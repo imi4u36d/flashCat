@@ -1,0 +1,31 @@
+# Build output
+build/
+dist/
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+coverage/
+*.log
+
+# Flutter generated files
+.flutter-plugins
+.flutter-plugins-dependencies
+**/Flutter/ephemeral/
+
+# IDE / editor
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# OS metadata
+.DS_Store
+**/xcuserdata/
+
+# Local-only data
+.shots/
+.models/
+__pycache__/
+*.pyc

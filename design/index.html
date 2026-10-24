@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>flashCat · 本地推理控制台</title>
+<meta name="theme-color" content="#f5f4f0">
+<script>
+  (() => {
+    try {
+      const params = new URLSearchParams(location.search);
+      const forced = params.get('theme');
+      const stored = localStorage.getItem('flashcat-theme');
+      const prefers = matchMedia('(prefers-color-scheme: dark)').matches;
+      document.documentElement.dataset.theme = forced || stored || (prefers ? 'dark' : 'light');
+    } catch (_) { /* ignore */ }
+  })();
+</script>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ================= 图标 ================= -->
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <defs>
+    <linearGradient id="avatarGrad" x1="4" y1="2" x2="36" y2="38" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6f5cf6"/><stop offset=".55" stop-color="#5b7cfa"/><stop offset="1" stop-color="#13c4ec"/>
+    </linearGradient>
+  </defs>
+  <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M3.5 18.5a9 9 0 1 1 17 0"/><path d="M12 14.5 16 10"/><circle cx="12" cy="15" r="1.4"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20.5 11.6a8 8 0 0 1-8.2 8.1 9 9 0 0 1-3.2-.6L4 20.5l1.4-4.6a8 8 0 0 1-.9-3.6 8 8 0 0 1 8-8.2h.3a8 8 0 0 1 7.7 7.5Z"/><path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01"/></symbol>
+  <symbol id="i-cube" viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/><path d="m4.4 7.8 7.6 4.3 7.6-4.3M12 12.1V21"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7 9.5 2.6 2.6L7 14.7M12.5 15h4"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13.2 2.2 4.6 13.4h6.1L10 21.8l8.9-11.6h-6.2l.5-8Z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5-10-6.5Z"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.2"/></symbol>
+  <symbol id="i-restart" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 6.4"/><path d="M20 4.5V11h-6.2"/></symbol>
+  <symbol id="i-arrow-up-right" viewBox="0 0 24 24"><path d="M7 17 17 7M8.5 7H17v8.5"/></symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M4.5 12h15M13.5 6l6 6-6 6"/></symbol>
+  <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M15 5.5A2.5 2.5 0 0 0 12.5 3h-7A2.5 2.5 0 0 0 3 5.5v7A2.5 2.5 0 0 0 5.5 15"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.5 4.5"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3.5v11M7.5 10l4.5 4.5 4.5-4.5M5 17.5v2A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5v-2"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5A2.5 2.5 0 0 1 6 5h3l2 2.5h7A2.5 2.5 0 0 1 20.5 10v7A2.5 2.5 0 0 1 18 19.5H6A2.5 2.5 0 0 1 3.5 17V7.5Z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9.5 7V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 14.5 5v2M6 7l.8 12a2 2 0 0 0 2 1.9h6.4a2 2 0 0 0 2-1.9L18 7"/><path d="M10 11.5v5M14 11.5v5"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 6.5"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2.5 12h2M19.5 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.3A8.4 8.4 0 0 1 9.7 4a8.4 8.4 0 1 0 10.3 10.3Z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-command" viewBox="0 0 24 24"><path d="M9 6.5A2.5 2.5 0 1 0 6.5 9H9V6.5ZM15 6.5A2.5 2.5 0 1 1 17.5 9H15V6.5ZM9 17.5A2.5 2.5 0 0 1 6.5 15H9v2.5ZM15 17.5a2.5 2.5 0 0 0 2.5-2.5H15v2.5ZM9 9h6v6H9V9Z"/></symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="M9.5 4.5v15"/></symbol>
+  <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2.5"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3"/></symbol>
+  <symbol id="i-memory" viewBox="0 0 24 24"><path d="M5 8.5A2.5 2.5 0 0 1 7.5 6h9A2.5 2.5 0 0 1 19 8.5v7a2.5 2.5 0 0 1-2.5 2.5h-9A2.5 2.5 0 0 1 5 15.5v-7Z"/><path d="M9 6V4M15 6V4M9 20v-2M15 20v-2M5 11H3M5 15H3M21 11h-2M21 15h-2"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 2.8 19.5 6v5.4c0 4.5-3 7.4-7.5 9.8-4.5-2.4-7.5-5.3-7.5-9.8V6L12 2.8Z"/><path d="m8.8 12 2.2 2.2 4.2-4.3"/></symbol>
+  <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="m12 3 1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7L12 3Z"/><path d="M18.5 15.5 19.4 18l2.5.9-2.5.9-.9 2.5-.9-2.5-2.5-.9 2.5-.9.9-2.5Z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5.5v13M15 5.5v13"/></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8.5 8.5"/><path d="M19 14v4.5a2.5 2.5 0 0 1-2.5 2.5h-10A2.5 2.5 0 0 1 4 18.5v-10A2.5 2.5 0 0 1 6.5 6H11"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 6.4"/><path d="M20 4.5V11h-6.2"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.8 21 19.5H3L12 3.8Z"/><path d="M12 9.5v4.5M12 17h.01"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9.5" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20h4l11-11a2.8 2.8 0 0 0-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/></symbol>
+  <symbol id="i-trash-sweep" viewBox="0 0 24 24"><path d="M4 7h16M10 7V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v2"/><path d="M6.5 7l.7 12a2 2 0 0 0 2 1.9h5.6a2 2 0 0 0 2-1.9l.7-12"/><path d="m14 11-4 5M10 11l4 5"/></symbol>
+</svg>
+
+<div class="app">
+  <!-- ================= 标题栏 ================= -->
+  <header class="titlebar">
+    <div class="traffic" aria-hidden="true"><i class="red"></i><i class="yellow"></i><i class="green"></i></div>
+    <div class="titlebar-center">
+      <span class="tb-brand">flashCat</span>
+      <span class="tb-sep">·</span>
+      <span class="tb-muted">本地推理</span>
+      <span class="tb-secure"><svg class="icon"><use href="#i-lock"/></svg>127.0.0.1:8000</span>
+    </div>
+    <div class="titlebar-actions">
+      <button class="palette-trigger" data-action="palette" title="命令面板">
+        <svg class="icon"><use href="#i-command"/></svg>
+        <span>快速操作</span><kbd>⌘K</kbd>
+      </button>
+      <button class="icon-btn" id="theme-toggle" data-tip="切换外观" aria-label="切换深浅色外观">
+        <svg class="icon icon-sun"><use href="#i-sun"/></svg>
+        <svg class="icon icon-moon"><use href="#i-moon"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="shell">
+    <!-- ================= 侧边栏 ================= -->
+    <aside class="sidebar" aria-label="侧边栏">
+      <div class="brand">
+        <svg class="logo" viewBox="0 0 40 40" aria-hidden="true">
+          <defs>
+            <linearGradient id="logoGrad" x1="4" y1="2" x2="36" y2="38" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#6f5cf6"/><stop offset=".55" stop-color="#5b7cfa"/><stop offset="1" stop-color="#13c4ec"/>
+            </linearGradient>
+          </defs>
+          <path d="M11.2 9.6 12 3.4l5 4.3Z" fill="url(#logoGrad)"/>
+          <path d="M28.8 9.6 28 3.4l-5 4.3Z" fill="url(#logoGrad)"/>
+          <rect x="5" y="7.2" width="30" height="27.8" rx="9.6" fill="url(#logoGrad)"/>
+          <path d="M22.4 11.6 14 21.8h5.7L17 30.6l8.4-10.6h-5.9l2.9-8.4Z" fill="#fff"/>
+        </svg>
+        <div class="brand-copy">
+          <strong>flashCat</strong>
+          <span>本地推理控制台</span>
+        </div>
+        <button class="sidebar-toggle" id="sidebar-toggle" data-action="toggle-sidebar"
+                aria-label="折叠侧边栏" aria-expanded="true" data-tip="折叠侧边栏 ⌘\\">
+          <svg class="icon"><use href="#i-panel"/></svg>
+        </button>
+      </div>
+
+      <div class="nav-label">工作区</div>
+      <nav class="nav" aria-label="主导航">
+        <button class="nav-item" data-nav="overview" aria-current="page" aria-label="概览" title="概览">
+          <svg class="icon"><use href="#i-gauge"/></svg><span>概览</span>
+        </button>
+        <button class="nav-item" data-nav="chat" aria-label="对话" title="对话">
+          <svg class="icon"><use href="#i-chat"/></svg><span>对话</span>
+        </button>
+        <button class="nav-item" data-nav="models" aria-label="模型" title="模型">
+          <svg class="icon"><use href="#i-cube"/></svg><span>模型</span><span class="nav-badge" id="model-count">6</span>
+        </button>
+        <button class="nav-item" data-nav="logs" aria-label="日志" title="日志">
+          <svg class="icon"><use href="#i-terminal"/></svg><span>日志</span>
+        </button>
+        <button class="nav-item" data-nav="settings" aria-label="设置" title="设置">
+          <svg class="icon"><use href="#i-sliders"/></svg><span>设置</span>
+        </button>
+      </nav>
+
+      <div class="nav-label nav-label-secondary">最近</div>
+      <div class="recent-list">
+        <button class="recent-item" data-nav="chat">
+          <span class="recent-dot"></span><span>并发下载器实现</span>
+        </button>
+        <button class="recent-item" data-nav="chat">
+          <span class="recent-dot"></span><span>首字延迟排查</span>
+        </button>
+      </div>
+
+      <div class="sidebar-spacer"></div>
+
+      <div class="engine-card">
+        <div class="engine-top">
+          <span class="status-dot" data-service-dot></span>
+          <span class="engine-state" data-service-label>运行中</span>
+          <span class="engine-speed"><span class="tabular" data-speed-text>74.2</span> tok/s</span>
+        </div>
+        <div class="engine-model" data-model-name>Qwen3.8-27B-4bit</div>
+        <div class="engine-meta">splash 1.4.0 · 端口 8000</div>
+        <div class="engine-meter"><span style="width:60%"></span></div>
+        <div class="engine-foot">
+          <span>内存 21.6 / 36 GB</span>
+          <button class="engine-action" data-action="toggle-service">停止</button>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- ================= 主内容 ================= -->
+    <main class="main" id="main">
+
+      <!-- ============ 概览 ============ -->
+      <section class="page page-overview" data-page="overview">
+        <div class="page-body">
+          <section class="hero card" aria-label="服务状态">
+            <div class="hero-bg" aria-hidden="true">
+              <span class="blob blob-a"></span><span class="blob blob-b"></span><span class="hero-grid-lines"></span>
+              <svg class="hero-mark" viewBox="0 0 40 40" aria-hidden="true"><path d="M22.4 11.6 14 21.8h5.7L17 30.6l8.4-10.6h-5.9l2.9-8.4Z"/></svg>
+            </div>
+            <div class="hero-content">
+              <div class="hero-copy">
+                <div class="hero-status">
+                  <span class="pulse-dot" data-service-dot></span>
+                  <span data-service-text>运行中</span>
+                  <span class="dot-sep">·</span>
+                  <span><span class="tabular" data-speed-text>74.2</span> tok/s</span>
+                  <span class="dot-sep">·</span>
+                  <span>1 个请求</span>
+                </div>
+                <h2 class="hero-title"><span data-model-name>Qwen3.8-27B</span><span class="hero-quant">4-bit · MLX</span></h2>
+                <p class="hero-model-id mono" data-model-id>mlx-community/Qwen3.8-27B-4bit</p>
+                <div class="chips">
+                  <span class="chip chip-ok"><svg class="icon"><use href="#i-check"/></svg>本机权重</span>
+                  <span class="chip chip-brand"><svg class="icon"><use href="#i-bolt"/></svg>DFlash2 就绪</span>
+                  <span class="chip"><svg class="icon"><use href="#i-cpu"/></svg>M3 Max · 40 核 GPU</span>
+                  <span class="chip"><svg class="icon"><use href="#i-shield"/></svg>完全离线</span>
+                </div>
+                <div class="hero-actions">
+                  <button class="btn btn-quiet" data-action="restart"><svg class="icon"><use href="#i-restart"/></svg>重启引擎</button>
+                  <button class="btn btn-quiet is-danger" data-action="toggle-service"><svg class="icon"><use href="#i-stop"/></svg><span data-toggle-label>停止</span></button>
+                </div>
+              </div>
+              <div class="hero-side">
+                <div class="gauge" id="gauge">
+                  <svg viewBox="0 0 240 148" class="gauge-svg" role="img" aria-label="解码速度">
+                    <defs>
+                      <linearGradient id="gaugeGrad" x1="30" y1="0" x2="210" y2="0" gradientUnits="userSpaceOnUse">
+                        <stop offset="0" stop-color="var(--brand)"/><stop offset="1" stop-color="var(--brand-2)"/>
+                      </linearGradient>
+                    </defs>
+                    <path class="gauge-track" d="M26 128a94 94 0 0 1 188 0" pathLength="100"/>
+                    <path class="gauge-arc" id="gauge-arc" d="M26 128a94 94 0 0 1 188 0" pathLength="100" stroke-dasharray="100" stroke-dashoffset="26"/>
+                    <circle class="gauge-cap" cx="26" cy="128" r="3.2"/>
+                    <circle class="gauge-cap" cx="214" cy="128" r="3.2"/>
+                  </svg>
+                  <div class="gauge-value"><strong id="gauge-value">74.2</strong><span>tok/s</span></div>
+                  <div class="gauge-label">解码速度 · 实时</div>
+                </div>
+                <div class="hero-mini">
+                  <div><span>首字延迟</span><strong>42<small>ms</small></strong></div>
+                  <div><span>活跃请求</span><strong>1</strong></div>
+                  <div><span>上下文</span><strong>18.4<small>K</small></strong></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div class="overview-lower">
+            <article class="card chart-card">
+              <div class="card-head">
+                <div>
+                  <h3>解码吞吐</h3>
+                  <p>tokens / second · 最近 45 秒</p>
+                </div>
+                <div class="seg" role="group" aria-label="时间范围">
+                  <button class="is-active" data-range="45">45 秒</button>
+                  <button data-range="300">5 分钟</button>
+                </div>
+              </div>
+              <div class="chart-stats">
+                <strong class="tabular" data-speed-text>74.2</strong><span class="unit">tok/s</span>
+                <span class="chart-meta">峰值 82.6 · 均值 71.4</span>
+                <span class="live-badge"><i></i>实时</span>
+              </div>
+              <div class="chart-wrap" id="chart-wrap">
+                <svg id="chart" role="img" aria-label="解码吞吐曲线"></svg>
+                <div class="chart-tip" id="chart-tip" hidden></div>
+              </div>
+              <div class="chart-legend">
+                <span><i class="dot dot-brand"></i>解码速度</span>
+                <span><i class="line line-muted"></i>平均 <b id="avg-label">71.4</b></span>
+                <span class="chart-foot">自动刷新 · 1s</span>
+              </div>
+            </article>
+
+            <div class="overview-side">
+              <div class="kpi-grid">
+                <article class="card kpi">
+                  <div class="kpi-head">
+                    <span class="kpi-icon tint-brand"><svg class="icon"><use href="#i-bolt"/></svg></span>
+                    <span class="kpi-title">预填充</span>
+                    <span class="kpi-delta up"><svg class="icon"><use href="#i-arrow-up-right"/></svg>4.2%</span>
+                  </div>
+                  <div class="kpi-value">1,280<small>tok/s</small></div>
+                  <div class="meter"><span style="width:86%"></span></div>
+                  <p class="kpi-note">首轮 prefill · 峰值 1,420</p>
+                </article>
+
+                <article class="card kpi">
+                  <div class="kpi-head">
+                    <span class="kpi-icon tint-cyan"><svg class="icon"><use href="#i-sparkles"/></svg></span>
+                    <span class="kpi-title">草稿接受率</span>
+                    <span class="kpi-delta up">+2.1%</span>
+                  </div>
+                  <div class="kpi-value">78<small>%</small></div>
+                  <div class="meter"><span style="width:78%"></span></div>
+                  <p class="kpi-note">DFlash2 命中比例 · 加速 1.9×</p>
+                </article>
+
+                <article class="card kpi">
+                  <div class="kpi-head">
+                    <span class="kpi-icon tint-amber"><svg class="icon"><use href="#i-memory"/></svg></span>
+                    <span class="kpi-title">内存占用</span>
+                    <span class="kpi-delta">峰值 24.8</span>
+                  </div>
+                  <div class="kpi-value">21.6<small>GB / 36 GB</small></div>
+                  <div class="meter meter-amber"><span style="width:60%"></span></div>
+                  <p class="kpi-note">统一内存 · 权重 15.8 GB</p>
+                </article>
+
+                <article class="card kpi">
+                  <div class="kpi-head">
+                    <span class="kpi-icon tint-violet"><svg class="icon"><use href="#i-cube"/></svg></span>
+                    <span class="kpi-title">上下文窗口</span>
+                    <span class="kpi-delta">18.4%</span>
+                  </div>
+                  <div class="kpi-value">100<small>K tokens</small></div>
+                  <div class="meter meter-violet"><span style="width:18.4%"></span></div>
+                  <p class="kpi-note">KV 缓存 q8 · 已用 18.4K</p>
+                </article>
+              </div>
+
+              <article class="card runtime-card">
+              <div class="card-head">
+                <div><h3>运行指标</h3><p>引擎与设备信息</p></div>
+                <span class="pill pill-ok"><svg class="icon"><use href="#i-shield"/></svg>健康</span>
+              </div>
+              <dl class="metrics">
+                <div><dt>引擎</dt><dd>splash 1.4.0</dd></div>
+                <div><dt>进程</dt><dd class="mono">pid 48213</dd></div>
+                <div><dt>设备</dt><dd>M3 Max · 40 核 GPU</dd></div>
+                <div><dt>请求</dt><dd>128 完成 · 0 失败</dd></div>
+                <div><dt>首字延迟</dt><dd>42 ms <span class="muted">p50</span></dd></div>
+                <div><dt>热状态</dt><dd>正常</dd></div>
+              </dl>
+              <div class="endpoint">
+                <div class="endpoint-copy">
+                  <span>OpenAI 兼容接口</span>
+                  <code>http://127.0.0.1:8000/v1</code>
+                </div>
+                <button class="icon-btn" data-copy="http://127.0.0.1:8000/v1" data-tip="复制地址" aria-label="复制接口地址">
+                  <svg class="icon"><use href="#i-copy"/></svg>
+                </button>
+              </div>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 对话 ============ -->
+      <section class="page page-chat" data-page="chat" hidden>
+        <div class="page-body chat-body">
+          <div class="chat-main card">
+            <div class="chat-topbar">
+              <div class="chat-thread">
+                <span class="thread-icon"><svg class="icon"><use href="#i-chat"/></svg></span>
+                <div>
+                  <strong id="thread-title">新对话</strong>
+                  <span><span data-model-id>mlx-community/Qwen3.8-27B-4bit</span> · 本地上下文</span>
+                </div>
+              </div>
+              <div class="chat-topbar-actions">
+                <span class="pill pill-ok" data-service-pill><i></i>就绪</span>
+                <span class="toolbar-divider"></span>
+                <button class="icon-btn" data-action="toggle-aside" id="params-btn" data-tip="对话参数" aria-label="对话参数"><svg class="icon"><use href="#i-sliders"/></svg></button>
+                <button class="icon-btn" data-action="clear-chat" id="clear-chat" data-tip="清空对话" aria-label="清空对话"><svg class="icon"><use href="#i-trash"/></svg></button>
+                <button class="icon-btn" data-action="new-chat" data-tip="新对话" aria-label="新对话"><svg class="icon"><use href="#i-plus"/></svg></button>
+              </div>
+            </div>
+
+            <div class="chat-scroll" id="chat-scroll">
+              <div class="chat-empty" id="chat-empty" hidden>
+                <svg class="empty-mark" viewBox="0 0 40 40" aria-hidden="true">
+                  <path d="M11.2 9.6 12 3.4l5 4.3Z" fill="url(#avatarGrad)"/><path d="M28.8 9.6 28 3.4l-5 4.3Z" fill="url(#avatarGrad)"/>
+                  <rect x="5" y="7.2" width="30" height="27.8" rx="9.6" fill="url(#avatarGrad)"/>
+                  <path d="M22.4 11.6 14 21.8h5.7L17 30.6l8.4-10.6h-5.9l2.9-8.4Z" fill="#fff"/>
+                </svg>
+                <h2>开始一次本地对话</h2>
+                <p>所有推理都在这台设备上完成。没有账号，没有云端，也没有内容上传。</p>
+                <div class="suggestion-grid">
+                  <button class="suggestion" data-suggestion="帮我解释一下这段推理日志里的首字延迟为什么偏高">
+                    <svg class="icon"><use href="#i-terminal"/></svg><span>解释这段日志</span><small>排查首字延迟</small>
+                  </button>
+                  <button class="suggestion" data-suggestion="用 Flutter 写一个并发下载器，限制最多 4 个并发，并显示进度">
+                    <svg class="icon"><use href="#i-bolt"/></svg><span>写一个并发下载器</span><small>Flutter · Dart</small>
+                  </button>
+                  <button class="suggestion" data-suggestion="DFlash2 草稿模型是怎么加速解码的？用通俗的语言解释">
+                    <svg class="icon"><use href="#i-sparkles"/></svg><span>草稿模型如何加速</span><small>DFlash2 原理</small>
+                  </button>
+                  <button class="suggestion" data-suggestion="帮我把这段 SQL 查询优化一下，并解释执行计划">
+                    <svg class="icon"><use href="#i-cube"/></svg><span>优化一段 SQL</span><small>查询与执行计划</small>
+                  </button>
+                </div>
+                <div class="empty-hint"><kbd>↵</kbd> 发送 · <kbd>⇧</kbd><kbd>↵</kbd> 换行</div>
+              </div>
+              <div id="messages" class="messages"></div>
+            </div>
+
+            <div class="service-banner" id="service-banner" hidden>
+              <svg class="icon"><use href="#i-alert"/></svg>
+              <span>服务未运行，启动后即可继续对话。</span>
+              <button class="btn btn-sm" data-action="toggle-service">启动服务</button>
+            </div>
+
+            <div class="live-strip" id="live-strip" hidden>
+              <span class="equalizer" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+              <span class="live-item"><strong id="live-rate">0.0</strong> tok/s</span>
+              <span class="live-item">首字 <strong id="live-ttft">—</strong></span>
+              <span class="live-item"><strong id="live-tokens">0</strong> tokens</span>
+              <span class="live-item"><strong id="live-elapsed">0.0s</strong></span>
+              <span class="live-state">生成中…</span>
+            </div>
+
+            <div class="composer" id="composer">
+              <textarea id="composer-input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行" aria-label="消息输入框"></textarea>
+              <div class="composer-bar">
+                <button class="chip chip-action" data-nav="models">
+                  <svg class="icon"><use href="#i-cube"/></svg><span data-model-name>Qwen3.8-27B-4bit</span>
+                  <svg class="icon chevron"><use href="#i-chevron-down"/></svg>
+                </button>
+                <button class="chip chip-action" data-action="toggle-aside">
+                  <svg class="icon"><use href="#i-gauge"/></svg>温度 <span id="composer-temp">0.70</span>
+                </button>
+                <button class="chip chip-action" data-action="toggle-aside">
+                  <svg class="icon"><use href="#i-sparkles"/></svg>思考 <span id="composer-thinking">自动</span>
+                </button>
+                <span class="composer-spacer"></span>
+                <span class="composer-hint" id="composer-hint"><kbd>↵</kbd></span>
+                <button class="send-btn" id="send-btn" data-action="send" aria-label="发送消息">
+                  <svg class="icon send-icon"><use href="#i-arrow-up"/></svg>
+                  <svg class="icon stop-icon"><use href="#i-stop"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <aside class="chat-aside card" id="chat-aside" hidden>
+            <div class="aside-head">
+              <div><h3>对话参数</h3><p>仅影响当前会话</p></div>
+              <button class="icon-btn" data-action="toggle-aside" aria-label="关闭参数面板"><svg class="icon"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="aside-body">
+              <label class="field">
+                <span class="field-label">模型</span>
+                <select class="select" id="aside-model"></select>
+              </label>
+              <label class="field">
+                <span class="field-label">Temperature <b id="temp-readout">0.70</b></span>
+                <input type="range" id="temp-range" min="0" max="2" step="0.05" value="0.7">
+                <span class="field-hint">越低越稳定，越高越有创造性</span>
+              </label>
+              <label class="field">
+                <span class="field-label">Top P <b id="topp-readout">0.95</b></span>
+                <input type="range" id="topp-range" min="0.05" max="1" step="0.01" value="0.95">
+              </label>
+              <div class="field">
+                <span class="field-label">思考模式</span>
+                <div class="seg seg-block" role="group" aria-label="思考模式">
+                  <button class="is-active" data-thinking="自动">自动</button>
+                  <button data-thinking="关闭">关闭</button>
+                  <button data-thinking="开启">开启</button>
+                </div>
+              </div>
+              <label class="field">
+                <span class="field-label">系统提示词</span>
+                <textarea class="textarea" id="system-prompt" rows="4" placeholder="例如：回答保持简洁、准确。"></textarea>
+              </label>
+            </div>
+            <div class="aside-foot">
+              <button class="btn btn-sm" data-action="reset-params">恢复默认</button>
+              <button class="btn btn-sm btn-primary" data-action="toggle-aside">完成</button>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ============ 模型 ============ -->
+      <section class="page page-models" data-page="models" hidden>
+        <div class="page-body">
+          <div class="model-toolbar">
+            <div class="search-field">
+              <svg class="icon"><use href="#i-search"/></svg>
+              <input type="search" id="model-search" placeholder="搜索模型、机构或参数规模" aria-label="搜索模型">
+              <kbd>⌘F</kbd>
+            </div>
+            <div class="seg seg-md" role="group" aria-label="筛选模型">
+              <button class="is-active" data-model-filter="all">全部 <span id="count-all">6</span></button>
+              <button data-model-filter="local">本机</button>
+              <button data-model-filter="remote">可下载</button>
+            </div>
+            <span class="toolbar-status"><span class="status-dot" data-service-dot></span><span data-service-label>运行中</span></span>
+            <div class="toolbar-actions">
+              <button class="icon-btn" data-action="open-models-folder" data-tip="打开模型目录" aria-label="打开模型目录"><svg class="icon"><use href="#i-folder"/></svg></button>
+              <button class="btn btn-sm btn-primary" data-action="import-model"><svg class="icon"><use href="#i-download"/></svg>导入模型</button>
+            </div>
+          </div>
+
+          <div class="model-grid" id="model-grid"></div>
+
+          <div class="import-grid">
+            <article class="card dropzone" id="dropzone" tabindex="0" role="button" aria-label="导入本地模型文件夹">
+              <span class="dropzone-icon"><svg class="icon"><use href="#i-folder"/></svg></span>
+              <h3>导入本地模型</h3>
+              <p>拖入包含 <code>.gguf</code> 或 MLX 权重的文件夹，或点击选择。</p>
+              <span class="dropzone-hint">支持 safetensors · gguf · 自动识别草稿模型</span>
+            </article>
+            <article class="card custom-model">
+              <div class="card-head">
+                <div><h3>自定义模型 ID</h3><p>填写 Hub 上的 owner/repo，确认后下载</p></div>
+                <span class="pill"><svg class="icon"><use href="#i-cube"/></svg>Hub</span>
+              </div>
+              <div class="field-row">
+                <input class="input" id="custom-model" placeholder="owner/repo，例如 mlx-community/Qwen3.8-27B-4bit" aria-label="自定义模型 ID">
+                <button class="btn btn-primary" data-action="use-custom-model">使用</button>
+              </div>
+              <p class="field-hint">支持 <code>owner/repo:VARIANT</code> 形式，下载位置可在设置中修改。</p>
+              <div class="mini-list">
+                <span>最近使用</span>
+                <button data-model-use="unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M">Qwen3.8-27B-GGUF</button>
+                <button data-model-use="mlx-community/Qwen3.6-35B-A3B-4bit">Qwen3.6-35B-A3B</button>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 日志 ============ -->
+      <section class="page page-logs" data-page="logs" hidden>
+        <div class="page-body logs-body">
+          <div class="log-stats">
+            <div class="log-stat"><span>解码速度</span><strong>74.2 <small>tok/s</small></strong></div>
+            <div class="log-stat"><span>预填充</span><strong>1,280 <small>tok/s</small></strong></div>
+            <div class="log-stat"><span>完成请求</span><strong>128</strong></div>
+            <div class="log-stat"><span>失败 / 取消</span><strong class="ok-text">0 / 1</strong></div>
+            <div class="log-stat log-stat-wide"><span>当前模型</span><strong class="mono" data-model-id>mlx-community/Qwen3.8-27B-4bit</strong></div>
+          </div>
+
+          <div class="log-panel card">
+            <div class="log-toolbar">
+              <span class="pill pill-ok" data-service-pill><i></i>运行中</span>
+              <span class="log-count"><span id="log-count">0</span> 行</span>
+              <div class="search-field search-field-sm">
+                <svg class="icon"><use href="#i-search"/></svg>
+                <input type="search" id="log-search" placeholder="搜索日志" aria-label="搜索日志">
+              </div>
+              <div class="seg seg-sm" role="group" aria-label="日志级别">
+                <button class="is-active" data-level="all">全部 <span id="lvl-all">0</span></button>
+                <button data-level="info">提示 <span id="lvl-info">0</span></button>
+                <button data-level="warn">警告 <span id="lvl-warn">0</span></button>
+                <button data-level="error">错误 <span id="lvl-error">0</span></button>
+              </div>
+              <div class="log-toolbar-right">
+                <button class="icon-btn" data-action="open-log" data-tip="打开日志文件" aria-label="打开日志文件"><svg class="icon"><use href="#i-folder"/></svg></button>
+                <button class="icon-btn" data-action="copy-logs" data-tip="复制筛选结果" aria-label="复制日志"><svg class="icon"><use href="#i-copy"/></svg></button>
+                <button class="icon-btn" data-action="clear-logs" data-tip="清空日志" aria-label="清空日志"><svg class="icon"><use href="#i-trash"/></svg></button>
+                <span class="toolbar-divider"></span>
+                <label class="switch-label"><span>自动滚动</span>
+                  <button class="switch is-on" id="autoscroll" role="switch" aria-checked="true" aria-label="自动滚动"></button>
+                </label>
+                <button class="icon-btn" id="log-pause" data-tip="暂停实时输出" aria-label="暂停实时输出"><svg class="icon"><use href="#i-pause"/></svg></button>
+              </div>
+            </div>
+
+            <div class="log-body" id="log-body" tabindex="0">
+              <div class="log-lines" id="log-lines"></div>
+              <div class="log-empty" id="log-empty" hidden>
+                <svg class="icon"><use href="#i-terminal"/></svg>
+                <h3>没有匹配的日志</h3>
+                <p>调整搜索关键词或级别筛选后再试。</p>
+              </div>
+            </div>
+
+            <div class="log-footer">
+              <span class="live-dot" id="log-live-dot"></span>
+              <span id="log-status-text">实时跟随 · 最新输出</span>
+              <span class="log-footer-spacer"></span>
+              <span>UTF-8</span>
+              <span>splash 1.4.0</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ 设置 ============ -->
+      <section class="page page-settings" data-page="settings" hidden>
+        <div class="page-body settings-body">
+          <nav class="settings-nav" aria-label="设置分节">
+            <button class="is-active" data-scroll="sec-service"><svg class="icon"><use href="#i-bolt"/></svg>服务</button>
+            <button data-scroll="sec-performance"><svg class="icon"><use href="#i-cpu"/></svg>性能</button>
+            <button data-scroll="sec-thinking"><svg class="icon"><use href="#i-sparkles"/></svg>思考</button>
+            <button data-scroll="sec-model"><svg class="icon"><use href="#i-cube"/></svg>模型</button>
+            <button data-scroll="sec-runtime"><svg class="icon"><use href="#i-download"/></svg>运行时</button>
+            <button data-scroll="sec-advanced"><svg class="icon"><use href="#i-terminal"/></svg>高级</button>
+          </nav>
+
+          <div class="settings-forms" id="settings-forms">
+            <section class="card settings-card" id="sec-service">
+              <div class="settings-head"><div><h3>服务</h3><p>本地 OpenAI 兼容接口</p></div><span class="pill pill-ok"><i></i>127.0.0.1</span></div>
+              <div class="setting-row">
+                <div class="setting-copy"><span class="setting-title">端口</span><span class="setting-desc">OpenAI 兼容接口监听的本地端口</span></div>
+                <div class="setting-control"><input class="input input-sm" id="set-port" value="8000" inputmode="numeric" aria-label="端口"></div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-copy"><span class="setting-title">随 flashCat 启动</span><span class="setting-desc">打开应用时自动拉起推理服务</span></div>
+                <div class="setting-control"><button class="switch is-on" data-setting role="switch" aria-checked="true" aria-label="随应用启动"></button></div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-copy"><span class="setting-title">登录时启动</span><span class="setting-desc">把 flashCat 加入 macOS 登录项</span></div>
+                <div class="setting-control"><button class="switch" data-setting role="switch" aria-checked="false" aria-label="登录时启动"></button></div>
+              </div>
+            </section>
+
+            <section class="card settings-card" id="sec-performance">
+              <div class="settings-head"><div><h3>性能</h3><p>引擎资源上限与内存策略</p></div></div>
+              <div class="setting-row">
+                <div class="setting-copy"><span class="setting-title">内存上限</span><span class="setting-desc">传给引擎的 <code>--max-memory</code>，留空表示自动</span></div>
+                <div class="setting-control"><input class="input input-sm input-suffix" id="set-memory" value="24G" aria-label="内存上限"></div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-copy"><span class="setting-title">上下文长度</span><span class="setting-desc">传给引擎的 <code>--max-context</code>，留空表示模型默认</span></div>
+                <div class="setting-control"><input class="input input-sm input-suffix" id="set-context" value="100K" aria-label="上下文长度"></div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-copy"><span class="setting-title">空闲时保留权重</span><span class="setting-desc">关闭空闲释放，响应更快但常驻内存</span></div>
+                <div class="setting-control"><button class="switch is-on" data-setting role="switch" aria-checked="true" aria-label="空闲时保留权重"></button></div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-copy"><span class="setting-title">仅语言模型</span><span class="setting-desc">跳过视觉与多模态部分，加载更快</span></div>
+                <div class="setting-control"><button class="switch" data-setting role="switch" aria-checked="false" aria-label="仅语言模型"></button></div>
+              </div>
+            </section>
+
+            <section class="card settings-card" id="sec-thinking">
+              <div class="settings-head"><div><h3>思考</h3><p>默认推理行为与推理等级</p></div></div>
+              <div class="setting-row">
+                <div class="setting-copy"><span class="setting-title">思考模式</span><span class="setting-desc" id="thinking-desc">跟随模型的聊天模板</span></div>
+                <div class="setting-control">
+                  <div class="seg seg-md" role="group" aria-label="思考模式">
+                    <button class="is-active" data-thinking-setting="自动">自动</button>
+                    <button data-thinking-setting="关闭">关闭</button>
+                    <button data-thinking-setting="开启">开启</button>
+                  </div>
+                </div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-copy"><span class="setting-title">推理等级</span><span class="setting-desc">仅在思考模式为“开启”时生效</span></div>
+                <div class="setting-control">
+                  <select class="select select-sm" id="set-effort" disabled aria-label="推理等级">
+                    <option>最少</option><option>低</option><option selected>中</option><option>高</option><option>极高</option><option>最大</option>
+                  </select>
+                </div>
+              </div>
+            </section>
+
+            <section class="card settings-card" id="sec-model">
+              <div class="settings-head"><div><h3>模型</h3><p>启动服务时默认加载的权重</p></div></div>
+              <div class="setting-row">
+                <div class="setting-copy"><span class="setting-title">默认模型</span><span class="setting-desc">启动服务时使用的模型 ID</span></div>
+                <div class="setting-control"><input class="input input-md mono" id="set-model" data-model-id aria-label="默认模型"></div>
+              </div>
+            </section>
+
+            <section class="card settings-card" id="sec-runtime">
+              <div class="settings-head"><div><h3>运行时</h3><p>应用内更新 splash 引擎</p></div><span class="pill pill-ok"><svg class="icon"><use href="#i-check"/></svg>已是最新</span></div>
+              <div class="runtime-row">
+                <span class="runtime-icon"><svg class="icon"><use href="#i-bolt"/></svg></span>
+                <div class="runtime-copy"><strong>splash 1.4.0</strong><span>内置运行时 · Apple Silicon · Metal</span></div>
+                <div class="runtime-actions">
+                  <button class="btn btn-sm" data-action="check-update">检查更新</button>
+                  <button class="btn btn-sm btn-ghost" data-action="restore-runtime">恢复内置</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="card settings-card" id="sec-advanced">
+              <div class="settings-head"><div><h3>高级</h3><p>附加参数与下载位置</p></div></div>
+              <div class="setting-row">
+                <div class="setting-copy"><span class="setting-title">额外参数</span><span class="setting-desc">原样追加到命令行，支持引号</span></div>
+                <div class="setting-control"><input class="input input-md mono" id="set-extra" placeholder="例如 --draft-window 8" aria-label="额外参数"></div>
+              </div>
+              <div class="setting-row">
+                <div class="setting-copy"><span class="setting-title">下载缓存目录</span><span class="setting-desc">设置 <code>HF_HUB_CACHE</code>，留空使用默认位置</span></div>
+                <div class="setting-control"><input class="input input-md" id="set-cache" placeholder="留空使用默认目录" aria-label="下载缓存目录"></div>
+              </div>
+              <div class="command-preview">
+                <div class="command-head"><span><svg class="icon"><use href="#i-terminal"/></svg>将执行的命令</span><button class="icon-btn" data-action="copy-command" data-tip="复制命令" aria-label="复制命令"><svg class="icon"><use href="#i-copy"/></svg></button></div>
+                <pre id="command-preview"><code></code></pre>
+              </div>
+              <div class="danger-row">
+                <div class="setting-copy"><span class="setting-title">恢复默认设置</span><span class="setting-desc">端口、上限、附加参数与全部开关恢复默认值</span></div>
+                <button class="btn btn-sm btn-danger-ghost" data-action="reset-settings">恢复默认</button>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div class="save-bar" id="save-bar" hidden>
+          <span class="save-bar-dot"></span>
+          <span>设置已修改，尚未应用到引擎</span>
+          <span class="save-bar-spacer"></span>
+          <button class="btn btn-sm" data-action="discard-settings">放弃</button>
+          <button class="btn btn-sm" data-action="save-settings" id="save-btn">保存</button>
+          <button class="btn btn-sm btn-primary" data-action="save-settings" data-restart="true" id="save-restart-btn">保存并重启</button>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- 移动端底部导航 -->
+  <nav class="mobile-nav" aria-label="移动端导航">
+    <button class="is-active" data-nav="overview"><svg class="icon"><use href="#i-gauge"/></svg><span>概览</span></button>
+    <button data-nav="chat"><svg class="icon"><use href="#i-chat"/></svg><span>对话</span></button>
+    <button data-nav="models"><svg class="icon"><use href="#i-cube"/></svg><span>模型</span></button>
+    <button data-nav="logs"><svg class="icon"><use href="#i-terminal"/></svg><span>日志</span></button>
+    <button data-nav="settings"><svg class="icon"><use href="#i-sliders"/></svg><span>设置</span></button>
+  </nav>
+</div>
+
+<!-- ================= 命令面板 ================= -->
+<div class="overlay palette-overlay" id="palette" hidden>
+  <div class="palette" role="dialog" aria-modal="true" aria-label="快速操作">
+    <div class="palette-input">
+      <svg class="icon"><use href="#i-search"/></svg>
+      <input id="palette-input" placeholder="搜索页面或操作…" aria-label="搜索页面或操作" autocomplete="off">
+      <kbd>ESC</kbd>
+    </div>
+    <div class="palette-results" id="palette-results"></div>
+    <div class="palette-foot"><span><kbd>↑</kbd><kbd>↓</kbd> 选择</span><span><kbd>↵</kbd> 打开</span><span><kbd>ESC</kbd> 关闭</span></div>
+  </div>
+</div>
+
+<!-- ================= 通用弹窗 ================= -->
+<div class="overlay modal-overlay" id="modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-head">
+      <div class="modal-icon" id="modal-icon"><svg class="icon"><use href="#i-alert"/></svg></div>
+      <div><h2 id="modal-title">标题</h2><p id="modal-desc">描述</p></div>
+      <button class="icon-btn modal-close" data-modal-close aria-label="关闭"><svg class="icon"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-actions" id="modal-actions"></div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

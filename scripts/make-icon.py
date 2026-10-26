@@ -2,14 +2,16 @@
 """为 flashCat 生成 AppIcon.iconset。
 
 用量：make-icon.py /path/to/AppIcon.iconset
-画布 1024px：猫头剪影 + 橙色闪电，深色玻璃质感。
+
+画布 1024px：猫头轮廓 + 闪电，日落橙→桃红→紫罗兰的街机渐变，
+配合顶部高光与放射光线，和游戏库风格的界面保持一致。
 """
 
 import math
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 SIZE = 1024
 INSET = 40  # 留白，符合 macOS 图标视觉重量
@@ -25,21 +27,20 @@ def cat_head_mask(size: int) -> Image.Image:
     inset = INSET * scale
     radius = int(big * 0.21)
     draw.rounded_rectangle(
-        [inset, inset + 40 * scale, big - inset, big - inset],
+        [inset, inset + 92 * scale, big - inset, big - inset],
         radius=radius,
         fill=255,
     )
 
-    ear_y = inset + 40 * scale
     left_ear = [
-        (int(big * 0.208), int(big * 0.335)),
-        (int(big * 0.300), int(big * 0.075)),
-        (int(big * 0.475), int(big * 0.245)),
+        (int(big * 0.190), int(big * 0.330)),
+        (int(big * 0.278), int(big * 0.030)),
+        (int(big * 0.500), int(big * 0.250)),
     ]
     right_ear = [
-        (int(big * 0.792), int(big * 0.335)),
-        (int(big * 0.700), int(big * 0.075)),
-        (int(big * 0.525), int(big * 0.245)),
+        (int(big * 0.810), int(big * 0.330)),
+        (int(big * 0.722), int(big * 0.030)),
+        (int(big * 0.500), int(big * 0.250)),
     ]
     draw.polygon(left_ear, fill=255)
     draw.polygon(right_ear, fill=255)
@@ -47,15 +48,22 @@ def cat_head_mask(size: int) -> Image.Image:
     return mask.resize((size, size), Image.LANCZOS)
 
 
-def vertical_gradient(size: int, top: tuple, bottom: tuple) -> Image.Image:
-    column = Image.new("RGB", (1, size))
-    for y in range(size):
-        t = y / max(1, size - 1)
-        column.putpixel(
-            (0, y),
-            tuple(int(top[i] + (bottom[i] - top[i]) * t) for i in range(3)),
-        )
-    return column.resize((size, size))
+def diagonal_gradient(size: int, stops: list) -> Image.Image:
+    """左上→右下的多段渐变，先在 256px 上计算再放大，避免逐像素过慢。"""
+    small = 256
+    grid = Image.new("RGB", (small, small))
+    pixels = grid.load()
+    for y in range(small):
+        for x in range(small):
+            t = (x + y) / (2 * (small - 1))
+            scaled = t * (len(stops) - 1)
+            index = min(int(scaled), len(stops) - 2)
+            local = scaled - index
+            a, b = stops[index], stops[index + 1]
+            pixels[x, y] = tuple(
+                int(a[i] + (b[i] - a[i]) * local) for i in range(3)
+            )
+    return grid.resize((size, size), Image.BICUBIC)
 
 
 def bolt_polygon(size: int) -> list:
@@ -70,45 +78,78 @@ def bolt_polygon(size: int) -> list:
     return [(x * size, y * size) for x, y in points]
 
 
-def render(iconset: Path) -> None:
-    canvas = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
+def rays(size: int) -> Image.Image:
+    """从右上角发散的细光线，模拟游戏主视觉。"""
+    scale = 2
+    big = size * scale
+    layer = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    anchor = (big * 0.82, big * 0.18)
+    reach = big * 1.6
+    for index in range(56):
+        angle = index / 56 * math.tau + 0.02
+        width = (1 + (index % 5)) * scale
+        alpha = 14 + (index * 7) % 26
+        draw.line(
+            [anchor,
+             (anchor[0] + math.cos(angle) * reach,
+              anchor[1] + math.sin(angle) * reach)],
+            fill=(255, 255, 255, alpha),
+            width=width,
+        )
+    layer = layer.filter(ImageFilter.GaussianBlur(1.2 * scale))
+    return layer.resize((size, size), Image.LANCZOS)
 
-    # 背景渐变
-    background = vertical_gradient(SIZE, (0x16, 0x19, 0x22), (0x2C, 0x33, 0x44))
+
+def render(iconset: Path) -> None:
     head = cat_head_mask(SIZE)
 
-    # 顶部高光，玻璃质感
-    gloss = Image.new("L", (SIZE, SIZE), 0)
-    gloss_draw = ImageDraw.Draw(gloss)
-    gloss_draw.ellipse(
-        [-SIZE * 0.35, -SIZE * 0.75, SIZE * 1.35, SIZE * 0.55],
-        fill=48,
+    # 街机渐变底
+    background = diagonal_gradient(
+        SIZE,
+        [(0xFF, 0xA2, 0x33), (0xFF, 0x5A, 0x5F), (0xFF, 0x37, 0x8F), (0x7C, 0x3A, 0xED)],
     )
-    gloss = gloss.filter(ImageFilter.GaussianBlur(90))
-    gloss = Image.composite(gloss, Image.new("L", (SIZE, SIZE), 0), head)
 
     base = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
     base.paste(background, (0, 0), head)
-    white = Image.new("RGBA", (SIZE, SIZE), (255, 255, 255, 255))
-    base.paste(white, (0, 0), gloss)
 
-    # 细描边
-    stroke = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    stroke_draw = ImageDraw.Draw(stroke)
-    stroke_draw.bitmap((0, 0), head, fill=(255, 255, 255, 26))
-    stroke = stroke.filter(ImageFilter.GaussianBlur(1))
+    # 放射光线，只落在猫头内部
+    light = rays(SIZE)
+    clipped = Image.new("L", (SIZE, SIZE), 0)
+    clipped.paste(light.getchannel("A"), (0, 0))
+    light.putalpha(ImageChops.multiply(clipped, head))
+    base = Image.alpha_composite(base, light)
+
+    # 顶部玻璃高光
+    gloss = Image.new("L", (SIZE, SIZE), 0)
+    ImageDraw.Draw(gloss).ellipse(
+        [-SIZE * 0.35, -SIZE * 0.85, SIZE * 1.35, SIZE * 0.48],
+        fill=70,
+    )
+    gloss = gloss.filter(ImageFilter.GaussianBlur(80))
+    gloss = ImageChops.multiply(gloss, head)
+    sheen = Image.new("RGBA", (SIZE, SIZE), (255, 255, 255, 255))
+    sheen.putalpha(gloss)
+    base = Image.alpha_composite(base, sheen)
+
+    # 内侧白描边
+    edge = ImageChops.subtract(head, head.filter(ImageFilter.MinFilter(7)))
+    stroke = Image.new("RGBA", (SIZE, SIZE), (255, 255, 255, 255))
+    stroke.putalpha(edge.point(lambda v: int(v * 0.55)))
     base = Image.alpha_composite(base, stroke)
 
-    # 闪电：竖向渐变 + 外发光
+    # 闪电：白色渐变 + 柔和投影
     bolt_mask = Image.new("L", (SIZE, SIZE), 0)
     ImageDraw.Draw(bolt_mask).polygon(bolt_polygon(SIZE), fill=255)
-    bolt_gradient = vertical_gradient(SIZE, (0xFF, 0xC2, 0x4A), (0xFF, 0x74, 0x12))
+    bolt_gradient = diagonal_gradient(SIZE, [(255, 255, 255), (255, 236, 214)])
+
+    shadow = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
+    shadow.paste((0, 0, 0, 120), (0, 0), bolt_mask)
+    shadow = shadow.filter(ImageFilter.GaussianBlur(22))
+    base = Image.alpha_composite(base, shadow)
+
     bolt = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
     bolt.paste(bolt_gradient, (0, 0), bolt_mask)
-
-    glow = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    glow.paste((0xFF, 0x9A, 0x2E, 150), (0, 0), bolt_mask.filter(ImageFilter.GaussianBlur(38)))
-    base = Image.alpha_composite(base, glow)
     base = Image.alpha_composite(base, bolt)
 
     base.save(iconset / "icon_512x512@2x.png")

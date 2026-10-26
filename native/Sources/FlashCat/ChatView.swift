@@ -34,7 +34,7 @@ struct ChatView: View {
     var body: some View {
         GeometryReader { proxy in
             let contentWidth = min(proxy.size.width, Native.contentMaxWidth)
-            let inlinePanel = contentWidth - Native.pagePadding * 2 >= 1000
+            let inlinePanel = contentWidth - Native.pagePadding * 2 >= 960
             VStack(alignment: .leading, spacing: 12) {
                 header
                 ZStack {
@@ -63,12 +63,13 @@ struct ChatView: View {
                     }
                 }
             }
-            .padding(Native.pagePadding)
+            .padding(.horizontal, Native.pagePadding)
+            .padding(.top, 26)
+            .padding(.bottom, Native.pagePadding)
             .frame(maxWidth: Native.contentMaxWidth, alignment: .leading)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .animation(.easeOut(duration: 0.16), value: showParameters)
         }
-        .background(Native.surface)
         .onAppear(perform: prepare)
         .onChange(of: draft) { _, value in ChatDraftCache.text = value }
         .onChange(of: state.messages.map(\.id)) { _, _ in syncStamps() }
@@ -107,7 +108,8 @@ struct ChatView: View {
 
     private var header: some View {
         PageHeader(title: topicTitle,
-                   subtitle: "\(state.selectedModel.isEmpty ? "—" : state.selectedModel) · 本地上下文") {
+                   subtitle: "\(state.selectedModel.isEmpty ? "—" : state.selectedModel) · 本地上下文",
+                   eyebrow: "对话") {
             Tag(text: readyText, tone: readyTone, icon: "circle.fill")
 
             HStack(spacing: 6) {
@@ -162,14 +164,15 @@ struct ChatView: View {
             }
         } label: {
             Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: 12, weight: .medium))
-                .frame(width: 24, height: 22)
-                .contentShape(Rectangle())
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.8))
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(.white.opacity(0.08)))
+                .overlay(Circle().stroke(.white.opacity(0.12), lineWidth: 0.8))
+                .contentShape(Circle())
         }
-        .menuStyle(.button)
-        .buttonStyle(.bordered)
+        .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .controlSize(.small)
         .fixedSize()
         .help("最近对话")
     }
@@ -196,8 +199,7 @@ struct ChatView: View {
     // MARK: - Chat surface
 
     private var chatSurface: some View {
-        Card(padded: false) {
-            VStack(spacing: 0) {
+        VStack(spacing: 0) {
                 messageArea
                 if !state.isReady {
                     serviceBanner
@@ -209,9 +211,26 @@ struct ChatView: View {
                 }
                 Hairline()
                 composer
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(.black.opacity(0.24))
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(LinearGradient(colors: [.white.opacity(0.055), .white.opacity(0.018)],
+                                         startPoint: .top, endPoint: .bottom))
+            }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(colors: [.white.opacity(0.18), .white.opacity(0.05)],
+                                   startPoint: .top, endPoint: .bottom),
+                    lineWidth: 1)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .shadow(color: .black.opacity(0.35), radius: 24, y: 12)
     }
 
     private var messageArea: some View {
@@ -408,17 +427,21 @@ struct ChatView: View {
         VStack(alignment: .leading, spacing: 8) {
             TextField(composerPlaceholder, text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(Native.bodyFont)
+                .font(.system(size: 13))
                 .lineLimit(1...6)
                 .focused($composerFocused)
                 .focusEffectDisabled()
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(Native.raised, in: RoundedRectangle(cornerRadius: Native.radiusSmall, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: Native.radiusSmall, style: .continuous)
-                        .stroke(composerFocused ? Native.accent.opacity(0.55) : Native.hairline, lineWidth: 1)
-                )
+                .padding(.horizontal, 13)
+                .padding(.vertical, 9)
+                .background {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(.white.opacity(0.065))
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(composerFocused ? Native.accent.opacity(0.75) : .white.opacity(0.10),
+                                lineWidth: 1)
+                }
 
             HStack(spacing: 6) {
                 modelChip
@@ -533,16 +556,19 @@ struct ChatView: View {
         } label: {
             ZStack {
                 Circle()
-                    .fill(state.generating ? Native.red : Native.accent)
+                    .fill(state.generating ? AnyShapeStyle(Native.red)
+                          : AnyShapeStyle(LinearGradient(colors: [.white, .white.opacity(0.86)],
+                                                         startPoint: .top, endPoint: .bottom)))
                 Image(systemName: state.generating ? "stop.fill" : "arrow.up")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.white)
+                    .font(.system(size: 12, weight: .heavy))
+                    .foregroundStyle(state.generating ? Color.white : Color(hex: 0x0B0B10))
             }
-            .frame(width: 28, height: 28)
+            .frame(width: 32, height: 32)
+            .shadow(color: .white.opacity(state.generating ? 0 : 0.18), radius: 8, y: 2)
         }
         .buttonStyle(.plain)
         .disabled(!state.generating && !canSend)
-        .opacity(state.generating || canSend ? 1 : 0.4)
+        .opacity(state.generating || canSend ? 1 : 0.35)
         .help(state.generating ? "停止生成" : "发送消息（⌘↩）")
         .accessibilityLabel(state.generating ? "停止生成" : "发送消息")
     }
@@ -697,21 +723,22 @@ struct ChatView: View {
 
             HStack(spacing: 8) {
                 Button("恢复默认") { restoreDefaults() }
-                    .controlSize(.small)
+                    .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
                 Spacer(minLength: 6)
                 Button("完成") { closeParameters() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    .buttonStyle(ArcadePillStyle(tone: .light, compact: true))
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
         }
-        .background(Native.panel, in: RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous)
-                .stroke(Native.hairline, lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.14), radius: 18, y: 6)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous)
+                    .fill(.black.opacity(0.42))
+                GlassSurface(radius: Native.radiusPanel)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous))
     }
 
     private var modelPicker: some View {
@@ -1264,9 +1291,6 @@ private struct MessageRow: View {
                         .monospacedDigit()
                         .foregroundStyle(Native.tertiary)
                 }
-                Text("你")
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(Native.secondary)
             } else {
                 Text(modelName)
                     .font(.system(size: 10.5, weight: .semibold))
@@ -1286,18 +1310,23 @@ private struct MessageRow: View {
     private var content: some View {
         if isUser {
             Text(message.content)
-                .font(Native.bodyFont)
-                .lineSpacing(3)
-                .foregroundStyle(Native.label)
+                .font(.system(size: 13.5))
+                .lineSpacing(4)
+                .foregroundStyle(.white)
                 .textSelection(.enabled)
                 .multilineTextAlignment(.leading)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(Native.raised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Native.hairline, lineWidth: 1)
-                )
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(LinearGradient(colors: [Native.accent.opacity(0.92), Native.pink.opacity(0.82)],
+                                             startPoint: .topLeading, endPoint: .bottomTrailing))
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(.white.opacity(0.20), lineWidth: 0.8)
+                }
+                .shadow(color: Native.pink.opacity(0.22), radius: 12, y: 5)
         } else if message.streaming && message.content.isEmpty {
             HStack(spacing: 7) {
                 ProgressView()
@@ -1358,34 +1387,25 @@ private struct MessageRow: View {
     }
 
     private var assistantBadge: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Native.accent.opacity(0.12))
-            Image(systemName: "bolt.fill")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(Native.accent)
-        }
-        .frame(width: 22, height: 22)
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(Native.accent.opacity(0.18), lineWidth: 1)
-        )
-        .help(modelName)
+        ArcadeIcon(symbol: "cat.fill",
+                   colors: [Native.accent, Native.pink],
+                   size: 26,
+                   glyphScale: 0.5)
+            .help(modelName)
     }
 
     private var userBadge: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Native.panel)
+            Circle()
+                .fill(LinearGradient(colors: [Native.violet, Native.blue],
+                                     startPoint: .topLeading, endPoint: .bottomTrailing))
             Text("你")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(Native.secondary)
+                .font(.system(size: 9.5, weight: .bold))
+                .foregroundStyle(.white)
         }
-        .frame(width: 22, height: 22)
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(Native.hairline, lineWidth: 1)
-        )
+        .frame(width: 26, height: 26)
+        .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 0.8))
+        .shadow(color: Native.violet.opacity(0.4), radius: 6, y: 2)
     }
 }
 
@@ -1409,6 +1429,13 @@ extension MessageRow: Equatable {
 private struct ChatEmptyState: View {
     let onSuggestion: (String) -> Void
 
+    private static let palette: [[Color]] = [
+        [Native.violet, Native.blue],
+        [Native.cyan, Native.mint],
+        [Native.accent, Native.pink],
+        [Native.amber, Native.orange],
+    ]
+
     private static let suggestions: [(icon: String, title: String, detail: String, prompt: String)] = [
         ("terminal", "解释这段日志", "排查首字延迟",
          "帮我解释一下这段推理日志里的首字延迟为什么偏高"),
@@ -1421,37 +1448,35 @@ private struct ChatEmptyState: View {
     ]
 
     var body: some View {
-        VStack(spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Native.accent.opacity(0.12))
-                Image(systemName: "bubble.left.and.text.bubble.right.fill")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(Native.accent)
-            }
-            .frame(width: 46, height: 46)
+        VStack(spacing: 16) {
+            ArcadeIcon(symbol: "cat.fill",
+                       colors: [Native.accent, Native.pink, Native.violet],
+                       size: 76,
+                       glyphScale: 0.48)
 
-            VStack(spacing: 4) {
+            VStack(spacing: 5) {
                 Text("开始一次本地对话")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: 22, weight: .bold))
+                    .tracking(-0.4)
                 Text("所有推理都在这台设备上完成。没有账号，没有云端，也没有内容上传。")
-                    .font(Native.calloutFont)
-                    .foregroundStyle(Native.tertiary)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Native.secondary)
                     .multilineTextAlignment(.center)
-                    .frame(maxWidth: 430)
+                    .frame(maxWidth: 440)
             }
 
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)],
-                      spacing: 8) {
-                ForEach(Self.suggestions, id: \.title) { item in
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
+                      spacing: 10) {
+                ForEach(Array(Self.suggestions.enumerated()), id: \.element.title) { index, item in
                     SuggestionButton(icon: item.icon,
                                      title: item.title,
-                                     detail: item.detail) {
+                                     detail: item.detail,
+                                     colors: Self.palette[index % Self.palette.count]) {
                         onSuggestion(item.prompt)
                     }
                 }
             }
-            .frame(maxWidth: 520)
+            .frame(maxWidth: 540)
             .padding(.top, 4)
 
             HStack(spacing: 5) {
@@ -1476,37 +1501,41 @@ private struct SuggestionButton: View {
     let icon: String
     let title: String
     let detail: String
+    var colors: [Color] = [Native.violet, Native.blue]
     let action: () -> Void
 
     @State private var hovered = false
 
     var body: some View {
         Button(action: action) {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Native.accent)
-                    .frame(width: 16)
-                VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .top, spacing: 10) {
+                ArcadeIcon(symbol: icon,
+                           colors: colors,
+                           size: 28,
+                           glyphScale: 0.45,
+                           glow: false)
+                VStack(alignment: .leading, spacing: 3) {
                     Text(title)
-                        .font(.system(size: 11.5, weight: .medium))
+                        .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Native.label)
                     Text(detail)
-                        .font(.system(size: 10))
+                        .font(.system(size: 10.5))
                         .foregroundStyle(Native.tertiary)
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 9)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(hovered ? Native.raised : Native.panel,
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Native.hairline, lineWidth: 1)
-            )
-            .contentShape(Rectangle())
+            .background {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(.white.opacity(hovered ? 0.10 : 0.055))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(.white.opacity(hovered ? 0.20 : 0.09), lineWidth: 0.8)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
@@ -1520,14 +1549,14 @@ private struct KeyCap: View {
 
     var body: some View {
         Text(label)
-            .font(.system(size: 9, weight: .medium, design: .monospaced))
-            .foregroundStyle(Native.secondary)
-            .padding(.horizontal, 4)
-            .padding(.vertical, 1)
-            .background(Native.panel, in: RoundedRectangle(cornerRadius: 3))
+            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+            .foregroundStyle(.white.opacity(0.6))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1.5)
+            .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(.white.opacity(0.07)))
             .overlay(
-                RoundedRectangle(cornerRadius: 3)
-                    .stroke(Native.hairline, lineWidth: 1)
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .stroke(.white.opacity(0.12), lineWidth: 0.8)
             )
     }
 }
@@ -1539,15 +1568,12 @@ private struct MetricChip: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundStyle(Native.secondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Native.panel, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .stroke(Native.hairline, lineWidth: 1)
-            )
+            .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+            .foregroundStyle(.white.opacity(0.55))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(.white.opacity(0.06)))
+            .overlay(Capsule().stroke(.white.opacity(0.09), lineWidth: 0.8))
     }
 }
 
@@ -1584,8 +1610,8 @@ private struct LiveStrip: View {
                 MetricChip(text: String(format: "%.1fs", elapsed))
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 6)
-            .background(Native.panel)
+            .padding(.vertical, 7)
+            .background(.black.opacity(0.22))
             .overlay(alignment: .top) { Hairline() }
         }
     }
@@ -1613,11 +1639,11 @@ private struct ComposerChipLabel: View {
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: icon)
-                .font(.system(size: 10))
-                .foregroundStyle(Native.tertiary)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.42))
             Text(text)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Native.secondary)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.72))
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: maxWidth, alignment: .leading)
@@ -1627,15 +1653,11 @@ private struct ComposerChipLabel: View {
                     .foregroundStyle(Native.tertiary)
             }
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(hovered ? Native.raised : Native.panel,
-                    in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .stroke(Native.hairline, lineWidth: 1)
-        )
-        .contentShape(Rectangle())
+        .padding(.horizontal, 9)
+        .frame(height: 26)
+        .background(Capsule().fill(.white.opacity(hovered ? 0.12 : 0.065)))
+        .overlay(Capsule().stroke(.white.opacity(0.10), lineWidth: 0.8))
+        .contentShape(Capsule())
         .onHover { hovered = $0 }
     }
 }

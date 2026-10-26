@@ -345,7 +345,7 @@ struct LogsView: View {
 
         GeometryReader { proxy in
             VStack(alignment: .leading, spacing: 12) {
-                PageHeader(title: "日志", subtitle: "引擎与控制台的实时输出")
+                PageHeader(title: "日志", subtitle: "引擎与控制台的实时输出", eyebrow: "实时输出")
 
                 LogsStatsStrip(stats: state.stats, model: currentModel,
                                showsModel: proxy.size.width >= 840)
@@ -361,7 +361,9 @@ struct LogsView: View {
                           onClear: { confirmingClear = true })
                     .frame(maxHeight: .infinity)
             }
-            .padding(Native.pagePadding)
+            .padding(.horizontal, Native.pagePadding)
+            .padding(.top, 30)
+            .padding(.bottom, Native.pagePadding)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .alert("清空日志？", isPresented: $confirmingClear) {
@@ -438,7 +440,7 @@ private struct LogsStatsStrip: View {
                         .help(model.isEmpty ? "未选择模型" : model)
                 }
             }
-            .frame(height: 52)
+            .frame(height: 60)
             .clipShape(RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous))
         }
     }
@@ -462,7 +464,7 @@ private struct LogsStatCell: View {
             HStack(alignment: .firstTextBaseline, spacing: 3) {
                 Text(value)
                     .font(mono ? Native.monoSmall
-                               : .system(size: 16, weight: .semibold, design: .rounded))
+                               : .system(size: 19, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(valueColor)
                     .lineLimit(1)

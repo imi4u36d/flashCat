@@ -20,8 +20,8 @@ struct ModelsView: View {
             let usable = max(320, min(proxy.size.width, Native.contentMaxWidth) - Native.pagePadding * 2)
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    PageHeader(title: "模型", subtitle: subtitle)
-                        .padding(.bottom, 12)
+                    PageHeader(title: "模型", subtitle: subtitle, eyebrow: "MODEL LIBRARY")
+                        .padding(.bottom, 14)
 
                     toolbar(width: usable)
                         .padding(.bottom, 14)
@@ -31,11 +31,13 @@ struct ModelsView: View {
                     importSection(width: usable)
                         .padding(.top, 18)
                 }
-                .padding(Native.pagePadding)
+                .padding(.horizontal, Native.pagePadding)
+                .padding(.top, 30)
+                .padding(.bottom, Native.pagePadding)
                 .frame(maxWidth: Native.contentMaxWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .background(Native.surface)
+            .scrollIndicators(.never)
         }
     }
 
@@ -119,18 +121,15 @@ struct ModelsView: View {
 
     private var serviceTag: some View {
         HStack(spacing: 6) {
-            StatusDot(color: statusColor(state.serverState), diameter: 7)
+            StatusDot(color: statusColor(state.serverState), diameter: 7, pulsing: state.isRunning)
             Text(serviceLabel)
-                .font(.system(size: 11))
-                .foregroundStyle(Native.tertiary)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.7))
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 4)
-        .background(Native.panel, in: RoundedRectangle(cornerRadius: Native.radiusSmall, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Native.radiusSmall, style: .continuous)
-                .stroke(Native.hairline.opacity(0.8), lineWidth: 1)
-        )
+        .padding(.horizontal, 10)
+        .frame(height: 28)
+        .background(Capsule().fill(.white.opacity(0.08)))
+        .overlay(Capsule().stroke(.white.opacity(0.12), lineWidth: 0.8))
         .help(state.startupStage)
     }
 
@@ -146,8 +145,7 @@ struct ModelsView: View {
         } label: {
             Label("导入模型", systemImage: "square.and.arrow.down")
         }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.small)
+        .buttonStyle(ArcadePillStyle(tone: .accent, compact: true))
         .disabled(state.importProgress != nil)
         .help("导入本地模型文件夹")
     }
@@ -163,7 +161,7 @@ struct ModelsView: View {
                     EmptyHint(icon: emptyIcon, title: emptyTitle, detail: emptyDetail)
                 }
             } else {
-                LazyVGrid(columns: gridColumns(width: width), alignment: .leading, spacing: 12) {
+                LazyVGrid(columns: gridColumns(width: width), alignment: .leading, spacing: 14) {
                     ForEach(entries) { entry in
                         card(for: entry)
                     }
@@ -184,8 +182,8 @@ struct ModelsView: View {
     }
 
     private func gridColumns(width: CGFloat) -> [GridItem] {
-        let count = width >= 900 ? 3 : (width >= 620 ? 2 : 1)
-        return Array(repeating: GridItem(.flexible(minimum: 0), spacing: 12, alignment: .top),
+        let count = width >= 1120 ? 3 : (width >= 600 ? 2 : 1)
+        return Array(repeating: GridItem(.flexible(minimum: 0), spacing: 14, alignment: .top),
                      count: count)
     }
 
@@ -301,8 +299,7 @@ struct ModelsView: View {
                         .onChange(of: customID) { _, _ in customError = nil }
 
                     Button("使用") { applyCustom(customID) }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
+                        .buttonStyle(ArcadePillStyle(tone: .accent, compact: true))
                         .disabled(customID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                   || state.downloadingModel != nil)
                 }
@@ -334,8 +331,7 @@ struct ModelsView: View {
                                 customID = id
                                 applyCustom(id)
                             }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                            .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
                             .font(.system(size: 10.5))
                             .disabled(state.downloadingModel != nil)
                             .help(id)
@@ -449,8 +445,8 @@ private struct ModelsSearchField: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Native.tertiary)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.4))
 
             TextField("搜索模型、机构或参数规模", text: $text)
                 .textFieldStyle(.plain)
@@ -469,13 +465,12 @@ private struct ModelsSearchField: View {
                 .help("清除搜索")
             }
         }
-        .padding(.horizontal, 8)
-        .frame(height: 26)
-        .background(Native.raised,
-                    in: RoundedRectangle(cornerRadius: Native.radiusSmall, style: .continuous))
+        .padding(.horizontal, 12)
+        .frame(height: 32)
+        .background(Capsule().fill(.white.opacity(0.075)))
         .overlay(
-            RoundedRectangle(cornerRadius: Native.radiusSmall, style: .continuous)
-                .stroke(focused ? Native.accent.opacity(0.7) : Native.hairline, lineWidth: 1)
+            Capsule().stroke(focused ? Native.accent.opacity(0.8) : .white.opacity(0.11),
+                             lineWidth: 1)
         )
         .contentShape(Rectangle())
         .onTapGesture { focused = true }
@@ -533,14 +528,24 @@ private struct ModelCardView: View {
             }
         }
         .padding(Native.cardPadding)
-        .frame(maxWidth: .infinity, minHeight: 156, alignment: .topLeading)
-        .background(background, in: RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous))
+        .frame(maxWidth: .infinity, minHeight: 164, alignment: .topLeading)
+        .background {
+            GlassSurface(radius: Native.radiusPanel,
+                         tint: selected ? ModelMeta.avatarTint(model.id) : .clear)
+        }
         .overlay(
             RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous)
-                .stroke(borderColor, lineWidth: selected ? 1.4 : 1)
+                .strokeBorder(
+                    selected
+                        ? AnyShapeStyle(LinearGradient(colors: [Native.accent.opacity(0.9), Native.pink.opacity(0.45)],
+                                                       startPoint: .topLeading, endPoint: .bottomTrailing))
+                        : AnyShapeStyle(.white.opacity(hovering ? 0.20 : 0.06)),
+                    lineWidth: selected ? 1.4 : 1)
         )
+        .shadow(color: selected ? Native.accent.opacity(0.22) : .clear, radius: 20, y: 8)
+        .scaleEffect(hovering ? 1.008 : 1)
         .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.13), value: hovering)
+        .animation(.easeOut(duration: 0.14), value: hovering)
     }
 
     private var header: some View {
@@ -569,14 +574,26 @@ private struct ModelCardView: View {
     }
 
     private var avatar: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(ModelMeta.avatarTint(model.id).opacity(0.14))
+        let tint = ModelMeta.avatarTint(model.id)
+        return ZStack {
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(LinearGradient(colors: [tint, tint.opacity(0.55)],
+                                     startPoint: .topLeading,
+                                     endPoint: .bottomTrailing))
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(LinearGradient(colors: [.white.opacity(0.35), .clear],
+                                     startPoint: .top, endPoint: .center))
             Text(ModelMeta.avatarLabel(ModelMeta.displayName(model)))
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(ModelMeta.avatarTint(model.id))
+                .font(.system(size: 15, weight: .heavy, design: .rounded))
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.3), radius: 1.5, y: 1)
         }
-        .frame(width: 32, height: 32)
+        .frame(width: 38, height: 38)
+        .overlay(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .strokeBorder(.white.opacity(0.35), lineWidth: 0.8)
+        )
+        .shadow(color: tint.opacity(0.45), radius: 9, y: 4)
     }
 
     private var tagSpecs: [ModelTagSpec] {
@@ -612,26 +629,22 @@ private struct ModelCardView: View {
     @ViewBuilder
     private var actions: some View {
         if installed {
-            HStack(spacing: 6) {
+            HStack(spacing: 7) {
                 if selected {
                     Button {} label: {
                         Label("使用中", systemImage: "checkmark")
-                            .font(.system(size: 11.5, weight: .medium))
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .buttonStyle(ArcadePillStyle(tone: .glass))
                     .disabled(true)
                 } else {
                     Button {
                         onUse()
                     } label: {
                         Label("使用", systemImage: "play.fill")
-                            .font(.system(size: 11.5, weight: .medium))
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    .buttonStyle(ArcadePillStyle(tone: .light))
                     .disabled(busy)
                 }
 
@@ -643,13 +656,14 @@ private struct ModelCardView: View {
                 if let onDelete {
                     Button(action: onDelete) {
                         Image(systemName: "trash")
-                            .font(.system(size: 11, weight: .medium))
-                            .frame(width: 20, height: 18)
-                            .contentShape(Rectangle())
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Native.red.opacity(0.85))
+                            .frame(width: 30, height: 30)
+                            .background(Circle().fill(.white.opacity(0.06)))
+                            .overlay(Circle().stroke(.white.opacity(0.10), lineWidth: 0.8))
+                            .contentShape(Circle())
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .tint(Native.red)
+                    .buttonStyle(.plain)
                     .help("删除模型")
                     .disabled(busy)
                 }
@@ -658,14 +672,15 @@ private struct ModelCardView: View {
             Button {
                 onUse()
             } label: {
-                Label("下载", systemImage: "arrow.down.circle")
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(Native.accent)
-                    .frame(maxWidth: .infinity)
+                Label {
+                    Text("下载")
+                } icon: {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .foregroundStyle(Native.accentSoft)
+                }
+                .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .tint(Native.accent)
+            .buttonStyle(ArcadePillStyle(tone: .glass))
             .disabled(busy)
         }
     }
@@ -690,16 +705,6 @@ private struct ModelCardView: View {
         }
     }
 
-    private var borderColor: Color {
-        if selected || downloading { return Native.accent.opacity(0.55) }
-        if hovering { return Native.secondary.opacity(0.4) }
-        return Native.hairline.opacity(0.8)
-    }
-
-    private var background: Color {
-        if selected { return Native.accent.opacity(0.055) }
-        return hovering ? Native.panel.opacity(0.95) : Native.panel
-    }
 }
 
 private struct ModelTagSpec {
@@ -830,14 +835,10 @@ private struct ModelsDropzone: View {
             }
         } else {
             VStack(spacing: 0) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(Native.accent.opacity(0.12))
-                    Image(systemName: "folder.badge.plus")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(Native.accent)
-                }
-                .frame(width: 34, height: 34)
+                ArcadeIcon(symbol: "folder.badge.plus",
+                           colors: [Native.accent, Native.pink],
+                           size: 44,
+                           glyphScale: 0.42)
 
                 Text("导入本地模型")
                     .font(.system(size: 13, weight: .semibold))
@@ -866,8 +867,8 @@ private struct ModelsDropzone: View {
 
     private var background: some View {
         RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous)
-            .fill(targeted ? Native.accent.opacity(0.07)
-                  : Native.panel.opacity(hovering ? 0.92 : 0.5))
+            .fill(targeted ? Native.accent.opacity(0.12)
+                  : Color.white.opacity(hovering ? 0.06 : 0.025))
     }
 
     private var border: some View {

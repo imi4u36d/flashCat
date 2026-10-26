@@ -152,7 +152,7 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Native.gap) {
-                PageHeader(title: "设置", subtitle: "服务、模型与运行时的默认行为")
+                PageHeader(title: "设置", subtitle: "服务、模型与运行时的默认行为", eyebrow: "偏好设置")
                 serviceCard
                 performanceCard
                 thinkingCard
@@ -160,7 +160,9 @@ struct SettingsView: View {
                 runtimeCard
                 advancedCard
             }
-            .padding(Native.pagePadding)
+            .padding(.horizontal, Native.pagePadding)
+            .padding(.top, 30)
+            .padding(.bottom, Native.pagePadding)
             .frame(maxWidth: 900, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -272,6 +274,7 @@ struct SettingsView: View {
 
     private var serviceCard: some View {
         SettingsCard(title: "服务", detail: "本地 OpenAI 兼容接口",
+                     icon: "network", tint: Native.cyan,
                      trailing: AnyView(endpointTag)) {
             SettingsRow(title: "端口",
                         detail: "OpenAI 兼容接口监听的本地端口，可填 `1024`–`65535`",
@@ -297,7 +300,8 @@ struct SettingsView: View {
     }
 
     private var performanceCard: some View {
-        SettingsCard(title: "性能", detail: "引擎资源上限与内存策略") {
+        SettingsCard(title: "性能", detail: "引擎资源上限与内存策略",
+                     icon: "speedometer", tint: Native.mint) {
             SettingsRow(title: "内存上限",
                         detail: "传给引擎的 `--max-memory`，留空表示自动",
                         error: shownIssue(.memory, memoryIssue),
@@ -331,7 +335,8 @@ struct SettingsView: View {
     }
 
     private var thinkingCard: some View {
-        SettingsCard(title: "思考", detail: "默认推理行为与推理等级") {
+        SettingsCard(title: "思考", detail: "默认推理行为与推理等级",
+                     icon: "brain.head.profile", tint: Native.violet) {
             SettingsRow(title: "思考模式",
                         detail: draft.thinking.detail,
                         divider: false) {
@@ -364,7 +369,8 @@ struct SettingsView: View {
     }
 
     private var modelCard: some View {
-        SettingsCard(title: "模型", detail: "启动服务时默认加载的权重") {
+        SettingsCard(title: "模型", detail: "启动服务时默认加载的权重",
+                     icon: "shippingbox.fill", tint: Native.amber) {
             SettingsRow(title: "默认模型",
                         detail: "从本地模型目录中选择，或填写下方自定义 ID",
                         divider: false) {
@@ -401,6 +407,7 @@ struct SettingsView: View {
 
     private var runtimeCard: some View {
         SettingsCard(title: "运行时", detail: "应用内更新 splash 引擎",
+                     icon: "bolt.fill", tint: Native.accent,
                      trailing: AnyView(runtimeTag)) {
             RuntimePanel(state: state) { target in
                 requestSwitch(target)
@@ -418,7 +425,8 @@ struct SettingsView: View {
     }
 
     private var advancedCard: some View {
-        SettingsCard(title: "高级", detail: "附加参数与下载位置") {
+        SettingsCard(title: "高级", detail: "附加参数与下载位置",
+                     icon: "slider.horizontal.3", tint: Native.gray) {
             SettingsRow(title: "额外参数",
                         detail: "原样追加到命令行，支持引号分组",
                         error: shownIssue(.extra, extraIssue),
@@ -731,20 +739,21 @@ struct SettingsView: View {
                 Tag(text: "重启服务后生效", tone: .warning)
             }
             Button("放弃更改") { discard() }
-                .buttonStyle(.bordered)
+                .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
                 .disabled(!isDirty)
             Button("保存") { save(restart: false) }
-                .buttonStyle(.bordered)
+                .buttonStyle(ArcadePillStyle(tone: .light, compact: true))
                 .keyboardShortcut("s", modifiers: .command)
                 .disabled(!isDirty)
             Button("保存并重启服务") { save(restart: true) }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(ArcadePillStyle(tone: .accent, compact: true))
                 .disabled(!isDirty)
                 .help(state.isRunning ? "保存后重启推理服务" : "保存后启动推理服务")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(Native.surface)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .top) { Hairline() }
         .overlay(alignment: .top) { Hairline() }
     }
 
@@ -940,11 +949,11 @@ private struct RuntimePanel: View {
                     .accessibilityLabel("重新检查更新")
                     .disabled(update.busy || state.updater == nil)
                 Button("安装更新") { install() }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(ArcadePillStyle(tone: .accent, compact: true))
                     .disabled(update.busy || state.updater == nil)
             } else {
                 Button(checkLabel) { check() }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
                     .disabled(update.busy || state.updater == nil)
             }
         }
@@ -978,8 +987,7 @@ private struct RuntimePanel: View {
                         }
                         Spacer(minLength: 10)
                         Button("切换") { onSwitch(.managed(version)) }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                            .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
                             .disabled(managedVersion == version || update.busy)
                     }
                     .padding(.horizontal, Native.cardPadding)
@@ -1002,7 +1010,7 @@ private struct RuntimePanel: View {
             }
             Spacer(minLength: 12)
             Button("恢复内置运行时") { onSwitch(.bundled) }
-                .buttonStyle(.bordered)
+                .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
                 .disabled(managedVersion == nil || update.busy)
         }
         .padding(.horizontal, Native.cardPadding)
@@ -1076,24 +1084,36 @@ private enum SettingsPattern {
 private struct SettingsCard<Content: View>: View {
     let title: String
     let detail: String
+    var icon: String = "gearshape.fill"
+    var tint: Color = Native.violet
     let trailing: AnyView?
     private let content: () -> Content
 
     init(title: String,
          detail: String,
+         icon: String = "gearshape.fill",
+         tint: Color = Native.violet,
          trailing: AnyView? = nil,
          @ViewBuilder content: @escaping () -> Content) {
         self.title = title
         self.detail = detail
+        self.icon = icon
+        self.tint = tint
         self.trailing = trailing
         self.content = content
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(alignment: .center, spacing: 11) {
+                ArcadeIcon(symbol: icon,
+                           colors: [tint, tint.opacity(0.55)],
+                           size: 32,
+                           glyphScale: 0.44,
+                           glow: false)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.system(size: 13, weight: .semibold))
+                    Text(title)
+                        .font(.system(size: 15, weight: .semibold))
                     Text(detail)
                         .font(Native.calloutFont)
                         .foregroundStyle(Native.tertiary)
@@ -1102,18 +1122,14 @@ private struct SettingsCard<Content: View>: View {
                 if let trailing { trailing }
             }
             .padding(.horizontal, Native.cardPadding)
-            .padding(.top, 12)
-            .padding(.bottom, 10)
+            .padding(.top, 15)
+            .padding(.bottom, 13)
 
             Hairline()
             VStack(alignment: .leading, spacing: 0) { content() }
         }
-        .background(Native.panel, in: RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous))
+        .background { GlassSurface(radius: Native.radiusPanel) }
         .clipShape(RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous)
-                .stroke(Native.hairline.opacity(0.8), lineWidth: 1)
-        )
     }
 }
 

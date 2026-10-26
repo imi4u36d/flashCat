@@ -10,7 +10,8 @@ struct FlashCatApp: App {
         Window("flashCat", id: "main") {
             ShellView(state: state)
         }
-        .defaultSize(width: 1180, height: 780)
+        .defaultSize(width: 1280, height: 820)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("关于 flashCat") { delegate.showAbout() }
@@ -52,6 +53,9 @@ struct FlashCatApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // The console is designed as a dark, game-library surface; pin the whole
+        // app to the dark appearance so system controls match the key art.
+        NSApp.appearance = NSAppearance(named: .darkAqua)
         AppState.shared.bootstrap()
 
         for target in NSApp.windows {
@@ -65,10 +69,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func configure(_ target: NSWindow) {
         target.title = "flashCat"
-        target.contentMinSize = NSSize(width: 980, height: 660)
+        target.titleVisibility = .hidden
+        target.titlebarAppearsTransparent = true
+        target.styleMask.insert(.fullSizeContentView)
+        target.isMovableByWindowBackground = false
+        target.backgroundColor = NSColor(calibratedRed: 0.027, green: 0.027, blue: 0.039, alpha: 1)
+        target.appearance = NSAppearance(named: .darkAqua)
+        target.contentMinSize = NSSize(width: 1040, height: 700)
         if target.frameAutosaveName.isEmpty {
             target.setFrameAutosaveName("flashCatWindow")
-            target.setContentSize(NSSize(width: 1180, height: 780))
+            target.setContentSize(NSSize(width: 1280, height: 820))
             target.center()
         }
     }

@@ -23,17 +23,22 @@ struct ModelsView: View {
                     PageHeader(title: "模型", subtitle: subtitle, eyebrow: "MODEL LIBRARY")
                         .padding(.bottom, 14)
 
-                    toolbar(width: usable)
-                        .padding(.bottom, 10)
+                    if state.activeEngine != .splash {
+                        EngineModelsPanel(state: state)
+                            .padding(.bottom, 18)
+                    } else {
+                        toolbar(width: usable)
+                            .padding(.bottom, 10)
 
-                    importBar
-                        .padding(.bottom, 16)
+                        importBar
+                            .padding(.bottom, 16)
 
-                    modelGrid(width: usable)
+                        modelGrid(width: usable)
 
-                    customCard()
-                        .padding(.top, 18)
-                        .frame(maxWidth: 720)
+                        customCard()
+                            .padding(.top, 18)
+                            .frame(maxWidth: 720)
+                    }
                 }
                 .padding(.horizontal, Native.pagePadding)
                 .padding(.top, 30)

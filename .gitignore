@@ -11,3 +11,8 @@ __pycache__/
 
 # OS metadata
 .DS_Store
+
+# docs
+docs/
+# Engine runtime packs (GB-scale build output; install via scripts/engines)
+vendor/engines/

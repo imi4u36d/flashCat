@@ -33,23 +33,29 @@ final class LogStore {
     private var sink: FileHandle?
     private let limit = 20_000
     private var followOffset: UInt64 = 0
+    /// Every engine keeps its own log file; splash uses the legacy path.
+    let path: String
+
+    init(path: String = Paths.logFile) {
+        self.path = path
+    }
 
     func openFile() {
         Paths.ensureDirectory(Paths.logsDirectory)
         close()
-        if !Paths.fileExists(Paths.logFile) {
-            try? Data().write(to: URL(fileURLWithPath: Paths.logFile))
+        if !Paths.fileExists(path) {
+            try? Data().write(to: URL(fileURLWithPath: path))
         }
         loadHistory()
-        sink = FileHandle(forWritingAtPath: Paths.logFile)
+        sink = FileHandle(forWritingAtPath: path)
         sink?.seekToEndOfFile()
-        followOffset = Self.fileSize(Paths.logFile)
+        followOffset = Self.fileSize(path)
     }
 
     /// Seed the in-memory tail with what the engine already wrote, so attaching
     /// to a running service shows the session rather than an empty pane.
     private func loadHistory() {
-        guard let text = try? String(contentsOfFile: Paths.logFile, encoding: .utf8) else { return }
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return }
         let rows = text.split(separator: "\n", omittingEmptySubsequences: true).suffix(limit)
         lock.lock()
         lines.removeAll(keepingCapacity: true)
@@ -66,12 +72,12 @@ final class LogStore {
 
     /// Pick up lines another process appended to the shared log file.
     func pollFollow() {
-        let size = Self.fileSize(Paths.logFile)
+        let size = Self.fileSize(path)
         guard size > followOffset else {
             if size < followOffset { followOffset = 0 }
             return
         }
-        guard let handle = FileHandle(forReadingAtPath: Paths.logFile) else { return }
+        guard let handle = FileHandle(forReadingAtPath: path) else { return }
         defer { handle.closeFile() }
         do {
             try handle.seek(toOffset: followOffset)

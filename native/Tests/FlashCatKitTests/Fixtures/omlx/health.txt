@@ -1,0 +1,8 @@
+HTTP/1.1 200 OK
+date: Mon, 26 Oct 2026 10:35:23 GMT
+server: uvicorn
+content-length: 173
+content-type: application/json
+vary: Origin
+
+{"status":"healthy","default_model":"Qwen3.8-27B-oQ4e-mtp","engine_pool":{"model_count":7,"loaded_count":0,"final_ceiling":115448725504,"current_model_memory":0},"mcp":null}

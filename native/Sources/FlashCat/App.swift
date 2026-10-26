@@ -41,8 +41,9 @@ struct FlashCatApp: App {
                 Button("概览") { state.section = .overview }.keyboardShortcut("1", modifiers: .command)
                 Button("对话") { state.section = .chat }.keyboardShortcut("2", modifiers: .command)
                 Button("模型") { state.section = .models }.keyboardShortcut("3", modifiers: .command)
-                Button("日志") { state.section = .logs }.keyboardShortcut("4", modifiers: .command)
-                Button("设置") { state.section = .settings }.keyboardShortcut("5", modifiers: .command)
+                Button("引擎") { state.section = .engines }.keyboardShortcut("4", modifiers: .command)
+                Button("日志") { state.section = .logs }.keyboardShortcut("5", modifiers: .command)
+                Button("设置") { state.section = .settings }.keyboardShortcut("6", modifiers: .command)
                 Divider()
                 Button("折叠/展开侧边栏") { state.toggleSidebar() }
                     .keyboardShortcut("\\", modifiers: .command)

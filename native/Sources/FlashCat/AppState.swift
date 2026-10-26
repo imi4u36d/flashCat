@@ -1,11 +1,13 @@
 import Foundation
 import SwiftUI
 import AppKit
+import FlashCatKit
 
 enum Page: String, CaseIterable, Identifiable {
     case overview = "概览"
     case chat = "对话"
     case models = "模型"
+    case engines = "引擎"
     case logs = "日志"
     case settings = "设置"
 
@@ -16,6 +18,7 @@ enum Page: String, CaseIterable, Identifiable {
         case .overview: return "gauge.with.dots.needle.33percent"
         case .chat: return "bubble.left.and.text.bubble.right"
         case .models: return "shippingbox"
+        case .engines: return "shippingbox.and.arrow.backward"
         case .logs: return "doc.plaintext"
         case .settings: return "slider.horizontal.3"
         }
@@ -78,7 +81,12 @@ final class AppState: ObservableObject {
     let conversation = ConversationStore()
     let chatClient = ChatClient()
     var runtime: EngineRuntime?
-    var controller: ServerController?
+    var engines: EngineManager?
+    /// Pack installs shown on the engines page; owns its own installer actor.
+    let installs = EngineInstallCenter()
+    var controller: EngineController? { engines?.active }
+    var activeEngine: EngineID { engines?.activeID ?? .splash }
+    var availableEngines: [EngineID] { engines?.installedIDs ?? [.splash] }
     var updater: RuntimeUpdater?
 
     struct ImportProgress {
@@ -102,6 +110,12 @@ final class AppState: ObservableObject {
     var failureMessage: String? { controller?.failureMessage }
     var downloadProgress: Double? { controller?.downloadProgress }
     var runtimeVersion: String { runtime?.version ?? SPLASH_VERSION }
+    /// Version of whatever engine is active, so the sidebar names the thing that
+    /// is actually running instead of always claiming splash.
+    var engineVersion: String {
+        if activeEngine == .splash { return runtime?.version ?? SPLASH_VERSION }
+        return engines?.controller(activeEngine)?.manifest?.version ?? "—"
+    }
     var health: (label: String, tone: TagTone) { healthTone(stats) }
 
     var installedRuntimes: [String] {
@@ -168,6 +182,22 @@ final class AppState: ObservableObject {
         attachRuntime()
         syncController()
 
+        // Model folders are per engine; build the links once at launch so the
+        // models page opens on something usable.
+        if activeEngine != .splash {
+            EngineModelLinker.synchronize(activeEngine)
+            // splash ids do not exist in another engine's model folder, so the
+            // saved splash selection must not leak across: prefer this engine's
+            // own last model, then whatever the folder actually contains.
+            if let saved = EngineStore.shared.configuration(for: activeEngine).lastModel, !saved.isEmpty {
+                selectModel(saved)
+            } else if let first = engineModels().first {
+                selectModel(first.id)
+            } else {
+                selectedModel = ""
+            }
+        }
+
         if settings.autoStart && !selectedModel.isEmpty {
             startService()
         }
@@ -175,11 +205,20 @@ final class AppState: ObservableObject {
 
     /// Build the controller/updater pair for the currently selected runtime.
     private func attachRuntime() {
-        guard let current = runtime else { return }
-        let server = ServerController(runtime: current, settings: settings, catalog: catalog)
-        server.onChange = { [weak self] in self?.syncController() }
-        controller = server
+        let manager = EngineManager(runtime: runtime, settings: settings, catalog: catalog)
+        manager.onChange = { [weak self] in self?.syncController() }
+        engines = manager
+        // A finished install/uninstall changes which packs exist, so rebuild the
+        // controllers and refresh whatever the models page is showing.
+        installs.configure(onChange: { [weak self] in
+            guard let self else { return }
+            self.engines?.rebuild()
+            self.reloadModels()
+            self.syncController()
+            self.objectWillChange.send()
+        })
 
+        guard let current = runtime else { return }
         let runtimeUpdater = RuntimeUpdater(currentVersion: current.version)
         runtimeUpdater.onStateChanged = { [weak self] value in
             DispatchQueue.main.async { self?.update = value }
@@ -233,6 +272,60 @@ final class AppState: ObservableObject {
         }
     }
 
+    // MARK: engines
+
+    /// Only one engine runs at a time: two MLX engines would fight for the same
+    /// unified memory, so switching stops the old one first.
+    func switchEngine(_ id: EngineID) {
+        guard let engines, id != engines.activeID else { return }
+        guard !isSwitchingModel else {
+            toast("正在切换模型，稍后再换引擎")
+            return
+        }
+        let wasRunning = isRunning
+        engines.activate(id)
+        reloadModels()
+        if let saved = EngineStore.shared.configuration(for: id).lastModel, !saved.isEmpty {
+            selectedModel = saved
+            settings.setModel(saved)
+        } else if let first = engineModels().first {
+            // Switching to an engine must not keep the previous engine's model id.
+            selectModel(first.id)
+            engines.setModel(first.id, for: id)
+        } else {
+            selectedModel = ""
+        }
+        syncController()
+        if wasRunning { startService() }
+        toast("已切换到 \(id.displayName)")
+    }
+
+    /// Change the port an engine listens on. Only the stored preference moves
+    /// while it is idle; a running engine keeps its port until restarted.
+    func switchEnginePort(_ id: EngineID, port: Int) {
+        guard let engines, let controller = engines.controller(id) else { return }
+        guard controller.port != port else { return }
+        EngineStore.shared.update(id) { $0.port = port }
+        if id == activeEngine, !isRunning {
+            controller.updatePort(port)
+        }
+        syncController()
+    }
+
+    /// Models the active engine can actually see: splash reads its catalog,
+    /// the others read the flashCat folder that holds links to the weights.
+    func engineModels() -> [EngineModel] {
+        let id = activeEngine
+        if id == .splash {
+            return catalog.machine.map {
+                EngineModel(id: $0.id, path: $0.path, bytes: $0.bytes,
+                            maximumContextTokens: nil, loaded: false, loading: false,
+                            kind: nil, hidden: false, helper: false, engine: .splash)
+            }
+        }
+        return LocalEngineModels.scan(engine: id, directory: EnginePaths.modelsDirectory(id))
+    }
+
     // MARK: service
 
     func selectModel(_ id: String) {
@@ -254,11 +347,29 @@ final class AppState: ObservableObject {
 
         let restarting = isRunning
         selectModel(target)
+        if activeEngine != .splash {
+            // Hot engines swap weights in place; restart engines reload through
+            // the supervisor. Either way the switcher shows a loading state.
+            engines?.setModel(target, for: activeEngine)
+            beginModelSwitch(to: target, restarting: restarting)
+            Task { await controller?.switchModel(target) }
+            return
+        }
         beginModelSwitch(to: target, restarting: restarting)
     }
 
     func startService() {
         guard !isSwitchingModel else { return }
+        if activeEngine != .splash {
+            guard !selectedModel.isEmpty else {
+                notice = "还没有选择模型"
+                return
+            }
+            Task {
+                await controller?.start(localModel: nil, requestedModel: selectedModel)
+            }
+            return
+        }
         guard let model = selectedModelInfo else {
             if !selectedModel.isEmpty, catalog.localModel(selectedModel) == nil {
                 notice = "「\(selectedModel)」还没有下载，先到模型页下载，或直接启动让引擎自动拉取"
@@ -280,12 +391,20 @@ final class AppState: ObservableObject {
             finishModelSwitch(notify: false)
             controller?.stop()
         } else if !isSwitchingModel {
-            Task { await controller?.start(localModel: selectedModelInfo) }
+            if activeEngine == .splash {
+                Task { await controller?.start(localModel: selectedModelInfo) }
+            } else {
+                Task { await controller?.start(localModel: nil, requestedModel: selectedModel) }
+            }
         }
     }
 
     func restartService() {
-        Task { await controller?.restart(localModel: selectedModelInfo) }
+        if activeEngine == .splash {
+            Task { await controller?.restart(localModel: selectedModelInfo) }
+        } else {
+            Task { await controller?.restart(localModel: nil) }
+        }
     }
 
     // MARK: model switch progress

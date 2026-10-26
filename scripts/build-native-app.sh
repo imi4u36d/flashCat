@@ -78,6 +78,16 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/flashCat"
 chmod +x "$APP/Contents/MacOS/flashCat"
 
+echo "==> Embed engine packs"
+# Packs are GB-sized and rebuilt by scripts/engines/*.sh, so the bundle links to
+# them instead of copying. The app searches Contents/Resources/engines and skips
+# engine ids it cannot find, so a checkout without packs still launches.
+if [ -d "$ROOT/vendor/engines" ]; then
+    ln -sfn "$ROOT/vendor/engines" "$APP/Contents/Resources/engines"
+else
+    echo "    (vendor/engines missing — run scripts/engines/build-omlx-pack.sh)"
+fi
+
 echo "==> Embed splash runtime"
 mkdir -p "$APP/Contents/Resources/runtime"
 tar -xzf "$RUNTIME_TARBALL" --strip-components=1 -C "$APP/Contents/Resources/runtime"

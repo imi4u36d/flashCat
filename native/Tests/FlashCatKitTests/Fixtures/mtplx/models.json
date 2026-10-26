@@ -1,0 +1,1 @@
+{"object":"list","data":[{"id":"youssofal-qwen3.5-4b-mtplx-optimized-speed","object":"model","created":1793010856,"owned_by":"mtplx","capability":"chat","supports_vision":false,"modalities":{"input":["text"],"output":["text"]},"context_length":262144,"max_context_length":262144,"max_model_len":262144}]}

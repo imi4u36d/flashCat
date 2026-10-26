@@ -90,6 +90,8 @@ extension Page {
             return [Color(hex: 0x7C5CFF), Color(hex: 0x0A84FF), Color(hex: 0x00C7BE)]
         case .models:
             return [Color(hex: 0x30D158), Color(hex: 0x00C7BE), Color(hex: 0x0A84FF)]
+        case .engines:
+            return [Color(hex: 0x22D3EE), Color(hex: 0x5E5CE6), Color(hex: 0xBF5AF2)]
         case .logs:
             return [Color(hex: 0xFFD60A), Color(hex: 0xFF9F0A), Color(hex: 0xFF453A)]
         case .settings:

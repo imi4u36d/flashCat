@@ -489,7 +489,7 @@ private struct MetricColumn: View {
             StatTile(label: "草稿接受率",
                      value: state.stats?.draftAcceptance.map { String(format: "%.0f", $0 * 100) } ?? "—",
                      unit: "%",
-                     detail: "DFlash2 草稿命中",
+                     detail: state.activeEngine == .mtplx ? "MTP 草稿命中" : "DFlash2 草稿命中",
                      badge: state.stats?.draftAcceptance.map { String(format: "%.0f%%", $0 * 100) },
                      tint: Native.violet,
                      progress: state.stats?.draftAcceptance,
@@ -528,7 +528,7 @@ private struct RuntimeDetails: View {
             VStack(spacing: 0) {
                 HStack(alignment: .top, spacing: 26) {
                     VStack(spacing: 0) {
-                        KeyValueRow(label: "引擎", value: "splash \(state.runtimeVersion)", mono: true)
+                        KeyValueRow(label: "引擎", value: "\(state.activeEngine.rawValue) \(state.engineVersion)", mono: true)
                         Hairline()
                         KeyValueRow(label: "进程",
                                     value: state.stats?.instancePid.map { "pid \($0)" } ?? "未运行",

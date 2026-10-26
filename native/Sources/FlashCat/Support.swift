@@ -54,7 +54,14 @@ enum Paths {
         return value.isEmpty ? NSHomeDirectory() : value
     }
 
-    static var supportDirectory: String { home + "/Library/Application Support/flashCat" }
+    /// `FLASHCAT_SUPPORT_DIR` keeps tests and trial runs out of the real
+    /// application-support folder.
+    static var supportDirectory: String {
+        if let override = ProcessInfo.processInfo.environment["FLASHCAT_SUPPORT_DIR"], !override.isEmpty {
+            return override
+        }
+        return home + "/Library/Application Support/flashCat"
+    }
     static var logsDirectory: String { home + "/Library/Logs/flashCat" }
     static var logFile: String { logsDirectory + "/server.log" }
     static var pidFile: String { supportDirectory + "/server.pid" }

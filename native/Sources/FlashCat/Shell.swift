@@ -350,6 +350,10 @@ struct EngineCard: View {
 
             ModelSwitcher(state: state, variant: .engine)
 
+            if state.availableEngines.count > 1 {
+                EngineSwitcherRow(state: state)
+            }
+
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(switching ? "—" : (rate > 0 ? String(format: "%.1f", rate) : "—"))
                     .font(.system(size: 24, weight: .bold, design: .rounded))
@@ -380,7 +384,7 @@ struct EngineCard: View {
                 Meter(fraction: memoryFraction,
                       tint: memoryFraction > 0.9 ? Native.red : (memoryFraction > 0.75 ? Native.orange : Native.cyan))
                 HStack {
-                    Text(verbatim: "splash \(state.runtimeVersion) · \(state.port)")
+                    Text(verbatim: "\(state.activeEngine.displayName.lowercased()) \(state.engineVersion) · \(state.port)")
                         .font(Native.monoSmall)
                         .foregroundStyle(.white.opacity(0.32))
                         .lineLimit(1)
@@ -439,6 +443,7 @@ struct DetailView: View {
                 case .overview: OverviewView(state: state)
                 case .chat: ChatView(state: state)
                 case .models: ModelsView(state: state)
+                case .engines: EnginesView(state: state, installs: state.installs)
                 case .logs: LogsView(state: state)
                 case .settings: SettingsView(state: state)
                 }

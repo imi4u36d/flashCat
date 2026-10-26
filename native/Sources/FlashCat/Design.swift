@@ -454,6 +454,107 @@ struct ArcadeIcon: View {
     }
 }
 
+/// The flashCat mark, drawn as vectors so it stays sharp at every size.
+/// Mirrors `scripts/icon_render.py`: a squircle that grows two cat ears,
+/// charged by a cream lightning bolt.
+struct BrandMark: View {
+    var size: CGFloat = 38
+    var glow: Bool = true
+
+    var body: some View {
+        Canvas { context, canvas in
+            let unit = canvas.width / 824
+            func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+                CGPoint(x: (x - 100) * unit, y: (y - 100) * unit)
+            }
+
+            var tile = superellipsePath(cx: 512, cy: 569, a: 412, b: 355,
+                                        n: 4.7, steps: 420)
+            tile.addPath(earPath(outer: p(102, 434), tip: p(268, 110), inner: p(432, 342)))
+            tile.addPath(earPath(outer: p(922, 434), tip: p(756, 110), inner: p(592, 342)))
+
+            context.fill(tile, with: .linearGradient(
+                Gradient(colors: [Color(hex: 0xFFB26B),
+                                  Color(hex: 0xFF7D5E),
+                                  Color(hex: 0xF24A7C),
+                                  Color(hex: 0xC03AA6),
+                                  Color(hex: 0x57279B)]),
+                startPoint: .zero,
+                endPoint: CGPoint(x: canvas.width, y: canvas.height)
+            ))
+
+            // Glass sheen from the top-left, clipped to the mark.
+            context.fill(tile, with: .linearGradient(
+                Gradient(colors: [.white.opacity(0.28), .clear]),
+                startPoint: .zero,
+                endPoint: CGPoint(x: canvas.width * 0.72, y: canvas.height * 0.66)
+            ))
+
+            var bolt = Path()
+            bolt.move(to: p(578, 300))
+            bolt.addLine(to: p(392, 600))
+            bolt.addLine(to: p(494, 600))
+            bolt.addLine(to: p(452, 840))
+            bolt.addLine(to: p(632, 540))
+            bolt.addLine(to: p(530, 540))
+            bolt.closeSubpath()
+
+            context.drawLayer { layer in
+                layer.addFilter(.shadow(color: .black.opacity(0.38),
+                                        radius: max(0.8, size * 0.035),
+                                        x: 0, y: size * 0.025))
+                layer.fill(bolt, with: .linearGradient(
+                    Gradient(colors: [.white, Color(hex: 0xFFE8D2)]),
+                    startPoint: p(452, 300),
+                    endPoint: p(632, 840)
+                ))
+            }
+        }
+        .frame(width: size, height: size)
+        .shadow(color: .black.opacity(0.35), radius: size * 0.07, x: 0, y: size * 0.05)
+        .shadow(color: glow ? Native.accent.opacity(0.35) : .clear,
+                radius: glow ? size * 0.32 : 0,
+                x: 0,
+                y: glow ? size * 0.12 : 0)
+        .accessibilityLabel("flashCat")
+    }
+
+    private func superellipsePath(cx: CGFloat, cy: CGFloat,
+                                  a: CGFloat, b: CGFloat,
+                                  n: CGFloat, steps: Int) -> Path {
+        var path = Path()
+        let exponent = 2.0 / Double(n)
+        for i in 0..<steps {
+            let t = Double(i) / Double(steps) * .pi * 2
+            let ct = cos(t), st = sin(t)
+            let x = Double(cx) + Double(a) * copysign(pow(abs(ct), exponent), ct)
+            let y = Double(cy) + Double(b) * copysign(pow(abs(st), exponent), st)
+            let point = CGPoint(x: x, y: y)
+            if i == 0 { path.move(to: point) } else { path.addLine(to: point) }
+        }
+        path.closeSubpath()
+        return path
+    }
+
+    private func earPath(outer: CGPoint, tip: CGPoint, inner: CGPoint) -> Path {
+        func toward(_ from: CGPoint, _ to: CGPoint, _ distance: CGFloat) -> CGPoint {
+            let dx = to.x - from.x, dy = to.y - from.y
+            let length = max(hypot(dx, dy), 0.001)
+            return CGPoint(x: to.x + dx / length * distance,
+                           y: to.y + dy / length * distance)
+        }
+        let before = toward(tip, outer, 24)
+        let after = toward(tip, inner, 24)
+        var path = Path()
+        path.move(to: outer)
+        path.addLine(to: before)
+        path.addQuadCurve(to: after, control: tip)
+        path.addLine(to: inner)
+        path.closeSubpath()
+        return path
+    }
+}
+
 // MARK: - Primitives
 
 struct Hairline: View {
@@ -605,6 +706,7 @@ struct StatTile: View {
     var tint: Color = Native.accent
     var progress: Double? = nil
     var progressTint: Color? = nil
+    var loading: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -614,29 +716,41 @@ struct StatTile: View {
                     .foregroundStyle(Native.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                if let badge {
+                if !loading, let badge {
                     Text(badge)
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(tint.opacity(0.9))
                 }
             }
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(value)
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .foregroundStyle(Native.label)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                if let unit {
-                    Text(unit)
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundStyle(Native.tertiary)
+
+            if loading {
+                SkeletonBar(width: 86, height: 24, radius: 7, opacity: 0.10)
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(value)
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .foregroundStyle(Native.label)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .contentTransition(.numericText())
+                    if let unit {
+                        Text(unit)
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(Native.tertiary)
+                    }
                 }
             }
-            if let progress {
+
+            if loading {
+                SkeletonBar(height: 5, radius: 2.5, opacity: 0.07)
+            } else if let progress {
                 Meter(fraction: progress, tint: progressTint ?? tint)
             }
-            if let detail {
+
+            if loading {
+                SkeletonBar(width: 96, height: 8, radius: 4, opacity: 0.07)
+            } else if let detail {
                 Text(detail)
                     .font(.system(size: 10.5))
                     .foregroundStyle(Native.tertiary)
@@ -646,6 +760,7 @@ struct StatTile: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background { GlassSurface(radius: Native.radiusTile, tint: tint) }
+        .animation(.easeOut(duration: 0.2), value: loading)
     }
 }
 
@@ -669,12 +784,71 @@ struct Meter: View {
     }
 }
 
+/// A single sweeping highlight reused by every skeleton placeholder. The
+/// TimelineView only ticks while a placeholder is actually on screen.
+struct ShimmerSweep: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { timeline in
+            GeometryReader { proxy in
+                let width = max(proxy.size.width, 1)
+                let sweep = max(width * 0.55, 28)
+                let period: Double = 1.35
+                let time = timeline.date.timeIntervalSinceReferenceDate
+                let phase = CGFloat(time.truncatingRemainder(dividingBy: period) / period)
+                LinearGradient(colors: [.clear, .white.opacity(0.22), .clear],
+                               startPoint: .leading,
+                               endPoint: .trailing)
+                    .frame(width: sweep)
+                    .offset(x: -sweep + phase * (width + sweep))
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// Text-shaped loading placeholder.
+struct SkeletonBar: View {
+    var width: CGFloat? = nil
+    var height: CGFloat = 10
+    var radius: CGFloat = 5
+    var opacity: Double = 0.09
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        shape
+            .fill(.white.opacity(opacity))
+            .frame(width: width, height: height)
+            .overlay { ShimmerSweep() }
+            .clipShape(shape)
+    }
+}
+
+/// Panel-shaped loading placeholder, used for charts and media areas.
+struct SkeletonBlock: View {
+    var height: CGFloat? = nil
+    var radius: CGFloat = 12
+    var opacity: Double = 0.055
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        shape
+            .fill(.white.opacity(opacity))
+            .frame(maxWidth: .infinity)
+            .frame(height: height)
+            .overlay { ShimmerSweep() }
+            .clipShape(shape)
+    }
+}
+
 struct KeyValueRow: View {
     let label: String
     var value: String
     var detail: String? = nil
     var mono: Bool = false
     var valueColor: Color = Native.label
+    var loading: Bool = false
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -682,16 +856,21 @@ struct KeyValueRow: View {
                 .font(.system(size: 11.5))
                 .foregroundStyle(Native.secondary)
             Spacer(minLength: 8)
-            Text(value)
-                .font(mono ? Native.monoFont : Native.bodyFont)
-                .foregroundStyle(valueColor)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            if let detail {
-                Text(detail)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Native.tertiary)
+            if loading {
+                SkeletonBar(width: 68, height: 9, opacity: 0.10)
+                    .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1.5 }
+            } else {
+                Text(value)
+                    .font(mono ? Native.monoFont : Native.bodyFont)
+                    .foregroundStyle(valueColor)
                     .lineLimit(1)
+                    .truncationMode(.middle)
+                if let detail {
+                    Text(detail)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Native.tertiary)
+                        .lineLimit(1)
+                }
             }
         }
         .padding(.vertical, 7)

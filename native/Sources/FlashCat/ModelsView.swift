@@ -324,7 +324,6 @@ struct ModelsView: View {
     private func use(_ id: String) {
         if state.catalog.machineModel(id) != nil {
             state.applyModel(id)
-            state.toast("已切换到 \(ModelMeta.shortName(id))")
             return
         }
         downloadTarget = id

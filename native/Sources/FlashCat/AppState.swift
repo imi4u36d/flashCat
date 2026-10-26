@@ -46,6 +46,9 @@ final class AppState: ObservableObject {
     @Published var logs: [LogLine] = []
     @Published var catalog = ModelCatalog()
     @Published var selectedModel: String = ""
+    /// Non-nil while newly selected weights are loading. The switchers show an
+    /// inline spinner and the overview swaps live metrics for skeletons.
+    @Published private(set) var switchingModel: String?
     @Published var runtimeMissing: String?
     @Published var messages: [ChatMessage] = []
     @Published var threads: [ChatThread] = []
@@ -64,6 +67,11 @@ final class AppState: ObservableObject {
     @Published var downloadFraction: Double?
 
     private var toastWork: DispatchWorkItem?
+    private var switchTimer: Timer?
+    private var switchCompletion: DispatchWorkItem?
+    private var switchStartedAt: Date?
+    private var switchSawBusy = false
+    private var switchSawStarting = false
 
     let settings = AppSettings()
     let history = ChatHistory()
@@ -86,10 +94,12 @@ final class AppState: ObservableObject {
     // MARK: derived
 
     var selectedModelInfo: ModelInfo? { catalog.machineModel(selectedModel) }
+    var isSwitchingModel: Bool { switchingModel != nil }
     var isRunning: Bool { controller?.isRunning ?? false }
     var isReady: Bool { controller?.isReady ?? false }
     var port: Int { controller?.port ?? settings.port }
     var startupStage: String { controller?.startupStage ?? "已停止" }
+    var failureMessage: String? { controller?.failureMessage }
     var downloadProgress: Double? { controller?.downloadProgress }
     var runtimeVersion: String { runtime?.version ?? SPLASH_VERSION }
     var health: (label: String, tone: TagTone) { healthTone(stats) }
@@ -126,6 +136,8 @@ final class AppState: ObservableObject {
                 throughput.removeAll { $0.at < cutoff }
             }
         }
+
+        if switchingModel != nil { checkModelSwitch() }
     }
 
     func bootstrap() {
@@ -171,6 +183,13 @@ final class AppState: ObservableObject {
         let runtimeUpdater = RuntimeUpdater(currentVersion: current.version)
         runtimeUpdater.onStateChanged = { [weak self] value in
             DispatchQueue.main.async { self?.update = value }
+        }
+        runtimeUpdater.onLog = { [weak self] message in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.controller?.logs.append("==> " + message, level: .system)
+                self.logs = self.controller?.logs.snapshot() ?? []
+            }
         }
         runtimeUpdater.onInstalled = { [weak self] installed in
             DispatchQueue.main.async {
@@ -222,14 +241,24 @@ final class AppState: ObservableObject {
         settings.rememberModel(id)
     }
 
-    /// Select a model and, if the engine is live, restart it on the new weights.
+    /// Select a model and, if the engine is live, reload it on the new weights.
+    /// The switcher UI stays in a loading state until the new engine reports
+    /// ready, so a slow weight load never looks like an ignored click.
     func applyModel(_ id: String) {
-        let wasRunning = isRunning
-        selectModel(id)
-        if wasRunning { restartService() }
+        let target = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty, target != selectedModel else { return }
+        guard !generating else {
+            toast("正在生成，先停止再切换模型")
+            return
+        }
+
+        let restarting = isRunning
+        selectModel(target)
+        beginModelSwitch(to: target, restarting: restarting)
     }
 
     func startService() {
+        guard !isSwitchingModel else { return }
         guard let model = selectedModelInfo else {
             if !selectedModel.isEmpty, catalog.localModel(selectedModel) == nil {
                 notice = "「\(selectedModel)」还没有下载，先到模型页下载，或直接启动让引擎自动拉取"
@@ -241,11 +270,117 @@ final class AppState: ObservableObject {
         Task { await controller?.start(localModel: model) }
     }
 
-    func stopService() { controller?.stop() }
-    func toggleService() { controller?.toggle(localModel: selectedModelInfo) }
+    func stopService() {
+        finishModelSwitch(notify: false)
+        controller?.stop()
+    }
+
+    func toggleService() {
+        if isRunning {
+            finishModelSwitch(notify: false)
+            controller?.stop()
+        } else if !isSwitchingModel {
+            Task { await controller?.start(localModel: selectedModelInfo) }
+        }
+    }
 
     func restartService() {
         Task { await controller?.restart(localModel: selectedModelInfo) }
+    }
+
+    // MARK: model switch progress
+
+    private func beginModelSwitch(to id: String, restarting: Bool) {
+        switchTimer?.invalidate()
+        switchTimer = nil
+        switchCompletion?.cancel()
+        switchCompletion = nil
+
+        switchingModel = id
+        switchStartedAt = Date()
+        switchSawBusy = false
+        switchSawStarting = false
+
+        if restarting {
+            toast("正在加载 \(shortModelName(id))…")
+            restartService()
+            startSwitchTimer()
+        } else {
+            toast("已切换到 \(shortModelName(id))")
+            let work = DispatchWorkItem { [weak self] in self?.finishModelSwitch() }
+            switchCompletion = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: work)
+        }
+    }
+
+    private func startSwitchTimer() {
+        switchTimer?.invalidate()
+        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.checkModelSwitch() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        switchTimer = timer
+    }
+
+    private func checkModelSwitch() {
+        guard let target = switchingModel else {
+            switchTimer?.invalidate()
+            switchTimer = nil
+            return
+        }
+
+        switch serverState {
+        case .starting:
+            switchSawBusy = true
+            switchSawStarting = true
+        case .stopping:
+            switchSawBusy = true
+        case .ready, .stopped, .failed:
+            break
+        }
+
+        // The old engine can still report ready for a moment after the click,
+        // so wait until it has actually restarted or the new model is reported.
+        let readyOnTarget = serverState == .ready
+            && (switchSawBusy || stats?.model == target)
+        if readyOnTarget || serverState == .failed {
+            finishModelSwitch()
+        } else if serverState == .stopped, switchSawStarting {
+            // The new engine started and then exited without reporting ready;
+            // drop the spinner instead of waiting for the long timeout.
+            finishModelSwitch()
+        } else if let started = switchStartedAt,
+                  Date().timeIntervalSince(started) > 300 {
+            finishModelSwitch()
+        }
+    }
+
+    private func finishModelSwitch(notify: Bool = true) {
+        guard switchingModel != nil else { return }
+        switchTimer?.invalidate()
+        switchTimer = nil
+        switchCompletion?.cancel()
+        switchCompletion = nil
+
+        let succeeded = serverState == .ready
+        let failed = serverState == .failed
+        switchingModel = nil
+        switchStartedAt = nil
+        switchSawBusy = false
+        switchSawStarting = false
+
+        guard notify else { return }
+        if succeeded {
+            toast("模型已就绪 · \(shortModelName(selectedModel))")
+        } else if failed {
+            toast("模型加载失败，请查看日志")
+        }
+    }
+
+    func shortModelName(_ id: String) -> String {
+        let value = id.trimmingCharacters(in: .whitespaces)
+        if value.isEmpty { return "—" }
+        return value.split(separator: "/").last.map(String.init) ?? value
     }
 
     // MARK: logs
@@ -554,7 +689,11 @@ final class AppState: ObservableObject {
     // MARK: sidebar
 
     func toggleSidebar() {
-        sidebarVisibility = sidebarVisibility == .all ? .detailOnly : .all
+        // Keep the rail's collapse/expand in step with the rest of the UI:
+        // NavigationSplitView resizes the column without its own transition.
+        withAnimation(.easeInOut(duration: 0.26)) {
+            sidebarVisibility = sidebarVisibility == .all ? .detailOnly : .all
+        }
         UserDefaults.standard.set(sidebarVisibility == .all, forKey: "sidebarVisible")
     }
 }

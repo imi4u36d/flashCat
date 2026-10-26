@@ -462,34 +462,7 @@ struct ChatView: View {
     }
 
     private var modelChip: some View {
-        Menu {
-            if state.catalog.machine.isEmpty {
-                Text("没有本地模型")
-                Button("打开模型页…") { state.section = .models }
-            } else {
-                ForEach(state.catalog.machine) { model in
-                    Button {
-                        applyModel(model.id)
-                    } label: {
-                        if model.id == state.selectedModel {
-                            Label(model.shortName, systemImage: "checkmark")
-                        } else {
-                            Text(model.shortName)
-                        }
-                    }
-                }
-                Divider()
-                Button("管理模型…") { state.section = .models }
-            }
-        } label: {
-            ComposerChipLabel(icon: "shippingbox",
-                              text: state.selectedModel.isEmpty ? "选择模型" : modelLabel,
-                              chevron: true)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help(state.selectedModel.isEmpty ? "选择模型" : state.selectedModel)
+        ModelSwitcher(state: state, variant: .chip)
     }
 
     private var temperatureChip: some View {
@@ -530,6 +503,7 @@ struct ChatView: View {
     private var canSend: Bool {
         !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && state.isReady
+            && !state.isSwitchingModel
             && !state.selectedModel.isEmpty
     }
 
@@ -741,16 +715,7 @@ struct ChatView: View {
                         .controlSize(.mini)
                 }
             } else {
-                Picker("", selection: Binding(get: { state.selectedModel },
-                                              set: { applyModel($0) })) {
-                    ForEach(state.catalog.machine) { model in
-                        Text(model.shortName).tag(model.id)
-                    }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .controlSize(.small)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                ModelSwitcher(state: state, variant: .panel)
             }
         }
     }
@@ -884,16 +849,6 @@ struct ChatView: View {
         thinkingMode = .automatic
     }
 
-    private func applyModel(_ id: String) {
-        guard id != state.selectedModel else { return }
-        guard !state.generating else {
-            state.toast("正在生成，先停止再切换模型")
-            return
-        }
-        state.applyModel(id)
-        state.toast("已切换到 \(shortModel(id))")
-    }
-
     private func submitFromComposer() {
         // Read the live editor text so the last keystroke before Return is not lost.
         var value = draft
@@ -907,6 +862,10 @@ struct ChatView: View {
     private func submit(_ text: String) {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty, !state.generating else { return }
+        guard !state.isSwitchingModel else {
+            state.toast("正在切换模型，加载完成后即可发送")
+            return
+        }
         guard state.isReady else {
             state.toast("推理服务未运行，请先启动服务")
             return
@@ -1078,12 +1037,6 @@ struct ChatView: View {
             return title
         }
         return normalized.count > 18 ? String(normalized.prefix(18)) + "…" : normalized
-    }
-
-    private func shortModel(_ id: String) -> String {
-        let value = id.trimmingCharacters(in: .whitespaces)
-        if value.isEmpty { return "—" }
-        return value.split(separator: "/").last.map(String.init) ?? value
     }
 
     private func isError(_ message: ChatMessage) -> Bool {
@@ -1375,10 +1328,7 @@ private struct MessageRow: View {
     }
 
     private var assistantBadge: some View {
-        ArcadeIcon(symbol: "cat.fill",
-                   colors: [Native.accent, Native.pink],
-                   size: 26,
-                   glyphScale: 0.5)
+        BrandMark(size: 26)
             .help(modelName)
     }
 
@@ -1437,10 +1387,7 @@ private struct ChatEmptyState: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            ArcadeIcon(symbol: "cat.fill",
-                       colors: [Native.accent, Native.pink, Native.violet],
-                       size: 76,
-                       glyphScale: 0.48)
+            BrandMark(size: 76)
 
             VStack(spacing: 5) {
                 Text("开始一次本地对话")

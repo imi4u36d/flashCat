@@ -61,9 +61,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for target in NSApp.windows {
             configure(target)
         }
-        // SwiftUI creates the window after the delegate in some builds.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            for target in NSApp.windows { self.configure(target) }
+        // SwiftUI creates the window (and installs its toolbar) after the
+        // delegate in some builds, so re-apply the chrome once layout settles.
+        for delay in [0.3, 1.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                for target in NSApp.windows { self.configure(target) }
+            }
         }
     }
 
@@ -72,6 +75,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         target.titleVisibility = .hidden
         target.titlebarAppearsTransparent = true
         target.styleMask.insert(.fullSizeContentView)
+        // The window paints its own chrome: the system toolbar's translucent
+        // titlebar strip would otherwise sit above the sidebar artwork and pick
+        // up the desktop tint, breaking the seamless dark sidebar.
+        target.toolbar = nil
+        target.titlebarSeparatorStyle = .none
         target.isMovableByWindowBackground = false
         target.backgroundColor = NSColor(calibratedRed: 0.027, green: 0.027, blue: 0.039, alpha: 1)
         target.appearance = NSAppearance(named: .darkAqua)

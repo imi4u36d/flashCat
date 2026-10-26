@@ -31,6 +31,9 @@ final class ServerController {
     private var pollInFlight = false
     private var isStopping = false
     private var lastError: String?
+    /// Log id the current start began at: history from earlier sessions must
+    /// not name this run's stage.
+    private var stageBaseline = 0
     private var lineBuffers = [Data(), Data()]
 
     init(runtime: EngineRuntime, settings: AppSettings, catalog: ModelCatalog) {
@@ -46,17 +49,27 @@ final class ServerController {
     // MARK: startup stage, derived from the engine's own log lines
 
     var startupStage: String {
-        if state == .ready { return "就绪" }
+        switch state {
+        case .ready: return "就绪"
+        case .failed: return "启动失败"
+        case .stopped: return "已停止"
+        case .stopping: return "停止中"
+        case .starting: break
+        }
         let recent = logs.tail(60)
-        for line in recent {
+        for line in recent where line.id > stageBaseline {
+            // The app's own banner echoes the whole command line, --max-context
+            // included; scanning it reported "准备上下文" for a server that had
+            // already exited. Only the engine's own lines describe its stage.
+            guard line.level != .system else { continue }
             let text = line.text
             if text.contains("Ready ·") { return "就绪" }
-            if text.lowercased().contains("downloading") || text.contains("%") { return "下载模型" }
+            if text.lowercased().contains("downloading") { return "下载模型" }
             if text.lowercased().contains("warm") { return "预热" }
             if text.lowercased().contains("load") { return "加载权重" }
             if text.lowercased().contains("kv") || text.lowercased().contains("context") { return "准备上下文" }
         }
-        return state == .starting ? "启动中" : state.rawValue
+        return "启动中"
     }
 
     var downloadProgress: Double? {
@@ -109,12 +122,18 @@ final class ServerController {
             }
             arguments += ["-u", serveScript, "--runtime", runtime.root,
                           "--models-dir", Paths.modelsDirectory,
-                          "--target", localModel.targetName,
                           "--model", localModel.id,
                           "--port", String(port)]
-            if let draft = localModel.draftPath { arguments += ["--draft", draft] }
-            if let mmproj = localModel.mmprojPath, !settings.languageOnly {
-                arguments += ["--mmproj", mmproj]
+            if localModel.origin == .splash {
+                // A model Splash installed is already a prepared assembly: hand
+                // it to the server as it is instead of preparing it again.
+                arguments += ["--assembly", localModel.path]
+            } else {
+                arguments += ["--target", localModel.targetName]
+                if let draft = localModel.draftPath { arguments += ["--draft", draft] }
+                if let mmproj = localModel.mmprojPath, !settings.languageOnly {
+                    arguments += ["--mmproj", mmproj]
+                }
             }
             arguments += settings.serveArguments().filter { $0 != "--offline" }
         } else {
@@ -124,6 +143,7 @@ final class ServerController {
         }
 
         logs.openFile()
+        stageBaseline = logs.latestId
         logs.append("==> flashCat 启动服务：\(selected!) · 端口 \(port)", level: .system)
         logs.append("==> \(runtime.pythonPath) \(arguments.joined(separator: " "))", level: .system)
 
@@ -317,7 +337,9 @@ final class ServerController {
                 state = .ready
                 onChange()
             }
-        } else if line.contains("Error ·") {
+        } else if line.contains("Error ·") || line.lowercased().hasPrefix("error:") {
+            // flashcat_serve.py reports preparation failures as "error: ..." on
+            // stderr; keep them for the help text instead of a bare exit code.
             lastError = line
         }
         logs.append(line)
@@ -425,6 +447,7 @@ final class ServerController {
         failureMessage = nil
         busySince = Date()
         state = .ready
+        stageBaseline = 0
         logs.openFile()
         logs.append("==> flashCat 接入已有服务：\(listener.model ?? "?") · 端口 \(port) · pid \(listener.instancePid ?? -1)", level: .system)
         if let pid = attachedPid, pid > 0 { writePidFile(pid) }

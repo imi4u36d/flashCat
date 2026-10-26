@@ -4,17 +4,32 @@ import AppKit
 struct ShellView: View {
     @ObservedObject var state: AppState
 
+    private var showsSidebar: Bool { state.sidebarVisibility == .all }
+
     var body: some View {
-        NavigationSplitView(columnVisibility: $state.sidebarVisibility) {
-            SidebarView(state: state)
-                .navigationSplitViewColumnWidth(min: 222, ideal: Native.sidebarWidth, max: 300)
-        } detail: {
+        ZStack(alignment: .leading) {
             DetailView(state: state)
+                .padding(.leading, showsSidebar ? Native.sidebarWidth : 0)
+
+            SidebarView(state: state)
+                .frame(width: Native.sidebarWidth)
+                .offset(x: showsSidebar ? 0 : -Native.sidebarWidth)
+                .allowsHitTesting(showsSidebar)
+                .accessibilityHidden(!showsSidebar)
         }
-        .navigationSplitViewStyle(.balanced)
-        .toolbar(removing: .sidebarToggle)
-        .background(Native.surface)
+        .background(Native.surface.ignoresSafeArea())
         .tint(Native.accent)
+        // The toggle rides the sidebar's trailing edge: parked at the rail's
+        // top-right while open, gliding left beside the traffic lights as the
+        // rail collapses, on the same row as the window buttons.
+        .overlay {
+            GeometryReader { _ in
+                SidebarTopToggle(state: state)
+                    .position(x: showsSidebar ? Native.sidebarWidth - 30 : 84,
+                              y: 14)
+            }
+            .ignoresSafeArea(.container, edges: .top)
+        }
         .overlay(alignment: .bottom) {
             if let message = state.toastMessage {
                 ToastView(message: message)
@@ -52,7 +67,12 @@ struct SidebarView: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 14)
         }
-        .background(SidebarBackdrop())
+        .background {
+            // Let the sidebar art run all the way into the titlebar so the
+            // traffic lights sit on the same surface as the rest of the rail.
+            SidebarBackdrop()
+                .ignoresSafeArea(.container, edges: .top)
+        }
     }
 
     private var workspace: some View {
@@ -114,10 +134,7 @@ struct BrandHeader: View {
 
     var body: some View {
         HStack(spacing: 11) {
-            ArcadeIcon(symbol: "cat.fill",
-                       colors: [Native.accent, Native.pink, Native.violet],
-                       size: 38,
-                       glyphScale: 0.5)
+            BrandMark(size: 38)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("flashCat")
@@ -138,6 +155,38 @@ struct BrandHeader: View {
 
             Spacer(minLength: 2)
         }
+    }
+}
+
+/// Hosted in an `NSTitlebarAccessoryViewController` by `AppDelegate`, so the
+/// control sits on the traffic-light row even though the window draws its own
+/// chrome. Its position is fixed while the rail animates — nothing jumps.
+/// Floating on the traffic-light row, above both columns. `ShellView` animates
+/// its x position between the rail's trailing edge and the window buttons, so
+/// the control travels with the collapse instead of jumping between rows.
+struct SidebarTopToggle: View {
+    @ObservedObject var state: AppState
+    @State private var hovering = false
+
+    private var expanded: Bool { state.sidebarVisibility == .all }
+
+    var body: some View {
+        Button {
+            state.toggleSidebar()
+        } label: {
+            Image(systemName: "sidebar.left")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(hovering ? 0.92 : 0.58))
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(.white.opacity(hovering ? 0.13 : 0.07)))
+                .overlay(Circle().stroke(.white.opacity(hovering ? 0.18 : 0.10), lineWidth: 0.8))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(expanded ? "收起边栏（⌘\\）" : "显示边栏（⌘\\）")
+        .accessibilityLabel(expanded ? "收起边栏" : "显示边栏")
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 
@@ -252,11 +301,22 @@ struct EngineCard: View {
 
     private var rate: Double { state.stats?.decodeTokensPerSecond ?? 0 }
 
+    private var switching: Bool { state.isSwitchingModel }
+
+    private var statusText: String {
+        if switching { return "正在加载新模型" }
+        return state.isRunning ? "引擎运行中" : state.startupStage
+    }
+
+    private var statusTint: Color {
+        switching ? Native.orange : statusColor(state.serverState)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 6) {
-                StatusDot(color: statusColor(state.serverState), diameter: 7, pulsing: state.isRunning)
-                Text(state.isRunning ? "引擎运行中" : state.startupStage)
+                StatusDot(color: statusTint, diameter: 7, pulsing: state.isRunning || switching)
+                Text(statusText)
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.78))
                     .lineLimit(1)
@@ -277,27 +337,33 @@ struct EngineCard: View {
                     .buttonStyle(.plain)
                     .help("重启引擎")
                     .accessibilityLabel("重启引擎")
+                    .disabled(switching)
+                    .opacity(switching ? 0.35 : 1)
                 }
 
                 Button(state.isRunning ? "停止" : "启动") {
                     state.toggleService()
                 }
                 .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
-                .disabled(state.runtimeMissing != nil)
+                .disabled(state.runtimeMissing != nil || (switching && !state.isRunning))
             }
 
-            modelMenu
+            ModelSwitcher(state: state, variant: .engine)
 
             HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(rate > 0 ? String(format: "%.1f", rate) : "—")
+                Text(switching ? "—" : (rate > 0 ? String(format: "%.1f", rate) : "—"))
                     .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .foregroundStyle(rate > 0 ? Native.label : Color.white.opacity(0.35))
+                    .foregroundStyle(rate > 0 && !switching ? Native.label : Color.white.opacity(0.35))
                     .monospacedDigit()
+                    .contentTransition(.numericText())
                 Text("tok/s")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.white.opacity(0.38))
                 Spacer(minLength: 4)
-                if let stats = state.stats, stats.memoryPressure != "nominal" {
+                if switching {
+                    Tag(text: "加载中", tone: .warning)
+                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                } else if let stats = state.stats, stats.memoryPressure != "nominal" {
                     Tag(text: stats.memoryPressureText, tone: .warning)
                 } else {
                     Tag(text: state.isReady ? "就绪" : "待机", tone: state.isReady ? .success : .neutral)
@@ -331,59 +397,7 @@ struct EngineCard: View {
         .background {
             GlassSurface(radius: 18, tint: state.isRunning ? Native.mint : .clear, elevated: false)
         }
-    }
-
-    /// The card is the app's single model switcher: it already shows the current
-    /// weights, so clicking them is the natural place to change them.
-    private var modelName: String {
-        state.selectedModelInfo?.shortName
-            ?? (state.selectedModel.isEmpty ? "未选择模型" : state.selectedModel)
-    }
-
-    @ViewBuilder
-    private var modelMenu: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 5) {
-            Text(modelName)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Native.label)
-                .lineLimit(2)
-                .truncationMode(.middle)
-                .multilineTextAlignment(.leading)
-                .help(state.selectedModel)
-
-            Menu {
-                if state.catalog.machine.isEmpty {
-                    Text("没有本地模型")
-                } else {
-                    ForEach(state.catalog.machine) { model in
-                        Button {
-                            state.applyModel(model.id)
-                        } label: {
-                            if model.id == state.selectedModel {
-                                Label(model.shortName, systemImage: "checkmark")
-                            } else {
-                                Text(model.shortName)
-                            }
-                        }
-                    }
-                }
-                Divider()
-                Button("管理模型…") { state.section = .models }
-            } label: {
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.4))
-                    .frame(width: 16, height: 18)
-                    .contentShape(Rectangle())
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("切换模型")
-            .accessibilityLabel("切换模型")
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
+        .animation(.easeOut(duration: 0.18), value: switching)
     }
 }
 
@@ -431,7 +445,10 @@ struct DetailView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background { ArcadeBackdrop(colors: state.section.keyColors) }
+        .background {
+            ArcadeBackdrop(colors: state.section.keyColors)
+                .ignoresSafeArea(.container, edges: .top)
+        }
         .overlay(alignment: .top) {
             DetailTopBar(state: state)
         }
@@ -450,10 +467,6 @@ private struct DetailTopBar: View {
     var body: some View {
         if state.sidebarVisibility != .all {
             HStack(spacing: 8) {
-                glassButton("sidebar.left", help: "显示边栏") {
-                    state.toggleSidebar()
-                }
-
                 Spacer(minLength: 0)
 
                 glassButton(state.isRunning ? "stop.fill" : "play.fill",
@@ -463,9 +476,10 @@ private struct DetailTopBar: View {
                 }
                 .disabled(state.runtimeMissing != nil)
             }
-            .padding(.leading, 92)
+            .padding(.leading, 18)
             .padding(.trailing, 18)
             .padding(.top, 14)
+            .transition(.opacity.combined(with: .move(edge: .top)))
         }
     }
 

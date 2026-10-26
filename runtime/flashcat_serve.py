@@ -15,12 +15,17 @@ network request: no Hub ID is resolved and no download happens.
     flashcat_serve.py --runtime RUNTIME --models-dir DIR --target TARGET
                       [--draft DIR] [--mmproj FILE] --model OWNER/REPO
                       --port PORT [--language-only] [SERVER OPTION ...]
+    flashcat_serve.py --runtime RUNTIME --assembly DIR --model OWNER/REPO
+                      --port PORT [SERVER OPTION ...]
 
 --runtime is the Splash release or checkout (the directory holding install/,
 server/ and engine/), --models-dir is where preparations are kept (flashCat's
 own models directory). --target is a GGUF file, any part of a split GGUF, or
 a model directory; --draft is a DFlash2 draft directory (config.json and
-safetensors weights); --mmproj is a GGUF vision projector.
+safetensors weights); --mmproj is a GGUF vision projector. --assembly is a
+model Splash already prepared (a .resolved assembly or a selection link to
+one), which is served as it is: that is how flashCat starts the models
+Splash installed instead of copying them into its own directory.
 
 Everything else, --language-only and --offline aside, goes to the server
 unchanged. Exit status 1 with "error: ..." on stderr means the files could
@@ -75,6 +80,7 @@ VALUE_FLAGS = {
     "--runtime": "runtime",
     "--models-dir": "models_dir",
     "--target": "target",
+    "--assembly": "assembly",
     "--draft": "draft",
     "--mmproj": "mmproj",
     "--model": "model",
@@ -83,12 +89,17 @@ VALUE_FLAGS = {
 SWITCH_FLAGS = {"--language-only": "language_only", "--offline": "offline"}
 
 
+def empty(value):
+    return value is None or value == ""
+
+
 def parse(argv):
     """flashCat's arguments, and the server's in order."""
     values = {
         "runtime": None,
         "models_dir": None,
         "target": None,
+        "assembly": None,
         "draft": None,
         "mmproj": None,
         "model": None,
@@ -115,8 +126,12 @@ def parse(argv):
         else:
             forwarded.append(argv[index])
             index += 1
-    required = ("runtime", "models_dir", "target", "model", "port")
+    required = ("runtime", "model", "port")
     missing = [name for name in required if values[name] in (None, "")]
+    if empty(values["target"]) and empty(values["assembly"]):
+        missing.append("target or assembly")
+    if empty(values["assembly"]) and empty(values["models_dir"]):
+        missing.append("models_dir")
     if missing:
         raise ValueError("missing " + ", ".join("--" + name.replace("_", "-") for name in missing))
     values["port"] = int(values["port"])
@@ -144,19 +159,30 @@ def main(argv):
         print("==> flashCat 仅文本模式：忽略视觉投影器", flush=True)
         args["mmproj"] = None
 
-    print(f"==> flashCat 准备本地模型：{args['target']}", flush=True)
-    try:
-        model = prepare_local_model(
-            args["target"],
-            args["draft"],
-            mmproj=args["mmproj"],
-            language_only=args["language_only"],
-            models_dir=args["models_dir"],
-        )
-    except ModelError as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
-    print(f"==> flashCat 已准备：{model}", flush=True)
+    if args["assembly"]:
+        # A model Splash installed is already an assembly: the server holds and
+        # serves it as it is, so preparing it again here would fail (its files
+        # are laid out as an assembly, not as a Hub repository).
+        model = Path(args["assembly"]).expanduser()
+        if not (model / "model.json").is_file():
+            print(f"error: cannot serve {model}: it is not a prepared Splash model", file=sys.stderr)
+            return 1
+        model = model.resolve()
+        print(f"==> flashCat 使用已安装模型：{model}", flush=True)
+    else:
+        print(f"==> flashCat 准备本地模型：{args['target']}", flush=True)
+        try:
+            model = prepare_local_model(
+                args["target"],
+                args["draft"],
+                mmproj=args["mmproj"],
+                language_only=args["language_only"],
+                models_dir=args["models_dir"],
+            )
+        except ModelError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 1
+        print(f"==> flashCat 已准备：{model}", flush=True)
 
     # The server of this runtime, from any working directory: -P keeps the
     # directory, which may hold a package of the same name, off sys.path, and

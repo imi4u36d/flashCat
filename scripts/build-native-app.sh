@@ -89,7 +89,7 @@ ICONSET="$OUT_DIR/AppIcon.iconset"
 mkdir -p "$ICONSET"
 PYTHON=""
 for candidate in "$APP/Contents/Resources/runtime/python/bin/python3" python3; do
-    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import PIL' >/dev/null 2>&1; then
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import PIL, numpy' >/dev/null 2>&1; then
         PYTHON="$candidate"
         break
     fi

@@ -240,8 +240,12 @@ final class ModelCatalogService {
         id = id ?? fallbackId
         guard let modelId = id, modelId.contains("/") else { return nil }
 
+        // An assembly is served from its target directory. The path has to be
+        // absolute: flashcat_serve.py resolves a relative --target against the
+        // runtime, not against the models directory, so "target" pointed at
+        // <runtime>/target and every installed model failed to start.
         let targetDirectory = assembly + "/target"
-        if !Paths.fileExists(targetDirectory) && !Paths.fileExists(assembly) { return nil }
+        guard Paths.fileExists(targetDirectory) else { return nil }
         let draft = assembly + "/draft"
 
         return ModelInfo(
@@ -249,7 +253,7 @@ final class ModelCatalogService {
             path: assembly,
             bytes: bytes,
             origin: .splash,
-            targetName: basename(targetDirectory),
+            targetName: targetDirectory,
             family: family,
             draftPath: Paths.fileExists(draft) ? draft : nil
         )

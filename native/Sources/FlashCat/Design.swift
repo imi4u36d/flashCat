@@ -779,6 +779,29 @@ struct IconAction: View {
     }
 }
 
+/// Circular glass label for a `Menu`, so a menu reads exactly like `IconAction`.
+struct IconMenuLabel: View {
+    let systemName: String
+    var active: Bool = false
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(active ? Color.white : Native.label.opacity(0.82))
+            .frame(width: 30, height: 30)
+            .background {
+                Circle()
+                    .fill(active
+                          ? AnyShapeStyle(LinearGradient(colors: [Native.accent, Native.pink],
+                                                         startPoint: .topLeading,
+                                                         endPoint: .bottomTrailing))
+                          : AnyShapeStyle(Color.white.opacity(0.08)))
+            }
+            .overlay(Circle().stroke(.white.opacity(active ? 0 : 0.12), lineWidth: 0.8))
+            .contentShape(Circle())
+    }
+}
+
 struct EmptyHint: View {
     var icon: String = "tray"
     let title: String

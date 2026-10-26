@@ -617,13 +617,17 @@ private struct LogsToolbar: View {
         }
     }
 
+    /// The level filter already shows the totals; only surface a separate count
+    /// when a filter/search is actually narrowing the list.
+    @ViewBuilder
     private var countLabel: some View {
-        Text(verbatim: visibleCount == counts.total ? "\(visibleCount) 行"
-                                                    : "\(visibleCount) / \(counts.total) 行")
-            .font(.system(size: 10.5, design: .monospaced))
-            .foregroundStyle(Native.tertiary)
-            .lineLimit(1)
-            .fixedSize()
+        if visibleCount != counts.total {
+            Text(verbatim: "\(visibleCount) / \(counts.total) 行")
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundStyle(Native.tertiary)
+                .lineLimit(1)
+                .fixedSize()
+        }
     }
 
     private var filterPicker: some View {

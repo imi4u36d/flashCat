@@ -112,69 +112,66 @@ struct ChatView: View {
                    eyebrow: "对话") {
             Tag(text: readyText, tone: readyTone, icon: "circle.fill")
 
-            HStack(spacing: 6) {
-                historyMenu
-
-                IconAction(systemName: "slider.horizontal.3",
-                           help: "对话参数",
-                           active: showParameters) {
-                    toggleParameters()
-                }
-
-                IconAction(systemName: "doc.on.doc", help: "复制整段对话") {
-                    copyConversation()
-                }
-                .disabled(state.messages.isEmpty)
-                .opacity(state.messages.isEmpty ? 0.45 : 1)
-
-                IconAction(systemName: "trash", help: "清空对话") {
-                    requestClear()
-                }
-                .disabled(state.messages.isEmpty)
-                .opacity(state.messages.isEmpty ? 0.45 : 1)
-
-                IconAction(systemName: "square.and.pencil", help: "新对话（⌘N）") {
-                    requestNewChat()
-                }
+            IconAction(systemName: "slider.horizontal.3",
+                       help: "对话参数",
+                       active: showParameters) {
+                toggleParameters()
             }
+
+            conversationMenu
+
+            Button {
+                requestNewChat()
+            } label: {
+                Label("新对话", systemImage: "square.and.pencil")
+            }
+            .buttonStyle(ArcadePillStyle(tone: .light, compact: true))
+            .help("新建对话（⌘N）")
         }
     }
 
-    private var historyMenu: some View {
+    /// Copy, clear and history all act on the same conversation, so they live in
+    /// one overflow menu instead of four separate header icons.
+    private var conversationMenu: some View {
         Menu {
+            Button {
+                copyConversation()
+            } label: {
+                Label("复制整段对话", systemImage: "doc.on.doc")
+            }
+            .disabled(state.messages.isEmpty)
+
+            Button {
+                requestClear()
+            } label: {
+                Label("清空当前对话", systemImage: "trash")
+            }
+            .disabled(state.messages.isEmpty)
+
+            Divider()
+
             if state.threads.isEmpty {
                 Text("暂无历史对话")
             } else {
-                ForEach(state.threads) { thread in
-                    Button {
-                        open(thread)
-                    } label: {
-                        Text("\(thread.title) · \(Format.relative(thread.updatedAt))")
-                    }
-                }
-                Divider()
-                Menu("删除对话") {
+                Menu("最近对话") {
                     ForEach(state.threads) { thread in
-                        Button(thread.title, role: .destructive) {
-                            state.deleteThread(thread)
+                        Button {
+                            open(thread)
+                        } label: {
+                            Text("\(thread.title) · \(Format.relative(thread.updatedAt))")
                         }
                     }
                 }
                 Button("清空最近对话…") { showClearHistoryConfirm = true }
             }
         } label: {
-            Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.8))
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(.white.opacity(0.08)))
-                .overlay(Circle().stroke(.white.opacity(0.12), lineWidth: 0.8))
-                .contentShape(Circle())
+            IconMenuLabel(systemName: "ellipsis")
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("最近对话")
+        .help("对话操作：复制、清空、历史")
+        .accessibilityLabel("对话操作")
     }
 
     private var readyText: String {
@@ -450,12 +447,6 @@ struct ChatView: View {
 
                 Spacer(minLength: 8)
 
-                Text("⌘↩ 发送 · ⇧↩ 换行")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Native.tertiary)
-                    .lineLimit(1)
-                    .layoutPriority(-1)
-
                 sendButton
             }
         }
@@ -493,8 +484,7 @@ struct ChatView: View {
         } label: {
             ComposerChipLabel(icon: "shippingbox",
                               text: state.selectedModel.isEmpty ? "选择模型" : modelLabel,
-                              chevron: true,
-                              maxWidth: 180)
+                              chevron: true)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -526,8 +516,6 @@ struct ChatView: View {
                     }
                 }
             }
-            Divider()
-            Button("更多参数…") { openParameters() }
         } label: {
             ComposerChipLabel(icon: "sparkles",
                               text: "思考 \(thinkingMode.label)",
@@ -1632,7 +1620,6 @@ private struct ComposerChipLabel: View {
     let icon: String
     let text: String
     var chevron = false
-    var maxWidth: CGFloat = 220
 
     @State private var hovered = false
 
@@ -1646,7 +1633,6 @@ private struct ComposerChipLabel: View {
                 .foregroundStyle(.white.opacity(0.72))
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(maxWidth: maxWidth, alignment: .leading)
             if chevron {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .semibold))

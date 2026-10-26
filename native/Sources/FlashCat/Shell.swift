@@ -137,20 +137,6 @@ struct BrandHeader: View {
             }
 
             Spacer(minLength: 2)
-
-            Button {
-                state.toggleSidebar()
-            } label: {
-                Image(systemName: "sidebar.left")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .frame(width: 26, height: 26)
-                    .background(Circle().fill(.white.opacity(0.07)))
-                    .overlay(Circle().stroke(.white.opacity(0.10), lineWidth: 0.8))
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .help("折叠侧边栏（⌘\\）")
         }
     }
 }
@@ -273,7 +259,26 @@ struct EngineCard: View {
                 Text(state.isRunning ? "引擎运行中" : state.startupStage)
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.78))
+                    .lineLimit(1)
                 Spacer(minLength: 4)
+
+                if state.isRunning {
+                    Button {
+                        state.restartService()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.7))
+                            .frame(width: 22, height: 22)
+                            .background(Circle().fill(.white.opacity(0.07)))
+                            .overlay(Circle().stroke(.white.opacity(0.10), lineWidth: 0.8))
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("重启引擎")
+                    .accessibilityLabel("重启引擎")
+                }
+
                 Button(state.isRunning ? "停止" : "启动") {
                     state.toggleService()
                 }
@@ -281,12 +286,7 @@ struct EngineCard: View {
                 .disabled(state.runtimeMissing != nil)
             }
 
-            Text(state.selectedModel.isEmpty ? "未选择模型" : state.selectedModel)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Native.label)
-                .lineLimit(2)
-                .truncationMode(.middle)
-                .help(state.selectedModel)
+            modelMenu
 
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(rate > 0 ? String(format: "%.1f", rate) : "—")
@@ -331,6 +331,59 @@ struct EngineCard: View {
         .background {
             GlassSurface(radius: 18, tint: state.isRunning ? Native.mint : .clear, elevated: false)
         }
+    }
+
+    /// The card is the app's single model switcher: it already shows the current
+    /// weights, so clicking them is the natural place to change them.
+    private var modelName: String {
+        state.selectedModelInfo?.shortName
+            ?? (state.selectedModel.isEmpty ? "未选择模型" : state.selectedModel)
+    }
+
+    @ViewBuilder
+    private var modelMenu: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
+            Text(modelName)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Native.label)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .multilineTextAlignment(.leading)
+                .help(state.selectedModel)
+
+            Menu {
+                if state.catalog.machine.isEmpty {
+                    Text("没有本地模型")
+                } else {
+                    ForEach(state.catalog.machine) { model in
+                        Button {
+                            state.applyModel(model.id)
+                        } label: {
+                            if model.id == state.selectedModel {
+                                Label(model.shortName, systemImage: "checkmark")
+                            } else {
+                                Text(model.shortName)
+                            }
+                        }
+                    }
+                }
+                Divider()
+                Button("管理模型…") { state.section = .models }
+            } label: {
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.4))
+                    .frame(width: 16, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("切换模型")
+            .accessibilityLabel("切换模型")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 }
 
@@ -380,12 +433,6 @@ struct DetailView: View {
         }
         .background { ArcadeBackdrop(colors: state.section.keyColors) }
         .overlay(alignment: .top) {
-            LinearGradient(colors: [.black.opacity(0.55), .black.opacity(0.18), .clear],
-                           startPoint: .top, endPoint: .bottom)
-                .frame(height: 96)
-                .allowsHitTesting(false)
-        }
-        .overlay(alignment: .top) {
             DetailTopBar(state: state)
         }
     }
@@ -393,75 +440,33 @@ struct DetailView: View {
 
 // MARK: - Floating detail chrome
 
-/// Floating glass controls in the top-right corner, mirroring the profile /
-/// search cluster of the Games app.
+/// Floating glass controls that only exist while the sidebar is collapsed —
+/// with the sidebar visible, the engine card in it is the single place for
+/// service control, so the detail pane stays free of duplicate chrome.
 private struct DetailTopBar: View {
     @ObservedObject var state: AppState
 
+    @ViewBuilder
     var body: some View {
-        HStack(spacing: 8) {
-            if state.sidebarVisibility != .all {
+        if state.sidebarVisibility != .all {
+            HStack(spacing: 8) {
                 glassButton("sidebar.left", help: "显示边栏") {
                     state.toggleSidebar()
                 }
-            }
 
-            Spacer(minLength: 0)
+                Spacer(minLength: 0)
 
-            glassButton(state.isRunning ? "stop.fill" : "play.fill",
-                        help: state.isRunning ? "停止本地推理服务" : "启动本地推理服务",
-                        tint: state.isRunning ? Native.red : Native.green) {
-                state.toggleService()
-            }
-            .disabled(state.runtimeMissing != nil)
-
-            Menu {
-                if state.catalog.machine.isEmpty {
-                    Text("没有本地模型")
+                glassButton(state.isRunning ? "stop.fill" : "play.fill",
+                            help: state.isRunning ? "停止本地推理服务" : "启动本地推理服务",
+                            tint: state.isRunning ? Native.red : Native.green) {
+                    state.toggleService()
                 }
-                ForEach(state.catalog.machine, id: \.id) { model in
-                    Button {
-                        state.applyModel(model.id)
-                    } label: {
-                        if model.id == state.selectedModel {
-                            Label(model.id, systemImage: "checkmark")
-                        } else {
-                            Text(model.id)
-                        }
-                    }
-                }
-                if !state.catalog.missingRecommendations.isEmpty {
-                    Divider()
-                    Menu("下载推荐模型") {
-                        ForEach(state.catalog.missingRecommendations, id: \.self) { model in
-                            Button(model) { state.downloadModel(model) }
-                        }
-                    }
-                }
-                Divider()
-                Button("管理模型…") { state.section = .models }
-            } label: {
-                Image(systemName: "shippingbox")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.8))
-                    .frame(width: 30, height: 30)
-                    .background(Circle().fill(.white.opacity(0.08)))
-                    .overlay(Circle().stroke(.white.opacity(0.12), lineWidth: 0.8))
-                    .contentShape(Circle())
+                .disabled(state.runtimeMissing != nil)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("切换当前模型")
-            .accessibilityLabel("切换当前模型")
-
-            glassButton("arrow.clockwise", help: "重新扫描模型目录") {
-                state.reloadModels()
-            }
+            .padding(.leading, 92)
+            .padding(.trailing, 18)
+            .padding(.top, 14)
         }
-        .padding(.leading, state.sidebarVisibility == .all ? 18 : 92)
-        .padding(.trailing, 18)
-        .padding(.top, 14)
     }
 
     private func glassButton(_ symbol: String,

@@ -17,24 +17,7 @@ struct OverviewView: View {
             VStack(alignment: .leading, spacing: 18) {
                 PageHeader(title: "概览",
                            subtitle: "本地推理引擎状态与实时指标",
-                           eyebrow: "控制台") {
-                    Button {
-                        state.restartService()
-                    } label: {
-                        Label("重启引擎", systemImage: "arrow.triangle.2.circlepath")
-                    }
-                    .buttonStyle(.arcadeGlass)
-                    .disabled(!state.isRunning)
-
-                    Button {
-                        state.toggleService()
-                    } label: {
-                        Label(state.isRunning ? "停止" : "启动",
-                              systemImage: state.isRunning ? "stop.fill" : "play.fill")
-                    }
-                    .buttonStyle(state.isRunning ? ArcadePillStyle(tone: .glass) : ArcadePillStyle(tone: .light))
-                    .disabled(state.runtimeMissing != nil)
-                }
+                           eyebrow: "控制台")
 
                 if let missing = state.runtimeMissing {
                     Card("运行时缺失",
@@ -81,8 +64,13 @@ struct OverviewView: View {
 private struct ServiceHero: View {
     @ObservedObject var state: AppState
 
+    /// The hero reflows instead of squeezing the 36 pt model title: at narrow
+    /// widths the live panel moves under the identity block.
+    @State private var heroWidth: CGFloat = 1000
+
     private var info: ModelInfo? { state.selectedModelInfo }
     private var rate: Double { state.stats?.decodeTokensPerSecond ?? 0 }
+    private var wide: Bool { heroWidth >= 900 }
 
     private var heroColors: [Color] {
         switch state.serverState {
@@ -95,99 +83,79 @@ private struct ServiceHero: View {
 
     var body: some View {
         HeroPanel(colors: heroColors) {
-            HStack(alignment: .center, spacing: 26) {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 9) {
-                        HStack(spacing: 6) {
-                            StatusDot(color: statusColor(state.serverState), diameter: 7, pulsing: state.isRunning)
-                            Text(state.isReady ? "运行中" : state.startupStage)
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(.white.opacity(0.92))
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(Capsule().fill(.black.opacity(0.22)))
-                        .overlay(Capsule().stroke(.white.opacity(0.16), lineWidth: 0.8))
-
-                        Eyebrow(text: "本地推理引擎", color: .white.opacity(0.55))
+            Group {
+                if wide {
+                    HStack(alignment: .center, spacing: 26) {
+                        identity
+                        Spacer(minLength: 16)
+                        livePanel
+                            .frame(width: 300)
                     }
-
-                    Text(info?.shortName ?? (state.selectedModel.isEmpty ? "未选择模型" : state.selectedModel))
-                        .font(.system(size: 36, weight: .bold))
-                        .tracking(-0.9)
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                        .truncationMode(.middle)
-                        .help(info?.id ?? state.selectedModel)
-
-                    Text(info?.id ?? state.selectedModel)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.55))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-
-                    FlowLayout(spacing: 6, lineSpacing: 6) {
-                        if let info {
-                            GlassChip(text: info.origin.rawValue,
-                                      tint: info.origin == .local ? Native.mint : Native.cyan)
-                            if info.draftPath != nil {
-                                GlassChip(icon: "bolt.fill", text: "DFlash2 就绪", tint: Native.mint)
-                            } else if state.catalog.draftRepository(info.id, family: info.family) != nil {
-                                GlassChip(text: "DFlash2 可下载")
-                            }
-                            if info.mmprojPath != nil {
-                                GlassChip(icon: "eye", text: "视觉")
-                            }
-                            GlassChip(text: info.sizeText)
-                        }
-                        if let device = state.stats?.deviceName {
-                            GlassChip(icon: "cpu", text: device)
-                        }
-                        GlassChip(icon: "lock", text: "完全离线")
+                } else {
+                    VStack(alignment: .leading, spacing: 16) {
+                        identity
+                        livePanel
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, 2)
-
-                    HStack(spacing: 8) {
-                        Button {
-                            state.restartService()
-                        } label: {
-                            Label("重启引擎", systemImage: "arrow.triangle.2.circlepath")
-                        }
-                        .buttonStyle(.arcadePill)
-                        .disabled(!state.isRunning)
-
-                        Button {
-                            state.toggleService()
-                        } label: {
-                            Label(state.isRunning ? "停止" : "启动",
-                                  systemImage: state.isRunning ? "stop.fill" : "play.fill")
-                        }
-                        .buttonStyle(.arcadeGlass)
-                        .disabled(state.runtimeMissing != nil)
-
-                        Menu {
-                            ForEach(state.catalog.machine, id: \.id) { model in
-                                Button(model.id) { state.applyModel(model.id) }
-                            }
-                        } label: {
-                            Label("切换模型", systemImage: "chevron.up.chevron.down")
-                        }
-                        .menuStyle(.button)
-                        .buttonStyle(.arcadeGlass)
-                        .menuIndicator(.hidden)
-                        .fixedSize()
-                        .disabled(state.catalog.machine.isEmpty)
-                    }
-                    .padding(.top, 4)
                 }
-
-                Spacer(minLength: 16)
-
-                livePanel
-                    .frame(width: 318)
             }
+            .animation(.easeOut(duration: 0.16), value: wide)
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { heroWidth = $0 }
+    }
+
+    private var identity: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 9) {
+                HStack(spacing: 6) {
+                    StatusDot(color: statusColor(state.serverState), diameter: 7, pulsing: state.isRunning)
+                    Text(state.isReady ? "运行中" : state.startupStage)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.92))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(.black.opacity(0.22)))
+                .overlay(Capsule().stroke(.white.opacity(0.16), lineWidth: 0.8))
+
+                Eyebrow(text: "本地推理引擎", color: .white.opacity(0.55))
+            }
+
+            Text(info?.shortName ?? (state.selectedModel.isEmpty ? "未选择模型" : state.selectedModel))
+                .font(.system(size: 36, weight: .bold))
+                .tracking(-0.9)
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .truncationMode(.middle)
+                .help(info?.id ?? state.selectedModel)
+
+            Text(info?.id ?? state.selectedModel)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.55))
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            FlowLayout(spacing: 6, lineSpacing: 6) {
+                if let info {
+                    GlassChip(text: info.origin.rawValue,
+                              tint: info.origin == .local ? Native.mint : Native.cyan)
+                    if info.draftPath != nil {
+                        GlassChip(icon: "bolt.fill", text: "DFlash2 就绪", tint: Native.mint)
+                    } else if state.catalog.draftRepository(info.id, family: info.family) != nil {
+                        GlassChip(text: "DFlash2 可下载")
+                    }
+                    if info.mmprojPath != nil {
+                        GlassChip(icon: "eye", text: "视觉")
+                    }
+                    GlassChip(text: info.sizeText)
+                }
+                if let device = state.stats?.deviceName {
+                    GlassChip(icon: "cpu", text: device)
+                }
+                GlassChip(icon: "lock", text: "完全离线")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 2)
         }
     }
 
@@ -396,35 +364,21 @@ private struct MetricColumn: View {
                      detail: "引擎 prefill 采样",
                      tint: Native.cyan)
 
-            HStack(spacing: 12) {
-                StatTile(label: "草稿接受率",
-                         value: state.stats?.draftAcceptance.map { String(format: "%.0f", $0 * 100) } ?? "—",
-                         unit: "%",
-                         detail: "DFlash2 草稿命中",
-                         badge: state.stats?.draftAcceptance.map { String(format: "%.0f%%", $0 * 100) },
-                         tint: Native.violet,
-                         progress: state.stats?.draftAcceptance,
-                         progressTint: Native.violet)
+            StatTile(label: "草稿接受率",
+                     value: state.stats?.draftAcceptance.map { String(format: "%.0f", $0 * 100) } ?? "—",
+                     unit: "%",
+                     detail: "DFlash2 草稿命中",
+                     badge: state.stats?.draftAcceptance.map { String(format: "%.0f%%", $0 * 100) },
+                     tint: Native.violet,
+                     progress: state.stats?.draftAcceptance,
+                     progressTint: Native.violet)
 
-                StatTile(label: "内存占用",
-                         value: state.stats?.memoryBytes.map { Format.bytes($0) } ?? "—",
-                         detail: state.stats?.peakMemoryBytes.map { "峰值 \(Format.bytes($0))" },
-                         tint: Native.mint,
-                         progress: memoryFraction,
-                         progressTint: memoryFraction > 0.9 ? Native.red : Native.mint)
-            }
-
-            StatTile(label: "上下文窗口",
-                     value: state.stats?.maximumContextTokens.map { contextText($0) } ?? "—",
-                     unit: "tokens",
-                     detail: "传给引擎的最大上下文",
-                     tint: Native.amber)
-
-            StatTile(label: "请求",
-                     value: "\(state.stats?.requestsCompleted ?? 0)",
-                     unit: "完成",
-                     detail: "失败 \(state.stats?.requestsFailed ?? 0) · 排队 \(state.stats?.queuedRequests ?? 0)",
-                     tint: Native.green)
+            StatTile(label: "内存占用",
+                     value: state.stats?.memoryBytes.map { Format.bytes($0) } ?? "—",
+                     detail: state.stats?.peakMemoryBytes.map { "峰值 \(Format.bytes($0))" },
+                     tint: Native.mint,
+                     progress: memoryFraction,
+                     progressTint: memoryFraction > 0.9 ? Native.red : Native.mint)
         }
     }
 
@@ -432,11 +386,6 @@ private struct MetricColumn: View {
         guard let used = state.stats?.memoryBytes,
               let total = state.stats?.physicalMemoryBytes, total > 0 else { return 0 }
         return Double(used) / Double(total)
-    }
-
-    private func contextText(_ tokens: Int) -> String {
-        if tokens >= 1000 { return String(format: "%.0fK", Double(tokens) / 1000) }
-        return "\(tokens)"
     }
 }
 
@@ -446,8 +395,8 @@ private struct RuntimeDetails: View {
     @ObservedObject var state: AppState
 
     var body: some View {
-        Card("运行指标",
-             subtitle: "引擎与设备信息",
+        Card("运行详情",
+             subtitle: "引擎、设备与当前状态",
              trailing: AnyView(Tag(text: state.health.label, tone: state.health.tone, icon: "checkmark.seal"))) {
             VStack(spacing: 0) {
                 HStack(alignment: .top, spacing: 26) {
@@ -459,16 +408,8 @@ private struct RuntimeDetails: View {
                                     mono: true)
                         Hairline()
                         KeyValueRow(label: "设备", value: deviceText)
-                        Hairline()
-                        KeyValueRow(label: "请求",
-                                    value: "\(state.stats?.requestsCompleted ?? 0) 完成 · \(state.stats?.requestsFailed ?? 0) 失败")
                     }
                     VStack(spacing: 0) {
-                        KeyValueRow(label: "首字延迟",
-                                    value: state.stats?.ttftMilliseconds.map { String(format: "%.0f ms", $0) } ?? "—",
-                                    detail: "p50",
-                                    mono: true)
-                        Hairline()
                         KeyValueRow(label: "热状态",
                                     value: state.stats?.thermalText ?? "—",
                                     valueColor: (state.stats?.thermal == nil || state.stats?.thermal == "nominal") ? Native.label : Native.orange)
@@ -476,26 +417,19 @@ private struct RuntimeDetails: View {
                         KeyValueRow(label: "内存压力",
                                     value: state.stats?.memoryPressureText ?? "—")
                         Hairline()
-                        KeyValueRow(label: "解码速度",
-                                    value: state.stats?.decodeTokensPerSecond.map { String(format: "平均 %.1f", $0) } ?? "—",
-                                    mono: true)
+                        KeyValueRow(label: "已运行", value: uptimeText)
                     }
                 }
 
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(Native.tertiary)
                     Text("自动刷新 · 1s")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Native.tertiary)
                     Spacer()
-                    if let started = state.stats?.startedAt, started > 0 {
-                        Text("已运行 \(uptimeText(started))")
-                            .font(.system(size: 10))
-                            .foregroundStyle(Native.tertiary)
-                    }
+                    Text("\(state.stats?.requestsCompleted ?? 0) 完成 · \(state.stats?.requestsFailed ?? 0) 失败 · \(state.stats?.queuedRequests ?? 0) 排队")
                 }
+                .font(.system(size: 10))
+                .foregroundStyle(Native.tertiary)
                 .padding(.top, 10)
             }
         }
@@ -508,7 +442,8 @@ private struct RuntimeDetails: View {
         return parts.isEmpty ? "—" : parts.joined(separator: " · ")
     }
 
-    private func uptimeText(_ started: Double) -> String {
+    private var uptimeText: String {
+        guard let started = state.stats?.startedAt, started > 0 else { return "—" }
         let seconds = max(0, Date().timeIntervalSince1970 - started)
         if seconds < 60 { return "\(Int(seconds)) 秒" }
         if seconds < 3600 { return "\(Int(seconds / 60)) 分钟" }
@@ -563,9 +498,10 @@ private struct EndpointCard: View {
 
                 Hairline()
 
-                KeyValueRow(label: "状态", value: state.isReady ? "就绪" : state.startupStage,
+                KeyValueRow(label: "状态",
+                            value: state.isReady ? "就绪" : state.startupStage,
+                            detail: "端口 \(state.port)",
                             valueColor: state.isReady ? Native.green : Native.secondary)
-                KeyValueRow(label: "模型", value: state.stats?.model ?? state.selectedModel, mono: true)
             }
         }
     }

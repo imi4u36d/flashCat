@@ -166,6 +166,7 @@ struct SettingsView: View {
             .frame(maxWidth: 900, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .scrollIndicators(.never)
         .safeAreaInset(edge: .bottom, spacing: 0) { saveBar }
         .onAppear { store.prepare(state.settings) }
         .onChange(of: state.selectedModel) { _, _ in
@@ -729,31 +730,36 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(isDirty ? "设置已修改，尚未保存" : "没有未保存的更改")
                     .font(.system(size: 12, weight: .medium))
-                Text(isDirty ? changedSummary : "保存后会写入本地配置")
+                Text(isDirty ? changedSummary : "改动会写入本地配置")
                     .font(.system(size: 10.5))
                     .foregroundStyle(Native.tertiary)
                     .lineLimit(1)
             }
             Spacer(minLength: 12)
-            if isDirty, state.isRunning, engineAffected {
-                Tag(text: "重启服务后生效", tone: .warning)
+
+            // Only offer actions while there is something to save. Saving with a
+            // live engine already restarts it, so a third "save and restart"
+            // button would duplicate the primary action.
+            if isDirty {
+                if engineAffected {
+                    if state.isRunning {
+                        Tag(text: "保存后自动重启", tone: .warning)
+                    } else {
+                        Button("保存并启动服务") { save(restart: true) }
+                            .buttonStyle(ArcadePillStyle(tone: .accent, compact: true))
+                            .help("保存后启动推理服务")
+                    }
+                }
+                Button("放弃更改") { discard() }
+                    .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
+                Button("保存") { save(restart: false) }
+                    .buttonStyle(ArcadePillStyle(tone: .light, compact: true))
+                    .keyboardShortcut("s", modifiers: .command)
             }
-            Button("放弃更改") { discard() }
-                .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
-                .disabled(!isDirty)
-            Button("保存") { save(restart: false) }
-                .buttonStyle(ArcadePillStyle(tone: .light, compact: true))
-                .keyboardShortcut("s", modifiers: .command)
-                .disabled(!isDirty)
-            Button("保存并重启服务") { save(restart: true) }
-                .buttonStyle(ArcadePillStyle(tone: .accent, compact: true))
-                .disabled(!isDirty)
-                .help(state.isRunning ? "保存后重启推理服务" : "保存后启动推理服务")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(.ultraThinMaterial)
-        .overlay(alignment: .top) { Hairline() }
         .overlay(alignment: .top) { Hairline() }
     }
 

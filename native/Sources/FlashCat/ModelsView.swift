@@ -24,12 +24,16 @@ struct ModelsView: View {
                         .padding(.bottom, 14)
 
                     toolbar(width: usable)
-                        .padding(.bottom, 14)
+                        .padding(.bottom, 10)
+
+                    importBar
+                        .padding(.bottom, 16)
 
                     modelGrid(width: usable)
 
-                    importSection(width: usable)
+                    customCard()
                         .padding(.top, 18)
+                        .frame(maxWidth: 720)
                 }
                 .padding(.horizontal, Native.pagePadding)
                 .padding(.top, 30)
@@ -74,14 +78,10 @@ struct ModelsView: View {
     private var remoteCount: Int { allEntries.count - localCount }
 
     private var subtitle: String {
-        "本地权重、DFlash2 草稿与 Hub 下载 · 共 \(allEntries.count) 个"
+        "本地权重、DFlash2 草稿与 Hub 下载"
     }
 
     // MARK: Toolbar
-
-    private var serviceLabel: String {
-        state.serverState == .stopped ? "未运行" : state.serverState.rawValue
-    }
 
     @ViewBuilder
     private func toolbar(width: CGFloat) -> some View {
@@ -89,20 +89,18 @@ struct ModelsView: View {
             HStack(spacing: 8) {
                 ModelsSearchField(text: $query)
                 filterPicker.frame(width: 252)
-                serviceTag
                 Spacer(minLength: 4)
+                rescanButton
                 openFolderButton
-                importButton
             }
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 ModelsSearchField(text: $query)
                 HStack(spacing: 8) {
                     filterPicker.frame(width: 238)
-                    serviceTag
                     Spacer(minLength: 4)
+                    rescanButton
                     openFolderButton
-                    importButton
                 }
             }
         }
@@ -119,35 +117,17 @@ struct ModelsView: View {
         .controlSize(.small)
     }
 
-    private var serviceTag: some View {
-        HStack(spacing: 6) {
-            StatusDot(color: statusColor(state.serverState), diameter: 7, pulsing: state.isRunning)
-            Text(serviceLabel)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.7))
+    private var rescanButton: some View {
+        IconAction(systemName: "arrow.clockwise", help: "重新扫描模型目录") {
+            state.reloadModels()
+            state.toast("已重新扫描模型目录")
         }
-        .padding(.horizontal, 10)
-        .frame(height: 28)
-        .background(Capsule().fill(.white.opacity(0.08)))
-        .overlay(Capsule().stroke(.white.opacity(0.12), lineWidth: 0.8))
-        .help(state.startupStage)
     }
 
     private var openFolderButton: some View {
         IconAction(systemName: "folder", help: "打开模型目录") {
             openModelsDirectory()
         }
-    }
-
-    private var importButton: some View {
-        Button {
-            pickModelsFolder()
-        } label: {
-            Label("导入模型", systemImage: "square.and.arrow.down")
-        }
-        .buttonStyle(ArcadePillStyle(tone: .accent, compact: true))
-        .disabled(state.importProgress != nil)
-        .help("导入本地模型文件夹")
     }
 
     // MARK: Grid
@@ -228,44 +208,16 @@ struct ModelsView: View {
         }
     }
 
-    // MARK: Import section
+    // MARK: Import bar
 
-    @ViewBuilder
-    private func importSection(width: CGFloat) -> some View {
-        Group {
-            if width < 760 {
-                VStack(spacing: 12) {
-                    dropzone
-                    customCard(minHeight: nil)
-                }
-            } else {
-                HStack(alignment: .top, spacing: 12) {
-                    dropzone
-                        .frame(maxWidth: .infinity)
-                    customCard(minHeight: 180)
-                        .frame(maxWidth: .infinity)
-                }
-            }
-        }
-        .alert("下载这个模型？",
-               isPresented: downloadShown,
-               presenting: downloadTarget) { id in
-            Button("下载") { startDownload(id) }
-            Button("取消", role: .cancel) { downloadTarget = nil }
-        } message: { id in
-            Text("\(id)\n\n模型会下载到 \(Paths.modelsDirectory)，可能需要几十 GB 磁盘空间。")
-        }
-    }
-
-    private var dropzone: some View {
-        ModelsDropzone(
+    private var importBar: some View {
+        ModelsImportBar(
             progress: state.importProgress,
             disabled: state.importProgress != nil,
             onPick: pickModelsFolder,
             onDropDirectory: { url in pendingImport = url },
             onReject: { state.notice = "请拖入包含 .gguf 或 MLX 权重的文件夹" }
         )
-        .frame(minHeight: 180)
         .help("导入本地模型文件夹")
         .alert("导入模型",
                isPresented: pendingImportShown,
@@ -278,7 +230,7 @@ struct ModelsView: View {
         }
     }
 
-    private func customCard(minHeight: CGFloat?) -> some View {
+    private func customCard() -> some View {
         Card("自定义模型 ID",
              subtitle: "填写 Hub 上的 owner/repo，确认后下载",
              trailing: AnyView(Tag(text: "Hub", tone: .neutral, icon: "cube"))) {
@@ -339,8 +291,14 @@ struct ModelsView: View {
                     }
                 }
             }
-            .frame(minHeight: minHeight.map { max(0, $0 - Native.cardPadding * 2) },
-                   alignment: .topLeading)
+        }
+        .alert("下载这个模型？",
+               isPresented: downloadShown,
+               presenting: downloadTarget) { id in
+            Button("下载") { startDownload(id) }
+            Button("取消", role: .cancel) { downloadTarget = nil }
+        } message: { id in
+            Text("\(id)\n\n模型会下载到 \(Paths.modelsDirectory)，可能需要几十 GB 磁盘空间。")
         }
     }
 
@@ -566,10 +524,6 @@ private struct ModelCardView: View {
             }
 
             Spacer(minLength: 6)
-
-            if selected {
-                Tag(text: "使用中", tone: .success, icon: "checkmark")
-            }
         }
     }
 
@@ -631,12 +585,20 @@ private struct ModelCardView: View {
         if installed {
             HStack(spacing: 7) {
                 if selected {
-                    Button {} label: {
-                        Label("使用中", systemImage: "checkmark")
-                            .frame(maxWidth: .infinity)
+                    // A state chip occupies the primary slot instead of a disabled
+                    // button repeating the old header tag.
+                    HStack(spacing: 5) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                        Text("使用中")
+                            .font(.system(size: 12.5, weight: .semibold))
                     }
-                    .buttonStyle(ArcadePillStyle(tone: .glass))
-                    .disabled(true)
+                    .foregroundStyle(Native.mint)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 33)
+                    .background(Capsule().fill(Native.mint.opacity(0.14)))
+                    .overlay(Capsule().stroke(Native.mint.opacity(0.32), lineWidth: 0.8))
+                    .help("当前正在使用这个模型")
                 } else {
                     Button {
                         onUse()
@@ -648,24 +610,34 @@ private struct ModelCardView: View {
                     .disabled(busy)
                 }
 
-                if let onReveal {
-                    IconAction(systemName: "folder", help: "在 Finder 中显示", action: onReveal)
-                        .disabled(busy)
-                }
-
-                if let onDelete {
-                    Button(action: onDelete) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Native.red.opacity(0.85))
-                            .frame(width: 30, height: 30)
-                            .background(Circle().fill(.white.opacity(0.06)))
-                            .overlay(Circle().stroke(.white.opacity(0.10), lineWidth: 0.8))
-                            .contentShape(Circle())
+                if onReveal != nil || onDelete != nil {
+                    Menu {
+                        if let onReveal {
+                            Button {
+                                onReveal()
+                            } label: {
+                                Label("在 Finder 中显示", systemImage: "folder")
+                            }
+                        }
+                        if onReveal != nil && onDelete != nil {
+                            Divider()
+                        }
+                        if let onDelete {
+                            Button(role: .destructive) {
+                                onDelete()
+                            } label: {
+                                Label("删除模型", systemImage: "trash")
+                            }
+                        }
+                    } label: {
+                        IconMenuLabel(systemName: "ellipsis")
                     }
-                    .buttonStyle(.plain)
-                    .help("删除模型")
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
                     .disabled(busy)
+                    .help("更多操作")
+                    .accessibilityLabel("更多操作")
                 }
             }
         } else {
@@ -770,9 +742,11 @@ private struct ModelsFlowLayout: Layout {
     }
 }
 
-// MARK: - Dropzone
+// MARK: - Import bar
 
-private struct ModelsDropzone: View {
+/// One import affordance: the toolbar's old "导入模型" button, the dashed drop
+/// zone and the click-to-choose area were three copies of the same action.
+private struct ModelsImportBar: View {
     let progress: AppState.ImportProgress?
     let disabled: Bool
     let onPick: () -> Void
@@ -782,20 +756,62 @@ private struct ModelsDropzone: View {
     @State private var targeted = false
     @State private var hovering = false
 
+    private var fraction: Double {
+        guard let progress else { return 0 }
+        return min(1, max(0, progress.fraction))
+    }
+
     var body: some View {
         Button(action: onPick) {
-            content
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 20)
-                .frame(minHeight: 180)
-                .background(background)
-                .overlay(border)
-                .contentShape(RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous))
+            HStack(spacing: 12) {
+                ArcadeIcon(symbol: progress == nil ? "folder.badge.plus" : "arrow.down.doc",
+                           colors: [Native.accent, Native.pink],
+                           size: 34,
+                           glyphScale: 0.44,
+                           glow: false)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(progress == nil ? "导入本地模型" : "正在导入模型")
+                        .font(.system(size: 12.5, weight: .semibold))
+                    Text(progress?.message
+                         ?? "把包含 .gguf 或 MLX 权重的文件夹拖到这里，或点击选择")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Native.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer(minLength: 10)
+
+                if let progress {
+                    HStack(spacing: 10) {
+                        Meter(fraction: fraction, tint: Native.accent)
+                            .frame(width: 120)
+                        Text("\(Int((fraction * 100).rounded()))%")
+                            .font(Native.monoSmall)
+                            .foregroundStyle(Native.secondary)
+                    }
+                    .help(progress.message)
+                } else {
+                    Text(targeted ? "松开以导入" : "选择文件夹…")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(targeted ? Native.accent : Native.label.opacity(0.85))
+                        .padding(.horizontal, 11)
+                        .frame(height: 26)
+                        .background(Capsule().fill(.white.opacity(0.10)))
+                        .overlay(Capsule().stroke(.white.opacity(0.14), lineWidth: 0.8))
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .background(background)
+            .overlay(border)
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
         .disabled(disabled)
-        .opacity(disabled ? 0.9 : 1)
+        .opacity(disabled ? 0.95 : 1)
         .onHover { hovering = $0 }
         .onDrop(of: [UTType.fileURL], isTargeted: $targeted) { providers in
             accept(providers)
@@ -804,82 +820,21 @@ private struct ModelsDropzone: View {
         .animation(.easeOut(duration: 0.14), value: hovering)
     }
 
-    @ViewBuilder
-    private var content: some View {
-        if let progress {
-            VStack(spacing: 9) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("正在导入模型")
-                        .font(.system(size: 13, weight: .semibold))
-                    Spacer(minLength: 4)
-                    Tag(text: "导入中", tone: .accent, icon: "arrow.down.doc")
-                }
-                HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    Text("\(Int((min(1, max(0, progress.fraction)) * 100).rounded()))")
-                        .font(.system(size: 24, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                    Text("%")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Native.tertiary)
-                    Spacer(minLength: 8)
-                    Text("导入完成后会自动切换")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Native.tertiary)
-                }
-                Meter(fraction: progress.fraction, tint: Native.accent, height: 5)
-                Text(progress.message)
-                    .font(Native.monoSmall)
-                    .foregroundStyle(Native.secondary)
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        } else {
-            VStack(spacing: 0) {
-                ArcadeIcon(symbol: "folder.badge.plus",
-                           colors: [Native.accent, Native.pink],
-                           size: 44,
-                           glyphScale: 0.42)
-
-                Text("导入本地模型")
-                    .font(.system(size: 13, weight: .semibold))
-                    .padding(.top, 10)
-
-                (Text("点击选择包含 ")
-                    + Text(".gguf").font(Native.monoSmall)
-                    + Text(" 或 MLX 权重的文件夹。"))
-                    .font(.system(size: 11))
-                    .foregroundStyle(Native.tertiary)
-                    .multilineTextAlignment(.center)
-                    .padding(.top, 4)
-
-                Text("支持 safetensors · gguf · 自动识别草稿模型")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Native.tertiary)
-                    .padding(.top, 8)
-
-                Text(targeted ? "松开以导入这个文件夹" : "也可以把文件夹拖到这里")
-                    .font(.system(size: 10, weight: targeted ? .medium : .regular))
-                    .foregroundStyle(targeted ? Native.accent : Native.tertiary)
-                    .padding(.top, 2)
-            }
-        }
-    }
-
     private var background: some View {
-        RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous)
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
             .fill(targeted ? Native.accent.opacity(0.12)
-                  : Color.white.opacity(hovering ? 0.06 : 0.025))
+                  : Color.white.opacity(hovering ? 0.055 : 0.025))
     }
 
     private var border: some View {
-        RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous)
-            .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1.2, dash: [6, 5]))
     }
 
     private var borderColor: Color {
         if targeted || progress != nil { return Native.accent }
         if hovering { return Native.accent.opacity(0.55) }
-        return Native.tertiary.opacity(0.4)
+        return Native.tertiary.opacity(0.35)
     }
 
     private func accept(_ providers: [NSItemProvider]) -> Bool {

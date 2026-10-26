@@ -183,6 +183,14 @@ def main(argv):
         TRANSFORMERS_VERBOSITY="error",
         PYTHONPATH=str(runtime),
     )
+    # The exec keeps this pid, so recording it here is how the app identifies
+    # the inference server it started.
+    pid_file = os.environ.get("FLASHCAT_PID_FILE")
+    if pid_file:
+        try:
+            Path(pid_file).write_text(str(os.getpid()), encoding="utf-8")
+        except OSError:
+            pass
     # The exec resets the handlers; the server unblocks the signals once its
     # own are in place, past its imports (as `splash serve` does).
     try:

@@ -1,20 +1,17 @@
-VERSION ?= 1.0.0
-BUILD_NUMBER ?= 1
+VERSION ?= 1.1.0
+BUILD_NUMBER ?= 4
 INSTALL ?= 1
-APP := dist/flashCat.app
-INSTALLED_APP := /Applications/flashCat.app
-SPLASH_SRC ?= ../tmp/splash-src
-# splash engine version (vendor/splash-<version>-arm64-macos26.tar.gz).
-# Separate from VERSION, which is the flashCat app version.
 SPLASH_VERSION ?= 1.4.0
 
-.PHONY: all app install pkg dmg verify run uninstall analyze test windows linux runtime runtime-check fetch-runtime clean
+INSTALLED_APP := /Applications/flashCat.app
+
+.PHONY: all app install pkg dmg verify run uninstall fetch-runtime runtime-check clean
 
 all: app
 
-## Build the Flutter macOS app, make the installers, and install into /Applications.
+## Build the native SwiftUI macOS app, make the installers, and install into /Applications.
 app:
-	VERSION=$(VERSION) BUILD_NUMBER=$(BUILD_NUMBER) INSTALL=$(INSTALL) SPLASH_VERSION=$(SPLASH_VERSION) ./scripts/build-app.sh
+	VERSION=$(VERSION) BUILD_NUMBER=$(BUILD_NUMBER) INSTALL=$(INSTALL) SPLASH_VERSION=$(SPLASH_VERSION) ./scripts/build-native-app.sh
 
 ## (Re)install an already built bundle into /Applications.
 install:
@@ -43,29 +40,11 @@ uninstall:
 	@for pid in $$(pgrep -f "$(INSTALLED_APP)/Contents/Resources/runtime" || true); do kill "$$pid"; done
 	@if [ -e "$(INSTALLED_APP)" ]; then rm -rf "$(INSTALLED_APP)"; echo "removed $(INSTALLED_APP)"; else echo "nothing installed"; fi
 	@rm -rf /Applications/.flashCat-previous-*.app
-	@rm -f "$$HOME/Library/LaunchAgents/com.zhuo.flashcat.plist"
+	@rm -f "$$HOME/Library/LaunchAgents/com.zhuo.flashCat.plist"
 
-analyze:
-	flutter analyze
-
-test:
-	flutter test
-
-windows:
-	flutter build windows --release
-
-linux:
-	flutter build linux --release
-
-## Download the official splash runtime archive (latest, or SPLASH_VERSION) into vendor/.
+## Download the official splash runtime archive into vendor/.
 fetch-runtime:
 	./scripts/fetch-runtime.sh $(SPLASH_VERSION)
-
-## Rebuild the splash runtime archive from a local source checkout.
-runtime:
-	@test -d "$(SPLASH_SRC)" || { echo "missing splash source: $(SPLASH_SRC)"; exit 1; }
-	$(MAKE) -C "$(SPLASH_SRC)" package RELEASE_VERSION=$(SPLASH_VERSION)
-	cp "$(SPLASH_SRC)/dist/splash-$(SPLASH_VERSION)-arm64-macos26.tar.gz" vendor/
 
 ## Confirm the vendored runtime archive matches SPLASH_VERSION.
 runtime-check:
@@ -74,6 +53,7 @@ runtime-check:
 	@tar -xzf "vendor/splash-$(SPLASH_VERSION)-arm64-macos26.tar.gz" -O splash-$(SPLASH_VERSION)-arm64-macos26/release.json \
 		| grep -o '"version": *"[^"]*"'
 
+## Remove build output (the installed app and the installers are kept).
 clean:
-	flutter clean
-	@echo "Removed Flutter build output. dist/ is kept."
+	rm -rf native/.build dist/.build dist/AppIcon.iconset
+	@echo "Removed native build output."

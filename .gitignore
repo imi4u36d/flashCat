@@ -3,6 +3,9 @@ build/
 dist/
 native/.build/
 .build/
+.swiftpm/
+xcuserdata/
+*.xcuserstate
 *.log
 
 # Local-only data
@@ -12,10 +15,11 @@ __pycache__/
 # OS metadata
 .DS_Store
 
-# docs
+# Internal docs (visual spec, implementation notes, screenshots)
 docs/
+
 # Engine runtime packs (GB-scale build output; install via scripts/engines)
 vendor/engines/
 
 # Downloaded release tarballs (build inputs; the app can fetch them)
-vendor/splash-*-arm64-macos26.tar.gz
+vendor/*.tar.gz

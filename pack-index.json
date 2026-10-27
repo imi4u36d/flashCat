@@ -4,7 +4,7 @@
     "mtplx": [
       {
         "version": "2.12.2",
-        "url": "file:///Users/example/zhuo/flashCat/dist/packs/mtplx-2.12.2-arm64-macos26.0.tar.gz",
+        "url": "https://github.com/imi4u36d/flashCat/releases/download/engines/mtplx-2.12.2-arm64-macos26.0.tar.gz",
         "sha256": "359aa5ade5220250577ed55adf773aeccce480804841e691dede8cc393ebddec",
         "bytes": 131783632,
         "minMacOS": "26.0",
@@ -14,7 +14,7 @@
     "omlx": [
       {
         "version": "0.7.2",
-        "url": "file:///Users/example/zhuo/flashCat/dist/packs/omlx-0.7.2-arm64-macos26.0.tar.gz",
+        "url": "https://github.com/imi4u36d/flashCat/releases/download/engines/omlx-0.7.2-arm64-macos26.0.tar.gz",
         "sha256": "3d237b1b8d71ddbcc029b0ba33d97ecb03ce1536a8c3f08e4c0ab8fb4e16d070",
         "bytes": 589640795,
         "minMacOS": "26.0",
@@ -24,7 +24,7 @@
     "splash": [
       {
         "version": "1.4.1",
-        "url": "file:///Users/example/zhuo/flashCat/dist/packs/splash-1.4.1-arm64-macos26.0.tar.gz",
+        "url": "https://github.com/imi4u36d/flashCat/releases/download/engines/splash-1.4.1-arm64-macos26.0.tar.gz",
         "sha256": "213135966fa0c2944293f84405916d82fa8e7a3c88e419224f110ab3e349e1d9",
         "bytes": 79818548,
         "minMacOS": "26.0",
@@ -32,7 +32,7 @@
       },
       {
         "version": "1.4.0",
-        "url": "file:///Users/example/zhuo/flashCat/dist/packs/splash-1.4.0-arm64-macos26.0.tar.gz",
+        "url": "https://github.com/imi4u36d/flashCat/releases/download/engines/splash-1.4.0-arm64-macos26.0.tar.gz",
         "sha256": "afbbda45a4491e1d26220c12b2672901278536a5b65607b3ef51f9288a1e1e82",
         "bytes": 77257310,
         "minMacOS": "26.0",

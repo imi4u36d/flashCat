@@ -72,12 +72,20 @@ struct ModelSwitcher: View {
         let menu = NSMenu()
         menu.autoenablesItems = false
 
-        if state.catalog.machine.isEmpty {
-            let empty = NSMenuItem(title: "没有本地模型", action: nil, keyEquivalent: "")
+        // Only the active engine's models: the catalog also carries Splash
+        // packages (`owner/repo`) and the packs serve their own `owner--repo`
+        // link names, so listing everything offers ids the running engine
+        // answers 404 to.
+        let models = state.engineModels()
+
+        if models.isEmpty {
+            let empty = NSMenuItem(title: "\(state.activeEngine.displayName) 没有本地模型",
+                                   action: nil,
+                                   keyEquivalent: "")
             empty.isEnabled = false
             menu.addItem(empty)
         } else {
-            for model in state.catalog.machine {
+            for model in models {
                 let item = NSMenuItem(title: model.id,
                                       action: #selector(ModelMenuTarget.select(_:)),
                                       keyEquivalent: "")

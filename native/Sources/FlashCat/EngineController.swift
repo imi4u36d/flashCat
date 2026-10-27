@@ -661,7 +661,7 @@ final class EngineController {
 
         var pending = [String]()
         for victim in victims {
-            let path = "/v1/models/\(Self.pathComponent(victim))/unload"
+            let path = EngineRoutes.unload(victim)
             let response = await HTTP.post(port: port, path: path, timeout: 60)
             let status = response?.status ?? 0
             logs.append("==> 卸载 \(victim) → HTTP \(status)", level: status < 300 ? .system : .error)
@@ -705,12 +705,6 @@ final class EngineController {
 
     /// Model ids are directory names, so no slash survives, but a custom id may
     /// still carry characters the URL path cannot.
-    private static func pathComponent(_ value: String) -> String {
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(charactersIn: "-._~")
-        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
-    }
-
     private func loadModelHot(_ target: String) async -> Bool {
         guard loadInFlight != target else { return false }
         loadInFlight = target
@@ -722,7 +716,7 @@ final class EngineController {
         // Settings only reach a model at load time, so push them first.
         if id == .omlx { await pushTuning(for: [target]) }
         let response = await HTTP.post(port: port,
-                                       path: "/v1/models/\(Self.pathComponent(target))/load",
+                                       path: EngineRoutes.load(target),
                                        timeout: 600)
         let status = response?.status ?? 0
         logs.append("==> \(id.displayName) 切换到 \(target) → HTTP \(status)",
@@ -841,7 +835,7 @@ final class EngineController {
         guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
         for target in targets {
             let response = await HTTP.put(port: port,
-                                          path: "/api/models/\(Self.pathComponent(target))/settings",
+                                          path: EngineRoutes.modelSettings(target),
                                           json: data,
                                           timeout: 20)
             let status = response?.status ?? 0
@@ -905,6 +899,12 @@ enum HTTP {
         request.httpMethod = method
         request.timeoutInterval = timeout
         request.cachePolicy = .reloadIgnoringLocalCacheData
+        if let body {
+            // FastAPI validates a JSON body only when the content type says so;
+            // an unlabelled body comes back as 422 missing-field.
+            request.httpBody = body
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = timeout
         configuration.timeoutIntervalForResource = timeout

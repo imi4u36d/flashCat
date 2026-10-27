@@ -197,16 +197,10 @@ final class AppState: ObservableObject {
         // models page opens on something usable. Splash's folder *is* the model
         // root, so it needs no links.
         EngineModelLinker.synchronize(activeEngine)
-        // Model ids do not carry across engines: prefer this engine's own last
-        // model, then whatever its folder actually contains.
-        if let saved = EngineStore.shared.configuration(for: activeEngine).lastModel, !saved.isEmpty {
-            selectModel(saved)
-        } else if let first = engineModels().first {
-            selectModel(first.id)
-            engines?.setModel(first.id, for: activeEngine)
-        } else {
-            selectedModel = ""
-        }
+        // Model ids do not carry across engines: a remembered id is only kept
+        // when this engine can actually serve it, otherwise the folder's own
+        // models win.
+        adoptSavedModel(for: activeEngine)
 
         if settings.autoStart && !selectedModel.isEmpty {
             startService()
@@ -238,14 +232,7 @@ final class AppState: ObservableObject {
         engines?.rebuild()
         EngineModelLinker.synchronize(id)
         reloadModels()
-        if let saved = EngineStore.shared.configuration(for: id).lastModel, !saved.isEmpty {
-            selectModel(saved)
-        } else if let first = engineModels().first {
-            selectModel(first.id)
-            engines?.setModel(first.id, for: id)
-        } else {
-            selectedModel = ""
-        }
+        adoptSavedModel(for: id)
         syncController()
         showsLaunchPage = false
         objectWillChange.send()
@@ -273,16 +260,9 @@ final class AppState: ObservableObject {
         let wasRunning = isRunning
         engines.activate(id)
         reloadModels()
-        if let saved = EngineStore.shared.configuration(for: id).lastModel, !saved.isEmpty {
-            selectedModel = saved
-            settings.setModel(saved)
-        } else if let first = engineModels().first {
-            // Switching to an engine must not keep the previous engine's model id.
-            selectModel(first.id)
-            engines.setModel(first.id, for: id)
-        } else {
-            selectedModel = ""
-        }
+        // Switching to an engine must not keep the previous engine's model id:
+        // the remembered one only survives if this engine can serve it.
+        adoptSavedModel(for: id)
         syncController()
         if wasRunning { startService() }
         toast("已切换到 \(id.displayName)")
@@ -302,8 +282,11 @@ final class AppState: ObservableObject {
 
     /// Models the active engine can actually see: splash reads its catalog,
     /// the others read the flashCat folder that holds links to the weights.
-    func engineModels() -> [EngineModel] {
-        let id = activeEngine
+    func engineModels() -> [EngineModel] { engineModels(for: activeEngine) }
+
+    /// Same list, for an engine that is not (yet) the active one — switching
+    /// engines has to know what the destination can serve before it commits.
+    func engineModels(for id: EngineID) -> [EngineModel] {
         if id == .splash {
             return catalog.machine.map {
                 EngineModel(id: $0.id, path: $0.path, bytes: $0.bytes,
@@ -315,6 +298,25 @@ final class AppState: ObservableObject {
     }
 
     // MARK: service
+
+    /// Resolve the model this engine should start on. Model ids are engine
+    /// scoped — Splash packages are `owner/repo` (e.g. the `omlx/…-e5133ef4`
+    /// staging repo oMLX publishes), while the packs serve the `owner--repo`
+    /// link names in their own folder. A remembered id from another engine, or
+    /// one whose weights have gone, would 404 on every request, so it is
+    /// replaced by a model the engine really has and the store is repaired.
+    private func adoptSavedModel(for id: EngineID) {
+        let models = engineModels(for: id)
+        let saved = EngineStore.shared.configuration(for: id).lastModel
+        guard let chosen = EngineModelSelection.resolve(saved: saved, available: models.map(\.id)) else {
+            selectedModel = ""
+            return
+        }
+        selectModel(chosen)
+        if chosen != saved {
+            engines?.setModel(chosen, for: id)
+        }
+    }
 
     func selectModel(_ id: String) {
         selectedModel = id
@@ -333,6 +335,15 @@ final class AppState: ObservableObject {
             return
         }
         guard !isSwitchingModel else { return }
+
+        // The menu only offers this engine's models, but a stale list or an id
+        // typed into settings must not reach the wire: the engine would answer
+        // 404 and keep retrying it.
+        let models = engineModels()
+        if !EngineModelSelection.isServable(target, available: models.map(\.id)) {
+            toast("\(activeEngine.displayName) 没有模型 \(shortModelName(target))")
+            return
+        }
 
         selectModel(target)
         if activeEngine != .splash {

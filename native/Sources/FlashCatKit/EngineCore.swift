@@ -368,3 +368,29 @@ public enum EnginePortAllocator {
         return nil
     }
 }
+
+// MARK: - Model selection
+
+/// Which model an engine should run.
+///
+/// Model ids are scoped to the engine that serves them: Splash stores packages
+/// as `owner/repo` (oMLX publishes its staged weights as
+/// `omlx/<name>-<sha1[:8]>`), while the pack engines expose the `owner--repo`
+/// link names inside their own folder. A remembered id therefore only means
+/// something to the engine that produced it — handing another engine's id over
+/// makes every request fail with "model not found".
+public enum EngineModelSelection {
+    /// The remembered id when this engine really has it, else the first model
+    /// the engine can serve, else nil when its folder is empty.
+    public static func resolve(saved: String?, available: [String]) -> String? {
+        let remembered = saved?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !remembered.isEmpty, available.contains(remembered) { return remembered }
+        return available.first
+    }
+
+    /// Whether an id can be served at all. An engine with no models keeps
+    /// whatever it was given — the launch page owns that state.
+    public static func isServable(_ id: String, available: [String]) -> Bool {
+        available.isEmpty || available.contains(id)
+    }
+}

@@ -11,7 +11,18 @@ final class EngineInstallCenter: ObservableObject {
     @Published private(set) var installed: [EngineID: [String]] = [:]
     @Published private(set) var indexError: String?
     @Published private(set) var indexLoaded = false
+    /// One GitHub probe per engine, so a card can say "newer than what you have".
+    @Published private(set) var upstream: [EngineID: EngineUpstreamStatus] = [:]
+    @Published private(set) var upstreamCheckedAt: Date?
+    /// The engine whose pack is being built right now (builds run one at a time).
+    @Published private(set) var building: EngineID?
+    @Published private(set) var buildStep: [EngineID: String] = [:]
+    @Published private(set) var buildTail: [EngineID: [String]] = [:]
 
+    private let checker = EngineUpstreamChecker()
+    /// Last GitHub answer per engine, kept so a finished install can be compared
+    /// again without spending another API call.
+    private var upstreamReleases: [EngineID: EngineUpstreamRelease] = [:]
     private var installer: EngineInstaller?
     private var onChange: (() -> Void)?
     /// Called after a pack finished installing; the launch page uses it to make
@@ -38,10 +49,15 @@ final class EngineInstallCenter: ObservableObject {
             result[id] = EngineInstallations.installed(id).map(\.version)
         }
         installed = result
+        // A pack that just landed must stop showing up as "update available"
+        // without waiting for the next GitHub check.
+        for (id, release) in upstreamReleases {
+            upstream[id] = EngineUpstreamComparison.status(installed: result[id] ?? [], release: release)
+        }
     }
 
-    func loadIndexIfNeeded() async {
-        guard let installer, !indexLoaded else { return }
+    func loadIndexIfNeeded(force: Bool = false) async {
+        guard let installer, force || !indexLoaded else { return }
         indexLoaded = true
         do {
             let index = try await installer.loadIndex()
@@ -58,6 +74,7 @@ final class EngineInstallCenter: ObservableObject {
 
     func install(_ release: EnginePackRelease, for id: EngineID) {
         guard phases[id]?.isBusy != true, let installer else { return }
+        let isFirstInstall = (installed[id] ?? []).isEmpty
         phases[id] = .resolving
         Task { [weak self] in
             do {
@@ -68,11 +85,88 @@ final class EngineInstallCenter: ObservableObject {
                     self?.phases[id] = .installed(version: release.version)
                     self?.refreshInstalled()
                     self?.onChange?()
-                    self?.onInstalled?(id)
+                    // Only a first install makes the engine the active one; an
+                    // update must leave whatever the user was running alone.
+                    if isFirstInstall { self?.onInstalled?(id) }
                 }
             } catch {
                 await MainActor.run {
                     self?.phases[id] = .failed(message: error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    // MARK: Upstream check
+
+    /// Probes GitHub for the newest release of every engine. Unauthenticated and
+    /// rate limited (60/h), so the result is reused for a few hours unless the
+    /// user explicitly asks to check again.
+    func checkUpstream(force: Bool = false) async {
+        if !force, let checkedAt = upstreamCheckedAt,
+           Date().timeIntervalSince(checkedAt) < 6 * 3600, !upstream.isEmpty {
+            return
+        }
+        refreshInstalled()
+        var result: [EngineID: EngineUpstreamStatus] = [:]
+        for id in EngineID.allCases {
+            do {
+                let release = try await checker.latest(for: id)
+                upstreamReleases[id] = release
+                result[id] = EngineUpstreamComparison.status(installed: installed[id] ?? [], release: release)
+            } catch {
+                result[id] = .unavailable(error.localizedDescription)
+            }
+        }
+        upstream = result
+        upstreamCheckedAt = Date()
+    }
+
+    // MARK: Build from source
+
+    /// Builds the runtime pack for `release` on this machine and installs it.
+    /// The three engines have different sources, so the plan differs per engine
+    /// (see `EnginePackBuildPlanner`); every output line is surfaced so a slow
+    /// `uv pip install` or `brew upgrade` is not a silent hang.
+    func buildAndInstall(_ release: EngineUpstreamRelease, for id: EngineID) {
+        guard building == nil, installer != nil else { return }
+        guard let repository = EnginePackBuildRunner.locateRepository() else {
+            phases[id] = .failed(message: EnginePackBuildError.repositoryNotFound.localizedDescription)
+            return
+        }
+        building = id
+        buildTail[id] = []
+        buildStep[id] = "准备"
+        phases[id] = .idle
+
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let steps = EnginePackBuildPlanner.steps(for: id, version: release.version, release: release)
+                try await EnginePackBuildRunner.run(steps: steps, in: repository) { step in
+                    Task { @MainActor in self.buildStep[id] = step.title }
+                } onLine: { line in
+                    Task { @MainActor in
+                        var tail = self.buildTail[id] ?? []
+                        tail.append(line)
+                        if tail.count > 8 { tail.removeFirst(tail.count - 8) }
+                        self.buildTail[id] = tail
+                    }
+                }
+                let path = repository + "/" + EnginePackBuildPlanner.releaseFile(for: id, version: release.version)
+                let pack = try EnginePackBuildRunner.loadRelease(at: path)
+                await self.loadIndexIfNeeded(force: true)
+                await MainActor.run {
+                    self.building = nil
+                    self.buildStep[id] = nil
+                    self.buildTail[id] = []
+                    self.install(pack, for: id)
+                }
+            } catch {
+                await MainActor.run {
+                    self.building = nil
+                    self.buildStep[id] = nil
+                    self.phases[id] = .failed(message: error.localizedDescription)
                 }
             }
         }
@@ -126,6 +220,7 @@ struct EnginesView: View {
         .task {
             installs.refreshInstalled()
             await installs.loadIndexIfNeeded()
+            await installs.checkUpstream()
         }
         .sheet(item: $configuring) { id in
             EngineConfigView(state: state, engine: id)
@@ -176,6 +271,8 @@ struct EnginesView: View {
             if let controller = state.engines?.controller(id), !versions.isEmpty {
                 engineSummary(controller)
             }
+
+            upstreamSection(id)
 
             if phase.isBusy {
                 Meter(fraction: phase.fraction ?? 0, tint: Native.cyan)
@@ -263,6 +360,99 @@ struct EnginesView: View {
             GlassSurface(radius: 18, tint: isActive ? Native.mint : .clear, elevated: false)
         }
     }
+
+    /// "What does GitHub have?" — the newest release, whether it is newer than
+    /// anything installed, and the two actions that follow from that: open the
+    /// release page, or build the pack here and install it.
+    @ViewBuilder
+    private func upstreamSection(_ id: EngineID) -> some View {
+        let status = installs.upstream[id]
+        let busy = installs.building != nil
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                Eyebrow(text: "上游版本 (GitHub)", color: .white.opacity(0.3))
+                Spacer(minLength: 4)
+                if let checkedAt = installs.upstreamCheckedAt {
+                    Text(verbatim: "检查于 \(Self.clock.string(from: checkedAt))")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(.white.opacity(0.26))
+                }
+                Button(status == nil ? "检查更新" : "重新检查") {
+                    Task { await installs.checkUpstream(force: true) }
+                }
+                .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
+            }
+
+            switch status {
+            case .current(let version):
+                Text(verbatim: "分支最新版 \(version)，本地已是最新。")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.white.opacity(0.45))
+            case .update(let installed, let release):
+                HStack(spacing: 8) {
+                    Text(verbatim: "新版本 \(release.version)")
+                        .font(Native.monoSmall)
+                        .foregroundStyle(Native.cyan)
+                    if release.isPrerelease {
+                        Tag(text: "预发布", tone: .warning)
+                    }
+                    Text(verbatim: installed.map { "已装 \($0)" } ?? "尚未安装")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(.white.opacity(0.34))
+                    Spacer(minLength: 4)
+                    Button("发布说明") { NSWorkspace.shared.open(release.pageURL) }
+                        .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
+                    Button(installs.building == id ? "构建中…" : "构建并安装") {
+                        installs.buildAndInstall(release, for: id)
+                    }
+                    .buttonStyle(ArcadePillStyle(tone: .accent, compact: true))
+                    .disabled(busy)
+                }
+            case .unavailable(let reason):
+                Text(verbatim: "无法检查上游：\(reason)")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Native.red.opacity(0.8))
+            case nil:
+                Text("尚未检查上游版本。")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.white.opacity(0.3))
+            }
+
+            if installs.building == id, let step = installs.buildStep[id] {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(verbatim: "\(step)…")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.white.opacity(0.55))
+                }
+            }
+            if let tail = installs.buildTail[id], !tail.isEmpty {
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        ForEach(Array(tail.enumerated()), id: \.offset) { entry in
+                            Text(verbatim: entry.element)
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(.white.opacity(0.34))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+                .frame(height: 62)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(.black.opacity(0.28))
+                }
+            }
+        }
+    }
+
+    private static let clock: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
 
     /// Editable port. Kept as a text field so the reader can type any free port;
     /// the value only lands in the store when it parses.

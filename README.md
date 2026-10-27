@@ -232,10 +232,11 @@ pack-index.json               内置的引擎发布索引
 1. 环境变量 `FLASHCAT_PACK_INDEX_URL` 指向的 JSON
 2. 应用包内置的 `pack-index.json`
 
-自己构建一个包并生成索引：
+自己构建一个包并生成索引（仓库里不带上游二进制，先按需下载）：
 
 ```bash
-make splash-pack                                   # 把 vendor/ 里的上游包解成运行时包
+scripts/fetch-runtime.sh 1.4.1                   # 把上游运行时包下载到 vendor/
+make splash-pack                                  # 解成 flashCat 认的运行时包
 scripts/engines/make-pack-index.sh --base-url https://你的域名/packs
 ```
 

@@ -9,6 +9,9 @@ final class EngineInstallCenter: ObservableObject {
     @Published private(set) var releases: [EngineID: [EnginePackRelease]] = [:]
     @Published private(set) var phases: [EngineID: EngineInstallPhase] = [:]
     @Published private(set) var installed: [EngineID: [String]] = [:]
+    /// Versions that live under flashCat's own installs directory, i.e. the ones
+    /// with a delete button. Bundled / checked-out packs are listed separately.
+    @Published private(set) var removable: [EngineID: Set<String>] = [:]
     @Published private(set) var indexError: String?
     @Published private(set) var indexLoaded = false
     /// One GitHub probe per engine, so a card can say "newer than what you have".
@@ -45,10 +48,13 @@ final class EngineInstallCenter: ObservableObject {
 
     func refreshInstalled() {
         var result: [EngineID: [String]] = [:]
+        var deletable: [EngineID: Set<String>] = [:]
         for id in EngineID.allCases {
             result[id] = EngineInstallations.installed(id).map(\.version)
+            deletable[id] = EngineInstallations.removableVersions(id)
         }
         installed = result
+        removable = deletable
         // A pack that just landed must stop showing up as "update available"
         // without waiting for the next GitHub check.
         for (id, release) in upstreamReleases {
@@ -175,10 +181,20 @@ final class EngineInstallCenter: ObservableObject {
     func uninstall(_ id: EngineID, version: String) {
         guard let installer else { return }
         Task {
-            try? await installer.uninstall(id, version: version)
-            await MainActor.run {
-                self.refreshInstalled()
-                self.onChange?()
+            do {
+                let removed = try await installer.uninstall(id, version: version)
+                await MainActor.run {
+                    // Only the installs directory belongs to us; a pack that ships
+                    // inside the app (or a checkout) cannot be removed and used to
+                    // fail without saying so.
+                    self.phases[id] = removed ? .idle : .failed(message: "\(version) 随应用内置，删不掉")
+                    self.refreshInstalled()
+                    self.onChange?()
+                }
+            } catch {
+                await MainActor.run {
+                    self.phases[id] = .failed(message: error.localizedDescription)
+                }
             }
         }
     }
@@ -285,6 +301,7 @@ struct EnginesView: View {
             }
 
             if versions.contains(where: { $0 != version(id) }) {
+                let deletable = installs.removable[id] ?? []
                 VStack(alignment: .leading, spacing: 6) {
                     Eyebrow(text: "已安装版本", color: .white.opacity(0.3))
                     ForEach(versions, id: \.self) { installedVersion in
@@ -295,10 +312,21 @@ struct EnginesView: View {
                             if installedVersion == version(id) {
                                 Tag(text: "使用中", tone: .success)
                             }
+                            if !deletable.contains(installedVersion) {
+                                // Shipped in the app bundle / checkout: usable, not ours.
+                                Tag(text: "内置", tone: .neutral)
+                            }
                             Spacer(minLength: 4)
-                            Button("删除") { installs.uninstall(id, version: installedVersion) }
+                            if deletable.contains(installedVersion) {
+                                Button("删除") {
+                                    installs.uninstall(id, version: installedVersion)
+                                }
                                 .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
                                 .disabled(isActive && state.isRunning)
+                                .help(isActive && state.isRunning
+                                      ? "正在运行的引擎不能删除，先停止"
+                                      : "删除 \(installedVersion)")
+                            }
                         }
                     }
                 }

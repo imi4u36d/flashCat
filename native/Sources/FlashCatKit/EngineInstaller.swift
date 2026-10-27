@@ -372,10 +372,15 @@ public actor EngineInstaller {
 
     // MARK: Uninstall
 
-    public func uninstall(_ id: EngineID, version: String) throws {
+    /// Moves a version into `.trash` and removes it. Returns false when there was
+    /// nothing to remove: packs found in the app bundle or a checkout are not
+    /// ours to delete, so callers can report that instead of silently doing
+    /// nothing.
+    @discardableResult
+    public func uninstall(_ id: EngineID, version: String) throws -> Bool {
         let fm = FileManager.default
         let target = engineRoot(id).appendingPathComponent(version, isDirectory: true)
-        guard fm.fileExists(atPath: target.path) else { return }
+        guard fm.fileExists(atPath: target.path) else { return false }
         let trash = trashRoot
         try fm.createDirectory(at: trash, withIntermediateDirectories: true)
         let doomed = trash.appendingPathComponent("\(id.rawValue)-\(version)-\(UUID().uuidString)",
@@ -383,6 +388,7 @@ public actor EngineInstaller {
         try fm.moveItem(at: target, to: doomed)
         try? fm.removeItem(at: doomed)
         pruneIfEmpty(trash)
+        return true
     }
 
     // MARK: Activation

@@ -125,17 +125,32 @@ enum EnginePaths {
 /// hand: env override, user installs, the app bundle, then the repo's
 /// `vendor/engines` so `swift run` works without an install step.
 enum EngineInstallations {
-    static func searchRoots() -> [String] {
+    /// Roots flashCat owns and may delete from. Everything else a pack can be
+    /// found in (app bundle, a checkout's `vendor/engines`) is shipped with the
+    /// app and is listed read-only.
+    static func userRoots() -> [String] {
         var roots: [String] = []
         if let override = ProcessInfo.processInfo.environment["FLASHCAT_ENGINE_PACKS_DIR"] {
             roots.append(override)
         }
         roots.append(EnginePaths.enginesDirectory)
+        return roots
+    }
+
+    static func searchRoots() -> [String] {
+        var roots = userRoots()
         if let resources = Bundle.main.resourceURL?.path {
             roots.append(resources + "/engines")
         }
         for candidate in developmentRoots() { roots.append(candidate + "/vendor/engines") }
         return roots
+    }
+
+    /// Versions of `id` the engine page may offer a delete button for.
+    static func removableVersions(_ id: EngineID) -> Set<String> {
+        EnginePackOwnership.removableVersions(
+            directories: installed(id).map { ($0.version, $0.root.path) },
+            userRoots: userRoots())
     }
 
     private static func developmentRoots() -> [String] {

@@ -154,6 +154,18 @@ struct EngineConfigView: View {
             }
             toggle("仅语言模型", detail: "跳过视觉与多模态部分，加载更快", isOn: boolBinding(\.languageOnly, default: false))
             toggle("空闲时保留权重", detail: "关闭空闲释放，响应更快但常驻内存", isOn: boolBinding(\.idleReleaseOff))
+            row("n-gram 表缓存", detail: "`--ple-memory`，如 2G：缓存外的 PLE n-gram 表从 SSD 流式读取；`off` 整表载入；留空自动（装不下才卸载）") {
+                TextField("自动", text: optionalText(\.pleMemory))
+                    .textFieldStyle(.roundedBorder)
+                    .font(Native.monoFont)
+                    .frame(width: 96)
+            }
+            // The size above is more specific, so this only speaks when it is blank.
+            toggle("n-gram 表固定放 SSD",
+                   detail: tuning.pleMemory == nil
+                        ? "开启 = `--ple-memory auto`，关闭 = `off`（整表载入内存）"
+                        : "已被上面的缓存大小覆盖",
+                   isOn: boolBinding(\.pleSSDOffload, default: EngineTuning.defaults(for: .splash).pleSSDOffload ?? true))
         }
     }
 
@@ -181,7 +193,10 @@ struct EngineConfigView: View {
                     .disabled(tuning.mtp != true)
             }
             toggle("启用 DFlash2", detail: "开启后关闭 MTP", isOn: dflashBinding)
-            Text("这些开关由 oMLX 的 `/api/models/<id>/settings` 保存，因此对每个模型独立生效；保存后会重新加载当前模型，未加载的模型在下一次加载时应用。")
+            toggle("PLE n-gram 表卸载到 SSD",
+                   detail: "`qwen4_ple_ssd_offload`：Flash-Next 的 n-gram 表留在 SSD 走 mmap；显存装不下时 oMLX 会自动开启，代价约 2.5× 解码变慢",
+                   isOn: boolBinding(\.pleSSDOffload, default: EngineTuning.defaults(for: .omlx).pleSSDOffload ?? true))
+            Text("这些开关由 oMLX 的 `/admin/api/models/<id>/settings` 保存，因此对每个模型独立生效；保存后会重新加载当前模型，未加载的模型在下一次加载时应用。")
                 .font(.system(size: 10.5))
                 .foregroundStyle(Native.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -277,7 +292,7 @@ struct EngineConfigView: View {
 
     private var dflashBinding: Binding<Bool> {
         Binding(
-            get: { tuning.dflash ?? false },
+            get: { tuning.dflash ?? EngineTuning.defaults(for: engine).dflash ?? false },
             set: { value in
                 tuning.dflash = value
                 // oMLX rejects a model that has both heads on, so turning one

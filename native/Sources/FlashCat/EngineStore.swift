@@ -55,11 +55,11 @@ final class EngineStore {
     }
 
     func tuning(for id: EngineID) -> EngineTuning {
-        configuration(for: id).tuning ?? EngineTuning()
+        configuration(for: id).tuning ?? EngineTuning.defaults(for: id)
     }
 
     func setTuning(_ value: EngineTuning, for id: EngineID) {
-        update(id) { $0.tuning = value.isDefault ? nil : value }
+        update(id) { $0.tuning = value == EngineTuning.defaults(for: id) ? nil : value }
     }
 
     func update(_ id: EngineID, _ change: (inout EngineConfiguration) -> Void) {

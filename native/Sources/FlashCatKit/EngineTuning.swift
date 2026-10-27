@@ -26,6 +26,15 @@ public struct EngineTuning: Codable, Equatable, Sendable {
     public var languageOnly: Bool?
     /// Splash `--idle-release off`: keep the weights resident between requests.
     public var idleReleaseOff: Bool?
+    /// Splash `--ple-memory`: the RAM row cache of a Qwen3.8-Flash-Next PLE
+    /// n-gram table, e.g. `2G`. Rows the cache cannot hold stream from the SSD;
+    /// `off` loads the whole table (tens of GB). `nil` leaves it to the engine.
+    public var pleMemory: String?
+    /// Keep the PLE n-gram table on the SSD instead of loading it resident.
+    /// Splash spells that `--ple-memory auto`/`off`; oMLX takes the per-model
+    /// `qwen4_ple_ssd_offload` setting. MTPLX has no switch — it attaches its
+    /// SSD sidecar whenever the checkpoint ships `ngram-table.safetensors`.
+    public var pleSSDOffload: Bool?
     /// Free-form extra CLI arguments, split like a shell would.
     public var extraArguments: String?
 
@@ -39,6 +48,8 @@ public struct EngineTuning: Codable, Equatable, Sendable {
                 maxContext: String? = nil,
                 languageOnly: Bool? = nil,
                 idleReleaseOff: Bool? = nil,
+                pleMemory: String? = nil,
+                pleSSDOffload: Bool? = nil,
                 extraArguments: String? = nil) {
         self.mtp = mtp
         self.mtpDepth = mtpDepth
@@ -50,10 +61,26 @@ public struct EngineTuning: Codable, Equatable, Sendable {
         self.maxContext = maxContext
         self.languageOnly = languageOnly
         self.idleReleaseOff = idleReleaseOff
+        self.pleMemory = pleMemory
+        self.pleSSDOffload = pleSSDOffload
         self.extraArguments = extraArguments
     }
 
     public var isDefault: Bool { self == EngineTuning() }
+
+    /// The tuning a fresh install starts from. The Flash-Next PLE n-gram table is
+    /// tens of gigabytes, so both engines that can stream it start that way; oMLX
+    /// starts with MTP and Splash with DFlash2, i.e. speculative decoding on.
+    public static func defaults(for id: EngineID) -> EngineTuning {
+        switch id {
+        case .splash:
+            return EngineTuning(dflash: true, pleSSDOffload: true)
+        case .omlx:
+            return EngineTuning(mtp: true, dflash: false, pleSSDOffload: true)
+        case .mtplx:
+            return EngineTuning()
+        }
+    }
 
     /// CLI arguments appended after the pack's launch profile. Anything the
     /// engine only accepts over HTTP (oMLX's per-model MTP/DFlash settings) is
@@ -66,6 +93,12 @@ public struct EngineTuning: Codable, Equatable, Sendable {
             if let value = trimmed(maxContext) { result += ["--max-context", value] }
             if languageOnly == true { result.append("--language-only") }
             if idleReleaseOff == true { result += ["--idle-release", "off"] }
+            // An explicit cache size says more than the on/off switch, so it wins.
+            if let value = trimmed(pleMemory) {
+                result += ["--ple-memory", value]
+            } else if let offload = pleSSDOffload {
+                result += ["--ple-memory", offload ? "auto" : "off"]
+            }
         case .mtplx:
             if let mtp { result.append(mtp ? "--mtp" : "--no-mtp") }
             if let loadMtp { result.append(loadMtp ? "--load-mtp" : "--no-load-mtp") }
@@ -89,8 +122,8 @@ public struct EngineTuning: Codable, Equatable, Sendable {
     public var draftsDisabled: Bool { dflash == false }
 
     /// oMLX applies MTP/DFlash per model through
-    /// `PUT /api/models/{id}/settings`. The engine refuses a payload where both
-    /// heads are on, so enabling one always switches the other off.
+    /// `PUT /admin/api/models/{id}/settings`. The engine refuses a payload where
+    /// both heads are on, so enabling one always switches the other off.
     public var omlxSettings: [String: EngineSettingValue]? {
         var payload: [String: EngineSettingValue] = [:]
         if dflash == true {
@@ -105,6 +138,10 @@ public struct EngineTuning: Codable, Equatable, Sendable {
             if let dflash { payload["dflash_enabled"] = .bool(dflash) }
             if let mtp { payload["mtp_enabled"] = .bool(mtp) }
         }
+        // Qwen4-Exp (Flash-Next) keeps its 51B-row PLE n-gram table on SSD and
+        // gathers rows through mmap; oMLX forces this on by itself when the
+        // resident load would leave no room to serve prompts.
+        if let offload = pleSSDOffload { payload["qwen4_ple_ssd_offload"] = .bool(offload) }
         return payload.isEmpty ? nil : payload
     }
 
@@ -119,6 +156,7 @@ public struct EngineTuning: Codable, Equatable, Sendable {
         value.draftModel = trimmed(value.draftModel)
         value.maxMemory = trimmed(value.maxMemory)
         value.maxContext = trimmed(value.maxContext)
+        value.pleMemory = trimmed(value.pleMemory)
         value.extraArguments = trimmed(value.extraArguments)
         // DFlash2 wins a conflicting pair, exactly like `omlxSettings` does.
         if value.mtp == true && value.dflash == true {

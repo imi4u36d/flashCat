@@ -73,6 +73,51 @@ final class EngineTuningTests: XCTestCase {
         XCTAssertNil(tuning.omlxSettings, "a draft path alone says nothing about MTP/DFlash")
     }
 
+    // MARK: PLE n-gram table offload
+
+    func testSplashTakesTheNgramCacheSizeVerbatim() {
+        var tuning = EngineTuning()
+        tuning.pleMemory = " 2G "
+        XCTAssertEqual(tuning.arguments(for: .splash), ["--ple-memory", "2G"])
+        // Only splash reads it as a flag.
+        XCTAssertEqual(tuning.arguments(for: .mtplx), [])
+        XCTAssertEqual(tuning.arguments(for: .omlx), [])
+    }
+
+    func testSplashMapsTheOffloadSwitchOntoPleMemory() {
+        var tuning = EngineTuning()
+        tuning.pleSSDOffload = true
+        XCTAssertEqual(tuning.arguments(for: .splash), ["--ple-memory", "auto"])
+
+        tuning.pleSSDOffload = false
+        XCTAssertEqual(tuning.arguments(for: .splash), ["--ple-memory", "off"])
+
+        // An explicit size beats the switch, so the CLI never carries both.
+        tuning.pleMemory = "4G"
+        XCTAssertEqual(tuning.arguments(for: .splash), ["--ple-memory", "4G"])
+    }
+
+    func testOMLXPushesTheNgramOffloadAsItsOwnSetting() {
+        var tuning = EngineTuning()
+        tuning.pleSSDOffload = true
+        XCTAssertEqual(tuning.omlxSettings, ["qwen4_ple_ssd_offload": .bool(true)])
+
+        tuning.pleSSDOffload = false
+        XCTAssertEqual(tuning.omlxSettings, ["qwen4_ple_ssd_offload": .bool(false)])
+    }
+
+    func testNgramOffloadCoexistsWithTheHeads() {
+        var tuning = EngineTuning()
+        tuning.mtp = true
+        tuning.pleSSDOffload = true
+        XCTAssertEqual(tuning.omlxSettings,
+                       ["mtp_enabled": .bool(true),
+                        "dflash_enabled": .bool(false),
+                        "mtp_fixed_depth": .null,
+                        "qwen4_ple_ssd_offload": .bool(true)])
+        XCTAssertFalse(tuning.omlxHeadsConflict)
+    }
+
     func testDraftDirectoryHonoursTheDisableSwitch() {
         var tuning = EngineTuning()
         XCTAssertEqual(tuning.draftDirectory(automatic: "/models/draft"), "/models/draft")
@@ -99,6 +144,8 @@ final class EngineTuningTests: XCTestCase {
         tuning.dflash = false
         tuning.draftModel = "/draft"
         tuning.maxMemory = "16G"
+        tuning.pleMemory = "2G"
+        tuning.pleSSDOffload = true
 
         let data = try JSONEncoder().encode(tuning)
         let decoded = try JSONDecoder().decode(EngineTuning.self, from: data)
@@ -117,4 +164,36 @@ final class EngineTuningTests: XCTestCase {
 
 private extension EngineTuning {
     mutating func depth(_ value: Int) { mtpDepth = value }
+}
+
+final class EngineTuningDefaultsTests: XCTestCase {
+
+    func testSplashStartsWithDFlash2AndTheNgramTableOnSSD() {
+        let tuning = EngineTuning.defaults(for: .splash)
+        XCTAssertEqual(tuning.dflash, true)
+        XCTAssertEqual(tuning.pleSSDOffload, true)
+        XCTAssertEqual(tuning.arguments(for: .splash), ["--ple-memory", "auto"])
+        XCTAssertEqual(tuning.draftDirectory(automatic: "/models/draft"), "/models/draft")
+    }
+
+    func testOMLXStartsWithMTPAndTheNgramTableOnSSD() {
+        let tuning = EngineTuning.defaults(for: .omlx)
+        XCTAssertEqual(tuning.mtp, true)
+        XCTAssertEqual(tuning.dflash, false)
+        XCTAssertEqual(tuning.pleSSDOffload, true)
+        XCTAssertEqual(tuning.omlxSettings,
+                       ["mtp_enabled": .bool(true),
+                        "dflash_enabled": .bool(false),
+                        "mtp_fixed_depth": .null,
+                        "qwen4_ple_ssd_offload": .bool(true)])
+        XCTAssertFalse(tuning.omlxHeadsConflict)
+    }
+
+    func testMTPLXKeepsItsOwnDefault() {
+        XCTAssertEqual(EngineTuning.defaults(for: .mtplx), EngineTuning())
+        for id in EngineID.allCases {
+            XCTAssertEqual(EngineTuning.defaults(for: id).sanitized(), EngineTuning.defaults(for: id),
+                           "defaults survive sanitizing on \(id)")
+        }
+    }
 }

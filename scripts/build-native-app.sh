@@ -16,6 +16,11 @@ INSTALL="${INSTALL:-1}"
 IDENTIFIER="${IDENTIFIER:-com.zhuo.flashCat}"
 # macOS 26.4 is the floor splash's native engine enforces.
 MIN_MACOS="${MIN_MACOS:-26.4}"
+# How the runtime packs reach `Contents/Resources/engines`. The installed app must
+# carry its own copy: a symlink into the checkout breaks the moment the checkout
+# moves, which is exactly what happens after `make app`. `link` is kept for the
+# fast development loop (no GB-sized copy per build).
+EMBED_PACKS="${EMBED_PACKS:-copy}"
 OUT_DIR="${OUT_DIR:-$ROOT/dist}"
 APP="$OUT_DIR/flashCat.app"
 NATIVE_DIR="$ROOT/native"
@@ -49,12 +54,23 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/flashCat"
 chmod +x "$APP/Contents/MacOS/flashCat"
 
-echo "==> Embed engine packs"
-# Packs are GB-sized and rebuilt by scripts/engines/*.sh, so the bundle links to
-# them instead of copying. The app searches Contents/Resources/engines and skips
-# engine ids it cannot find, so a checkout without packs still launches.
-if [ -d "$ROOT/vendor/engines" ]; then
-    ln -sfn "$ROOT/vendor/engines" "$APP/Contents/Resources/engines"
+echo "==> Embed engine packs ($EMBED_PACKS)"
+# APFS clones make the copy free: `cp -Rc` shares extents with vendor/engines, so
+# the bundle is independent but only costs disk once.
+if [ -d "$ROOT/vendor/engines" ] || [ -L "$ROOT/vendor/engines" ]; then
+    rm -rf "$APP/Contents/Resources/engines"
+    if [ "$EMBED_PACKS" = "link" ]; then
+        ln -sfn "$ROOT/vendor/engines" "$APP/Contents/Resources/engines"
+        echo "    symlinked (dev only): $ROOT/vendor/engines"
+    else
+        mkdir -p "$APP/Contents/Resources/engines"
+        for engine in "$ROOT"/vendor/engines/*/; do
+            name="$(basename "$engine")"
+            cp -Rc "$engine" "$APP/Contents/Resources/engines/$name" \
+                || cp -R "$engine" "$APP/Contents/Resources/engines/$name"
+        done
+        echo "    copied: $(ls "$APP/Contents/Resources/engines" | tr '\n' ' ')"
+    fi
 else
     echo "    (vendor/engines missing — run scripts/engines/build-omlx-pack.sh)"
 fi

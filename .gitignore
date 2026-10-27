@@ -16,3 +16,6 @@ __pycache__/
 docs/
 # Engine runtime packs (GB-scale build output; install via scripts/engines)
 vendor/engines/
+
+# Downloaded release tarballs (build inputs; the app can fetch them)
+vendor/splash-*-arm64-macos26.tar.gz

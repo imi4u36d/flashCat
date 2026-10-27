@@ -136,7 +136,7 @@ struct EnginesView: View {
         let isActive = state.activeEngine == id
         let versions = installs.installed[id] ?? []
         let phase = installs.phases[id] ?? .idle
-        let available = (installs.releases[id] ?? []).filter { !versions.contains($0.version) }
+        let offers = EnginePackOffers.offers(installed: versions, releases: installs.releases[id] ?? [])
 
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
@@ -207,14 +207,18 @@ struct EnginesView: View {
                 }
             }
 
-            if !available.isEmpty {
+            if !offers.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Eyebrow(text: "可安装", color: .white.opacity(0.3))
-                    ForEach(available, id: \.version) { release in
+                    Eyebrow(text: "运行时包", color: .white.opacity(0.3))
+                    ForEach(offers, id: \.release.version) { offer in
+                        let release = offer.release
                         HStack(spacing: 8) {
                             Text(release.version)
                                 .font(Native.monoSmall)
                                 .foregroundStyle(.white.opacity(0.62))
+                            if offer.action == .reinstall {
+                                Tag(text: "已装此版本", tone: .neutral)
+                            }
                             if let bytes = release.bytes {
                                 Text(verbatim: Format.bytes(bytes))
                                     .font(.system(size: 9.5))
@@ -227,8 +231,9 @@ struct EnginesView: View {
                                     .lineLimit(1)
                             }
                             Spacer(minLength: 4)
-                            Button("安装") { installs.install(release, for: id) }
-                                .buttonStyle(ArcadePillStyle(tone: .accent, compact: true))
+                            Button(offer.action.label) { installs.install(release, for: id) }
+                                .buttonStyle(ArcadePillStyle(tone: offer.action == .reinstall ? .glass : .accent,
+                                                             compact: true))
                                 .disabled(phase.isBusy)
                         }
                     }

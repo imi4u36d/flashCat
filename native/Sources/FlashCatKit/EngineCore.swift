@@ -393,4 +393,15 @@ public enum EngineModelSelection {
     public static func isServable(_ id: String, available: [String]) -> Bool {
         available.isEmpty || available.contains(id)
     }
+
+    /// Whether picking `target` needs the reader's consent first.
+    ///
+    /// With weights loaded, switching means unloading the resident model before
+    /// the new ones allocate, so the engine answers nothing for a while — that
+    /// gap is worth a click. With nothing loaded the pick is only a selection
+    /// that takes effect on the next start, so it needs no confirmation.
+    public static func needsConfirmation(isRunning: Bool, current: String, target: String) -> Bool {
+        let next = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        return isRunning && !next.isEmpty && next != current
+    }
 }

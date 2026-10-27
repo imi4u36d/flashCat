@@ -70,3 +70,28 @@ final class EngineRoutesTests: XCTestCase {
                        "/admin/api/models/omlx%2FQwen3.8-27B-oQ4e-mtp-e5133ef4/settings")
     }
 }
+
+final class ModelSwitchConfirmationTests: XCTestCase {
+
+    func testRunningEngineAsksBeforeDroppingTheLoadedWeights() {
+        XCTAssertTrue(EngineModelSelection.needsConfirmation(
+            isRunning: true,
+            current: "Jundot--Qwen3.8-Flash-Next-oQ4e-mtp",
+            target: "Jundot--Qwen3.8-27B-oQ4e-mtp"))
+    }
+
+    func testPickingTheModelThatIsAlreadyLoadedAsksNothing() {
+        XCTAssertFalse(EngineModelSelection.needsConfirmation(
+            isRunning: true,
+            current: "Jundot--Qwen3.8-27B-oQ4e-mtp",
+            target: " Jundot--Qwen3.8-27B-oQ4e-mtp "))
+    }
+
+    func testAStoppedEngineOnlyRemembersTheChoice() {
+        XCTAssertFalse(EngineModelSelection.needsConfirmation(
+            isRunning: false,
+            current: "Jundot--Qwen3.8-27B-oQ4e-mtp",
+            target: "Jundot--Qwen3.8-Flash-Next-oQ4e-mtp"))
+        XCTAssertFalse(EngineModelSelection.needsConfirmation(isRunning: true, current: "", target: ""))
+    }
+}

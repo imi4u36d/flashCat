@@ -7,6 +7,19 @@ struct ShellView: View {
     private var showsSidebar: Bool { state.sidebarVisibility == .all }
 
     var body: some View {
+        content
+            // Switching weights unloads the resident model first, so the engine
+            // has nothing to serve until the new ones are up. That gap is not
+            // obvious from the picker, so it is confirmed — once, per switch.
+            .alert("切换模型？", isPresented: switchConfirmation) {
+                Button("取消", role: .cancel) { state.cancelModelSwitchRequest() }
+                Button("停止并切换") { state.confirmModelSwitch() }
+            } message: {
+                Text(switchConfirmationMessage)
+            }
+    }
+
+    @ViewBuilder private var content: some View {
         if state.isPresentingLaunchPage {
             // Nothing is bundled any more, so the first run is the launch page:
             // the console has no engine to show until one is chosen.
@@ -23,6 +36,17 @@ struct ShellView: View {
         } else {
             console
         }
+    }
+
+    private var switchConfirmation: Binding<Bool> {
+        Binding(get: { state.confirmingModelSwitch != nil },
+                set: { if !$0 { state.cancelModelSwitchRequest() } })
+    }
+
+    private var switchConfirmationMessage: String {
+        let next = state.shortModelName(state.confirmingModelSwitch ?? "")
+        let running = state.shortModelName(state.selectedModel)
+        return "会先停止 \(running) 并卸载它的权重，再加载 \(next)。卸载到新模型就绪之间引擎无法应答；失败时会回滚到 \(running)。"
     }
 
     private var console: some View {

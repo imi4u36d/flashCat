@@ -58,6 +58,11 @@ final class AppState: ObservableObject {
     /// Stage the running switch is in ("卸载旧模型" / "加载新模型"). Shown in the
     /// switcher instead of a generic spinner so the wait is explainable.
     @Published private(set) var switchStage: String = ""
+    /// Non-nil while a model switch is waiting for the reader to confirm that
+    /// the model that is loaded now gets stopped first. Switching weights means
+    /// unloading the resident model, so the engine is briefly unusable — that is
+    /// worth one click, not a silent stall.
+    @Published var confirmingModelSwitch: String?
     @Published var messages: [ChatMessage] = []
     @Published var threads: [ChatThread] = []
     @Published var generating = false
@@ -345,6 +350,30 @@ final class AppState: ObservableObject {
             return
         }
 
+        // With weights loaded the switch unloads them first, which leaves the
+        // engine without a model for a while — ask before doing that. With
+        // nothing resident the pick is only a selection, applied on next start.
+        guard EngineModelSelection.needsConfirmation(isRunning: isRunning,
+                                                     current: selectedModel,
+                                                     target: target) else {
+            commitModelSwitch(to: target)
+            return
+        }
+        confirmingModelSwitch = target
+    }
+
+    /// Run the switch the reader just approved.
+    func confirmModelSwitch() {
+        guard let target = confirmingModelSwitch else { return }
+        confirmingModelSwitch = nil
+        commitModelSwitch(to: target)
+    }
+
+    func cancelModelSwitchRequest() {
+        confirmingModelSwitch = nil
+    }
+
+    private func commitModelSwitch(to target: String) {
         selectModel(target)
         if activeEngine != .splash {
             engines?.setModel(target, for: activeEngine)

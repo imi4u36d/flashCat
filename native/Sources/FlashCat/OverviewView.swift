@@ -98,7 +98,9 @@ private struct ServiceHero: View {
     }
 
     private var loadingStage: String {
-        if state.switchingModel != nil { return "切换模型" }
+        if state.switchingModel != nil {
+            return state.switchStage.isEmpty ? "切换模型" : state.switchStage
+        }
         let stage = state.startupStage
         return stage == "就绪" ? "同步指标" : stage
     }

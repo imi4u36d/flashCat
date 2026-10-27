@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "engines": {
+    "omlx": [
+      {
+        "version": "0.7.2",
+        "url": "https://example.invalid/packs/omlx-0.7.2-arm64-macos26.0.tar.gz",
+        "sha256": "cf2d3ddeb0f4ff2dc6fc79d651e9b93ecad202bdc56da53545c03003942f87b1",
+        "bytes": 589640462,
+        "minMacOS": "26.0",
+        "notes": ""
+      }
+    ]
+  }
+}

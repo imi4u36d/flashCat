@@ -103,12 +103,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @MainActor
     func showAbout() {
-        let version = AppState.shared.runtime?.version ?? SPLASH_VERSION
+        let state = AppState.shared
+        let engine = state.controller
+        let installed = state.installedEngineIDs
+            .map { EngineInstallations.newest($0, version: nil).map { "\($0.id.displayName) \($0.manifest.version)" } ?? $0.displayName }
+            .joined(separator: "、")
         let alert = NSAlert()
         alert.messageText = "flashCat"
         alert.informativeText = """
         本地推理控制台 · v\(SPLASH_VERSION)
-        运行时：splash \(version)
+        当前引擎：\(engine.map { "\($0.id.displayName) \($0.installation.version)" } ?? "未选择")
+        已安装：\(installed.isEmpty ? "无" : installed)
         模型目录：\(Paths.modelsDirectory)
         """
         alert.runModal()

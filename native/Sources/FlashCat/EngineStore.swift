@@ -3,12 +3,15 @@ import FlashCatKit
 
 /// One engine's persisted preferences. Keyed by `EngineID.rawValue` inside
 /// `engines.json` so a new engine can be added without a migration.
-struct EngineConfiguration: Codable {
+struct EngineConfiguration: Codable, Equatable {
     var enabled: Bool = true
     var version: String?
     var port: Int?
     var lastModel: String?
     var autoStart: Bool = false
+    /// Per-engine knobs edited on that engine's config page. Optional so a file
+    /// written before the config page existed still decodes.
+    var tuning: EngineTuning?
 }
 
 /// Reads and writes `engines.json`, and tells the UI where every engine's pack
@@ -49,6 +52,14 @@ final class EngineStore {
 
     func configuration(for id: EngineID) -> EngineConfiguration {
         configurations[id.rawValue] ?? EngineConfiguration(port: id.defaultPort)
+    }
+
+    func tuning(for id: EngineID) -> EngineTuning {
+        configuration(for: id).tuning ?? EngineTuning()
+    }
+
+    func setTuning(_ value: EngineTuning, for id: EngineID) {
+        update(id) { $0.tuning = value.isDefault ? nil : value }
     }
 
     func update(_ id: EngineID, _ change: (inout EngineConfiguration) -> Void) {
@@ -94,7 +105,11 @@ enum EnginePaths {
     }
 
     static func modelsDirectory(_ id: EngineID) -> String {
-        modelsRoot + "/" + id.rawValue
+        // Splash's models are the ones flashCat already keeps and downloads into;
+        // the pack points at the very same folder, so existing installs keep
+        // working after the engine moved out of the app bundle.
+        if id == .splash { return Paths.modelsDirectory }
+        return modelsRoot + "/" + id.rawValue
     }
 
     static func logFile(_ id: EngineID) -> String {
@@ -190,13 +205,15 @@ enum EngineModelLinker {
     /// ones. Existing links are left untouched so the user can prune by hand.
     @discardableResult
     static func synchronize(_ id: EngineID) -> [LinkedModel] {
-        guard id != .splash else { return [] }
         let destination = EnginePaths.modelsDirectory(id)
         Paths.ensureDirectory(destination)
         var result: [LinkedModel] = []
         let manager = FileManager.default
 
         for source in sourceDirectories(for: id) {
+            // splash serves the flashCat model folder directly, so its "source"
+            // is already the destination and linking would point at itself.
+            if source == destination { continue }
             let entries = (try? manager.contentsOfDirectory(atPath: source)) ?? []
             for entry in entries.sorted() where !entry.hasPrefix(".") {
                 let first = source + "/" + entry

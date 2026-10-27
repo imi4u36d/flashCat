@@ -195,6 +195,7 @@ cat > "$PACK_DIR/manifest.json" <<EOF
   "models": { "path": "/v1/models" },
   "defaultPort": $DEFAULT_PORT,
   "modelSwitch": "hot",
+  "modelArgument": "name",
   "capabilities": ["chat", "streaming", "vision", "reasoning", "multiModel", "hotLoad", "hotUnload", "modelRescan"],
   "license": "Apache-2.0"
 }

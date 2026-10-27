@@ -7,6 +7,25 @@ struct ShellView: View {
     private var showsSidebar: Bool { state.sidebarVisibility == .all }
 
     var body: some View {
+        if state.isPresentingLaunchPage {
+            // Nothing is bundled any more, so the first run is the launch page:
+            // the console has no engine to show until one is chosen.
+            OnboardingView(state: state, installs: state.installs)
+                .tint(Native.accent)
+                .transition(.opacity)
+                .overlay(alignment: .bottom) {
+                    if let message = state.toastMessage {
+                        ToastView(message: message)
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                            .onTapGesture { state.dismissToast() }
+                    }
+                }
+        } else {
+            console
+        }
+    }
+
+    private var console: some View {
         ZStack(alignment: .leading) {
             DetailView(state: state)
                 .padding(.leading, showsSidebar ? Native.sidebarWidth : 0)
@@ -305,7 +324,7 @@ struct EngineCard: View {
 
     private var statusText: String {
         if switching { return "正在加载新模型" }
-        return state.isRunning ? "引擎运行中" : state.startupStage
+        return state.isReady ? "引擎运行中" : state.startupStage
     }
 
     private var statusTint: Color {

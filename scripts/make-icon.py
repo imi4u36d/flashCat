@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Generate the flashCat AppIcon.iconset.
+"""Render the flashCat icon in one of its four light treatments.
+
+The shipped artwork lives in `native/Sources/FlashCat/Resources/app-icon.png` and
+`scripts/build-native-app.sh` derives `AppIcon.icns` from that file directly, so
+this script is the fallback for a checkout without the master, and the tool for
+re-rolling the icon in another style (`--style midnight`).
 
     scripts/make-icon.py dist/AppIcon.iconset
     scripts/make-icon.py dist/AppIcon.iconset --style midnight

@@ -43,12 +43,10 @@ final class EngineManager {
 
     let settings: AppSettings
     private(set) var catalog: ModelCatalog
-    private(set) var runtime: EngineRuntime?
 
     var onChange: () -> Void = {}
 
-    init(runtime: EngineRuntime?, settings: AppSettings, catalog: ModelCatalog) {
-        self.runtime = runtime
+    init(settings: AppSettings, catalog: ModelCatalog) {
         self.settings = settings
         self.catalog = catalog
         rebuild()
@@ -65,21 +63,17 @@ final class EngineManager {
         controllers.first { $0.id == id }
     }
 
-    /// Rebuild the controller list; installations can appear or vanish between
-    /// launches (a pack is deleted, the runtime updates).
+    /// Rebuild the controller list. Every engine is now an installed pack —
+    /// splash included — so an engine without a pack simply has no controller
+    /// and the launch page offers to download one.
     func rebuild() {
         let previous = controllers
         var next: [EngineController] = []
         for id in EngineID.allCases {
-            let installation = id == .splash ? nil : EngineInstallations.newest(id, version: nil)
-            if id != .splash, installation == nil { continue }
-            if id == .splash, runtime == nil { continue }
-            let port = id == .splash
-                ? settings.port
-                : (EngineStore.shared.configuration(for: id).port ?? id.defaultPort)
+            guard let installation = EngineInstallations.newest(id, version: nil) else { continue }
+            let port = EngineStore.shared.configuration(for: id).port ?? id.defaultPort
             let controller = EngineController(id: id,
                                               installation: installation,
-                                              runtime: id == .splash ? runtime : nil,
                                               settings: settings,
                                               catalog: catalog,
                                               port: port)
@@ -89,7 +83,7 @@ final class EngineManager {
         // Keep the previous instance when nothing changed, so a running process
         // is not orphaned by a rebuild.
         controllers = next.map { fresh in
-            previous.first { $0.id == fresh.id && $0.installation?.root == fresh.installation?.root } ?? fresh
+            previous.first { $0.id == fresh.id && $0.installation.root == fresh.installation.root } ?? fresh
         }
         let preferred = EngineStore.shared.preferredEngine
         if controllers.contains(where: { $0.id == preferred }), preferred != activeID {

@@ -44,6 +44,9 @@ final class AppState: ObservableObject {
     static let shared = AppState()
 
     @Published var section: Page = .overview
+    /// Re-open the launch page from the engines tab; the page is also shown
+    /// automatically while no engine is installed.
+    @Published var showsLaunchPage = false
     @Published var serverState: ServerState = .stopped
     @Published var stats: ServerStats?
     @Published var logs: [LogLine] = []
@@ -52,12 +55,13 @@ final class AppState: ObservableObject {
     /// Non-nil while newly selected weights are loading. The switchers show an
     /// inline spinner and the overview swaps live metrics for skeletons.
     @Published private(set) var switchingModel: String?
-    @Published var runtimeMissing: String?
+    /// Stage the running switch is in ("卸载旧模型" / "加载新模型"). Shown in the
+    /// switcher instead of a generic spinner so the wait is explainable.
+    @Published private(set) var switchStage: String = ""
     @Published var messages: [ChatMessage] = []
     @Published var threads: [ChatThread] = []
     @Published var generating = false
     @Published var generationStatus: String?
-    @Published var update: UpdateState = UpdateState()
     @Published var importProgress: ImportProgress?
     /// Persistent banner for errors that need the reader's attention.
     @Published var notice: String?
@@ -70,24 +74,29 @@ final class AppState: ObservableObject {
     @Published var downloadFraction: Double?
 
     private var toastWork: DispatchWorkItem?
-    private var switchTimer: Timer?
-    private var switchCompletion: DispatchWorkItem?
-    private var switchStartedAt: Date?
-    private var switchSawBusy = false
-    private var switchSawStarting = false
+    /// The single task that owns a model switch. Nothing else may touch the
+    /// engine while it runs — the old weights must be confirmed gone before the
+    /// new ones allocate.
+    private var switchTask: Task<Void, Never>?
 
     let settings = AppSettings()
     let history = ChatHistory()
     let conversation = ConversationStore()
     let chatClient = ChatClient()
-    var runtime: EngineRuntime?
     var engines: EngineManager?
     /// Pack installs shown on the engines page; owns its own installer actor.
     let installs = EngineInstallCenter()
     var controller: EngineController? { engines?.active }
     var activeEngine: EngineID { engines?.activeID ?? .splash }
-    var availableEngines: [EngineID] { engines?.installedIDs ?? [.splash] }
-    var updater: RuntimeUpdater?
+    var availableEngines: [EngineID] { engines?.installedIDs ?? [] }
+
+    /// Splash's pack doubles as this app's model installer: hub models are
+    /// fetched by the same Python that serves them. `nil` until splash is
+    /// installed, which is why downloading asks for it explicitly.
+    var splashRuntime: EngineRuntime? {
+        guard let root = EngineInstallations.newest(.splash, version: nil)?.root.path else { return nil }
+        return EngineRuntime(root: root)
+    }
 
     struct ImportProgress {
         let fraction: Double
@@ -105,24 +114,28 @@ final class AppState: ObservableObject {
     var isSwitchingModel: Bool { switchingModel != nil }
     var isRunning: Bool { controller?.isRunning ?? false }
     var isReady: Bool { controller?.isReady ?? false }
-    var port: Int { controller?.port ?? settings.port }
+    var port: Int {
+        controller?.port
+            ?? EngineStore.shared.configuration(for: activeEngine).port
+            ?? activeEngine.defaultPort
+    }
     var startupStage: String { controller?.startupStage ?? "已停止" }
     var failureMessage: String? { controller?.failureMessage }
     var downloadProgress: Double? { controller?.downloadProgress }
-    var runtimeVersion: String { runtime?.version ?? SPLASH_VERSION }
+    /// Non-nil when nothing can run yet. Every engine — splash included — is an
+    /// installed pack, so this is simply "no pack installed".
+    var runtimeMissing: String? {
+        needsEngineSetup ? "还没有安装推理引擎。打开启动页选择一个引擎即可下载安装。" : nil
+    }
+    /// No engine pack installed yet: the launch page owns the window until one
+    /// is chosen.
+    var needsEngineSetup: Bool { engines?.installedIDs.isEmpty ?? true }
+    var isPresentingLaunchPage: Bool { needsEngineSetup || showsLaunchPage }
+    var installedEngineIDs: [EngineID] { engines?.installedIDs ?? [] }
     /// Version of whatever engine is active, so the sidebar names the thing that
     /// is actually running instead of always claiming splash.
-    var engineVersion: String {
-        if activeEngine == .splash { return runtime?.version ?? SPLASH_VERSION }
-        return engines?.controller(activeEngine)?.manifest?.version ?? "—"
-    }
+    var engineVersion: String { controller?.installation.version ?? "—" }
     var health: (label: String, tone: TagTone) { healthTone(stats) }
-
-    var installedRuntimes: [String] {
-        let root = Paths.runtimesDirectory
-        let entries = (try? FileManager.default.contentsOfDirectory(atPath: root)) ?? []
-        return entries.filter { Paths.fileExists(root + "/" + $0 + "/release.json") }.sorted()
-    }
 
     func throughput(in range: ThroughputRange) -> [ThroughputSample] {
         let cutoff = Date().addingTimeInterval(-range.seconds)
@@ -151,7 +164,7 @@ final class AppState: ObservableObject {
             }
         }
 
-        if switchingModel != nil { checkModelSwitch() }
+        if switchingModel != nil { syncSwitchStage() }
     }
 
     func bootstrap() {
@@ -159,15 +172,7 @@ final class AppState: ObservableObject {
         service.migrateLegacyDirectory()
         Paths.ensureDirectory(Paths.modelsDirectory)
 
-        runtime = EngineRuntime.locate()
-        if runtime == nil {
-            runtimeMissing = "未找到内置推理运行时。macOS 请使用 make app 打包；开发时可用 FLASHCAT_RUNTIME 指向运行时目录。"
-        } else if runtime!.version == SPLASH_VERSION {
-            // Bundled runtime is the one this build ships with: clear any override.
-            EngineRuntime.selectRuntime(nil)
-        }
-
-        catalog = service.load(runtime: runtime)
+        catalog = service.load(runtime: splashRuntime)
         if catalog.machine.isEmpty {
             selectedModel = settings.model
         } else if settings.model.isEmpty {
@@ -179,23 +184,28 @@ final class AppState: ObservableObject {
         messages = conversation.load()
         threads = history.load()
 
-        attachRuntime()
+        attachEngines()
         syncController()
 
+        // Nothing installed yet: the launch page takes over and picks an engine.
+        guard !needsEngineSetup else {
+            selectedModel = ""
+            return
+        }
+
         // Model folders are per engine; build the links once at launch so the
-        // models page opens on something usable.
-        if activeEngine != .splash {
-            EngineModelLinker.synchronize(activeEngine)
-            // splash ids do not exist in another engine's model folder, so the
-            // saved splash selection must not leak across: prefer this engine's
-            // own last model, then whatever the folder actually contains.
-            if let saved = EngineStore.shared.configuration(for: activeEngine).lastModel, !saved.isEmpty {
-                selectModel(saved)
-            } else if let first = engineModels().first {
-                selectModel(first.id)
-            } else {
-                selectedModel = ""
-            }
+        // models page opens on something usable. Splash's folder *is* the model
+        // root, so it needs no links.
+        EngineModelLinker.synchronize(activeEngine)
+        // Model ids do not carry across engines: prefer this engine's own last
+        // model, then whatever its folder actually contains.
+        if let saved = EngineStore.shared.configuration(for: activeEngine).lastModel, !saved.isEmpty {
+            selectModel(saved)
+        } else if let first = engineModels().first {
+            selectModel(first.id)
+            engines?.setModel(first.id, for: activeEngine)
+        } else {
+            selectedModel = ""
         }
 
         if settings.autoStart && !selectedModel.isEmpty {
@@ -203,9 +213,11 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Build the controller/updater pair for the currently selected runtime.
-    private func attachRuntime() {
-        let manager = EngineManager(runtime: runtime, settings: settings, catalog: catalog)
+    /// Point the manager at the installed packs. Installation is the only thing
+    /// that changes the controller list, so every engine becomes a controller
+    /// here — splash included.
+    private func attachEngines() {
+        let manager = EngineManager(settings: settings, catalog: catalog)
         manager.onChange = { [weak self] in self?.syncController() }
         engines = manager
         // A finished install/uninstall changes which packs exist, so rebuild the
@@ -217,54 +229,30 @@ final class AppState: ObservableObject {
             self.syncController()
             self.objectWillChange.send()
         })
-
-        guard let current = runtime else { return }
-        let runtimeUpdater = RuntimeUpdater(currentVersion: current.version)
-        runtimeUpdater.onStateChanged = { [weak self] value in
-            DispatchQueue.main.async { self?.update = value }
-        }
-        runtimeUpdater.onLog = { [weak self] message in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.controller?.logs.append("==> " + message, level: .system)
-                self.logs = self.controller?.logs.snapshot() ?? []
-            }
-        }
-        runtimeUpdater.onInstalled = { [weak self] installed in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                let wasRunning = self.isRunning
-                if wasRunning { self.controller?.stop() }
-                self.runtime = installed
-                self.catalog = ModelCatalogService().load(runtime: installed)
-                self.attachRuntime()
-                self.reloadModels()
-                self.toast("运行时已更新到 \(installed.version)")
-                if wasRunning { self.restartService() }
-            }
-        }
-        updater = runtimeUpdater
-        update = runtimeUpdater.currentState
     }
 
-    func switchRuntime(_ version: String?) {
-        EngineRuntime.selectRuntime(version)
-        guard let located = EngineRuntime.locate() else {
-            notice = "找不到该运行时"
-            return
-        }
-        let wasRunning = isRunning
-        controller?.stop()
-        runtime = located
-        catalog = ModelCatalogService().load(runtime: located)
-        attachRuntime()
+    /// Make a freshly installed engine the one this app runs.
+    func adoptEngine(_ id: EngineID) {
+        EngineStore.shared.update(id) { $0.enabled = true }
+        EngineStore.shared.rememberActive(id)
+        engines?.rebuild()
+        EngineModelLinker.synchronize(id)
         reloadModels()
-        toast("已切换到运行时 \(located.version)")
-        if wasRunning { restartService() }
+        if let saved = EngineStore.shared.configuration(for: id).lastModel, !saved.isEmpty {
+            selectModel(saved)
+        } else if let first = engineModels().first {
+            selectModel(first.id)
+            engines?.setModel(first.id, for: id)
+        } else {
+            selectedModel = ""
+        }
+        syncController()
+        showsLaunchPage = false
+        objectWillChange.send()
     }
 
     func reloadModels() {
-        catalog = ModelCatalogService().load(runtime: runtime)
+        catalog = ModelCatalogService().load(runtime: splashRuntime)
         controller?.updateCatalog(catalog)
         if selectedModel.isEmpty, let first = catalog.machine.first {
             selectedModel = first.id
@@ -344,156 +332,105 @@ final class AppState: ObservableObject {
             toast("正在生成，先停止再切换模型")
             return
         }
+        guard !isSwitchingModel else { return }
 
-        let restarting = isRunning
         selectModel(target)
         if activeEngine != .splash {
-            // Hot engines swap weights in place; restart engines reload through
-            // the supervisor. Either way the switcher shows a loading state.
             engines?.setModel(target, for: activeEngine)
-            beginModelSwitch(to: target, restarting: restarting)
-            Task { await controller?.switchModel(target) }
-            return
         }
-        beginModelSwitch(to: target, restarting: restarting)
+        beginModelSwitch(to: target)
     }
 
     func startService() {
         guard !isSwitchingModel else { return }
-        if activeEngine != .splash {
-            guard !selectedModel.isEmpty else {
-                notice = "还没有选择模型"
-                return
-            }
-            Task {
-                await controller?.start(localModel: nil, requestedModel: selectedModel)
-            }
+        guard !needsEngineSetup else {
+            notice = "还没有安装推理引擎，请先在启动页选择一个"
             return
         }
-        guard let model = selectedModelInfo else {
-            if !selectedModel.isEmpty, catalog.localModel(selectedModel) == nil {
-                notice = "「\(selectedModel)」还没有下载，先到模型页下载，或直接启动让引擎自动拉取"
-            } else {
-                notice = "还没有本地模型，请先导入或下载一个模型"
-            }
+        guard !selectedModel.isEmpty else {
+            notice = "还没有选择模型"
             return
         }
-        Task { await controller?.start(localModel: model) }
+        // Weights already on disk launch in place; an id that is not downloaded
+        // yet goes through the requested-model path so the engine's own launcher
+        // can fetch it.
+        Task {
+            await controller?.start(localModel: selectedModelInfo, requestedModel: selectedModel)
+        }
     }
 
     func stopService() {
-        finishModelSwitch(notify: false)
+        cancelModelSwitch()
         controller?.stop()
     }
 
     func toggleService() {
         if isRunning {
-            finishModelSwitch(notify: false)
-            controller?.stop()
+            stopService()
         } else if !isSwitchingModel {
-            if activeEngine == .splash {
-                Task { await controller?.start(localModel: selectedModelInfo) }
-            } else {
-                Task { await controller?.start(localModel: nil, requestedModel: selectedModel) }
-            }
+            startService()
         }
     }
 
     func restartService() {
-        if activeEngine == .splash {
-            Task { await controller?.restart(localModel: selectedModelInfo) }
-        } else {
-            Task { await controller?.restart(localModel: nil) }
-        }
+        Task { await controller?.restart(localModel: selectedModelInfo) }
     }
 
     // MARK: model switch progress
 
-    private func beginModelSwitch(to id: String, restarting: Bool) {
-        switchTimer?.invalidate()
-        switchTimer = nil
-        switchCompletion?.cancel()
-        switchCompletion = nil
+    /// One task drives the whole swap — stop/unload, confirm the old weights are
+    /// gone, then load — and reports back when it is really done. The previous
+    /// design fired a process restart from the view model and a hot load from
+    /// here at the same time, which is what wedged the engine mid-switch.
+    private func beginModelSwitch(to id: String) {
+        switchTask?.cancel()
+        switchTask = nil
 
-        switchingModel = id
-        switchStartedAt = Date()
-        switchSawBusy = false
-        switchSawStarting = false
-
-        if restarting {
-            toast("正在加载 \(shortModelName(id))…")
-            restartService()
-            startSwitchTimer()
-        } else {
+        guard isRunning, let controller else {
+            // Nothing is resident, so there is nothing to unload: the choice only
+            // takes effect on the next start.
+            switchingModel = nil
+            switchStage = ""
             toast("已切换到 \(shortModelName(id))")
-            let work = DispatchWorkItem { [weak self] in self?.finishModelSwitch() }
-            switchCompletion = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: work)
-        }
-    }
-
-    private func startSwitchTimer() {
-        switchTimer?.invalidate()
-        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.checkModelSwitch() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        switchTimer = timer
-    }
-
-    private func checkModelSwitch() {
-        guard let target = switchingModel else {
-            switchTimer?.invalidate()
-            switchTimer = nil
             return
         }
 
-        switch serverState {
-        case .starting:
-            switchSawBusy = true
-            switchSawStarting = true
-        case .stopping:
-            switchSawBusy = true
-        case .ready, .stopped, .failed:
-            break
-        }
-
-        // The old engine can still report ready for a moment after the click,
-        // so wait until it has actually restarted or the new model is reported.
-        let readyOnTarget = serverState == .ready
-            && (switchSawBusy || stats?.model == target)
-        if readyOnTarget || serverState == .failed {
-            finishModelSwitch()
-        } else if serverState == .stopped, switchSawStarting {
-            // The new engine started and then exited without reporting ready;
-            // drop the spinner instead of waiting for the long timeout.
-            finishModelSwitch()
-        } else if let started = switchStartedAt,
-                  Date().timeIntervalSince(started) > 300 {
-            finishModelSwitch()
+        switchingModel = id
+        switchStage = "准备切换"
+        switchTask = Task { [weak self] in
+            let outcome = await controller.switchModel(id) { stage in
+                self?.switchStage = stage
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.finishModelSwitch(outcome: outcome)
+            self.switchTask = nil
         }
     }
 
-    private func finishModelSwitch(notify: Bool = true) {
+    /// Keep the stage line honest if the engine moves on its own between stages.
+    private func syncSwitchStage() {
+        guard switchingModel != nil, switchStage.isEmpty else { return }
+        switchStage = serverState == .ready ? "加载新模型" : "停止旧模型"
+    }
+
+    private func finishModelSwitch(outcome: EngineController.ModelSwitchOutcome) {
         guard switchingModel != nil else { return }
-        switchTimer?.invalidate()
-        switchTimer = nil
-        switchCompletion?.cancel()
-        switchCompletion = nil
-
-        let succeeded = serverState == .ready
-        let failed = serverState == .failed
         switchingModel = nil
-        switchStartedAt = nil
-        switchSawBusy = false
-        switchSawStarting = false
-
-        guard notify else { return }
-        if succeeded {
+        switchStage = ""
+        switch outcome {
+        case .ready:
             toast("模型已就绪 · \(shortModelName(selectedModel))")
-        } else if failed {
-            toast("模型加载失败，请查看日志")
+        case .failed(let reason):
+            notice = reason
+            toast("模型切换失败，请查看日志")
         }
+    }
+
+    private func cancelModelSwitch() {
+        switchTask?.cancel()
+        switchTask = nil
+        switchingModel = nil
+        switchStage = ""
     }
 
     func shortModelName(_ id: String) -> String {
@@ -710,13 +647,13 @@ final class AppState: ObservableObject {
     /// draft model and manifest land where the engine expects them.
     func downloadModel(_ id: String) {
         guard downloadingModel == nil else { return }
-        guard let current = runtime else {
-            notice = "运行时不可用，无法下载模型"
+        guard let current = splashRuntime else {
+            notice = "还没有安装 Splash 引擎，无法下载模型"
             return
         }
         let script = current.root + "/install/models.py"
         guard Paths.fileExists(script) else {
-            notice = "内置运行时缺少 install/models.py"
+            notice = "Splash 引擎缺少 install/models.py"
             return
         }
 

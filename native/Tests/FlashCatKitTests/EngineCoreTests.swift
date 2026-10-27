@@ -132,8 +132,13 @@ final class EngineCoreTests: XCTestCase {
                                                 "manifest failed to decode: \(root.path)")
                 XCTAssertEqual(installation.id.rawValue, engine)
                 XCTAssertEqual(installation.version, version)
-                let args = installation.manifest.launchProfiles["default"]?.args ?? []
-                XCTAssertTrue(args.contains("{port}"), "\(engine) template dropped the port placeholder")
+                // Every profile a pack ships must bind the port the app claims;
+                // splash ships "hub" and "local" instead of one "default".
+                XCTAssertFalse(installation.manifest.launchProfiles.isEmpty)
+                for (name, profile) in installation.manifest.launchProfiles {
+                    XCTAssertTrue(profile.args.contains("{port}"),
+                                  "\(engine)/\(version) profile \(name) dropped the port placeholder")
+                }
             }
         }
     }

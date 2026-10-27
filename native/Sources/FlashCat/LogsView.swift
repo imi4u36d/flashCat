@@ -517,7 +517,7 @@ private struct LogsPanel: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 Hairline()
                 LogsFooter(paused: paused, pinned: pinned,
-                           autoScroll: autoScroll, version: state.runtimeVersion)
+                           autoScroll: autoScroll, version: state.engineVersion)
             }
             .clipShape(RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous))
         }

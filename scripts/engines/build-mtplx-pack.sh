@@ -218,6 +218,7 @@ cat > "$PACK_DIR/manifest.json" <<EOF
   "models": { "path": "/v1/models" },
   "defaultPort": $DEFAULT_PORT,
   "modelSwitch": "restart",
+  "modelArgument": "path",
   "capabilities": ["chat", "streaming", "vision", "reasoning", "singleModel", "mtp"],
   "warmup": {
     "precompiled": ["cache/$SO_NAME"],

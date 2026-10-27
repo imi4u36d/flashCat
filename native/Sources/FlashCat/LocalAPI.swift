@@ -98,31 +98,3 @@ struct ServerStats {
         return nil
     }
 }
-
-enum LocalAPI {
-    static func ready(port: Int) async -> Bool {
-        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/ready")!)
-        request.timeoutInterval = 1.5
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-        do {
-            let (_, response) = try await URLSession.shared.data(for: request)
-            return (response as? HTTPURLResponse)?.statusCode == 200
-        } catch {
-            return false
-        }
-    }
-
-    static func status(port: Int) async -> ServerStats? {
-        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/status")!)
-        request.timeoutInterval = 1.8
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            if (response as? HTTPURLResponse)?.statusCode != 200 { return nil }
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-            return ServerStats.parse(json)
-        } catch {
-            return nil
-        }
-    }
-}

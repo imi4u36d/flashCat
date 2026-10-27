@@ -75,6 +75,23 @@ public enum EngineCapability: String, Codable, Hashable, Sendable {
     case draft
     case mtp
 
+    /// Short label for the console UI; the manifest only carries the raw token.
+    public var displayName: String {
+        switch self {
+        case .chat: return "对话"
+        case .streaming: return "流式"
+        case .vision: return "视觉"
+        case .reasoning: return "推理"
+        case .multiModel: return "多模型"
+        case .hotLoad: return "热加载"
+        case .hotUnload: return "热卸载"
+        case .modelRescan: return "模型重扫"
+        case .singleModel: return "单模型"
+        case .draft: return "DFlash2"
+        case .mtp: return "MTP"
+        }
+    }
+
     /// Decoding an unknown capability must not fail the whole manifest: a pack
     /// built by a newer flashCat may advertise something this build predates.
     public init(from decoder: Decoder) throws {
@@ -86,6 +103,21 @@ public enum EngineCapability: String, Codable, Hashable, Sendable {
 public enum EnginePackKind: String, Codable, Sendable {
     case bundled
     case download
+}
+
+/// How a launch profile wants the model handed to it: oMLX indexes by directory
+/// name, MTPLX expects a path, splash's own serve script names the model itself.
+public enum EngineModelArgument: String, Codable, Sendable {
+    case name
+    case path
+    case id
+
+    /// A pack built by a newer flashCat may name a style this build predates;
+    /// falling back to `name` keeps the engine launchable instead of failing.
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = EngineModelArgument(rawValue: raw) ?? .name
+    }
 }
 
 public enum ModelSwitchMode: String, Codable, Sendable {
@@ -152,6 +184,8 @@ public struct EngineManifest: Codable, Sendable {
     public let models: EngineModelsSpec?
     public let defaultPort: Int
     public let modelSwitch: ModelSwitchMode
+    /// Optional so manifests written before this key existed still decode.
+    public let modelArgument: EngineModelArgument?
     public let capabilities: [EngineCapability]
     public let license: String?
 
@@ -172,6 +206,7 @@ public struct EngineManifest: Codable, Sendable {
                 models: EngineModelsSpec? = nil,
                 defaultPort: Int,
                 modelSwitch: ModelSwitchMode,
+                modelArgument: EngineModelArgument? = nil,
                 capabilities: [EngineCapability],
                 license: String? = nil) {
         self.schemaVersion = schemaVersion
@@ -191,11 +226,14 @@ public struct EngineManifest: Codable, Sendable {
         self.models = models
         self.defaultPort = defaultPort
         self.modelSwitch = modelSwitch
+        self.modelArgument = modelArgument
         self.capabilities = capabilities
         self.license = license
     }
 
     public var capabilitySet: Set<EngineCapability> { Set(capabilities) }
+
+    public var modelArgumentStyle: EngineModelArgument { modelArgument ?? .name }
 }
 
 // MARK: - Installation

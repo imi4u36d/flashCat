@@ -4,6 +4,7 @@
 #
 #   scripts/engines/make-pack-release.sh --engine omlx --version 0.7.2
 #   scripts/engines/make-pack-release.sh --engine mtplx --version 2.12.2 --out dist/packs
+#   scripts/engines/make-pack-release.sh --engine splash --version 1.4.0 --base-url https://host/packs
 #
 # Output (both optional to keep, the JSON is what you paste into pack-index.json):
 #   dist/packs/<engine>-<version>-arm64-macos<min>.tar.gz
@@ -34,7 +35,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$ENGINE" ] || [ -z "$VERSION" ]; then
-  echo "usage: $0 --engine <omlx|mtplx> --version <x.y.z> [--out DIR] [--base-url URL]" >&2
+  echo "usage: $0 --engine <omlx|mtplx|splash> --version <x.y.z> [--out DIR] [--base-url URL]" >&2
   exit 2
 fi
 

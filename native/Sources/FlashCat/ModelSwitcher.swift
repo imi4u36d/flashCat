@@ -36,7 +36,9 @@ struct ModelSwitcher: View {
 
     private var helpText: String {
         if switching, let target = state.switchingModel {
-            return "正在切换到 \(target)"
+            return state.switchStage.isEmpty
+                ? "正在切换到 \(target)"
+                : "正在切换到 \(target) · \(state.switchStage)"
         }
         return state.selectedModel.isEmpty ? "选择模型" : fullName
     }
@@ -154,7 +156,7 @@ struct ModelSwitcher: View {
                     .layoutPriority(1)
 
                 if switching {
-                    Text("切换中")
+                    Text(state.switchStage.isEmpty ? "切换中" : state.switchStage)
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(Native.orange)
                         .lineLimit(1)

@@ -6,7 +6,6 @@ import FlashCatKit
 /// copying anything.
 enum LocalEngineModels {
     static func scan(engine: EngineID, directory: String) -> [EngineModel] {
-        guard engine != .splash else { return [] }
         let manager = FileManager.default
         let entries = (try? manager.contentsOfDirectory(atPath: directory)) ?? []
         var models: [EngineModel] = []

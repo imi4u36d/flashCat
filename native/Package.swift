@@ -16,7 +16,11 @@ let package = Package(
         .executableTarget(
             name: "FlashCat",
             dependencies: ["FlashCatKit"],
-            path: "Sources/FlashCat"
+            path: "Sources/FlashCat",
+            // `Resources/app-icon.png` is the single master artwork: the build
+            // script turns it into AppIcon.icns and the in-app brand mark draws
+            // it, so Dock, Finder and window chrome always show the same icon.
+            resources: [.process("Resources")]
         ),
         .testTarget(
             name: "FlashCatKitTests",

@@ -155,11 +155,16 @@ func portOpen(_ port: Int) -> Bool {
     return connected == 0
 }
 
-func waitForPortFree(_ port: Int, _ seconds: Double) -> Bool {
+/// Waits for the listener on `port` to disappear without ever blocking the main
+/// actor: `Task.sleep` releases it, so the process termination handler and the
+/// status poller keep running while a 20 GB weight map is being torn down.
+@MainActor
+func waitForPortFree(_ port: Int, _ seconds: Double) async -> Bool {
     let deadline = Date().addingTimeInterval(seconds)
     while Date() < deadline {
         if !portOpen(port) { return true }
-        Thread.sleep(forTimeInterval: 0.2)
+        if Task.isCancelled { break }
+        try? await Task.sleep(nanoseconds: 200_000_000)
     }
     return !portOpen(port)
 }

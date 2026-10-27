@@ -32,6 +32,7 @@ Nothing else in the pack is interpreted by the app.
   "models": { "path": "/v1/models" },
   "defaultPort": 8100,
   "modelSwitch": "hot",
+  "modelArgument": "name",
   "capabilities": ["chat", "streaming", "vision", "reasoning", "multiModel", "hotLoad", "hotUnload", "modelRescan"],
   "license": "Apache-2.0"
 }
@@ -50,6 +51,7 @@ Nothing else in the pack is interpreted by the app.
 | `minMacOS` | string | Minimum macOS version, `major.minor`. mlx-based engines need Metal features of a recent release. |
 | `entrypoint` | string | Executable to spawn, relative to the pack root. Template variables are allowed. Packs here use `python/bin/python3` (the bundled CPython). |
 | `workingDirectory` | string | cwd for the spawned process, relative to the pack root. `.` = the pack root, so relative engine paths resolve inside the pack. |
+| `modelArgument` | string | How `{model}` is filled: `name` (directory name, oMLX), `path` (absolute path inside flashCat's model folder, MTPLX), `id` (the model's own id, splash). Defaults to `name`. |
 | `modelsSubdirectory` | string | Directory (inside the pack or inside the user data dir, depending on the app's mode) where model folders are discovered. Created empty by the build scripts. |
 | `launchProfiles` | object | Named argv/environment recipes. `default` is used unless the user picks another profile. |
 | `launchProfiles.<name>.args` | string[] | argv passed to `entrypoint` **as an array** — never a shell string. `{port}`, `{model}`, … are substituted by the app (see below). |

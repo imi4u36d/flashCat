@@ -14,6 +14,9 @@ final class EngineInstallCenter: ObservableObject {
 
     private var installer: EngineInstaller?
     private var onChange: (() -> Void)?
+    /// Called after a pack finished installing; the launch page uses it to make
+    /// the freshly installed engine the active one.
+    var onInstalled: ((EngineID) -> Void)?
 
     func configure(onChange: @escaping () -> Void) {
         self.onChange = onChange
@@ -23,24 +26,27 @@ final class EngineInstallCenter: ObservableObject {
                 .flatMap { $0.isEmpty ? nil : URL(string: $0) },
             bundledIndexPath: Bundle.main.url(forResource: "pack-index", withExtension: "json")?.path)
         installer = EngineInstaller(environment: environment)
+        // The launch page can appear before bootstrap() has configured us, so the
+        // index load is kicked here instead of relying on a view task that may
+        // already have run.
+        Task { await loadIndexIfNeeded() }
     }
 
     func refreshInstalled() {
         var result: [EngineID: [String]] = [:]
-        for id in EngineID.allCases where id != .splash {
+        for id in EngineID.allCases {
             result[id] = EngineInstallations.installed(id).map(\.version)
         }
         installed = result
     }
 
     func loadIndexIfNeeded() async {
-        guard !indexLoaded else { return }
+        guard let installer, !indexLoaded else { return }
         indexLoaded = true
-        guard let installer else { return }
         do {
             let index = try await installer.loadIndex()
             var result: [EngineID: [EnginePackRelease]] = [:]
-            for id in EngineID.allCases where id != .splash {
+            for id in EngineID.allCases {
                 result[id] = index.releases(for: id)
             }
             releases = result
@@ -62,6 +68,7 @@ final class EngineInstallCenter: ObservableObject {
                     self?.phases[id] = .installed(version: release.version)
                     self?.refreshInstalled()
                     self?.onChange?()
+                    self?.onInstalled?(id)
                 }
             } catch {
                 await MainActor.run {
@@ -88,6 +95,7 @@ final class EngineInstallCenter: ObservableObject {
 struct EnginesView: View {
     @ObservedObject var state: AppState
     @ObservedObject var installs: EngineInstallCenter
+    @State private var configuring: EngineID?
 
     var body: some View {
         GeometryReader { proxy in
@@ -95,11 +103,13 @@ struct EnginesView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     PageHeader(title: "引擎",
-                               subtitle: "同一时刻只运行一个推理引擎；每个引擎使用自己的端口与模型目录。",
-                               eyebrow: "RUNTIME PACKS")
-                        .padding(.bottom, 4)
+                               subtitle: "同一时刻只运行一个推理引擎；每个引擎有自己的端口、模型目录与参数。",
+                               eyebrow: "RUNTIME PACKS") {
+                        Button("启动页…") { state.showsLaunchPage = true }
+                    }
+                    .padding(.bottom, 4)
 
-                    ForEach(EngineID.allCases.filter { $0 != .splash }, id: \.self) { id in
+                    ForEach(EngineID.allCases, id: \.self) { id in
                         card(id, width: usable)
                     }
 
@@ -116,6 +126,9 @@ struct EnginesView: View {
         .task {
             installs.refreshInstalled()
             await installs.loadIndexIfNeeded()
+        }
+        .sheet(item: $configuring) { id in
+            EngineConfigView(state: state, engine: id)
         }
     }
 
@@ -153,9 +166,16 @@ struct EnginesView: View {
                         .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
                         .disabled(versions.isEmpty)
                 }
+                Button("配置…") { configuring = id }
+                    .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
+                    .disabled(versions.isEmpty)
             }
 
             portField(id)
+
+            if let controller = state.engines?.controller(id), !versions.isEmpty {
+                engineSummary(controller)
+            }
 
             if phase.isBusy {
                 Meter(fraction: phase.fraction ?? 0, tint: Native.cyan)
@@ -285,13 +305,39 @@ struct EnginesView: View {
     }
 
     private func version(_ id: EngineID) -> String? {
-        state.engines?.controller(id)?.installation?.version
+        state.engines?.controller(id)?.installation.version
+    }
+
+    /// One line of what the engine is configured to do, so the page says more
+    /// than "installed".
+    private func engineSummary(_ controller: EngineController) -> some View {
+        let tuning = EngineStore.shared.tuning(for: controller.id).sanitized()
+        var parts: [String] = []
+        switch controller.id {
+        case .omlx:
+            if tuning.dflash == true { parts.append("DFlash2") }
+            if tuning.mtp == true { parts.append(tuning.mtpDepth.map { "MTP 深度 \($0)" } ?? "MTP 自适应") }
+        case .mtplx:
+            if tuning.mtp != false { parts.append("MTP") }
+            if let bits = tuning.mtpQuantBits { parts.append("MTP \(bits)-bit") }
+        case .splash:
+            if tuning.dflash != false { parts.append(tuning.draftModel == nil ? "DFlash2 自动" : "DFlash2 指定") }
+            if tuning.languageOnly == true { parts.append("仅语言") }
+        }
+        if let memory = tuning.maxMemory, !memory.isEmpty { parts.append("内存 \(memory)") }
+        if let context = tuning.maxContext, !context.isEmpty { parts.append("上下文 \(context)") }
+        return VStack(alignment: .leading, spacing: 3) {
+            Eyebrow(text: "当前配置", color: .white.opacity(0.3))
+            Text(parts.isEmpty ? "使用引擎默认值" : parts.joined(separator: " · "))
+                .font(.system(size: 10.5))
+                .foregroundStyle(.white.opacity(0.45))
+        }
     }
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 6) {
             Eyebrow(text: "说明", color: .white.opacity(0.3))
-            Text("运行时包是自管的 Python + 引擎依赖，和 Homebrew / 系统里已装的应用互不影响。安装走 SHA256 校验、解包到 .staging、验证 manifest 后才激活，失败不会动已装版本。模型不在这里下载：模型页显示的是你本机已有权重建立的符号链接。")
+            Text("三个引擎地位相同，都从运行时包安装、都不随应用打包：splash 也只是其中一个引擎，不再内置。首次启动时启动页会让你选一个下载。运行时包是自管的 Python + 引擎依赖，和 Homebrew / 系统里已装的应用互不影响。安装走 SHA256 校验、解包到 .staging、验证 manifest 后才激活。模型在各引擎自己的模型目录里，不在这里下载。")
                 .font(.system(size: 11))
                 .foregroundStyle(.white.opacity(0.38))
                 .fixedSize(horizontal: false, vertical: true)

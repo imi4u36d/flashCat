@@ -456,64 +456,37 @@ struct ArcadeIcon: View {
     }
 }
 
-/// The flashCat mark, drawn as vectors so it stays sharp at every size.
-/// Mirrors `scripts/icon_render.py`: a squircle that grows two cat ears,
-/// charged by a cream lightning bolt.
+/// The flashCat mark — the shipped app icon itself, not a redraw of it.
+///
+/// `Sources/FlashCat/Resources/app-icon.png` is the single master artwork: the
+/// build script compiles it into `Contents/Resources/AppIcon.icns` and embeds
+/// the same PNG, so the sidebar header, the assistant bubbles and the Dock all
+/// show one icon. Lookup walks the SwiftPM resource bundle by hand instead of
+/// `Bundle.module`, whose accessor traps when an un-bundled binary is run.
 struct BrandMark: View {
     var size: CGFloat = 38
     var glow: Bool = true
 
+    /// The artwork carries the macOS icon-grid padding (~20 % of the canvas on
+    /// every side), so draw it oversized to fill the requested frame.
+    private static let artworkScale: CGFloat = 1.24
+
     var body: some View {
-        Canvas { context, canvas in
-            let unit = canvas.width / 824
-            func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-                CGPoint(x: (x - 100) * unit, y: (y - 100) * unit)
-            }
-
-            var tile = superellipsePath(cx: 512, cy: 569, a: 412, b: 355,
-                                        n: 4.7, steps: 420)
-            tile.addPath(earPath(outer: p(102, 434), tip: p(268, 110), inner: p(432, 342)))
-            tile.addPath(earPath(outer: p(922, 434), tip: p(756, 110), inner: p(592, 342)))
-
-            context.fill(tile, with: .linearGradient(
-                Gradient(colors: [Color(hex: 0xFFB26B),
-                                  Color(hex: 0xFF7D5E),
-                                  Color(hex: 0xF24A7C),
-                                  Color(hex: 0xC03AA6),
-                                  Color(hex: 0x57279B)]),
-                startPoint: .zero,
-                endPoint: CGPoint(x: canvas.width, y: canvas.height)
-            ))
-
-            // Glass sheen from the top-left, clipped to the mark.
-            context.fill(tile, with: .linearGradient(
-                Gradient(colors: [.white.opacity(0.28), .clear]),
-                startPoint: .zero,
-                endPoint: CGPoint(x: canvas.width * 0.72, y: canvas.height * 0.66)
-            ))
-
-            var bolt = Path()
-            bolt.move(to: p(578, 300))
-            bolt.addLine(to: p(392, 600))
-            bolt.addLine(to: p(494, 600))
-            bolt.addLine(to: p(452, 840))
-            bolt.addLine(to: p(632, 540))
-            bolt.addLine(to: p(530, 540))
-            bolt.closeSubpath()
-
-            context.drawLayer { layer in
-                layer.addFilter(.shadow(color: .black.opacity(0.38),
-                                        radius: max(0.8, size * 0.035),
-                                        x: 0, y: size * 0.025))
-                layer.fill(bolt, with: .linearGradient(
-                    Gradient(colors: [.white, Color(hex: 0xFFE8D2)]),
-                    startPoint: p(452, 300),
-                    endPoint: p(632, 840)
-                ))
+        Group {
+            if let icon = BrandMark.artwork {
+                Image(nsImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+                    .antialiased(true)
+                    .scaledToFit()
+                    .scaleEffect(BrandMark.artworkScale)
+            } else {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: size * 0.52, weight: .bold))
+                    .foregroundStyle(Native.accent)
             }
         }
         .frame(width: size, height: size)
-        .shadow(color: .black.opacity(0.35), radius: size * 0.07, x: 0, y: size * 0.05)
         .shadow(color: glow ? Native.accent.opacity(0.35) : .clear,
                 radius: glow ? size * 0.32 : 0,
                 x: 0,
@@ -521,39 +494,33 @@ struct BrandMark: View {
         .accessibilityLabel("flashCat")
     }
 
-    private func superellipsePath(cx: CGFloat, cy: CGFloat,
-                                  a: CGFloat, b: CGFloat,
-                                  n: CGFloat, steps: Int) -> Path {
-        var path = Path()
-        let exponent = 2.0 / Double(n)
-        for i in 0..<steps {
-            let t = Double(i) / Double(steps) * .pi * 2
-            let ct = cos(t), st = sin(t)
-            let x = Double(cx) + Double(a) * copysign(pow(abs(ct), exponent), ct)
-            let y = Double(cy) + Double(b) * copysign(pow(abs(st), exponent), st)
-            let point = CGPoint(x: x, y: y)
-            if i == 0 { path.move(to: point) } else { path.addLine(to: point) }
-        }
-        path.closeSubpath()
-        return path
-    }
+    /// Resolved once: the artwork is a 1024 px PNG, and every bubble badge
+    /// would otherwise re-decode it.
+    @MainActor private static let artwork: NSImage? = loadArtwork()
 
-    private func earPath(outer: CGPoint, tip: CGPoint, inner: CGPoint) -> Path {
-        func toward(_ from: CGPoint, _ to: CGPoint, _ distance: CGFloat) -> CGPoint {
-            let dx = to.x - from.x, dy = to.y - from.y
-            let length = max(hypot(dx, dy), 0.001)
-            return CGPoint(x: to.x + dx / length * distance,
-                           y: to.y + dy / length * distance)
+    @MainActor private static func loadArtwork() -> NSImage? {
+        let bundleName = "FlashCat_FlashCat.bundle"
+        var roots: [URL] = []
+        if let resources = Bundle.main.resourceURL { roots.append(resources) }
+        if let executable = Bundle.main.executableURL?.deletingLastPathComponent() {
+            roots.append(executable)
         }
-        let before = toward(tip, outer, 24)
-        let after = toward(tip, inner, 24)
-        var path = Path()
-        path.move(to: outer)
-        path.addLine(to: before)
-        path.addQuadCurve(to: after, control: tip)
-        path.addLine(to: inner)
-        path.closeSubpath()
-        return path
+        roots.append(Bundle.main.bundleURL)
+
+        for root in roots {
+            let bundleURL = root.appendingPathComponent(bundleName)
+            guard let resources = Bundle(url: bundleURL) else { continue }
+            if let url = resources.url(forResource: "app-icon", withExtension: "png"),
+               let image = NSImage(contentsOf: url) {
+                return image
+            }
+        }
+        // Copy the build script drops straight into Contents/Resources.
+        if let url = Bundle.main.url(forResource: "app-icon", withExtension: "png"),
+           let image = NSImage(contentsOf: url) {
+            return image
+        }
+        return NSApplication.shared.applicationIconImage
     }
 }
 

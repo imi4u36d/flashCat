@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+import FlashCatKit
 
 // MARK: - Page
 
@@ -12,8 +13,13 @@ struct ModelsView: View {
     @State private var customID = ""
     @State private var customError: String?
     @State private var pendingImport: URL?
-    @State private var deleteTarget: ModelInfo?
-    @State private var downloadTarget: String?
+    @State private var removeTarget: ModelLibraryEntry?
+    @State private var downloadTarget: ModelLibraryEntry?
+
+    /// The library the page is showing. It is *not* the running engine: browsing
+    /// (and downloading, importing, deleting) stays available for every engine,
+    /// installed or not, running or not.
+    private var engine: EngineID { state.libraryEngine }
 
     var body: some View {
         GeometryReader { proxy in
@@ -21,24 +27,36 @@ struct ModelsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     PageHeader(title: "模型", subtitle: subtitle, eyebrow: "MODEL LIBRARY")
+                        .padding(.bottom, 12)
+
+                    engineScope
                         .padding(.bottom, 14)
 
-                    if state.activeEngine != .splash {
-                        EngineModelsPanel(state: state)
-                            .padding(.bottom, 18)
+                    if showsStartCard {
+                        LibraryStartCard(state: state,
+                                         engine: engine,
+                                         installed: engineIsInstalled,
+                                         entries: recommendedEntries,
+                                         onDownload: { entry in downloadTarget = entry })
+                            .padding(.bottom, 16)
                     } else {
                         toolbar(width: usable)
                             .padding(.bottom, 10)
-
-                        importBar
-                            .padding(.bottom, 16)
-
-                        modelGrid(width: usable)
-
-                        customCard()
-                            .padding(.top, 18)
-                            .frame(maxWidth: 720)
                     }
+
+                    importBar
+                        .padding(.bottom, 16)
+
+                    // The start card already lists every suggestion, so the
+                    // grid would just repeat it; it appears with the first
+                    // model on disk.
+                    if !showsStartCard {
+                        modelGrid(width: usable)
+                    }
+
+                    customCard()
+                        .padding(.top, 18)
+                        .frame(maxWidth: 720)
                 }
                 .padding(.horizontal, Native.pagePadding)
                 .padding(.top, 30)
@@ -47,27 +65,119 @@ struct ModelsView: View {
             }
             .scrollIndicators(.never)
         }
+        .onChange(of: state.libraryEngine) { _, _ in
+            query = ""
+            filter = .all
+        }
+        .alert("切换引擎？",
+               isPresented: pendingLibraryUseShown,
+               presenting: state.pendingLibraryUse) { request in
+            Button(request.needsDownload ? "切换并下载" : "切换并使用") {
+                state.confirmLibraryUse()
+            }
+            Button("取消", role: .cancel) { state.cancelLibraryUse() }
+        } message: { request in
+            Text(libraryUseMessage(request))
+        }
+    }
+
+    // MARK: Engine scope
+
+    /// Every engine's library is reachable, not only the installed ones: the
+    /// page is a catalogue first, and a missing runtime is a reason to offer the
+    /// install, not a reason to hide what that runtime can serve.
+    private var engineList: [EngineID] { [.splash, .omlx, .mtplx] }
+
+    private var engineIsInstalled: Bool { state.availableEngines.contains(engine) }
+
+    private var engineScope: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 3) {
+                ForEach(engineList, id: \.self) { id in
+                    engineChip(id)
+                }
+            }
+            .padding(3)
+            .background(Capsule().fill(Native.overlay(0.05)))
+            .overlay(Capsule().strokeBorder(Native.overlay(0.08), lineWidth: 1))
+
+            Spacer(minLength: 4)
+
+            if engine == state.activeEngine {
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(state.isRunning ? Native.mint : Native.overlay(0.25))
+                        .frame(width: 5, height: 5)
+                    Text(state.isRunning ? "正在运行" : "未启动")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Native.tertiary)
+                }
+            } else if !engineIsInstalled {
+                HStack(spacing: 6) {
+                    Text("\(engine.displayName) 还没安装")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Native.tertiary)
+                    Button {
+                        state.section = .engines
+                    } label: {
+                        Label("去安装", systemImage: "arrow.down.circle")
+                            .font(.system(size: 10.5, weight: .medium))
+                    }
+                    .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
+                }
+            } else {
+                HStack(spacing: 6) {
+                    Text("运行中：\(state.activeEngine.displayName)")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Native.tertiary)
+
+                    Button {
+                        state.switchEngine(engine)
+                    } label: {
+                        Label("切到 \(engine.displayName)", systemImage: "arrow.left.arrow.right")
+                            .font(.system(size: 10.5, weight: .medium))
+                    }
+                    .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
+                    .help("切换运行中的引擎，模型列表不受影响")
+                }
+            }
+        }
+    }
+
+    private func engineChip(_ id: EngineID) -> some View {
+        let active = id == engine
+        let running = id == state.activeEngine && state.isRunning
+        let installed = state.availableEngines.contains(id)
+        return Button {
+            state.browseEngine(id)
+        } label: {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(running ? Native.mint : (installed ? Native.overlay(0.3) : Native.overlay(0.14)))
+                    .frame(width: 5, height: 5)
+                Text(id.displayName)
+                    .font(.system(size: 11.5, weight: active ? .semibold : .medium))
+                    .foregroundStyle(active ? Native.label : (installed ? Native.secondary : Native.tertiary))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(active ? Native.raised : Color.clear))
+            .overlay(Capsule().strokeBorder(active ? Native.overlay(0.14) : Color.clear, lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(installed ? "查看 \(id.displayName) 的模型库" : "\(id.displayName) 还没安装，先看它能跑什么")
     }
 
     // MARK: Derived data
 
-    private var allEntries: [ModelEntry] {
-        let catalog = state.catalog
-        var entries: [ModelEntry] = catalog.machine.map { model in
-            ModelEntry(model: model,
-                       draftRepository: catalog.draftRepository(model.id, family: model.family))
-        }
-        for id in catalog.missingRecommendations.prefix(8) {
-            let model = ModelInfo(id: id, path: "", bytes: 0, origin: .recommended, targetName: "")
-            entries.append(ModelEntry(model: model,
-                                      draftRepository: catalog.draftRepository(id, family: nil)))
-        }
-        return entries
-    }
+    private var entries: [ModelLibraryEntry] { state.libraryEntries(for: engine) }
+    private var installedEntries: [ModelLibraryEntry] { entries.filter(\.installed) }
+    private var recommendedEntries: [ModelLibraryEntry] { entries.filter(\.downloadable) }
 
-    private var filteredEntries: [ModelEntry] {
+    private var filteredEntries: [ModelLibraryEntry] {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return allEntries.filter { entry in
+        return entries.filter { entry in
             if filter == .local && !entry.installed { return false }
             if filter == .remote && entry.installed { return false }
             guard !needle.isEmpty else { return true }
@@ -78,11 +188,18 @@ struct ModelsView: View {
         }
     }
 
-    private var localCount: Int { allEntries.filter(\.installed).count }
-    private var remoteCount: Int { allEntries.count - localCount }
+    private var localCount: Int { installedEntries.count }
+    private var remoteCount: Int { recommendedEntries.count }
+
+    /// Nothing installed for this engine, so the suggestions get the top of the
+    /// page instead of a quiet row at the bottom of the grid.
+    private var showsStartCard: Bool {
+        installedEntries.isEmpty && !recommendedEntries.isEmpty
+    }
 
     private var subtitle: String {
-        "本地权重、DFlash2 草稿与 Hub 下载"
+        let local = installedEntries.isEmpty ? "还没有本机模型" : "本机 \(localCount) 个"
+        return "\(engine.displayName) 的模型库 · \(local) · 推荐 \(remoteCount) 个"
     }
 
     // MARK: Toolbar
@@ -112,7 +229,7 @@ struct ModelsView: View {
 
     private var filterPicker: some View {
         Picker("筛选", selection: $filter) {
-            Text(verbatim: "全部 \(allEntries.count)").tag(ModelsFilter.all)
+            Text(verbatim: "全部 \(entries.count)").tag(ModelsFilter.all)
             Text(verbatim: "本机 \(localCount)").tag(ModelsFilter.local)
             Text(verbatim: "可下载 \(remoteCount)").tag(ModelsFilter.remote)
         }
@@ -122,9 +239,10 @@ struct ModelsView: View {
     }
 
     private var rescanButton: some View {
-        IconAction(systemName: "arrow.clockwise", help: "重新扫描模型目录") {
+        IconAction(systemName: "arrow.clockwise", help: "重新扫描 \(engine.displayName) 的模型目录") {
+            _ = EngineModelLinker.synchronize(engine)
             state.reloadModels()
-            state.toast("已重新扫描模型目录")
+            state.toast("已重新扫描 \(engine.displayName) 的模型目录")
         }
     }
 
@@ -138,30 +256,41 @@ struct ModelsView: View {
 
     @ViewBuilder
     private func modelGrid(width: CGFloat) -> some View {
-        let entries = filteredEntries
+        let shown = filteredEntries
         Group {
-            if entries.isEmpty {
+            if shown.isEmpty {
                 Card {
                     EmptyHint(icon: emptyIcon, title: emptyTitle, detail: emptyDetail)
                 }
             } else {
                 LazyVGrid(columns: gridColumns(width: width), alignment: .leading, spacing: 14) {
-                    ForEach(entries) { entry in
+                    ForEach(shown) { entry in
                         card(for: entry)
                     }
                 }
             }
         }
-        .alert("删除本地模型？",
-               isPresented: deleteShown,
-               presenting: deleteTarget) { model in
+        .alert("删除这个模型？",
+               isPresented: removeShown,
+               presenting: removeTarget) { entry in
             Button("删除", role: .destructive) {
-                state.deleteModel(model)
-                deleteTarget = nil
+                state.removeModel(entry.model.id, engine: entry.engine)
+                removeTarget = nil
             }
-            Button("取消", role: .cancel) { deleteTarget = nil }
-        } message: { model in
-            Text("\(model.id)\n\n这会删除 \(model.sizeText) 的权重，无法撤销。")
+            Button("取消", role: .cancel) { removeTarget = nil }
+        } message: { entry in
+            Text(removalMessage(entry))
+        }
+        .alert("下载这个模型？",
+               isPresented: downloadShown,
+               presenting: downloadTarget) { entry in
+            Button("下载") {
+                downloadTarget = nil
+                state.downloadModel(entry.model.id, engine: entry.engine)
+            }
+            Button("取消", role: .cancel) { downloadTarget = nil }
+        } message: { entry in
+            Text(downloadMessage(entry))
         }
     }
 
@@ -171,42 +300,45 @@ struct ModelsView: View {
                      count: count)
     }
 
-    private func card(for entry: ModelEntry) -> some View {
-        let selected = entry.model.id == state.selectedModel
+    private func card(for entry: ModelLibraryEntry) -> some View {
+        let selected = entry.installed
+            && entry.engine == state.activeEngine
+            && entry.model.id == state.selectedModel
         let tokens = selected ? state.stats?.maximumContextTokens.flatMap { $0 > 0 ? $0 : nil } : nil
         return ModelCardView(
             state: state,
-            model: entry.model,
-            draftRepository: entry.draftRepository,
+            entry: entry,
             selected: selected,
             contextTokens: tokens,
-            onUse: { use(entry.model.id) },
-            onReveal: entry.installed ? { reveal(entry.model) } : nil,
-            onDelete: entry.model.origin == .local ? { deleteTarget = entry.model } : nil
+            onUse: { state.useModel(entry.model.id, engine: entry.engine) },
+            onReveal: entry.installed && !entry.model.path.isEmpty
+                ? { reveal(entry) }
+                : nil,
+            onRemove: entry.installed
+                ? { removeTarget = entry }
+                : nil
         )
     }
 
     private var emptyIcon: String {
-        allEntries.isEmpty ? "shippingbox" : "magnifyingglass"
+        entries.isEmpty ? "shippingbox" : "magnifyingglass"
     }
 
     private var emptyTitle: String {
-        allEntries.isEmpty ? "还没有模型" : "没有匹配的模型"
+        entries.isEmpty ? "还没有模型" : "没有匹配的模型"
     }
 
     private var emptyDetail: String {
-        if allEntries.isEmpty {
-            return "导入一个包含 .gguf 权重的文件夹，或从 Hub 下载推荐模型"
+        if entries.isEmpty {
+            return "\(engine.displayName) 还找不到可用的权重：从 Hub 下载，或导入一个本地文件夹"
         }
         switch filter {
         case .local:
             return localCount == 0
-                ? "还没有本机模型。导入一个文件夹，或切换到「可下载」"
+                ? "\(engine.displayName) 下还没有模型。切到「可下载」挑一个，或点上方「重新扫描」"
                 : "试试别的关键词"
         case .remote:
-            return remoteCount == 0
-                ? "没有可下载的推荐模型。检查运行时是否提供推荐列表"
-                : "试试别的关键词"
+            return remoteCount == 0 ? "推荐模型都已下载到本机" : "试试别的关键词"
         case .all:
             return "试试别的关键词，或清空搜索"
         }
@@ -223,20 +355,20 @@ struct ModelsView: View {
             onReject: { state.notice = "请拖入包含 .gguf 或 MLX 权重的文件夹" }
         )
         .help("导入本地模型文件夹")
-        .alert("导入模型",
+        .alert("导入到 \(engine.displayName)？",
                isPresented: pendingImportShown,
                presenting: pendingImport) { url in
             Button("复制") { startImport(url, move: false) }
             Button("移动") { startImport(url, move: true) }
             Button("取消", role: .cancel) { pendingImport = nil }
         } message: { url in
-            Text("\(url.path)\n\n“移动到模型目录”适合同盘整理；“复制”会保留原文件。大模型可能需要较长时间。")
+            Text("\(url.path)\n\n会放进 \(EnginePaths.modelsDirectory(engine))。“移动”适合同盘整理，“复制”保留原文件。大模型可能需要较长时间。")
         }
     }
 
     private func customCard() -> some View {
         Card("自定义模型 ID",
-             subtitle: "填写 Hub 上的 owner/repo，确认后下载",
+             subtitle: "填写 Hub 上的 owner/repo，下载到 \(engine.displayName) 的模型库",
              trailing: AnyView(Tag(text: "Hub", tone: .neutral, icon: "cube"))) {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 8) {
@@ -260,7 +392,7 @@ struct ModelsView: View {
                                   || state.downloadingModel != nil)
                 }
 
-                Text("支持 owner/repo:VARIANT 形式，下载位置可在设置中修改。")
+                Text("下载进 \(engine.displayName) 的目录；Splash 走 install/models.py，oMLX 与 MTPLX 走包内 python 的 huggingface_hub。")
                     .font(.system(size: 10.5))
                     .foregroundStyle(Native.tertiary)
 
@@ -296,14 +428,6 @@ struct ModelsView: View {
                 }
             }
         }
-        .alert("下载这个模型？",
-               isPresented: downloadShown,
-               presenting: downloadTarget) { id in
-            Button("下载") { startDownload(id) }
-            Button("取消", role: .cancel) { downloadTarget = nil }
-        } message: { id in
-            Text("\(id)\n\n模型会下载到 \(Paths.modelsDirectory)，可能需要几十 GB 磁盘空间。")
-        }
     }
 
     // MARK: Bindings
@@ -313,9 +437,9 @@ struct ModelsView: View {
                 set: { if !$0 { pendingImport = nil } })
     }
 
-    private var deleteShown: Binding<Bool> {
-        Binding(get: { deleteTarget != nil },
-                set: { if !$0 { deleteTarget = nil } })
+    private var removeShown: Binding<Bool> {
+        Binding(get: { removeTarget != nil },
+                set: { if !$0 { removeTarget = nil } })
     }
 
     private var downloadShown: Binding<Bool> {
@@ -323,20 +447,47 @@ struct ModelsView: View {
                 set: { if !$0 { downloadTarget = nil } })
     }
 
-    // MARK: Actions
+    private var pendingLibraryUseShown: Binding<Bool> {
+        Binding(get: { state.pendingLibraryUse != nil },
+                set: { if !$0 { state.cancelLibraryUse() } })
+    }
 
-    private func use(_ id: String) {
-        if state.catalog.machineModel(id) != nil {
-            state.applyModel(id)
-            return
+    // MARK: Messages
+
+    private func downloadMessage(_ entry: ModelLibraryEntry) -> String {
+        let model = entry.model
+        let destination = entry.engine == .splash
+            ? Paths.modelsDirectory
+            : ModelInstaller.destination(engine: entry.engine, repo: model.id)
+        var lines = [model.id, ""]
+        if model.bytes > 0 {
+            let size = model.sizeText.trimmingCharacters(in: CharacterSet(charactersIn: "≈"))
+            lines.append("下载约 \(size)")
         }
-        downloadTarget = id
+        if let memory = entry.recommendation?.memoryText {
+            lines.append("建议 \(memory)")
+        }
+        lines.append("会放进 \(destination)")
+        return lines.joined(separator: "\n")
     }
 
-    private func startDownload(_ id: String) {
-        downloadTarget = nil
-        state.downloadModel(id)
+    private func removalMessage(_ entry: ModelLibraryEntry) -> String {
+        if entry.model.path.isEmpty {
+            return entry.model.id
+        }
+        let isLink = (try? FileManager.default.destinationOfSymbolicLink(atPath: entry.model.path)) != nil
+        if isLink {
+            return "\(entry.model.id)\n\n这是指向 \(engine.displayName) 权重目录的一个链接，删除只移除链接，原始权重保留。"
+        }
+        return "\(entry.model.id)\n\n这会删除 \(entry.model.sizeText) 的权重，无法撤销。"
     }
+
+    private func libraryUseMessage(_ request: LibraryUseRequest) -> String {
+        let action = request.needsDownload ? "下载到" : "在"
+        return "\(request.model) 属于 \(request.engine.displayName)，\(action)\(request.engine.displayName) 的模型库。\n\n切换会先停掉 \(state.activeEngine.displayName)，再以这个模型启动 \(request.engine.displayName)。"
+    }
+
+    // MARK: Actions
 
     private func applyCustom(_ raw: String) {
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -347,7 +498,7 @@ struct ModelsView: View {
         }
         customError = nil
         customID = ""
-        use(value)
+        state.useModel(value, engine: engine)
     }
 
     private func pickModelsFolder() {
@@ -366,16 +517,131 @@ struct ModelsView: View {
 
     private func startImport(_ url: URL, move: Bool) {
         pendingImport = nil
-        state.importModel(url.path, move: move)
+        state.importModel(url.path, move: move, engine: engine)
     }
 
-    private func reveal(_ model: ModelInfo) {
-        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: model.path)])
+    private func reveal(_ entry: ModelLibraryEntry) {
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: entry.model.path)])
     }
 
     private func openModelsDirectory() {
-        Paths.ensureDirectory(Paths.modelsDirectory)
-        NSWorkspace.shared.open(URL(fileURLWithPath: Paths.modelsDirectory))
+        let directory = EnginePaths.modelsDirectory(engine)
+        Paths.ensureDirectory(directory)
+        NSWorkspace.shared.open(URL(fileURLWithPath: directory))
+    }
+}
+
+// MARK: - Start card
+
+/// What an engine's page shows while it holds nothing to serve: the three Qwen
+/// tiers that engine is tuned for, one click each, instead of an empty grid.
+private struct LibraryStartCard: View {
+    @ObservedObject var state: AppState
+    let engine: EngineID
+    let installed: Bool
+    let entries: [ModelLibraryEntry]
+    let onDownload: (ModelLibraryEntry) -> Void
+
+    private var busy: Bool { state.downloadingModel != nil }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 11) {
+                ArcadeIcon(symbol: "sparkles",
+                           colors: [Native.accent, Native.pink],
+                           size: 38,
+                           glyphScale: 0.42)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("\(engine.displayName) 还没有模型")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Native.label)
+                    Text(installed
+                         ? "这三个是 \(engine.displayName) 最适配的 Qwen 档位，下载完就能直接启动。"
+                         : "\(engine.displayName) 还没安装，先看看它适配的 Qwen 档位；装好引擎后在这里一键下载。")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Native.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 6)
+
+                Tag(text: "推荐", tone: .accent, icon: "sparkles")
+            }
+
+            VStack(spacing: 8) {
+                ForEach(entries.prefix(3)) { entry in
+                    row(entry)
+                }
+            }
+        }
+        .padding(Native.cardPadding)
+        .background {
+            GlassSurface(radius: Native.radiusPanel, tint: Native.accent)
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+                .foregroundStyle(Native.accent.opacity(0.28))
+        )
+    }
+
+    private func row(_ entry: ModelLibraryEntry) -> some View {
+        let model = entry.model
+        let downloading = state.downloadingModel == model.id && state.downloadingEngine == engine
+        return HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ModelMeta.displayName(model))
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(Native.label)
+                    .lineLimit(1)
+                Text(entry.recommendation?.summary ?? ModelMeta.specLine(model, contextTokens: nil))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Native.tertiary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            if model.bytes > 0 {
+                Tag(text: model.sizeText, tone: .neutral, icon: nil)
+            }
+            if let memory = entry.recommendation?.memoryText {
+                Tag(text: memory, tone: .neutral, icon: "memorychip")
+            }
+
+            if downloading {
+                HStack(spacing: 5) {
+                    Text(ModelMeta.percent(state.downloadFraction))
+                        .font(Native.monoSmall)
+                        .foregroundStyle(Native.secondary)
+                    ProgressView(value: state.downloadFraction ?? 0)
+                        .progressViewStyle(.linear)
+                        .frame(width: 56)
+                }
+            } else {
+                Button {
+                    onDownload(entry)
+                } label: {
+                    Text("下载")
+                        .font(.system(size: 11.5, weight: .semibold))
+                }
+                .buttonStyle(ArcadePillStyle(tone: .accent, compact: true))
+                .disabled(busy || !installed)
+                .help(installed ? "下载到 \(engine.displayName) 的模型库" : "先在「引擎」页安装 \(engine.displayName)")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: Native.radiusSmall, style: .continuous)
+                .fill(Native.overlay(0.045))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Native.radiusSmall, style: .continuous)
+                .strokeBorder(Native.overlay(0.07), lineWidth: 1)
+        )
+        .help(model.id)
     }
 }
 
@@ -387,14 +653,6 @@ private enum ModelsFilter: String, CaseIterable, Identifiable {
     case remote = "可下载"
 
     var id: String { rawValue }
-}
-
-private struct ModelEntry: Identifiable {
-    let model: ModelInfo
-    let draftRepository: String?
-
-    var id: String { model.id }
-    var installed: Bool { model.origin != .recommended }
 }
 
 // MARK: - Search field
@@ -442,28 +700,39 @@ private struct ModelsSearchField: View {
 
 private struct ModelCardView: View {
     @ObservedObject var state: AppState
-    let model: ModelInfo
-    let draftRepository: String?
+    let entry: ModelLibraryEntry
     let selected: Bool
     let contextTokens: Int?
     let onUse: () -> Void
     let onReveal: (() -> Void)?
-    let onDelete: (() -> Void)?
+    let onRemove: (() -> Void)?
 
     @State private var hovering = false
 
-    private var local: Bool { model.origin == .local }
-    private var splash: Bool { model.origin == .splash }
-    private var installed: Bool { model.origin != .recommended }
-    private var downloading: Bool { state.downloadingModel == model.id }
+    private var model: ModelInfo { entry.model }
+    private var engine: EngineID { entry.engine }
+    private var recommendation: ModelRecommendation? { entry.recommendation }
+    private var draftRepository: String? { entry.draftRepository }
+
+    private var installed: Bool { entry.installed }
+    private var downloading: Bool {
+        state.downloadingModel == model.id && state.downloadingEngine == engine
+    }
     private var busy: Bool { state.downloadingModel != nil }
-    private var draftReady: Bool { installed && model.draftPath != nil }
+    private var draftReady: Bool {
+        installed && (model.draftPath != nil || draftRepository != nil)
+    }
+    /// A suggestion from another engine can only be used by switching to it, so
+    /// the primary action says which engine it will start.
+    private var useTitle: String {
+        engine == state.activeEngine ? "使用" : "切到 \(engine.displayName)"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
 
-            Text(ModelMeta.specLine(model, contextTokens: contextTokens))
+            Text(specLine)
                 .font(.system(size: 11.5))
                 .foregroundStyle(Native.secondary)
                 .lineLimit(2)
@@ -507,6 +776,22 @@ private struct ModelCardView: View {
         .scaleEffect(hovering ? 1.008 : 1)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.14), value: hovering)
+    }
+
+    private var specLine: String {
+        // A suggestion's size and memory floor come from the Hub page, and its
+        // MoE/dense nature from the curation table rather than from a folder
+        // name, so the heuristics that read installed folders would mislead.
+        if let recommendation {
+            var parts: [String] = []
+            if let params = ModelMeta.params(model) { parts.append(params) }
+            if model.bytes > 0 { parts.append(model.sizeText) }
+            let quant = ModelMeta.quant(model)
+            if !quant.isEmpty { parts.append(quant) }
+            if let memory = recommendation.memoryText { parts.append(memory) }
+            return parts.joined(separator: " · ")
+        }
+        return ModelMeta.specLine(model, contextTokens: contextTokens)
     }
 
     private var header: some View {
@@ -555,32 +840,53 @@ private struct ModelCardView: View {
 
     private var tagSpecs: [ModelTagSpec] {
         var result: [ModelTagSpec] = []
+        var seen = Set<String>()
+        func add(_ text: String, _ tone: TagTone, _ icon: String?) {
+            guard seen.insert(text.lowercased()).inserted else { return }
+            result.append(ModelTagSpec(text: text, tone: tone, icon: icon))
+        }
+
         if draftReady {
-            result.append(ModelTagSpec(text: "DFlash2 就绪", tone: .success, icon: "bolt.fill"))
+            add("DFlash2 就绪", .success, "bolt.fill")
         } else if draftRepository != nil {
-            result.append(ModelTagSpec(text: "DFlash2 可下载", tone: .accent, icon: "bolt"))
+            add("DFlash2 可下载", .accent, "bolt")
+        } else if engine == .splash {
+            add("标准解码", .neutral, nil)
         } else {
-            result.append(ModelTagSpec(text: "标准解码", tone: .neutral, icon: nil))
+            // The pack engines decode with the model's own MTP head, so their
+            // weights never need a separate draft repository.
+            add("MTP 解码", .accent, "bolt")
         }
-        if ModelMeta.isVision(model) {
-            result.append(ModelTagSpec(text: "视觉", tone: .accent, icon: "eye"))
-        }
-        if ModelMeta.isMoE(model) {
-            result.append(ModelTagSpec(text: "MoE", tone: .accent, icon: nil))
-        }
+        let vision = ModelMeta.isVision(model)
+            || (recommendation?.tags.contains { $0.contains("视觉") } ?? false)
+        if vision { add("视觉", .accent, "eye") }
+        let moe = ModelMeta.isMoE(model)
+            || (recommendation?.tags.contains { $0.lowercased().contains("moe") } ?? false)
+        if moe { add("MoE", .accent, nil) }
         if let active = ModelMeta.activeParams(model) {
-            result.append(ModelTagSpec(text: "\(active) 激活", tone: .neutral, icon: nil))
+            add("\(active) 激活", .neutral, nil)
         }
         if model.bytes > 0 && model.bytes < 6_000_000_000 {
-            result.append(ModelTagSpec(text: "轻量", tone: .neutral, icon: nil))
+            add("轻量", .neutral, nil)
         }
-        if local {
-            result.append(ModelTagSpec(text: "本机", tone: .neutral, icon: nil))
+        // The pack's own labels (quant, MTP, DFlash2) last, minus whatever the
+        // heuristics above already said in different words.
+        for tag in recommendation?.tags ?? [] where !tagIsCovered(tag) {
+            add(tag, .neutral, nil)
         }
-        if splash {
-            result.append(ModelTagSpec(text: "Splash", tone: .neutral, icon: nil))
+        if installed {
+            add(model.origin == .splash ? "Splash" : "本机", .neutral, nil)
         }
         return result
+    }
+
+    /// Tags the heuristic rows above already cover, so a card does not repeat
+    /// itself: `DFlash2` is the draft tag, `MoE`/`视觉` their own tags, and the
+    /// format labels duplicate the spec line.
+    private func tagIsCovered(_ tag: String) -> Bool {
+        let lower = tag.lowercased()
+        if lower.contains("dflash") || lower == "moe" || lower == "视觉" || lower == "mtp" { return true }
+        return lower.contains("mlx") || lower.contains("bit") || lower == "gguf"
     }
 
     @ViewBuilder
@@ -606,14 +912,15 @@ private struct ModelCardView: View {
                     Button {
                         onUse()
                     } label: {
-                        Label("使用", systemImage: "play.fill")
+                        Label(useTitle, systemImage: "play.fill")
+                            .lineLimit(1)
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(ArcadePillStyle(tone: .light))
                     .disabled(busy)
                 }
 
-                if onReveal != nil || onDelete != nil {
+                if onReveal != nil || onRemove != nil {
                     Menu {
                         if let onReveal {
                             Button {
@@ -622,12 +929,12 @@ private struct ModelCardView: View {
                                 Label("在 Finder 中显示", systemImage: "folder")
                             }
                         }
-                        if onReveal != nil && onDelete != nil {
+                        if onReveal != nil && onRemove != nil {
                             Divider()
                         }
-                        if let onDelete {
+                        if let onRemove {
                             Button(role: .destructive) {
-                                onDelete()
+                                onRemove()
                             } label: {
                                 Label("删除模型", systemImage: "trash")
                             }
@@ -644,19 +951,22 @@ private struct ModelCardView: View {
                 }
             }
         } else {
-            Button {
-                onUse()
-            } label: {
-                Label {
-                    Text("下载")
-                } icon: {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .foregroundStyle(Native.accentSoft)
+            HStack(spacing: 7) {
+                Button {
+                    onUse()
+                } label: {
+                    Label {
+                        Text("下载")
+                    } icon: {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .foregroundStyle(Native.accentSoft)
+                    }
+                    .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: .infinity)
+                .buttonStyle(ArcadePillStyle(tone: .glass))
+                .disabled(busy)
+                .help("下载到 \(engine.displayName) 的模型库")
             }
-            .buttonStyle(ArcadePillStyle(tone: .glass))
-            .disabled(busy)
         }
     }
 
@@ -674,12 +984,11 @@ private struct ModelCardView: View {
                     .foregroundStyle(Native.secondary)
             }
             Meter(fraction: state.downloadFraction ?? 0, tint: Native.accent)
-            Text("完成后自动切换")
+            Text(engine == state.activeEngine ? "完成后自动切换" : "完成后可在 \(engine.displayName) 里启动")
                 .font(.system(size: 10))
                 .foregroundStyle(Native.tertiary)
         }
     }
-
 }
 
 private struct ModelTagSpec {
@@ -917,8 +1226,14 @@ private enum ModelPattern {
 }
 
 private enum ModelMeta {
+    /// Pack engines name models `owner--repo` (their flat link folders); show
+    /// them the way the Hub writes them.
+    static func displayID(_ id: String) -> String {
+        id.replacingOccurrences(of: "--", with: "/")
+    }
+
     static func owner(_ model: ModelInfo) -> String {
-        if let first = model.id.split(separator: "/").first {
+        if let first = displayID(model.id).split(separator: "/").first {
             return String(first)
         }
         switch model.origin {
@@ -929,7 +1244,7 @@ private enum ModelMeta {
     }
 
     static func displayName(_ model: ModelInfo) -> String {
-        shortName(model.id)
+        shortName(displayID(model.id))
     }
 
     static func shortName(_ id: String) -> String {
@@ -968,7 +1283,8 @@ private enum ModelMeta {
     /// MoE model still gets the MoE badge even though its family label is GGUF.
     static func isMoE(_ model: ModelInfo) -> Bool {
         let id = model.id.lowercased()
-        return id.contains("moe") || ModelPattern.test("a[0-9]+(?:\\.[0-9]+)?b", id)
+        if id.contains("moe") || id.contains("flash-next") { return true }
+        return ModelPattern.test("a[0-9]+(?:\\.[0-9]+)?b", id)
     }
 
     static func quant(_ model: ModelInfo) -> String {

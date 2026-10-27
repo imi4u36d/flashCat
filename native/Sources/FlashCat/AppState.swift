@@ -76,9 +76,26 @@ final class AppState: ObservableObject {
     @Published var throughput: [ThroughputSample] = []
     @Published var throughputRange: ThroughputRange = .seconds45
     @Published var downloadingModel: String?
+    /// Which engine the running download is for: two engines can hold models
+    /// with the same id, and only the one being written shows the progress bar.
+    @Published private(set) var downloadingEngine: EngineID?
     @Published var downloadFraction: Double?
+    /// Which engine's model library the model page shows. Browsing is
+    /// deliberately independent of the running engine, so an engine that is
+    /// stopped — or that has no weights at all — can still be inspected,
+    /// filled from the Hub and compared with the others.
+    @Published var libraryEngine: EngineID = .splash
+    /// Set when a model is picked for an engine that is not running: the switch
+    /// is a bigger step than a model change, so it asks first.
+    @Published var pendingLibraryUse: LibraryUseRequest?
 
     private var toastWork: DispatchWorkItem?
+    /// Polls the folder a snapshot download writes into, so the card can show
+    /// a percentage without the downloader having to report one.
+    private var downloadWatchTask: Task<Void, Never>?
+    /// Bytes the Hub says the whole repository needs, printed by the downloader
+    /// before the transfer starts.
+    private var downloadTotalBytes = 0
     /// The single task that owns a model switch. Nothing else may touch the
     /// engine while it runs — the old weights must be confirmed gone before the
     /// new ones allocate.
@@ -205,6 +222,7 @@ final class AppState: ObservableObject {
         // models page opens on something usable. Splash's folder *is* the model
         // root, so it needs no links.
         EngineModelLinker.synchronize(activeEngine)
+        libraryEngine = activeEngine
         // Model ids do not carry across engines: a remembered id is only kept
         // when this engine can actually serve it, otherwise the folder's own
         // models win.
@@ -267,6 +285,7 @@ final class AppState: ObservableObject {
         }
         let wasRunning = isRunning
         engines.activate(id)
+        libraryEngine = id
         reloadModels()
         // Switching to an engine must not keep the previous engine's model id:
         // the remembered one only survives if this engine can serve it.
@@ -304,6 +323,70 @@ final class AppState: ObservableObject {
         }
         return LocalEngineModels.scan(engine: id, directory: EnginePaths.modelsDirectory(id))
     }
+
+    // MARK: model library
+
+    /// The three Qwen tiers this engine can serve, bounded to the build it can
+    /// load: Splash and oMLX read MLX folders, MTPLX serves its own packs.
+    func libraryRecommendations(for engine: EngineID) -> [ModelRecommendation] {
+        ModelRecommendations.list(for: engine)
+    }
+
+    /// Installed weights plus the engine's suggestions as one grid — the same
+    /// rows whether or not that engine is installed, running or holding a model.
+    func libraryEntries(for engine: EngineID) -> [ModelLibraryEntry] {
+        let installed: [ModelInfo]
+        if engine == .splash {
+            installed = catalog.machine
+        } else {
+            installed = engineModels(for: engine).map {
+                ModelInfo(id: $0.id,
+                          path: $0.path ?? (EnginePaths.modelsDirectory(engine) + "/" + $0.id),
+                          bytes: $0.bytes ?? 0,
+                          origin: .local,
+                          targetName: "")
+            }
+        }
+        return ModelLibrary.entries(installed: installed,
+                                    engine: engine,
+                                    recommendations: libraryRecommendations(for: engine)) { id in
+            engine == .splash ? self.catalog.draftRepository(id, family: nil) : nil
+        }
+    }
+
+    func browseEngine(_ id: EngineID) {
+        libraryEngine = id
+    }
+
+    /// The card's one action. A model is bound to the engine that serves its
+    /// format, so using one from another engine's library is a switch, not a
+    /// model change, and it asks before stopping what runs now.
+    func useModel(_ id: String, engine: EngineID) {
+        guard !isSwitchingModel else { return }
+        let installed = engineModels(for: engine).contains { $0.id == id }
+        if engine != activeEngine {
+            pendingLibraryUse = LibraryUseRequest(engine: engine, model: id, needsDownload: !installed)
+            return
+        }
+        if installed {
+            applyModel(id)
+        } else {
+            downloadModel(id, engine: engine)
+        }
+    }
+
+    func confirmLibraryUse() {
+        guard let request = pendingLibraryUse else { return }
+        pendingLibraryUse = nil
+        switchEngine(request.engine)
+        if request.needsDownload {
+            downloadModel(request.model, engine: request.engine)
+        } else {
+            applyModel(request.model)
+        }
+    }
+
+    func cancelLibraryUse() { pendingLibraryUse = nil }
 
     // MARK: service
 
@@ -653,17 +736,21 @@ final class AppState: ObservableObject {
 
     // MARK: models
 
-    func importModel(_ source: String, move: Bool = false) {
+    func importModel(_ source: String, move: Bool = false, engine: EngineID? = nil) {
+        let target = engine ?? activeEngine
         let service = ModelCatalogService()
         importProgress = ImportProgress(fraction: 0, message: "正在复制…")
         Task {
             do {
-                let result = try service.importDirectory(source, move: move) { fraction, message in
+                let result = try service.importDirectory(source,
+                                                         move: move,
+                                                         into: EnginePaths.modelsDirectory(target),
+                                                         flatten: target != .splash) { fraction, message in
                     DispatchQueue.main.async { self.importProgress = ImportProgress(fraction: fraction, message: message) }
                 }
                 importProgress = nil
                 reloadModels()
-                selectModel(result.id)
+                if target == activeEngine { selectModel(result.id) }
                 toast("已导入 \(result.id)")
             } catch {
                 importProgress = nil
@@ -686,43 +773,73 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Fetch weights for a hub model through the runtime's own installer, so the
-    /// draft model and manifest land where the engine expects them.
-    func downloadModel(_ id: String) {
-        guard downloadingModel == nil else { return }
-        guard let current = splashRuntime else {
-            notice = "还没有安装 Splash 引擎，无法下载模型"
+    /// Remove a model from one engine's folder. The packs find weights through
+    /// the links flashCat created, so removing a link only unlinks the model —
+    /// the bytes in `~/.omlx` or `~/.mtplx` stay where they are.
+    func removeModel(_ id: String, engine: EngineID) {
+        guard engine != .splash else {
+            if let model = catalog.machine.first(where: { $0.id == id }) {
+                deleteModel(model)
+            }
             return
         }
-        let script = current.root + "/install/models.py"
-        guard Paths.fileExists(script) else {
-            notice = "Splash 引擎缺少 install/models.py"
+        let path = EnginePaths.modelsDirectory(engine) + "/" + id
+        let link = (try? FileManager.default.destinationOfSymbolicLink(atPath: path)) != nil
+        do {
+            try FileManager.default.removeItem(atPath: path)
+        } catch {
+            notice = "移除失败：\(error.localizedDescription)"
+            return
+        }
+        if selectedModel == id, engine == activeEngine {
+            selectedModel = ""
+            adoptSavedModel(for: engine)
+        }
+        reloadModels()
+        toast(link ? "已从 \(engine.displayName) 移除链接，权重还在原处" : "已删除 \(id)")
+    }
+
+    /// Fetch weights for the engine the model page is showing.
+    func downloadModel(_ id: String) { downloadModel(id, engine: libraryEngine) }
+
+    /// Fetch weights for one engine. Both paths download through the
+    /// huggingface_hub that ships inside the engine packs: Splash's installer
+    /// picks the single GGUF quant out of a repository that carries a dozen and
+    /// prepares its assembly, while oMLX and MTPLX run flashCat's snapshot
+    /// downloader straight into their own model folder.
+    func downloadModel(_ id: String, engine: EngineID) {
+        guard downloadingModel == nil else {
+            toast("正在下载另一个模型，先等它结束")
+            return
+        }
+        let recommendation = ModelRecommendations.recommendation(for: id)
+        let draft = engine == .splash
+            ? (catalog.draftRepository(id, family: nil) ?? recommendation.draftRepository)
+            : nil
+
+        let plan: ModelInstaller.Plan
+        do {
+            plan = try ModelInstaller.plan(engine: engine,
+                                           model: id,
+                                           draftRepository: draft,
+                                           runtime: splashRuntime,
+                                           cache: settings.hfCache)
+        } catch {
+            notice = (error as? ModelInstaller.Failure)?.message ?? "\(error)"
             return
         }
 
         downloadingModel = id
+        downloadingEngine = engine
         downloadFraction = 0
-        Paths.ensureDirectory(Paths.modelsDirectory)
-
-        var arguments = ["-u", script, "--models", Paths.modelsDirectory, "--model", id]
-        if let draft = catalog.draftRepository(id, family: nil) {
-            arguments += ["--draft-model", draft]
-        }
-        arguments.append("prepare")
-
-        var environment = ProcessInfo.processInfo.environment
-        environment["PYTHONDONTWRITEBYTECODE"] = "1"
-        environment["PYTHONUNBUFFERED"] = "1"
-        let cache = settings.hfCache.trimmingCharacters(in: .whitespaces)
-        if !cache.isEmpty { environment["HF_HUB_CACHE"] = cache }
-
-        controller?.logs.append("==> 准备下载模型：\(id)", level: .system)
+        downloadTotalBytes = 0
+        append(log: "==> \(engine.displayName) 下载模型：\(id)", engine: engine)
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: current.pythonPath)
-        process.arguments = arguments
-        process.currentDirectoryURL = URL(fileURLWithPath: current.root)
-        process.environment = environment
+        process.executableURL = URL(fileURLWithPath: plan.executable)
+        process.arguments = plan.arguments
+        process.currentDirectoryURL = URL(fileURLWithPath: plan.workingDirectory)
+        process.environment = plan.environment
 
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -731,25 +848,25 @@ final class AppState: ObservableObject {
 
         TailReader.read(pipe) { line in
             DispatchQueue.main.async {
-                self.controller?.logs.append(line, level: .system)
-                if let match = TextPattern.firstMatch("(\\d{1,3})%", line), let value = Double(match[1]) {
+                self.append(log: line, engine: engine)
+                if let total = Self.totalBytes(in: line) {
+                    self.downloadTotalBytes = total
+                    if let directory = plan.watchDirectory {
+                        self.startDownloadWatch(directory: directory, engine: engine)
+                    }
+                } else if let match = TextPattern.firstMatch("(\\d{1,3})%", line),
+                          let value = Double(match[1]) {
+                    // Splash's installer reports its own percentage.
                     self.downloadFraction = min(max(value / 100, 0), 1)
                 }
-                self.logs = self.controller?.logs.snapshot() ?? []
             }
         }
 
         process.terminationHandler = { finished in
             DispatchQueue.main.async {
-                self.downloadingModel = nil
-                self.downloadFraction = nil
-                self.reloadModels()
-                if finished.terminationStatus == 0 {
-                    self.applyModel(id)
-                    self.toast("已下载 \(id)")
-                } else {
-                    self.notice = "模型下载失败，退出码 \(finished.terminationStatus)"
-                }
+                self.finishDownload(engine: engine,
+                                    model: id,
+                                    status: finished.terminationStatus)
             }
         }
 
@@ -757,9 +874,69 @@ final class AppState: ObservableObject {
             try process.run()
         } catch {
             downloadingModel = nil
+            downloadingEngine = nil
             downloadFraction = nil
             notice = "无法启动下载：\(error.localizedDescription)"
         }
+    }
+
+    private static func totalBytes(in line: String) -> Int? {
+        guard line.hasPrefix("TOTAL ") else { return nil }
+        return Int(line.dropFirst(6).trimmingCharacters(in: .whitespaces))
+    }
+
+    /// Watch the destination grow and turn bytes on disk into a percentage.
+    /// The walk happens off the main actor: a model folder holds thousands of
+    /// shards and the UI thread has a card to animate.
+    private func startDownloadWatch(directory: String, engine: EngineID) {
+        downloadWatchTask?.cancel()
+        downloadWatchTask = Task { [weak self] in
+            while !Task.isCancelled {
+                let bytes = await Task.detached(priority: .utility) {
+                    ModelInstaller.size(of: directory)
+                }.value
+                guard let self, !Task.isCancelled else { return }
+                let total = self.downloadTotalBytes
+                if total > 0 {
+                    self.downloadFraction = min(max(Double(bytes) / Double(total), 0), 1)
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+    }
+
+    private func finishDownload(engine: EngineID, model: String, status: Int32) {
+        downloadWatchTask?.cancel()
+        downloadWatchTask = nil
+        downloadingModel = nil
+        downloadingEngine = nil
+        downloadFraction = nil
+        downloadTotalBytes = 0
+        reloadModels()
+
+        guard status == 0 else {
+            append(log: "==> 下载失败，退出码 \(status)", engine: engine)
+            notice = "模型下载失败，退出码 \(status)"
+            return
+        }
+
+        // Splash addresses a model by its repository id, the packs by the
+        // folder name flashCat gave it.
+        let repo = model.split(separator: ":", maxSplits: 1).first.map(String.init) ?? model
+        let installed = engine == .splash ? model : ModelInstaller.folderName(for: repo)
+        append(log: "==> 已下载 \(model)", engine: engine)
+        guard engine == activeEngine else {
+            toast("已下载 \(model)，切到 \(engine.displayName) 就能用")
+            return
+        }
+        applyModel(installed)
+        toast("已下载 \(model)")
+    }
+
+    /// Engine logs are per engine; only the running engine's copy is on screen.
+    private func append(log line: String, engine: EngineID) {
+        engines?.controller(engine)?.logs.append(line, level: .system)
+        if engine == activeEngine { logs = controller?.logs.snapshot() ?? [] }
     }
 
     func copy(_ text: String, label: String = "已复制") {

@@ -15,9 +15,13 @@ struct ModelInfo: Identifiable {
     var family: String?
     var draftPath: String?
     var mmprojPath: String?
+    /// A suggestion's size comes from the Hub page, not from a scan of the
+    /// files, so the card marks it as approximate instead of claiming a
+    /// measurement it never took.
+    var approximateSize = false
 
     var shortName: String { id.split(separator: "/").last.map(String.init) ?? id }
-    var sizeText: String { Format.size(bytes) }
+    var sizeText: String { bytes > 0 && approximateSize ? "≈" + Format.size(bytes) : Format.size(bytes) }
     var exists: Bool { Paths.fileExists(path) }
 }
 
@@ -96,19 +100,27 @@ final class ModelCatalogService {
     struct ImportResult { let id: String; let destination: String }
     struct ImportError: Error { let message: String }
 
-    /// Copy (or move) a model folder into ~/.flashcat/models.
-    func importDirectory(_ source: String, move: Bool, progress: (Double, String) -> Void) throws -> ImportResult {
+    /// Copy (or move) a model folder into an engine's model directory —
+    /// `~/.flashcat/models` for Splash, `~/.flashcat/models/<engine>` for the
+    /// rest — so importing works the same for every engine.
+    func importDirectory(_ source: String, move: Bool, into root: String = Paths.modelsDirectory,
+                         flatten: Bool = false, progress: (Double, String) -> Void) throws -> ImportResult {
         guard Paths.fileExists(source) else { throw ImportError(message: "选择的目录不存在") }
         let files = allFiles(source)
         let hasWeights = files.contains {
-            $0.hasSuffix(".gguf") && $0.lowercased().contains("mmproj") == false
+            let lower = $0.lowercased()
+            if lower.hasSuffix(".gguf") { return lower.contains("mmproj") == false }
+            return lower.hasSuffix(".safetensors")
         }
-        if !hasWeights { throw ImportError(message: "目录里没有找到 .gguf 权重文件") }
+        if !hasWeights { throw ImportError(message: "目录里没有找到 .gguf 或 .safetensors 权重文件") }
 
         let owner = sanitize(basename((source as NSString).deletingLastPathComponent))
         let repo = sanitize(basename(source))
-        let destination = Paths.modelsDirectory + "/" + owner + "/" + repo
-        if Paths.fileExists(destination) { throw ImportError(message: "\(owner)/\(repo) 已经存在") }
+        // Splash reads `<owner>/<repo>`, the packaged engines read flat
+        // `<owner>--<repo>` folders, so the destination shape follows the root.
+        let id = flatten ? "\(owner)--\(repo)" : "\(owner)/\(repo)"
+        let destination = root + "/" + id
+        if Paths.fileExists(destination) { throw ImportError(message: "\(id) 已经存在") }
 
         Paths.ensureDirectory(destination)
         let total = files.reduce(0) { $0 + fileSize($1) }
@@ -116,8 +128,8 @@ final class ModelCatalogService {
 
         if move {
             if (try? FileManager.default.moveItem(atPath: source, toPath: destination)) != nil {
-                progress(1, "已移动 \(owner)/\(repo)")
-                return ImportResult(id: "\(owner)/\(repo)", destination: destination)
+                progress(1, "已移动 \(id)")
+                return ImportResult(id: id, destination: destination)
             }
         }
 
@@ -136,7 +148,7 @@ final class ModelCatalogService {
         }
 
         if move { try? FileManager.default.removeItem(atPath: source) }
-        return ImportResult(id: "\(owner)/\(repo)", destination: destination)
+        return ImportResult(id: id, destination: destination)
     }
 
     func deleteLocal(_ model: ModelInfo) throws {

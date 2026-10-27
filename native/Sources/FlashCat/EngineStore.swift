@@ -263,16 +263,27 @@ enum EngineModelLinker {
         return result
     }
 
-    /// A folder counts as a model when it has weights config *and* a tokenizer.
-    /// Draft/assistant heads (oMLX's `DFlash2` folders, for instance) ship only
-    /// `config.json` + weights and cannot be served on their own, so offering
-    /// them in the picker would just produce a load failure.
+    /// A folder counts as a model when it carries a weights config *and* a
+    /// tokenizer, or a GGUF file of its own. Draft/assistant heads (oMLX's
+    /// `DFlash2` folders, for instance) ship only `config.json` + weights and
+    /// cannot be served on their own, so offering them in the picker would just
+    /// produce a load failure. GGUF folders need no tokenizer: the quantized
+    /// file embeds its own vocab, and all three packs serve those directly.
     static func isWeightsDirectory(_ path: String, engine: EngineID) -> Bool {
         let manager = FileManager.default
+        if hasGGUF(path) { return true }
         guard manager.fileExists(atPath: path + "/config.json") else { return false }
         let tokenizerFiles = ["tokenizer.json", "tokenizer_config.json", "chat_template.jinja",
                               "merges.txt", "vocab.json", "tokenizer.model"]
         return tokenizerFiles.contains { manager.fileExists(atPath: path + "/" + $0) }
+    }
+
+    private static func hasGGUF(_ path: String) -> Bool {
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: path)) ?? []
+        return files.contains {
+            let lower = $0.lowercased()
+            return lower.hasSuffix(".gguf") && !lower.contains("mmproj")
+        }
     }
 
     private static func isDanglingLink(_ path: String) -> Bool {

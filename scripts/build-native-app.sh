@@ -16,11 +16,15 @@ INSTALL="${INSTALL:-1}"
 IDENTIFIER="${IDENTIFIER:-com.zhuo.flashCat}"
 # macOS 26.4 is the floor splash's native engine enforces.
 MIN_MACOS="${MIN_MACOS:-26.4}"
-# How the runtime packs reach `Contents/Resources/engines`. The installed app must
-# carry its own copy: a symlink into the checkout breaks the moment the checkout
-# moves, which is exactly what happens after `make app`. `link` is kept for the
-# fast development loop (no GB-sized copy per build).
-EMBED_PACKS="${EMBED_PACKS:-copy}"
+# How the runtime packs reach the app.
+#   none  (default) ship no packs: they come from pack-index.json, installed into
+#         ~/Library/Application Support/flashCat/engines. Keeps the bundle ~15 MB,
+#         and every version the engine page lists is one flashCat installed itself
+#         (so it can be deleted there).
+#   copy  embed the checkout's vendor/engines (~2.6 GB with all three engines).
+#   link  symlink the checkout, for the fast development loop only: it breaks as
+#         soon as the checkout moves.
+EMBED_PACKS="${EMBED_PACKS:-none}"
 OUT_DIR="${OUT_DIR:-$ROOT/dist}"
 APP="$OUT_DIR/flashCat.app"
 NATIVE_DIR="$ROOT/native"
@@ -57,20 +61,26 @@ chmod +x "$APP/Contents/MacOS/flashCat"
 echo "==> Embed engine packs ($EMBED_PACKS)"
 # APFS clones make the copy free: `cp -Rc` shares extents with vendor/engines, so
 # the bundle is independent but only costs disk once.
-if [ -d "$ROOT/vendor/engines" ] || [ -L "$ROOT/vendor/engines" ]; then
-    rm -rf "$APP/Contents/Resources/engines"
-    if [ "$EMBED_PACKS" = "link" ]; then
+rm -rf "$APP/Contents/Resources/engines"
+if [ "$EMBED_PACKS" = "none" ]; then
+    echo "    (none — runtime packs come from the pack index)"
+elif [ "$EMBED_PACKS" = "link" ]; then
+    if [ -d "$ROOT/vendor/engines" ]; then
         ln -sfn "$ROOT/vendor/engines" "$APP/Contents/Resources/engines"
         echo "    symlinked (dev only): $ROOT/vendor/engines"
     else
-        mkdir -p "$APP/Contents/Resources/engines"
-        for engine in "$ROOT"/vendor/engines/*/; do
-            name="$(basename "$engine")"
-            cp -Rc "$engine" "$APP/Contents/Resources/engines/$name" \
-                || cp -R "$engine" "$APP/Contents/Resources/engines/$name"
-        done
-        echo "    copied: $(ls "$APP/Contents/Resources/engines" | tr '\n' ' ')"
+        echo "    (vendor/engines missing — run scripts/engines/build-omlx-pack.sh)"
     fi
+elif [ -d "$ROOT/vendor/engines" ] || [ -L "$ROOT/vendor/engines" ]; then
+    # APFS clones make the copy cheap on disk: `cp -Rc` shares extents with
+    # vendor/engines.
+    mkdir -p "$APP/Contents/Resources/engines"
+    for engine in "$ROOT"/vendor/engines/*/; do
+        name="$(basename "$engine")"
+        cp -Rc "$engine" "$APP/Contents/Resources/engines/$name" \
+            || cp -R "$engine" "$APP/Contents/Resources/engines/$name"
+    done
+    echo "    copied: $(ls "$APP/Contents/Resources/engines" | tr '\n' ' ')"
 else
     echo "    (vendor/engines missing — run scripts/engines/build-omlx-pack.sh)"
 fi

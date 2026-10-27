@@ -52,12 +52,14 @@ struct FlashCatApp: App {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // The console is designed as a dark, game-library surface; pin the whole
-        // app to the dark appearance so system controls match the key art.
-        NSApp.appearance = NSAppearance(named: .darkAqua)
-        AppState.shared.bootstrap()
+        // Apply the stored skin before anything paints: `nil` appearance means
+        // "follow macOS", so the app opens in whatever the reader picked.
+        let state = AppState.shared
+        state.theme.apply()
+        state.bootstrap()
 
         for target in NSApp.windows {
             configure(target)
@@ -82,8 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         target.toolbar = nil
         target.titlebarSeparatorStyle = .none
         target.isMovableByWindowBackground = false
-        target.backgroundColor = NSColor(calibratedRed: 0.027, green: 0.027, blue: 0.039, alpha: 1)
-        target.appearance = NSAppearance(named: .darkAqua)
+        // Both the canvas colour and the appearance follow the selected skin so
+        // the strip above the sidebar matches instead of flashing dark.
+        AppState.shared.theme.apply(to: target)
         target.contentMinSize = NSSize(width: 1040, height: 700)
         if target.frameAutosaveName.isEmpty {
             target.setFrameAutosaveName("flashCatWindow")

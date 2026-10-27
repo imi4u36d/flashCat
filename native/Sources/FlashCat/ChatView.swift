@@ -33,7 +33,7 @@ struct ChatView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let contentWidth = min(proxy.size.width, Native.contentMaxWidth)
+            let contentWidth = proxy.size.width
             let inlinePanel = contentWidth - Native.pagePadding * 2 >= 960
             VStack(alignment: .leading, spacing: 12) {
                 header
@@ -49,7 +49,7 @@ struct ChatView: View {
                     }
 
                     if showParameters && !inlinePanel {
-                        Color.black.opacity(0.12)
+                        Native.scrim
                             .contentShape(Rectangle())
                             .onTapGesture { closeParameters() }
                             .transition(.opacity)
@@ -66,8 +66,7 @@ struct ChatView: View {
             .padding(.horizontal, Native.pagePadding)
             .padding(.top, 26)
             .padding(.bottom, Native.pagePadding)
-            .frame(maxWidth: Native.contentMaxWidth, alignment: .leading)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .pageColumn(maxHeight: .infinity)
             .animation(.easeOut(duration: 0.16), value: showParameters)
         }
         .onAppear(perform: prepare)
@@ -213,21 +212,21 @@ struct ChatView: View {
         .background {
             ZStack {
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(.black.opacity(0.24))
+                    .fill(Native.sheetBase)
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(LinearGradient(colors: [.white.opacity(0.055), .white.opacity(0.018)],
+                    .fill(LinearGradient(colors: [Native.glassTop, Native.glassBottom],
                                          startPoint: .top, endPoint: .bottom))
             }
         }
         .overlay {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .strokeBorder(
-                    LinearGradient(colors: [.white.opacity(0.18), .white.opacity(0.05)],
+                    LinearGradient(colors: [Native.glassEdgeTop, Native.glassEdgeBottom],
                                    startPoint: .top, endPoint: .bottom),
                     lineWidth: 1)
         }
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .shadow(color: .black.opacity(0.35), radius: 24, y: 12)
+        .shadow(color: Native.sheetShadow, radius: 24, y: 12)
     }
 
     private var messageArea: some View {
@@ -432,11 +431,11 @@ struct ChatView: View {
                 .padding(.vertical, 9)
                 .background {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(.white.opacity(0.065))
+                        .fill(Native.overlay(0.065))
                 }
                 .overlay {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(composerFocused ? Native.accent.opacity(0.75) : .white.opacity(0.10),
+                        .stroke(composerFocused ? Native.accent.opacity(0.75) : Native.overlay(0.10),
                                 lineWidth: 1)
                 }
 
@@ -519,14 +518,14 @@ struct ChatView: View {
             ZStack {
                 Circle()
                     .fill(state.generating ? AnyShapeStyle(Native.red)
-                          : AnyShapeStyle(LinearGradient(colors: [.white, .white.opacity(0.86)],
+                          : AnyShapeStyle(LinearGradient(colors: [Native.pillFill, Native.pillFill.opacity(0.88)],
                                                          startPoint: .top, endPoint: .bottom)))
                 Image(systemName: state.generating ? "stop.fill" : "arrow.up")
                     .font(.system(size: 12, weight: .heavy))
-                    .foregroundStyle(state.generating ? Color.white : Color(hex: 0x0B0B10))
+                    .foregroundStyle(state.generating ? Color.white : Native.pillText)
             }
             .frame(width: 32, height: 32)
-            .shadow(color: .white.opacity(state.generating ? 0 : 0.18), radius: 8, y: 2)
+            .shadow(color: Native.overlay(state.generating ? 0 : 0.18), radius: 8, y: 2)
         }
         .buttonStyle(.plain)
         .disabled(!state.generating && !canSend)
@@ -696,7 +695,7 @@ struct ChatView: View {
         .background {
             ZStack {
                 RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous)
-                    .fill(.black.opacity(0.42))
+                    .fill(Native.sheetBase)
                 GlassSurface(radius: Native.radiusPanel)
             }
         }
@@ -1464,11 +1463,11 @@ private struct SuggestionButton: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.white.opacity(hovered ? 0.10 : 0.055))
+                    .fill(Native.overlay(hovered ? 0.10 : 0.055))
             }
             .overlay {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(.white.opacity(hovered ? 0.20 : 0.09), lineWidth: 0.8)
+                    .stroke(Native.overlay(hovered ? 0.20 : 0.09), lineWidth: 0.8)
             }
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
@@ -1485,13 +1484,13 @@ private struct KeyCap: View {
     var body: some View {
         Text(label)
             .font(.system(size: 9, weight: .semibold, design: .monospaced))
-            .foregroundStyle(.white.opacity(0.6))
+            .foregroundStyle(Native.secondary)
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
-            .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(.white.opacity(0.07)))
+            .background(RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Native.overlay(0.07)))
             .overlay(
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .stroke(.white.opacity(0.12), lineWidth: 0.8)
+                    .stroke(Native.overlay(0.12), lineWidth: 0.8)
             )
     }
 }
@@ -1504,11 +1503,11 @@ private struct MetricChip: View {
     var body: some View {
         Text(text)
             .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-            .foregroundStyle(.white.opacity(0.55))
+            .foregroundStyle(Native.tertiary)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .background(Capsule().fill(.white.opacity(0.06)))
-            .overlay(Capsule().stroke(.white.opacity(0.09), lineWidth: 0.8))
+            .background(Capsule().fill(Native.overlay(0.06)))
+            .overlay(Capsule().stroke(Native.overlay(0.09), lineWidth: 0.8))
     }
 }
 
@@ -1546,7 +1545,7 @@ private struct LiveStrip: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 7)
-            .background(.black.opacity(0.22))
+            .background(Native.recess)
             .overlay(alignment: .top) { Hairline() }
         }
     }
@@ -1574,10 +1573,10 @@ private struct ComposerChipLabel: View {
         HStack(spacing: 4) {
             Image(systemName: icon)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.42))
+                .foregroundStyle(Native.tertiary)
             Text(text)
                 .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(.white.opacity(0.72))
+                .foregroundStyle(Native.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
             if chevron {
@@ -1588,8 +1587,8 @@ private struct ComposerChipLabel: View {
         }
         .padding(.horizontal, 9)
         .frame(height: 26)
-        .background(Capsule().fill(.white.opacity(hovered ? 0.12 : 0.065)))
-        .overlay(Capsule().stroke(.white.opacity(0.10), lineWidth: 0.8))
+        .background(Capsule().fill(Native.overlay(hovered ? 0.12 : 0.065)))
+        .overlay(Capsule().stroke(Native.overlay(0.10), lineWidth: 0.8))
         .contentShape(Capsule())
         .onHover { hovered = $0 }
     }

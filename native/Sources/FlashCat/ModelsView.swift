@@ -17,7 +17,7 @@ struct ModelsView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let usable = max(320, min(proxy.size.width, Native.contentMaxWidth) - Native.pagePadding * 2)
+            let usable = max(320, proxy.size.width - Native.pagePadding * 2)
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     PageHeader(title: "模型", subtitle: subtitle, eyebrow: "MODEL LIBRARY")
@@ -43,8 +43,7 @@ struct ModelsView: View {
                 .padding(.horizontal, Native.pagePadding)
                 .padding(.top, 30)
                 .padding(.bottom, Native.pagePadding)
-                .frame(maxWidth: Native.contentMaxWidth, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .pageColumn()
             }
             .scrollIndicators(.never)
         }
@@ -408,7 +407,7 @@ private struct ModelsSearchField: View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.4))
+                .foregroundStyle(Native.tertiary)
 
             TextField("搜索模型、机构或参数规模", text: $text)
                 .textFieldStyle(.plain)
@@ -429,9 +428,9 @@ private struct ModelsSearchField: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 32)
-        .background(Capsule().fill(.white.opacity(0.075)))
+        .background(Capsule().fill(Native.overlay(0.075)))
         .overlay(
-            Capsule().stroke(focused ? Native.accent.opacity(0.8) : .white.opacity(0.11),
+            Capsule().stroke(focused ? Native.accent.opacity(0.8) : Native.overlay(0.11),
                              lineWidth: 1)
         )
         .contentShape(Rectangle())
@@ -501,7 +500,7 @@ private struct ModelCardView: View {
                     selected
                         ? AnyShapeStyle(LinearGradient(colors: [Native.accent.opacity(0.9), Native.pink.opacity(0.45)],
                                                        startPoint: .topLeading, endPoint: .bottomTrailing))
-                        : AnyShapeStyle(.white.opacity(hovering ? 0.20 : 0.06)),
+                        : AnyShapeStyle(Native.overlay(hovering ? 0.20 : 0.06)),
                     lineWidth: selected ? 1.4 : 1)
         )
         .shadow(color: selected ? Native.accent.opacity(0.22) : .clear, radius: 20, y: 8)
@@ -802,8 +801,8 @@ private struct ModelsImportBar: View {
                         .foregroundStyle(targeted ? Native.accent : Native.label.opacity(0.85))
                         .padding(.horizontal, 11)
                         .frame(height: 26)
-                        .background(Capsule().fill(.white.opacity(0.10)))
-                        .overlay(Capsule().stroke(.white.opacity(0.14), lineWidth: 0.8))
+                        .background(Capsule().fill(Native.overlay(0.10)))
+                        .overlay(Capsule().stroke(Native.overlay(0.14), lineWidth: 0.8))
                 }
             }
             .padding(.horizontal, 14)
@@ -827,7 +826,7 @@ private struct ModelsImportBar: View {
     private var background: some View {
         RoundedRectangle(cornerRadius: 16, style: .continuous)
             .fill(targeted ? Native.accent.opacity(0.12)
-                  : Color.white.opacity(hovering ? 0.055 : 0.025))
+                  : Native.overlay(hovering ? 0.055 : 0.025))
     }
 
     private var border: some View {

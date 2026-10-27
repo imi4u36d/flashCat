@@ -3,10 +3,12 @@ import AppKit
 
 // MARK: - Palette
 //
-// The visual language mirrors Apple's Games app: a near-black canvas, full-bleed
-// gradient key art, glass panels with a soft top sheen, oversized rounded type,
-// white pill actions and colourful squircle icons. Everything is dark-first; the
-// app pins itself to the dark appearance at launch.
+// The visual language mirrors Apple's Games app: full-bleed gradient key art,
+// glass panels with a soft top sheen, oversized rounded type, pill actions and
+// colourful squircle icons. Two skins share that language — the original night
+// canvas and a daylight one. Every token below resolves per appearance (see
+// Theme.swift), so views never branch on the skin. Key art stays saturated with
+// white type in both skins, the way a cover image does.
 
 extension Color {
     init(hex: UInt32, opacity: Double = 1) {
@@ -20,37 +22,100 @@ extension Color {
 
 enum Native {
     // Canvas
-    static let surface = Color(hex: 0x07070A)
-    static let canvas = Color(hex: 0x0B0B10)
-    static let panel = Color.white.opacity(0.055)
-    static let raised = Color.white.opacity(0.095)
-    static let hairline = Color.white.opacity(0.10)
-    static let stroke = Color.white.opacity(0.13)
+    static let surface = Color.adaptive(dark: 0x07070A, light: 0xF2F2F5)
+    static let canvas = Color.adaptive(dark: 0x0B0B10, light: 0xFFFFFF)
+    static let sidebar = Color.adaptive(dark: 0x0B0B11, light: 0xECECF1)
+    static let panel = Color.adaptive(dark: 0xFFFFFF, light: 0x101014,
+                                      darkAlpha: 0.055, lightAlpha: 0.045)
+    static let raised = Color.adaptive(dark: 0xFFFFFF, light: 0x101014,
+                                       darkAlpha: 0.095, lightAlpha: 0.07)
+    static let hairline = Color.adaptive(dark: 0xFFFFFF, light: 0x101014,
+                                         darkAlpha: 0.10, lightAlpha: 0.10)
+    static let stroke = Color.adaptive(dark: 0xFFFFFF, light: 0x101014,
+                                       darkAlpha: 0.13, lightAlpha: 0.13)
+
+    /// The colour AppKit paints behind the hidden title bar.
+    static let windowBackground = NSColor.adaptive(dark: 0x07070A, light: 0xF2F2F5)
 
     // Type
-    static let label = Color(hex: 0xF5F5F7)
-    static let secondary = Color(hex: 0xA6A6B0)
-    static let tertiary = Color(hex: 0x767680)
+    static let label = Color.adaptive(dark: 0xF5F5F7, light: 0x121216)
+    static let secondary = Color.adaptive(dark: 0xA6A6B0, light: 0x56565F)
+    static let tertiary = Color.adaptive(dark: 0x767680, light: 0x82828B)
 
-    // Brand + accents
-    static let accent = Color(hex: 0xFF6A3D)
-    static let accentSoft = Color(hex: 0xFF8E5C)
-    static let pink = Color(hex: 0xFF375F)
-    static let violet = Color(hex: 0x8B5CF6)
-    static let cyan = Color(hex: 0x22D3EE)
-    static let mint = Color(hex: 0x30D158)
-    static let amber = Color(hex: 0xFFB020)
-    static let indigo = Color(hex: 0x5E5CE6)
+    // Brand + accents. The daylight values are the same hues pushed deeper so
+    // they stay legible as type and still read as fills/gradients on white.
+    static let accent = Color.adaptive(dark: 0xFF6A3D, light: 0xDE4E1C)
+    static let accentSoft = Color.adaptive(dark: 0xFF8E5C, light: 0xC2410C)
+    static let pink = Color.adaptive(dark: 0xFF375F, light: 0xD81B45)
+    static let violet = Color.adaptive(dark: 0x8B5CF6, light: 0x6D28D9)
+    static let cyan = Color.adaptive(dark: 0x22D3EE, light: 0x0E7490)
+    static let mint = Color.adaptive(dark: 0x30D158, light: 0x15803D)
+    static let amber = Color.adaptive(dark: 0xFFB020, light: 0xA9600A)
+    static let indigo = Color.adaptive(dark: 0x5E5CE6, light: 0x4338CA)
 
     // Status
-    static let green = Color(hex: 0x32D74B)
-    static let yellow = Color(hex: 0xFFD60A)
-    static let orange = Color(hex: 0xFF9F0A)
-    static let red = Color(hex: 0xFF453A)
-    static let blue = Color(hex: 0x0A84FF)
-    static let purple = Color(hex: 0xBF5AF2)
-    static let teal = Color(hex: 0x40C8E0)
-    static let gray = Color(hex: 0x8E8E93)
+    static let green = Color.adaptive(dark: 0x32D74B, light: 0x248A3D)
+    static let yellow = Color.adaptive(dark: 0xFFD60A, light: 0xA16207)
+    static let orange = Color.adaptive(dark: 0xFF9F0A, light: 0xC2410C)
+    static let red = Color.adaptive(dark: 0xFF453A, light: 0xD01B22)
+    static let blue = Color.adaptive(dark: 0x0A84FF, light: 0x0A6CD0)
+    static let purple = Color.adaptive(dark: 0xBF5AF2, light: 0x8944AB)
+    static let teal = Color.adaptive(dark: 0x40C8E0, light: 0x0E7490)
+    static let gray = Color.adaptive(dark: 0x8E8E93, light: 0x8A8A8E)
+
+    // Surfaces that sit on the canvas and swap direction with the skin.
+    static let glassTop = Color.adaptive(dark: 0xFFFFFF, light: 0xFFFFFF,
+                                         darkAlpha: 0.080, lightAlpha: 0.92)
+    static let glassBottom = Color.adaptive(dark: 0xFFFFFF, light: 0xFFFFFF,
+                                            darkAlpha: 0.032, lightAlpha: 0.72)
+    static let glassEdgeTop = Color.adaptive(dark: 0xFFFFFF, light: 0x101014,
+                                             darkAlpha: 0.20, lightAlpha: 0.07)
+    static let glassEdgeBottom = Color.adaptive(dark: 0xFFFFFF, light: 0x101014,
+                                                darkAlpha: 0.05, lightAlpha: 0.02)
+    static let panelShadow = Color.adaptive(dark: 0x000000, light: 0x000000,
+                                            darkAlpha: 0.38, lightAlpha: 0.07)
+
+    // Backdrop vignette: darkens the night canvas, gently lifts the day one.
+    static let backdropTop = Color.adaptive(dark: 0x000000, light: 0xFFFFFF,
+                                            darkAlpha: 0.48, lightAlpha: 0.55)
+    static let backdropTopSoft = Color.adaptive(dark: 0x000000, light: 0xFFFFFF,
+                                                darkAlpha: 0.12, lightAlpha: 0.18)
+    static let backdropBottom = Color.adaptive(dark: 0x000000, light: 0x101014,
+                                               darkAlpha: 0.28, lightAlpha: 0.03)
+
+    // Primary (leading) pill: white on night, ink on day.
+    static let pillFill = Color.adaptive(dark: 0xF2F2F4, light: 0x17171B)
+    static let pillText = Color.adaptive(dark: 0x0B0B10, light: 0xFFFFFF)
+
+    // Glass chips that sit on key art.
+    static let chipFill = Color.adaptive(dark: 0x000000, light: 0xFFFFFF,
+                                         darkAlpha: 0.22, lightAlpha: 0.78)
+    static let chipText = Color.adaptive(dark: 0xF5F5F7, light: 0x14141A)
+    static let chipBorder = Color.adaptive(dark: 0xFFFFFF, light: 0xFFFFFF,
+                                           darkAlpha: 0.20, lightAlpha: 0.55)
+
+    // Toast capsule.
+    static let toastFill = Color.adaptive(dark: 0x000000, light: 0xFFFFFF,
+                                          darkAlpha: 0.35, lightAlpha: 0.92)
+
+    // Large content sheets (chat canvas, parameter panel): a faint base under the
+    // glass gradient so the panel separates from the page.
+    static let sheetBase = Color.adaptive(dark: 0x000000, light: 0xFFFFFF,
+                                         darkAlpha: 0.24, lightAlpha: 0.82)
+    static let sheetShadow = Color.adaptive(dark: 0x000000, light: 0x000000,
+                                           darkAlpha: 0.35, lightAlpha: 0.10)
+    /// Dimming layer behind floating panels.
+    static let scrim = Color.adaptive(dark: 0x000000, light: 0x000000,
+                                      darkAlpha: 0.12, lightAlpha: 0.10)
+    /// Recessed strip (live metrics bar): darker than the canvas both ways.
+    static let recess = Color.adaptive(dark: 0x000000, light: 0x101014,
+                                       darkAlpha: 0.22, lightAlpha: 0.04)
+
+    /// Translucent overlay that flips direction with the skin: white lifts the
+    /// night canvas, near-black recesses the daylight one.
+    static func overlay(_ opacity: Double) -> Color {
+        .adaptiveOverlay(opacity)
+    }
 
     // Geometry
     static let radiusSmall: CGFloat = 10
@@ -75,7 +140,15 @@ enum Native {
     static let metricLarge = Font.system(size: 34, weight: .bold, design: .rounded)
 
     static let sidebarWidth: CGFloat = 244
-    static let contentMaxWidth: CGFloat = 1280
+}
+
+extension View {
+    /// The page column every workspace page shares: full width, so cards,
+    /// headers and grids keep the same edges when switching pages and grow
+    /// with the window instead of leaving a gutter on the right.
+    func pageColumn(maxHeight: CGFloat? = nil) -> some View {
+        frame(maxWidth: .infinity, maxHeight: maxHeight, alignment: .topLeading)
+    }
 }
 
 // MARK: - Page key colours
@@ -265,7 +338,7 @@ struct HeroPanel<Content: View>: View {
     }
 }
 
-/// Ambient page backdrop: black canvas, two soft colour washes, fine grain.
+/// Ambient page backdrop: canvas, two soft colour washes, fine grain.
 struct ArcadeBackdrop: View {
     var colors: [Color]
 
@@ -282,10 +355,10 @@ struct ArcadeBackdrop: View {
                                startRadius: 0,
                                endRadius: max(proxy.size.width, 800) * 0.55)
                 LinearGradient(stops: [
-                    .init(color: .black.opacity(0.48), location: 0),
-                    .init(color: .black.opacity(0.12), location: 0.16),
+                    .init(color: Native.backdropTop, location: 0),
+                    .init(color: Native.backdropTopSoft, location: 0.16),
                     .init(color: .clear, location: 0.42),
-                    .init(color: .black.opacity(0.28), location: 1),
+                    .init(color: Native.backdropBottom, location: 1),
                 ], startPoint: .top, endPoint: .bottom)
                 GrainOverlay(opacity: 0.03)
             }
@@ -308,7 +381,7 @@ struct GlassSurface: View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         shape
             .fill(
-                LinearGradient(colors: [.white.opacity(0.080), .white.opacity(0.032)],
+                LinearGradient(colors: [Native.glassTop, Native.glassBottom],
                                startPoint: .top, endPoint: .bottom)
             )
             .overlay {
@@ -318,18 +391,20 @@ struct GlassSurface: View {
             }
             .overlay(
                 shape.strokeBorder(
-                    LinearGradient(colors: [.white.opacity(0.20), .white.opacity(0.05)],
+                    LinearGradient(colors: [Native.glassEdgeTop, Native.glassEdgeBottom],
                                    startPoint: .top, endPoint: .bottom),
                     lineWidth: 1)
             )
-            .shadow(color: .black.opacity(elevated ? 0.38 : 0),
+            .shadow(color: Native.panelShadow.opacity(elevated ? 1 : 0),
                     radius: elevated ? 20 : 0,
                     x: 0,
                     y: elevated ? 10 : 0)
     }
 }
 
-/// Small glass capsule used for tags, chips and status labels.
+/// Small glass capsule used for tags, chips and status labels. They normally sit
+/// on key art, so they keep a dark-glass look at night and a frosted light one by
+/// day — both are readable because the label colour flips with the fill.
 struct GlassChip: View {
     var icon: String? = nil
     var text: String
@@ -341,19 +416,19 @@ struct GlassChip: View {
             if let icon {
                 Image(systemName: icon)
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(solid ? Color.black.opacity(0.7) : tint)
+                    .foregroundStyle(solid ? Native.pillText.opacity(0.75) : tint)
             }
             Text(text)
                 .font(.system(size: 11, weight: .semibold))
                 .lineLimit(1)
-                .foregroundStyle(solid ? Color.black.opacity(0.85) : .white.opacity(0.94))
+                .foregroundStyle(solid ? Native.pillText.opacity(0.9) : Native.chipText)
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 4)
         .background {
-            Capsule().fill(solid ? Color.white.opacity(0.92) : Color.black.opacity(0.22))
+            Capsule().fill(solid ? Native.pillFill : Native.chipFill)
         }
-        .overlay(Capsule().stroke(.white.opacity(solid ? 0 : 0.20), lineWidth: 0.8))
+        .overlay(Capsule().stroke(Native.chipBorder.opacity(solid ? 0 : 1), lineWidth: 0.8))
     }
 }
 
@@ -371,17 +446,18 @@ struct ArcadePillStyle: ButtonStyle {
 
     private var foreground: Color {
         switch tone {
-        case .light: return Color(hex: 0x0B0B10)
-        case .glass, .accent, .danger: return .white
+        case .light: return Native.pillText
+        case .glass: return Native.label
+        case .accent, .danger: return .white
         }
     }
 
     private var background: AnyShapeStyle {
         switch tone {
         case .light:
-            return AnyShapeStyle(Color.white.opacity(0.94))
+            return AnyShapeStyle(Native.pillFill)
         case .glass:
-            return AnyShapeStyle(Color.white.opacity(0.12))
+            return AnyShapeStyle(Native.overlay(0.12))
         case .accent:
             return AnyShapeStyle(LinearGradient(colors: [Native.accent, Native.pink],
                                                 startPoint: .topLeading, endPoint: .bottomTrailing))
@@ -397,7 +473,7 @@ struct ArcadePillStyle: ButtonStyle {
             .padding(.horizontal, compact ? 12 : 15)
             .frame(height: compact ? 28 : 33)
             .background(background, in: Capsule())
-            .overlay(Capsule().stroke(.white.opacity(tone == .light ? 0 : 0.16), lineWidth: 0.8))
+            .overlay(Capsule().stroke(Native.overlay(0.16).opacity(tone == .light ? 0 : 1), lineWidth: 0.8))
             .shadow(color: tone == .accent ? Native.accent.opacity(0.35) : .black.opacity(0.18),
                     radius: tone == .accent ? 12 : 6,
                     x: 0,
@@ -562,17 +638,17 @@ enum TagTone {
 
     var foreground: Color {
         switch self {
-        case .neutral: return Color(hex: 0xC9C9D3)
-        case .accent: return Color(hex: 0xFFA07A)
-        case .success: return Color(hex: 0x5BE38B)
-        case .warning: return Color(hex: 0xFFD166)
-        case .danger: return Color(hex: 0xFF7A72)
+        case .neutral: return Color.adaptive(dark: 0xC9C9D3, light: 0x4C4C55)
+        case .accent: return Color.adaptive(dark: 0xFFA07A, light: 0xB23A11)
+        case .success: return Color.adaptive(dark: 0x5BE38B, light: 0x18743A)
+        case .warning: return Color.adaptive(dark: 0xFFD166, light: 0x8A5A08)
+        case .danger: return Color.adaptive(dark: 0xFF7A72, light: 0xBC1F1B)
         }
     }
 
     var background: Color {
         switch self {
-        case .neutral: return .white.opacity(0.09)
+        case .neutral: return Native.overlay(0.09)
         case .accent: return Native.accent.opacity(0.20)
         case .success: return Native.green.opacity(0.18)
         case .warning: return Native.orange.opacity(0.20)
@@ -606,7 +682,7 @@ struct Tag: View {
 
 struct Eyebrow: View {
     var text: String
-    var color: Color = .white.opacity(0.55)
+    var color: Color = Native.secondary.opacity(0.9)
 
     var body: some View {
         Text(text)
@@ -741,7 +817,7 @@ struct Meter: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(0.10))
+                Capsule().fill(Native.overlay(0.10))
                 Capsule()
                     .fill(LinearGradient(colors: [tint, tint.opacity(0.62)],
                                          startPoint: .leading, endPoint: .trailing))
@@ -766,7 +842,7 @@ struct ShimmerSweep: View {
                 let period: Double = 1.35
                 let time = timeline.date.timeIntervalSinceReferenceDate
                 let phase = CGFloat(time.truncatingRemainder(dividingBy: period) / period)
-                LinearGradient(colors: [.clear, .white.opacity(0.22), .clear],
+                LinearGradient(colors: [.clear, Native.overlay(0.22), .clear],
                                startPoint: .leading,
                                endPoint: .trailing)
                     .frame(width: sweep)
@@ -787,7 +863,7 @@ struct SkeletonBar: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         shape
-            .fill(.white.opacity(opacity))
+            .fill(Native.overlay(opacity))
             .frame(width: width, height: height)
             .overlay { ShimmerSweep() }
             .clipShape(shape)
@@ -803,7 +879,7 @@ struct SkeletonBlock: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         shape
-            .fill(.white.opacity(opacity))
+            .fill(Native.overlay(opacity))
             .frame(maxWidth: .infinity)
             .frame(height: height)
             .overlay { ShimmerSweep() }
@@ -915,9 +991,9 @@ struct IconAction: View {
                         .fill(active ? AnyShapeStyle(LinearGradient(colors: [Native.accent, Native.pink],
                                                                     startPoint: .topLeading,
                                                                     endPoint: .bottomTrailing))
-                                     : AnyShapeStyle(Color.white.opacity(hovering ? 0.14 : 0.08)))
+                                     : AnyShapeStyle(Native.overlay(hovering ? 0.14 : 0.08)))
                 }
-                .overlay(Circle().stroke(.white.opacity(active ? 0 : 0.12), lineWidth: 0.8))
+                .overlay(Circle().stroke(Native.overlay(0.12).opacity(active ? 0 : 1), lineWidth: 0.8))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -943,9 +1019,9 @@ struct IconMenuLabel: View {
                           ? AnyShapeStyle(LinearGradient(colors: [Native.accent, Native.pink],
                                                          startPoint: .topLeading,
                                                          endPoint: .bottomTrailing))
-                          : AnyShapeStyle(Color.white.opacity(0.08)))
+                          : AnyShapeStyle(Native.overlay(0.08)))
             }
-            .overlay(Circle().stroke(.white.opacity(active ? 0 : 0.12), lineWidth: 0.8))
+            .overlay(Circle().stroke(Native.overlay(0.12).opacity(active ? 0 : 1), lineWidth: 0.8))
             .contentShape(Circle())
     }
 }
@@ -993,9 +1069,9 @@ struct ToastView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(.ultraThinMaterial, in: Capsule())
-        .background(Capsule().fill(.black.opacity(0.35)))
-        .overlay(Capsule().stroke(.white.opacity(0.16), lineWidth: 0.8))
-        .shadow(color: .black.opacity(0.45), radius: 18, y: 8)
+        .background(Capsule().fill(Native.toastFill))
+        .overlay(Capsule().stroke(Native.overlay(0.16), lineWidth: 0.8))
+        .shadow(color: Native.panelShadow, radius: 18, y: 8)
         .padding(.bottom, 20)
     }
 }

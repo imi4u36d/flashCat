@@ -16,7 +16,7 @@ struct EngineSwitcherRow: View {
         .padding(3)
         .background {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(.white.opacity(0.045))
+                .fill(Native.overlay(0.045))
         }
     }
 
@@ -27,7 +27,7 @@ struct EngineSwitcherRow: View {
         } label: {
             Text(id.displayName)
                 .font(.system(size: 9.5, weight: .semibold))
-                .foregroundStyle(active ? Color.black.opacity(0.82) : .white.opacity(0.62))
+                .foregroundStyle(active ? Native.pillText : Native.secondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background {
@@ -64,7 +64,7 @@ struct EngineModelsPanel: View {
                     .foregroundStyle(Native.cyan)
                 Text("这些模型来自你本机已有的权重目录，flashCat 只建立链接，不复制、不下载。")
                     .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(Native.tertiary)
                 Spacer(minLength: 4)
                 Button("重新扫描") {
                     EngineModelLinker.synchronize(state.activeEngine)
@@ -80,7 +80,7 @@ struct EngineModelsPanel: View {
             if models.isEmpty {
                 Text("在 \(EnginePaths.modelsDirectory(state.activeEngine)) 里没有找到可用模型。点「重新扫描」从你已有的模型目录建立链接。")
                     .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.45))
+                    .foregroundStyle(Native.tertiary)
                     .padding(.vertical, 20)
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 12)], spacing: 12) {
@@ -101,7 +101,7 @@ struct EngineModelsPanel: View {
                 HStack(spacing: 6) {
                     Text(model.id)
                         .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.9))
+                        .foregroundStyle(Native.label)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer(minLength: 2)
@@ -115,7 +115,7 @@ struct EngineModelsPanel: View {
                     if let kind = model.kind { Text(kind) }
                 }
                 .font(Native.monoSmall)
-                .foregroundStyle(.white.opacity(0.36))
+                .foregroundStyle(Native.tertiary.opacity(0.9))
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)

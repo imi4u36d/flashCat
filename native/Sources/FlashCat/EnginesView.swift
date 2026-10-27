@@ -209,7 +209,7 @@ struct EnginesView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let usable = max(320, min(proxy.size.width, Native.contentMaxWidth) - Native.pagePadding * 2)
+            let usable = max(320, proxy.size.width - Native.pagePadding * 2)
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     PageHeader(title: "引擎",
@@ -228,8 +228,7 @@ struct EnginesView: View {
                 .padding(.horizontal, Native.pagePadding)
                 .padding(.top, 30)
                 .padding(.bottom, Native.pagePadding)
-                .frame(maxWidth: Native.contentMaxWidth, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .pageColumn()
             }
             .scrollIndicators(.never)
         }
@@ -252,7 +251,7 @@ struct EnginesView: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Circle()
-                    .fill(isActive ? statusColor(state.serverState) : Color.white.opacity(0.18))
+                    .fill(isActive ? statusColor(state.serverState) : Native.overlay(0.18))
                     .frame(width: 7, height: 7)
                 Text(id.displayName)
                     .font(.system(size: 14, weight: .semibold))
@@ -262,14 +261,14 @@ struct EnginesView: View {
                 }
                 Text(verbatim: "端口 \(String(enginePort(id)))")
                     .font(Native.monoSmall)
-                    .foregroundStyle(.white.opacity(0.34))
+                    .foregroundStyle(Native.tertiary)
                 Spacer(minLength: 6)
                 if versions.isEmpty {
                     Tag(text: "未安装", tone: .neutral)
                 } else {
                     Text(verbatim: "已装 \(versions.joined(separator: ", "))")
                         .font(Native.monoSmall)
-                        .foregroundStyle(.white.opacity(0.4))
+                        .foregroundStyle(Native.tertiary)
                         .lineLimit(1)
                 }
                 if !isActive {
@@ -296,19 +295,19 @@ struct EnginesView: View {
             if phase != .idle {
                 Text(phase.label)
                     .font(.system(size: 10.5))
-                    .foregroundStyle(phase.isFailure ? Native.red.opacity(0.9) : .white.opacity(0.5))
+                    .foregroundStyle(phase.isFailure ? Native.red.opacity(0.9) : Native.secondary)
                     .lineLimit(2)
             }
 
             if versions.contains(where: { $0 != version(id) }) {
                 let deletable = installs.removable[id] ?? []
                 VStack(alignment: .leading, spacing: 6) {
-                    Eyebrow(text: "已安装版本", color: .white.opacity(0.3))
+                    Eyebrow(text: "已安装版本", color: Native.tertiary)
                     ForEach(versions, id: \.self) { installedVersion in
                         HStack(spacing: 8) {
                             Text(installedVersion)
                                 .font(Native.monoSmall)
-                                .foregroundStyle(.white.opacity(0.62))
+                                .foregroundStyle(Native.secondary)
                             if installedVersion == version(id) {
                                 Tag(text: "使用中", tone: .success)
                             }
@@ -334,25 +333,25 @@ struct EnginesView: View {
 
             if !offers.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Eyebrow(text: "运行时包", color: .white.opacity(0.3))
+                    Eyebrow(text: "运行时包", color: Native.tertiary)
                     ForEach(offers, id: \.release.version) { offer in
                         let release = offer.release
                         HStack(spacing: 8) {
                             Text(release.version)
                                 .font(Native.monoSmall)
-                                .foregroundStyle(.white.opacity(0.62))
+                                .foregroundStyle(Native.secondary)
                             if offer.action == .reinstall {
                                 Tag(text: "已装此版本", tone: .neutral)
                             }
                             if let bytes = release.bytes {
                                 Text(verbatim: Format.bytes(bytes))
                                     .font(.system(size: 9.5))
-                                    .foregroundStyle(.white.opacity(0.34))
+                                    .foregroundStyle(Native.tertiary)
                             }
                             if let notes = release.notes, !notes.isEmpty {
                                 Text(notes)
                                     .font(.system(size: 9.5))
-                                    .foregroundStyle(.white.opacity(0.34))
+                                    .foregroundStyle(Native.tertiary)
                                     .lineLimit(1)
                             }
                             Spacer(minLength: 4)
@@ -367,7 +366,7 @@ struct EnginesView: View {
                 Text(installs.indexError.map { "没有可安装的版本：\($0)" }
                      ?? "没有可安装的版本。用 scripts/engines/build-\(id.rawValue)-pack.sh 在本机构建，或配置 FLASHCAT_PACK_INDEX_URL。")
                     .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.4))
+                    .foregroundStyle(Native.tertiary)
             }
 
             HStack(spacing: 8) {
@@ -398,12 +397,12 @@ struct EnginesView: View {
         let busy = installs.building != nil
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
-                Eyebrow(text: "上游版本 (GitHub)", color: .white.opacity(0.3))
+                Eyebrow(text: "上游版本 (GitHub)", color: Native.tertiary)
                 Spacer(minLength: 4)
                 if let checkedAt = installs.upstreamCheckedAt {
                     Text(verbatim: "检查于 \(Self.clock.string(from: checkedAt))")
                         .font(.system(size: 9.5))
-                        .foregroundStyle(.white.opacity(0.26))
+                        .foregroundStyle(Native.tertiary.opacity(0.8))
                 }
                 Button(status == nil ? "检查更新" : "重新检查") {
                     Task { await installs.checkUpstream(force: true) }
@@ -415,7 +414,7 @@ struct EnginesView: View {
             case .current(let version):
                 Text(verbatim: "分支最新版 \(version)，本地已是最新。")
                     .font(.system(size: 10.5))
-                    .foregroundStyle(.white.opacity(0.45))
+                    .foregroundStyle(Native.tertiary)
             case .update(let installed, let release):
                 HStack(spacing: 8) {
                     Text(verbatim: "新版本 \(release.version)")
@@ -426,7 +425,7 @@ struct EnginesView: View {
                     }
                     Text(verbatim: installed.map { "已装 \($0)" } ?? "尚未安装")
                         .font(.system(size: 9.5))
-                        .foregroundStyle(.white.opacity(0.34))
+                        .foregroundStyle(Native.tertiary)
                     Spacer(minLength: 4)
                     Button("发布说明") { NSWorkspace.shared.open(release.pageURL) }
                         .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
@@ -443,7 +442,7 @@ struct EnginesView: View {
             case nil:
                 Text("尚未检查上游版本。")
                     .font(.system(size: 10.5))
-                    .foregroundStyle(.white.opacity(0.3))
+                    .foregroundStyle(Native.tertiary.opacity(0.9))
             }
 
             if installs.building == id, let step = installs.buildStep[id] {
@@ -451,7 +450,7 @@ struct EnginesView: View {
                     ProgressView().controlSize(.small)
                     Text(verbatim: "\(step)…")
                         .font(.system(size: 10.5))
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(Native.secondary)
                 }
             }
             if let tail = installs.buildTail[id], !tail.isEmpty {
@@ -460,7 +459,7 @@ struct EnginesView: View {
                         ForEach(Array(tail.enumerated()), id: \.offset) { entry in
                             Text(verbatim: entry.element)
                                 .font(.system(size: 9, design: .monospaced))
-                                .foregroundStyle(.white.opacity(0.34))
+                                .foregroundStyle(Native.tertiary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
@@ -470,7 +469,7 @@ struct EnginesView: View {
                 .padding(.vertical, 4)
                 .background {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(.black.opacity(0.28))
+                        .fill(Native.recess)
                 }
             }
         }
@@ -488,24 +487,24 @@ struct EnginesView: View {
         HStack(spacing: 8) {
             Text("端口")
                 .font(.system(size: 10.5))
-                .foregroundStyle(.white.opacity(0.42))
+                .foregroundStyle(Native.tertiary)
             TextField("", text: portBinding(id))
                 .textFieldStyle(.plain)
                 .font(Native.monoSmall)
-                .foregroundStyle(.white.opacity(0.8))
+                .foregroundStyle(Native.label.opacity(0.9))
                 .frame(width: 70)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background {
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(.white.opacity(0.06))
+                        .fill(Native.overlay(0.06))
                 }
                 .disabled(state.activeEngine == id && state.isRunning)
             Text(verbatim: state.activeEngine == id && state.isRunning
                  ? "运行中不能改端口"
                  : "默认 \(id.defaultPort)，可顺延 \(id.portRange.count) 个")
                 .font(.system(size: 9.5))
-                .foregroundStyle(.white.opacity(0.28))
+                .foregroundStyle(Native.tertiary.opacity(0.85))
             Spacer(minLength: 0)
         }
     }
@@ -550,19 +549,19 @@ struct EnginesView: View {
         if let memory = tuning.maxMemory, !memory.isEmpty { parts.append("内存 \(memory)") }
         if let context = tuning.maxContext, !context.isEmpty { parts.append("上下文 \(context)") }
         return VStack(alignment: .leading, spacing: 3) {
-            Eyebrow(text: "当前配置", color: .white.opacity(0.3))
+            Eyebrow(text: "当前配置", color: Native.tertiary)
             Text(parts.isEmpty ? "使用引擎默认值" : parts.joined(separator: " · "))
                 .font(.system(size: 10.5))
-                .foregroundStyle(.white.opacity(0.45))
+                .foregroundStyle(Native.tertiary)
         }
     }
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Eyebrow(text: "说明", color: .white.opacity(0.3))
+            Eyebrow(text: "说明", color: Native.tertiary)
             Text("三个引擎地位相同，都从运行时包安装、都不随应用打包：splash 也只是其中一个引擎，不再内置。首次启动时启动页会让你选一个下载。运行时包是自管的 Python + 引擎依赖，和 Homebrew / 系统里已装的应用互不影响。安装走 SHA256 校验、解包到 .staging、验证 manifest 后才激活。模型在各引擎自己的模型目录里，不在这里下载。")
                 .font(.system(size: 11))
-                .foregroundStyle(.white.opacity(0.38))
+                .foregroundStyle(Native.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.top, 6)

@@ -107,8 +107,12 @@ struct SettingsView: View {
         "登录项设置失败：无法写入 ~/Library/LaunchAgents/\(LoginItem.label).plist，应用仍可正常使用。"
 
     @ObservedObject var state: AppState
+    /// Observed separately: the skin lives in its own object, and a nested
+    /// `ObservableObject` would not republish through `AppState`.
+    @ObservedObject private var theme: ThemeController
     @StateObject private var store: SettingsDraftStore
     @State private var confirmReset = false
+    @Environment(\.colorScheme) private var colorScheme
 
     /// Port the active engine is configured to use: the same value the engine
     /// page edits, so the two views can never disagree.
@@ -119,6 +123,7 @@ struct SettingsView: View {
     @MainActor
     init(state: AppState) {
         _state = ObservedObject(wrappedValue: state)
+        _theme = ObservedObject(wrappedValue: state.theme)
         let shared = SettingsDraftStore.shared
         let port = EngineStore.shared.configuration(for: state.activeEngine).port
             ?? state.activeEngine.defaultPort
@@ -130,6 +135,7 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Native.gap) {
                 PageHeader(title: "设置", subtitle: "服务、模型与默认行为", eyebrow: "偏好设置")
+                appearanceCard
                 serviceCard
                 thinkingCard
                 modelCard
@@ -138,8 +144,7 @@ struct SettingsView: View {
             .padding(.horizontal, Native.pagePadding)
             .padding(.top, 30)
             .padding(.bottom, Native.pagePadding)
-            .frame(maxWidth: 900, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .pageColumn()
         }
         .scrollIndicators(.never)
         .safeAreaInset(edge: .bottom, spacing: 0) { saveBar }
@@ -222,6 +227,43 @@ struct SettingsView: View {
     }
 
     // MARK: cards
+
+    /// Skin switch. Applied the moment it is picked — a pure presentation
+    /// preference has nothing to validate, so it never waits for the save bar.
+    private var appearanceCard: some View {
+        SettingsCard(title: "外观",
+                     detail: "日间 / 夜间皮肤，选择后立即生效",
+                     icon: "circle.lefthalf.filled",
+                     tint: Native.indigo,
+                     trailing: AnyView(appearanceTag)) {
+            SettingsRow(title: "外观模式",
+                        detail: theme.mode.detail,
+                        divider: false) {
+                Picker("", selection: appearanceBinding) {
+                    ForEach(AppAppearance.allCases) { mode in
+                        Label(mode.label, systemImage: mode.symbol).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 286)
+                .accessibilityLabel("外观模式")
+                .help("跟随系统时随 macOS 的浅色 / 深色设置自动切换")
+            }
+        }
+    }
+
+    private var appearanceBinding: Binding<AppAppearance> {
+        Binding(get: { theme.mode }, set: { theme.set($0) })
+    }
+
+    /// Shows what is on screen right now, which matters most in “跟随系统”.
+    private var appearanceTag: some View {
+        let dark = colorScheme == .dark
+        return Tag(text: dark ? "夜间模式" : "日间模式",
+                   tone: theme.mode == .system ? .neutral : .accent)
+            .help(theme.mode == .system ? "当前由 macOS 外观决定" : "已手动指定皮肤")
+    }
 
     private var serviceCard: some View {
         SettingsCard(title: "服务", detail: "本地 OpenAI 兼容接口",

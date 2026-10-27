@@ -146,7 +146,7 @@ struct ModelSwitcher: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(.white.opacity(hovered && !switching ? 0.06 : 0))
+                    .fill(Native.overlay(hovered && !switching ? 0.06 : 0))
             }
             .contentShape(Rectangle())
             .onHover { hovering in
@@ -181,11 +181,11 @@ struct ModelSwitcher: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(.white.opacity(switching ? 0.075 : (hovered ? 0.10 : 0.055)))
+                    .fill(Native.overlay(switching ? 0.075 : (hovered ? 0.10 : 0.055)))
             }
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(switching ? Native.orange.opacity(0.40) : .white.opacity(0.10),
+                    .stroke(switching ? Native.orange.opacity(0.40) : Native.overlay(0.10),
                             lineWidth: 0.8)
             }
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -197,11 +197,11 @@ struct ModelSwitcher: View {
             HStack(spacing: 4) {
                 Image(systemName: "shippingbox")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.42))
+                    .foregroundStyle(Native.tertiary)
 
                 Text(label)
                     .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(.white.opacity(switching ? 0.9 : 0.72))
+                    .foregroundStyle(Native.secondary.opacity(switching ? 1 : 0.85))
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .contentTransition(.opacity)
@@ -214,10 +214,10 @@ struct ModelSwitcher: View {
             .padding(.horizontal, 9)
             .frame(height: 26)
             .background {
-                Capsule().fill(.white.opacity(switching ? 0.10 : (hovered ? 0.12 : 0.065)))
+                Capsule().fill(Native.overlay(switching ? 0.10 : (hovered ? 0.12 : 0.065)))
             }
             .overlay {
-                Capsule().stroke(switching ? Native.orange.opacity(0.35) : .white.opacity(0.10),
+                Capsule().stroke(switching ? Native.orange.opacity(0.35) : Native.overlay(0.10),
                                  lineWidth: 0.8)
             }
             .contentShape(Capsule())
@@ -240,7 +240,7 @@ struct ModelSwitcher: View {
         } else {
             Image(systemName: variant == .chip ? "chevron.down" : "chevron.up.chevron.down")
                 .font(.system(size: variant == .engine ? 8 : 8.5, weight: .bold))
-                .foregroundStyle(.white.opacity(variant == .engine ? 0.4 : 0.34))
+                .foregroundStyle(Native.tertiary)
                 .frame(width: variant == .engine ? 14 : 16, height: 16)
                 .fixedSize()
                 .transition(.opacity)

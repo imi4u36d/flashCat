@@ -66,8 +66,7 @@ struct OverviewView: View {
             .padding(.horizontal, Native.pagePadding)
             .padding(.top, 30)
             .padding(.bottom, 30)
-            .frame(maxWidth: Native.contentMaxWidth, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .pageColumn()
             .opacity(appeared ? 1 : 0)
             .offset(y: appeared ? 0 : 10)
         }
@@ -432,7 +431,7 @@ private struct ThroughputCard: View {
                 .chartYScale(domain: 0...max(peak * 1.15, 10))
                 .chartXAxis {
                     AxisMarks(values: .automatic(desiredCount: 6)) { _ in
-                        AxisGridLine().foregroundStyle(.white.opacity(0.06))
+                        AxisGridLine().foregroundStyle(Native.overlay(0.10))
                         AxisValueLabel(format: .dateTime.minute().second())
                             .font(.system(size: 9))
                             .foregroundStyle(Native.tertiary)
@@ -440,7 +439,7 @@ private struct ThroughputCard: View {
                 }
                 .chartYAxis {
                     AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { _ in
-                        AxisGridLine().foregroundStyle(.white.opacity(0.06))
+                        AxisGridLine().foregroundStyle(Native.overlay(0.10))
                         AxisValueLabel()
                             .font(.system(size: 9))
                             .foregroundStyle(Native.tertiary)
@@ -607,11 +606,11 @@ private struct EndpointCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(.black.opacity(0.28))
+                            .fill(Native.recess)
                     }
                     .overlay {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(.white.opacity(0.10), lineWidth: 0.8)
+                            .stroke(Native.overlay(0.10), lineWidth: 0.8)
                     }
 
                 HStack(spacing: 8) {

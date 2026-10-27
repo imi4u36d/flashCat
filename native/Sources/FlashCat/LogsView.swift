@@ -364,7 +364,7 @@ struct LogsView: View {
             .padding(.horizontal, Native.pagePadding)
             .padding(.top, 30)
             .padding(.bottom, Native.pagePadding)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .pageColumn(maxHeight: .infinity)
         }
         .alert("清空日志？", isPresented: $confirmingClear) {
             Button("取消", role: .cancel) {}

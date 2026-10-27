@@ -140,6 +140,16 @@ final class AppSettings {
     var hfCache: String { defaults.string(forKey: "hfCache") ?? "" }
     func setHfCache(_ value: String) { defaults.set(value, forKey: "hfCache") }
 
+    /// Which skin the console wears. `.system` follows the macOS appearance.
+    var appearance: AppAppearance {
+        get {
+            guard let raw = defaults.object(forKey: "appearance") as? Int,
+                  let value = AppAppearance(rawValue: raw) else { return .system }
+            return value
+        }
+        set { defaults.set(newValue.rawValue, forKey: "appearance") }
+    }
+
     var recentModels: [String] { defaults.stringArray(forKey: "recentModels") ?? [] }
 
     var temperature: Double {

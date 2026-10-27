@@ -85,6 +85,8 @@ final class AppState: ObservableObject {
     private var switchTask: Task<Void, Never>?
 
     let settings = AppSettings()
+    /// Owns the day/night skin choice and applies it to AppKit.
+    let theme: ThemeController
     let history = ChatHistory()
     let conversation = ConversationStore()
     let chatClient = ChatClient()
@@ -109,6 +111,7 @@ final class AppState: ObservableObject {
     }
 
     init() {
+        theme = ThemeController(settings: settings)
         let visible = UserDefaults.standard.object(forKey: "sidebarVisible") as? Bool ?? true
         sidebarVisibility = visible ? .all : .detailOnly
     }

@@ -4,10 +4,19 @@ import AppKit
 struct ShellView: View {
     @ObservedObject var state: AppState
 
+    init(state: AppState) {
+        _state = ObservedObject(wrappedValue: state)
+    }
+
     private var showsSidebar: Bool { state.sidebarVisibility == .all }
 
     var body: some View {
         content
+            // No `preferredColorScheme` here on purpose: it sets a window-level
+            // override that SwiftUI keeps once applied, so going back to
+            // “跟随系统” left the window dark until the next activation change.
+            // `ThemeController` drives AppKit, and SwiftUI's `colorScheme`
+            // follows the window's effective appearance from there.
             // Switching weights unloads the resident model first, so the engine
             // has nothing to serve until the new ones are up. That gap is not
             // obvious from the picker, so it is confirmed — once, per switch.
@@ -120,7 +129,7 @@ struct SidebarView: View {
 
     private var workspace: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Eyebrow(text: "工作区", color: .white.opacity(0.34))
+            Eyebrow(text: "工作区", color: Native.tertiary)
                 .padding(.horizontal, 10)
                 .padding(.bottom, 5)
 
@@ -135,11 +144,11 @@ struct SidebarView: View {
         if !state.threads.isEmpty {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Eyebrow(text: "最近对话", color: .white.opacity(0.34))
+                    Eyebrow(text: "最近对话", color: Native.tertiary)
                     Spacer()
                     Text(verbatim: "\(state.threads.count)")
                         .font(.system(size: 9.5, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.35))
+                        .foregroundStyle(Native.tertiary)
                 }
                 .padding(.horizontal, 10)
                 .padding(.bottom, 4)
@@ -155,7 +164,7 @@ struct SidebarView: View {
 struct SidebarBackdrop: View {
     var body: some View {
         ZStack {
-            Color(hex: 0x0B0B11)
+            Native.sidebar
             LinearGradient(colors: [Native.accent.opacity(0.10), .clear],
                            startPoint: .topLeading,
                            endPoint: .center)
@@ -166,7 +175,7 @@ struct SidebarBackdrop: View {
         }
         .overlay(alignment: .trailing) {
             Rectangle()
-                .fill(.white.opacity(0.07))
+                .fill(Native.overlay(0.07))
                 .frame(width: 1)
         }
     }
@@ -192,7 +201,7 @@ struct BrandHeader: View {
                     Text(state.isReady ? "本地引擎在线" : "本地推理控制台")
                         .font(.system(size: 9.5, weight: .semibold))
                         .tracking(0.4)
-                        .foregroundStyle(.white.opacity(0.45))
+                        .foregroundStyle(Native.tertiary)
                 }
             }
 
@@ -219,10 +228,10 @@ struct SidebarTopToggle: View {
         } label: {
             Image(systemName: "sidebar.left")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(hovering ? 0.92 : 0.58))
+                .foregroundStyle(Native.label.opacity(hovering ? 1 : 0.6))
                 .frame(width: 26, height: 26)
-                .background(Circle().fill(.white.opacity(hovering ? 0.13 : 0.07)))
-                .overlay(Circle().stroke(.white.opacity(hovering ? 0.18 : 0.10), lineWidth: 0.8))
+                .background(Circle().fill(Native.overlay(hovering ? 0.13 : 0.07)))
+                .overlay(Circle().stroke(Native.overlay(hovering ? 0.18 : 0.10), lineWidth: 0.8))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -253,36 +262,36 @@ struct SidebarNavRow: View {
 
                 Text(page.rawValue)
                     .font(.system(size: 13, weight: selected ? .semibold : .medium))
-                    .foregroundStyle(selected ? Native.label : Color.white.opacity(hovering ? 0.86 : 0.62))
+                    .foregroundStyle(selected ? Native.label : Native.secondary.opacity(hovering ? 1 : 0.8))
 
                 Spacer(minLength: 4)
 
                 if page == .models, !state.catalog.machine.isEmpty {
                     Text(verbatim: "\(state.catalog.machine.count)")
                         .font(.system(size: 9.5, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(Native.secondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Capsule().fill(.white.opacity(0.08)))
+                        .background(Capsule().fill(Native.overlay(0.08)))
                 }
 
                 if selected {
                     Circle()
                         .fill(Native.label)
                         .frame(width: 4, height: 4)
-                        .shadow(color: .white.opacity(0.6), radius: 4)
+                        .shadow(color: Native.label.opacity(0.35), radius: 4)
                 }
             }
             .padding(.horizontal, 9)
             .frame(height: 40)
             .background {
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .fill(selected ? Color.white.opacity(0.10)
-                                   : Color.white.opacity(hovering ? 0.055 : 0))
+                    .fill(selected ? Native.overlay(0.10)
+                                   : Native.overlay(hovering ? 0.055 : 0))
             }
             .overlay {
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .stroke(.white.opacity(selected ? 0.10 : 0), lineWidth: 0.8)
+                    .stroke(Native.overlay(selected ? 0.10 : 0), lineWidth: 0.8)
             }
             .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
         }
@@ -303,17 +312,17 @@ struct RecentRow: View {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "bubble.left.fill")
                     .font(.system(size: 8.5, weight: .semibold))
-                    .foregroundStyle(.white.opacity(hovering ? 0.5 : 0.28))
+                    .foregroundStyle(Native.tertiary.opacity(hovering ? 1 : 0.72))
                     .padding(.top, 3)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(thread.title)
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white.opacity(hovering ? 0.92 : 0.68))
+                        .foregroundStyle(Native.label.opacity(hovering ? 1 : 0.8))
                         .lineLimit(1)
                     Text(Format.relative(thread.updatedAt))
                         .font(.system(size: 9.5))
-                        .foregroundStyle(.white.opacity(0.30))
+                        .foregroundStyle(Native.tertiary.opacity(0.85))
                 }
                 Spacer(minLength: 0)
             }
@@ -322,7 +331,7 @@ struct RecentRow: View {
             .contentShape(Rectangle())
             .background {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(.white.opacity(hovering ? 0.05 : 0))
+                    .fill(Native.overlay(hovering ? 0.05 : 0))
             }
         }
         .buttonStyle(.plain)
@@ -361,7 +370,7 @@ struct EngineCard: View {
                 StatusDot(color: statusTint, diameter: 7, pulsing: state.isRunning || switching)
                 Text(statusText)
                     .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.78))
+                    .foregroundStyle(Native.label.opacity(0.9))
                     .lineLimit(1)
                 Spacer(minLength: 4)
 
@@ -371,10 +380,10 @@ struct EngineCard: View {
                     } label: {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.7))
+                            .foregroundStyle(Native.label.opacity(0.75))
                             .frame(width: 22, height: 22)
-                            .background(Circle().fill(.white.opacity(0.07)))
-                            .overlay(Circle().stroke(.white.opacity(0.10), lineWidth: 0.8))
+                            .background(Circle().fill(Native.overlay(0.07)))
+                            .overlay(Circle().stroke(Native.overlay(0.10), lineWidth: 0.8))
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
@@ -400,12 +409,12 @@ struct EngineCard: View {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(switching ? "—" : (rate > 0 ? String(format: "%.1f", rate) : "—"))
                     .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .foregroundStyle(rate > 0 && !switching ? Native.label : Color.white.opacity(0.35))
+                    .foregroundStyle(rate > 0 && !switching ? Native.label : Native.tertiary)
                     .monospacedDigit()
                     .contentTransition(.numericText())
                 Text("tok/s")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.38))
+                    .foregroundStyle(Native.tertiary)
                 Spacer(minLength: 4)
                 if switching {
                     Tag(text: "加载中", tone: .warning)
@@ -421,7 +430,7 @@ struct EngineCard: View {
                 Meter(fraction: state.downloadFraction ?? 0, tint: Native.cyan)
                 Text("下载 \(downloading.split(separator: "/").last.map(String.init) ?? downloading)")
                     .font(.system(size: 9.5))
-                    .foregroundStyle(.white.opacity(0.4))
+                    .foregroundStyle(Native.tertiary)
                     .lineLimit(1)
             } else {
                 Meter(fraction: memoryFraction,
@@ -429,13 +438,13 @@ struct EngineCard: View {
                 HStack {
                     Text(verbatim: "\(state.activeEngine.displayName.lowercased()) \(state.engineVersion) · \(state.port)")
                         .font(Native.monoSmall)
-                        .foregroundStyle(.white.opacity(0.32))
+                        .foregroundStyle(Native.tertiary.opacity(0.9))
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     if let stats = state.stats, (stats.physicalMemoryBytes ?? 0) > 0 {
                         Text(verbatim: "\(Format.bytes(stats.memoryBytes ?? 0))")
                             .font(.system(size: 9.5, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.38))
+                            .foregroundStyle(Native.tertiary)
                     }
                 }
             }
@@ -469,9 +478,9 @@ struct DetailView: View {
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.6))
+                            .foregroundStyle(Native.label.opacity(0.65))
                             .frame(width: 20, height: 20)
-                            .background(Circle().fill(.white.opacity(0.08)))
+                            .background(Circle().fill(Native.overlay(0.08)))
                     }
                     .buttonStyle(.plain)
                 }
@@ -533,15 +542,15 @@ private struct DetailTopBar: View {
 
     private func glassButton(_ symbol: String,
                              help: String,
-                             tint: Color = .white,
+                             tint: Color = Native.label,
                              action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(tint.opacity(0.85))
                 .frame(width: 30, height: 30)
-                .background(Circle().fill(.white.opacity(0.08)))
-                .overlay(Circle().stroke(.white.opacity(0.12), lineWidth: 0.8))
+                .background(Circle().fill(Native.overlay(0.08)))
+                .overlay(Circle().stroke(Native.overlay(0.12), lineWidth: 0.8))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)

@@ -248,7 +248,8 @@ struct EnginesView: View {
         let phase = installs.phases[id] ?? .idle
         let offers = EnginePackOffers.offers(installed: versions, releases: installs.releases[id] ?? [])
 
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: 0) {
+            // Header: identity on the left, actions on the right.
             HStack(spacing: 8) {
                 Circle()
                     .fill(isActive ? statusColor(state.serverState) : Native.overlay(0.18))
@@ -259,17 +260,9 @@ struct EnginesView: View {
                 if isActive {
                     Tag(text: "当前引擎", tone: .success)
                 }
-                Text(verbatim: "端口 \(String(enginePort(id)))")
-                    .font(Native.monoSmall)
-                    .foregroundStyle(Native.tertiary)
                 Spacer(minLength: 6)
                 if versions.isEmpty {
                     Tag(text: "未安装", tone: .neutral)
-                } else {
-                    Text(verbatim: "已装 \(versions.joined(separator: ", "))")
-                        .font(Native.monoSmall)
-                        .foregroundStyle(Native.tertiary)
-                        .lineLimit(1)
                 }
                 if !isActive {
                     Button("设为当前") { state.switchEngine(id) }
@@ -280,112 +273,117 @@ struct EnginesView: View {
                     .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
                     .disabled(versions.isEmpty)
             }
+            .padding(.bottom, 12)
 
-            portField(id)
-
-            if let controller = state.engines?.controller(id), !versions.isEmpty {
-                engineSummary(controller)
-            }
-
-            upstreamSection(id)
-
+            // Install / build progress sits right under the header so a long
+            // download never pushes the rest of the card around visually.
             if phase.isBusy {
                 Meter(fraction: phase.fraction ?? 0, tint: Native.cyan)
+                    .padding(.bottom, 6)
             }
             if phase != .idle {
                 Text(phase.label)
                     .font(.system(size: 10.5))
                     .foregroundStyle(phase.isFailure ? Native.red.opacity(0.9) : Native.secondary)
                     .lineLimit(2)
+                    .padding(.bottom, 10)
             }
 
-            if versions.contains(where: { $0 != version(id) }) {
-                let deletable = installs.removable[id] ?? []
-                VStack(alignment: .leading, spacing: 6) {
-                    Eyebrow(text: "已安装版本", color: Native.tertiary)
-                    ForEach(versions, id: \.self) { installedVersion in
-                        HStack(spacing: 8) {
-                            Text(installedVersion)
-                                .font(Native.monoSmall)
-                                .foregroundStyle(Native.secondary)
-                            if installedVersion == version(id) {
-                                Tag(text: "使用中", tone: .success)
-                            }
-                            if !deletable.contains(installedVersion) {
-                                // Shipped in the app bundle / checkout: usable, not ours.
-                                Tag(text: "内置", tone: .neutral)
-                            }
-                            Spacer(minLength: 4)
-                            if deletable.contains(installedVersion) {
-                                Button("删除") {
-                                    installs.uninstall(id, version: installedVersion)
+            // 配置
+            VStack(alignment: .leading, spacing: 8) {
+                portField(id)
+                if let controller = state.engines?.controller(id), !versions.isEmpty {
+                    engineSummary(controller)
+                }
+            }
+            cardDivider
+
+            // 上游
+            upstreamSection(id)
+            cardDivider
+
+            // 版本
+            VStack(alignment: .leading, spacing: 8) {
+                if versions.contains(where: { $0 != version(id) }) {
+                    let deletable = installs.removable[id] ?? []
+                    VStack(alignment: .leading, spacing: 6) {
+                        Eyebrow(text: "已安装版本", color: Native.tertiary)
+                        ForEach(versions, id: \.self) { installedVersion in
+                            HStack(spacing: 8) {
+                                Text(installedVersion)
+                                    .font(Native.monoSmall)
+                                    .foregroundStyle(Native.secondary)
+                                if installedVersion == version(id) {
+                                    Tag(text: "使用中", tone: .success)
                                 }
-                                .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
-                                .disabled(isActive && state.isRunning)
-                                .help(isActive && state.isRunning
-                                      ? "正在运行的引擎不能删除，先停止"
-                                      : "删除 \(installedVersion)")
+                                if !deletable.contains(installedVersion) {
+                                    // Shipped in the app bundle / checkout: usable, not ours.
+                                    Tag(text: "内置", tone: .neutral)
+                                }
+                                Spacer(minLength: 4)
+                                if deletable.contains(installedVersion) {
+                                    Button("删除") {
+                                        installs.uninstall(id, version: installedVersion)
+                                    }
+                                    .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
+                                    .disabled(isActive && state.isRunning)
+                                    .help(isActive && state.isRunning
+                                          ? "正在运行的引擎不能删除，先停止"
+                                          : "删除 \(installedVersion)")
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            if !offers.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Eyebrow(text: "运行时包", color: Native.tertiary)
-                    ForEach(offers, id: \.release.version) { offer in
-                        let release = offer.release
-                        HStack(spacing: 8) {
-                            Text(release.version)
-                                .font(Native.monoSmall)
-                                .foregroundStyle(Native.secondary)
-                            if offer.action == .reinstall {
-                                Tag(text: "已装此版本", tone: .neutral)
+                if !offers.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(offers, id: \.release.version) { offer in
+                            let release = offer.release
+                            HStack(spacing: 8) {
+                                Eyebrow(text: "运行时包", color: Native.tertiary)
+                                Text(release.version)
+                                    .font(Native.monoSmall)
+                                    .foregroundStyle(Native.secondary)
+                                if offer.action == .reinstall {
+                                    Tag(text: "已装此版本", tone: .neutral)
+                                }
+                                if let bytes = release.bytes {
+                                    Text(verbatim: Format.bytes(bytes))
+                                        .font(.system(size: 9.5))
+                                        .foregroundStyle(Native.tertiary)
+                                }
+                                if let notes = release.notes, !notes.isEmpty {
+                                    Text(notes)
+                                        .font(.system(size: 9.5))
+                                        .foregroundStyle(Native.tertiary)
+                                        .lineLimit(1)
+                                }
                             }
-                            if let bytes = release.bytes {
-                                Text(verbatim: Format.bytes(bytes))
-                                    .font(.system(size: 9.5))
-                                    .foregroundStyle(Native.tertiary)
-                            }
-                            if let notes = release.notes, !notes.isEmpty {
-                                Text(notes)
-                                    .font(.system(size: 9.5))
-                                    .foregroundStyle(Native.tertiary)
-                                    .lineLimit(1)
-                            }
-                            Spacer(minLength: 4)
-                            Button(offer.action.label) { installs.install(release, for: id) }
-                                .buttonStyle(ArcadePillStyle(tone: offer.action == .reinstall ? .glass : .accent,
-                                                             compact: true))
-                                .disabled(phase.isBusy)
                         }
                     }
+                } else if versions.isEmpty {
+                    Text(installs.indexError.map { "没有可安装的版本：\($0)" }
+                         ?? "没有可安装的版本。用 scripts/engines/build-\(id.rawValue)-pack.sh 在本机构建，或配置 FLASHCAT_PACK_INDEX_URL。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Native.tertiary)
                 }
-            } else if versions.isEmpty {
-                Text(installs.indexError.map { "没有可安装的版本：\($0)" }
-                     ?? "没有可安装的版本。用 scripts/engines/build-\(id.rawValue)-pack.sh 在本机构建，或配置 FLASHCAT_PACK_INDEX_URL。")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Native.tertiary)
             }
 
-            HStack(spacing: 8) {
-                Button("打开目录") {
-                    NSWorkspace.shared.open(URL(fileURLWithPath: EnginePaths.enginesDirectory))
-                }
-                .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
-                Button("查看日志") {
-                    NSWorkspace.shared.open(URL(fileURLWithPath: EnginePaths.logFile(id)))
-                }
-                .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
-                Spacer(minLength: 0)
-            }
         }
         .padding(14)
         .frame(maxWidth: width, alignment: .leading)
         .background {
             GlassSurface(radius: 18, tint: isActive ? Native.mint : .clear, elevated: false)
         }
+    }
+
+    /// Hairline separator between the card's 配置 / 上游 / 版本 sections.
+    private var cardDivider: some View {
+        Rectangle()
+            .fill(Native.overlay(0.08))
+            .frame(height: 1)
+            .padding(.vertical, 12)
     }
 
     /// "What does GitHub have?" — the newest release, whether it is newer than
@@ -398,24 +396,27 @@ struct EnginesView: View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
                 Eyebrow(text: "上游版本 (GitHub)", color: Native.tertiary)
-                Spacer(minLength: 4)
-                if let checkedAt = installs.upstreamCheckedAt {
-                    Text(verbatim: "检查于 \(Self.clock.string(from: checkedAt))")
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(Native.tertiary.opacity(0.8))
+                switch status {
+                case .current(let version):
+                    Text(verbatim: "分支最新版 \(version)，本地已是最新。")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Native.tertiary)
+                case .unavailable(let reason):
+                    Text(reason)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Native.tertiary)
+                        .lineLimit(1)
+                default:
+                    EmptyView()
                 }
+                Spacer(minLength: 4)
                 Button(status == nil ? "检查更新" : "重新检查") {
                     Task { await installs.checkUpstream(force: true) }
                 }
                 .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
             }
 
-            switch status {
-            case .current(let version):
-                Text(verbatim: "分支最新版 \(version)，本地已是最新。")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Native.tertiary)
-            case .update(let installed, let release):
+            if case .update(let installed, let release) = status {
                 HStack(spacing: 8) {
                     Text(verbatim: "新版本 \(release.version)")
                         .font(Native.monoSmall)
@@ -435,14 +436,6 @@ struct EnginesView: View {
                     .buttonStyle(ArcadePillStyle(tone: .accent, compact: true))
                     .disabled(busy)
                 }
-            case .unavailable(let reason):
-                Text(verbatim: "无法检查上游：\(reason)")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Native.red.opacity(0.8))
-            case nil:
-                Text("尚未检查上游版本。")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Native.tertiary.opacity(0.9))
             }
 
             if installs.building == id, let step = installs.buildStep[id] {
@@ -474,12 +467,6 @@ struct EnginesView: View {
             }
         }
     }
-
-    private static let clock: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter
-    }()
 
     /// Editable port. Kept as a text field so the reader can type any free port;
     /// the value only lands in the store when it parses.
@@ -559,7 +546,7 @@ struct EnginesView: View {
     private var footer: some View {
         VStack(alignment: .leading, spacing: 6) {
             Eyebrow(text: "说明", color: Native.tertiary)
-            Text("三个引擎地位相同，都从运行时包安装、都不随应用打包：splash 也只是其中一个引擎，不再内置。首次启动时启动页会让你选一个下载。运行时包是自管的 Python + 引擎依赖，和 Homebrew / 系统里已装的应用互不影响。安装走 SHA256 校验、解包到 .staging、验证 manifest 后才激活。模型在各引擎自己的模型目录里，不在这里下载。")
+            Text("三个引擎均从运行时包安装，不随应用打包；模型在各引擎自己的模型目录里管理，不在这里下载。")
                 .font(.system(size: 11))
                 .foregroundStyle(Native.tertiary)
                 .fixedSize(horizontal: false, vertical: true)

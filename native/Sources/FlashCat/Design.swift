@@ -140,6 +140,7 @@ enum Native {
     static let metricLarge = Font.system(size: 34, weight: .bold, design: .rounded)
 
     static let sidebarWidth: CGFloat = 244
+    static let railWidth: CGFloat = 68
 }
 
 extension View {

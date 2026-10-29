@@ -25,14 +25,6 @@ enum Page: String, CaseIterable, Identifiable {
     }
 }
 
-enum ThroughputRange: String, CaseIterable, Identifiable {
-    case seconds45 = "45 秒"
-    case minutes5 = "5 分钟"
-
-    var id: String { rawValue }
-    var seconds: TimeInterval { self == .seconds45 ? 45 : 300 }
-}
-
 struct ThroughputSample: Identifiable {
     let id = UUID()
     let at: Date
@@ -74,7 +66,6 @@ final class AppState: ObservableObject {
     @Published var toastMessage: String?
     @Published var sidebarVisibility: NavigationSplitViewVisibility
     @Published var throughput: [ThroughputSample] = []
-    @Published var throughputRange: ThroughputRange = .seconds45
     @Published var downloadingModel: String?
     /// Which engine the running download is for: two engines can hold models
     /// with the same id, and only the one being written shows the progress bar.
@@ -162,8 +153,10 @@ final class AppState: ObservableObject {
     var engineVersion: String { controller?.installation.version ?? "—" }
     var health: (label: String, tone: TagTone) { healthTone(stats) }
 
-    func throughput(in range: ThroughputRange) -> [ThroughputSample] {
-        let cutoff = Date().addingTimeInterval(-range.seconds)
+    /// Fixed 30-second window for the hero sparkline; older samples are dropped
+    /// at the sampler so this only filters late arrivals.
+    func recentThroughput() -> [ThroughputSample] {
+        let cutoff = Date().addingTimeInterval(-30)
         return throughput.filter { $0.at >= cutoff }
     }
 

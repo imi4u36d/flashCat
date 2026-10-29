@@ -207,6 +207,7 @@ struct ChatView: View {
                 }
                 Hairline()
                 composer
+                    .padding(10)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
@@ -419,25 +420,21 @@ struct ChatView: View {
 
     // MARK: - Composer
 
+    /// One unified card: text area on top, tool row inside the same card.
     private var composer: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 0) {
             TextField(composerPlaceholder, text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .lineLimit(1...6)
+                .font(.system(size: 13.5))
+                .lineSpacing(3)
+                .lineLimit(1...8)
                 .focused($composerFocused)
                 .focusEffectDisabled()
-                .padding(.horizontal, 13)
-                .padding(.vertical, 9)
-                .background {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Native.overlay(0.065))
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(composerFocused ? Native.accent.opacity(0.75) : Native.overlay(0.10),
-                                lineWidth: 1)
-                }
+                .padding(.horizontal, 16)
+                .padding(.top, 13)
+                .padding(.bottom, 10)
+
+            Hairline()
 
             HStack(spacing: 6) {
                 modelChip
@@ -448,10 +445,20 @@ struct ChatView: View {
 
                 sendButton
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 10)
-        .padding(.bottom, 12)
+        .background {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Native.overlay(composerFocused ? 0.09 : 0.06))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(composerFocused ? Native.accent.opacity(0.7) : Native.overlay(0.11),
+                              lineWidth: 1)
+        }
+        .shadow(color: Native.overlay(composerFocused ? 0.14 : 0.08), radius: 10, y: 3)
+        .animation(.easeOut(duration: 0.15), value: composerFocused)
     }
 
     private var composerPlaceholder: String {
@@ -518,14 +525,17 @@ struct ChatView: View {
             ZStack {
                 Circle()
                     .fill(state.generating ? AnyShapeStyle(Native.red)
-                          : AnyShapeStyle(LinearGradient(colors: [Native.pillFill, Native.pillFill.opacity(0.88)],
-                                                         startPoint: .top, endPoint: .bottom)))
+                          : (canSend ? AnyShapeStyle(LinearGradient(colors: [Native.accent, Native.accentSoft],
+                                                                    startPoint: .top, endPoint: .bottom))
+                                     : AnyShapeStyle(Native.overlay(0.10))))
                 Image(systemName: state.generating ? "stop.fill" : "arrow.up")
                     .font(.system(size: 12, weight: .heavy))
-                    .foregroundStyle(state.generating ? Color.white : Native.pillText)
+                    .foregroundStyle(state.generating ? Color.white
+                                     : (canSend ? Color.white : Native.tertiary))
             }
-            .frame(width: 32, height: 32)
-            .shadow(color: Native.overlay(state.generating ? 0 : 0.18), radius: 8, y: 2)
+            .frame(width: 30, height: 30)
+            .shadow(color: canSend || state.generating ? Native.accent.opacity(0.35) : .clear,
+                    radius: 7, y: 2)
         }
         .buttonStyle(.plain)
         .disabled(!state.generating && !canSend)
@@ -541,9 +551,9 @@ struct ChatView: View {
             HStack(alignment: .top, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("对话参数")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 14, weight: .semibold))
                     Text("参数会保存到本机设置")
-                        .font(.system(size: 10.5))
+                        .font(.system(size: 11))
                         .foregroundStyle(Native.tertiary)
                 }
                 Spacer(minLength: 4)
@@ -559,111 +569,40 @@ struct ChatView: View {
                 .foregroundStyle(Native.secondary)
                 .help("关闭参数面板（Esc）")
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 12)
-            .padding(.bottom, 10)
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 11)
 
             Hairline()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 15) {
-                    panelLabel("模型")
-                    modelPicker
-
-                    sliderBlock("Temperature",
-                                value: Binding(get: { temperature },
-                                               set: { setTemperature($0) }),
-                                range: 0...2,
-                                detail: "越低越稳定，越高越有创造性")
-
-                    sliderBlock("Top P",
-                                value: Binding(get: { topP },
-                                               set: { setTopP($0) }),
-                                range: 0.05...1,
-                                detail: "只从概率最高的一部分词里采样")
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        panelLabel("最大生成 tokens")
-                        HStack(spacing: 6) {
-                            TextField("", value: Binding(get: { maxTokens },
-                                                        set: { setMaxTokens($0) }),
-                                      format: .number)
-                                .textFieldStyle(.roundedBorder)
-                                .font(Native.monoFont)
-                                .frame(width: 84)
-                                .onChange(of: maxTokens) { _, value in
-                                    state.settings.setMaxTokens(value)
-                                }
-                            Stepper("", value: Binding(get: { maxTokens },
-                                                       set: { setMaxTokens($0) }),
-                                    in: 128...131_072,
-                                    step: 512)
-                                .labelsHidden()
-                            Spacer()
-                        }
-                        Text("单次回复允许生成的最大长度")
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(Native.tertiary)
+                VStack(alignment: .leading, spacing: 20) {
+                    panelSection("模型", icon: "cpu") {
+                        modelPicker
                     }
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        panelLabel("思考模式")
-                        Picker("", selection: Binding(get: { thinkingMode },
-                                                      set: { setThinking($0) })) {
-                            ForEach(ThinkingMode.allCases, id: \.self) { mode in
-                                Text(mode.label).tag(mode)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .controlSize(.small)
+                    panelSection("生成", icon: "slider.horizontal.3") {
+                        sliderBlock("Temperature",
+                                    value: Binding(get: { temperature },
+                                                   set: { setTemperature($0) }),
+                                    range: 0...2,
+                                    detail: "越低越稳定，越高越有创造性")
 
-                        if thinkingMode == .on {
-                            HStack(spacing: 8) {
-                                Text("推理等级")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(Native.secondary)
-                                Picker("", selection: Binding(get: { reasoningEffort },
-                                                              set: { setReasoningEffort($0) })) {
-                                    ForEach(ReasoningEffort.allCases, id: \.self) { effort in
-                                        Text(effort.label).tag(effort)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                                .labelsHidden()
-                                .controlSize(.small)
-                                .frame(maxWidth: 110)
-                            }
-                        }
+                        sliderBlock("Top P",
+                                    value: Binding(get: { topP },
+                                                   set: { setTopP($0) }),
+                                    range: 0.05...1,
+                                    detail: "只从概率最高的一部分词里采样")
 
-                        Text(thinkingMode.detail)
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(Native.tertiary)
+                        maxTokensBlock
                     }
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        panelLabel("系统提示词")
-                        ZStack(alignment: .topLeading) {
-                            if systemPrompt.isEmpty {
-                                Text("例如：回答保持简洁、准确。")
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(Native.tertiary)
-                                    .padding(.horizontal, 9)
-                                    .padding(.vertical, 8)
-                                    .allowsHitTesting(false)
-                            }
-                            TextEditor(text: Binding(get: { systemPrompt },
-                                                     set: { setSystemPrompt($0) }))
-                                .font(.system(size: 12))
-                                .scrollContentBackground(.hidden)
-                                .frame(height: 92)
-                                .padding(4)
-                        }
-                        .background(Native.raised, in: RoundedRectangle(cornerRadius: Native.radiusSmall, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: Native.radiusSmall, style: .continuous)
-                                .stroke(Native.hairline, lineWidth: 1)
-                        )
+                    panelSection("思考", icon: "sparkles") {
+                        thinkingBlock
+                    }
+
+                    panelSection("系统提示词", icon: "text.quote") {
+                        systemPromptBlock
                     }
 
                     if !state.isRunning {
@@ -671,13 +610,14 @@ struct ChatView: View {
                             Image(systemName: "info.circle")
                                 .font(.system(size: 10))
                             Text("参数可在服务未运行时调整，启动后生效。")
-                                .font(.system(size: 10.5))
+                                .font(.system(size: 11))
                             Spacer(minLength: 0)
                         }
                         .foregroundStyle(Native.tertiary)
+                        .padding(.top, 2)
                     }
                 }
-                .padding(14)
+                .padding(16)
             }
 
             Hairline()
@@ -689,8 +629,8 @@ struct ChatView: View {
                 Button("完成") { closeParameters() }
                     .buttonStyle(ArcadePillStyle(tone: .light, compact: true))
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 11)
         }
         .background {
             ZStack {
@@ -700,6 +640,97 @@ struct ChatView: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous))
+    }
+
+    private var maxTokensBlock: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("最大生成 tokens")
+                    .font(.system(size: 12, weight: .medium))
+                Spacer()
+                Text("\(maxTokens)")
+                    .font(Native.monoFont)
+                    .foregroundStyle(Native.secondary)
+            }
+            HStack(spacing: 8) {
+                Slider(value: Binding(get: { Double(maxTokens) },
+                                      set: { setMaxTokens(Int($0)) }),
+                       in: 128...131_072)
+                    .controlSize(.small)
+                TextField("", value: Binding(get: { maxTokens },
+                                             set: { setMaxTokens($0) }),
+                          format: .number.grouping(.never))
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.small)
+                    .font(Native.monoFont)
+                    .frame(width: 68)
+                    .multilineTextAlignment(.trailing)
+                    .onSubmit { setMaxTokens(maxTokens) }
+            }
+            Text("单次回复允许生成的最大长度")
+                .font(.system(size: 10.5))
+                .foregroundStyle(Native.tertiary)
+        }
+    }
+
+    private var thinkingBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("", selection: Binding(get: { thinkingMode },
+                                          set: { setThinking($0) })) {
+                ForEach(ThinkingMode.allCases, id: \.self) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(.small)
+
+            if thinkingMode == .on {
+                HStack(spacing: 8) {
+                    Text("推理等级")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Native.secondary)
+                    Picker("", selection: Binding(get: { reasoningEffort },
+                                                  set: { setReasoningEffort($0) })) {
+                        ForEach(ReasoningEffort.allCases, id: \.self) { effort in
+                            Text(effort.label).tag(effort)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .frame(maxWidth: 110)
+                }
+            }
+
+            Text(thinkingMode.detail)
+                .font(.system(size: 10.5))
+                .foregroundStyle(Native.tertiary)
+        }
+    }
+
+    private var systemPromptBlock: some View {
+        ZStack(alignment: .topLeading) {
+            if systemPrompt.isEmpty {
+                Text("例如：回答保持简洁、准确。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Native.tertiary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 9)
+                    .allowsHitTesting(false)
+            }
+            TextEditor(text: Binding(get: { systemPrompt },
+                                     set: { setSystemPrompt($0) }))
+                .font(.system(size: 12))
+                .scrollContentBackground(.hidden)
+                .frame(height: 104)
+                .padding(5)
+        }
+        .background(Native.raised, in: RoundedRectangle(cornerRadius: Native.radiusSmall, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Native.radiusSmall, style: .continuous)
+                .stroke(Native.hairline, lineWidth: 1)
+        )
     }
 
     private var modelPicker: some View {
@@ -719,14 +750,31 @@ struct ChatView: View {
         }
     }
 
+    /// Grouped block with an icon header and a recessed content surface.
+    private func panelSection<Content: View>(_ title: String,
+                                             icon: String,
+                                             @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Native.tertiary)
+                Text(title)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(Native.secondary)
+            }
+            content()
+        }
+    }
+
     private func sliderBlock(_ label: String,
                              value: Binding<Double>,
                              range: ClosedRange<Double>,
                              detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
                 Text(label)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                 Spacer()
                 Text(String(format: "%.2f", value.wrappedValue))
                     .font(Native.monoFont)
@@ -738,12 +786,6 @@ struct ChatView: View {
                 .font(.system(size: 10.5))
                 .foregroundStyle(Native.tertiary)
         }
-    }
-
-    private func panelLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11.5, weight: .semibold))
-            .foregroundStyle(Native.secondary)
     }
 
     // MARK: - Actions

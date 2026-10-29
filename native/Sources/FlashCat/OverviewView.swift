@@ -6,12 +6,8 @@ struct OverviewView: View {
     @ObservedObject var state: AppState
     @State private var appeared = false
 
-    private var samples: [ThroughputSample] { state.throughput(in: state.throughputRange) }
+    private var samples: [ThroughputSample] { state.recentThroughput() }
     private var peak: Double { samples.map(\.value).max() ?? 0 }
-    private var average: Double {
-        guard !samples.isEmpty else { return 0 }
-        return samples.map(\.value).reduce(0, +) / Double(samples.count)
-    }
 
     /// True while the engine is changing weights or the first live snapshot is
     /// still on its way. The cards swap their values for skeleton content so a
@@ -26,7 +22,8 @@ struct OverviewView: View {
     }
 
     var body: some View {
-        ScrollView {
+        // Header and hero stay pinned; only the cards below scroll.
+        VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 18) {
                 PageHeader(title: "概览",
                            subtitle: "本地推理引擎状态与实时指标",
@@ -42,35 +39,34 @@ struct OverviewView: View {
                     }
                 }
 
-                ServiceHero(state: state, loading: loading)
-
-                HStack(alignment: .top, spacing: Native.gap) {
-                    ThroughputCard(state: state,
-                                   samples: samples,
-                                   peak: peak,
-                                   average: average,
-                                   loading: loading)
-                        .frame(maxWidth: .infinity)
-
-                    MetricColumn(state: state, loading: loading)
-                        .frame(width: 336)
-                }
-
-                HStack(alignment: .top, spacing: Native.gap) {
-                    RuntimeDetails(state: state, loading: loading)
-                        .frame(maxWidth: .infinity)
-                    EndpointCard(state: state)
-                        .frame(width: 336)
-                }
+                ServiceHero(state: state,
+                            samples: samples,
+                            peak: peak,
+                            loading: loading)
             }
             .padding(.horizontal, Native.pagePadding)
             .padding(.top, 30)
-            .padding(.bottom, 30)
             .pageColumn()
-            .opacity(appeared ? 1 : 0)
-            .offset(y: appeared ? 0 : 10)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack(alignment: .top, spacing: Native.gap) {
+                        MetricsCard(state: state, loading: loading)
+                            .frame(maxWidth: .infinity)
+                        EndpointCard(state: state)
+                            .frame(width: 336)
+                    }
+
+                    RuntimeDetails(state: state, loading: loading)
+                }
+                .padding(.horizontal, Native.pagePadding)
+                .padding(.bottom, 30)
+                .pageColumn()
+            }
+            .scrollIndicators(.never)
         }
-        .scrollIndicators(.never)
+        .opacity(appeared ? 1 : 0)
+        .offset(y: appeared ? 0 : 10)
         .onAppear {
             guard !appeared else { return }
             withAnimation(.easeOut(duration: 0.34)) { appeared = true }
@@ -82,6 +78,8 @@ struct OverviewView: View {
 
 private struct ServiceHero: View {
     @ObservedObject var state: AppState
+    let samples: [ThroughputSample]
+    let peak: Double
     let loading: Bool
 
     /// The hero reflows instead of squeezing the 36 pt model title: at narrow
@@ -109,7 +107,7 @@ private struct ServiceHero: View {
         case .ready: return [Color(hex: 0xFF9F0A), Color(hex: 0xFF375F), Color(hex: 0x7B2CBF)]
         case .starting, .stopping: return [Color(hex: 0xFFB020), Color(hex: 0xFF6A3D), Color(hex: 0x8B5CF6)]
         case .failed: return [Color(hex: 0xFF453A), Color(hex: 0x8B1E3F), Color(hex: 0x3A1030)]
-        case .stopped: return [Color(hex: 0x3A3A46), Color(hex: 0x2A2A36), Color(hex: 0x16161F)]
+        case .stopped: return [Color(hex: 0x9E9EB4), Color(hex: 0x64648A), Color(hex: 0x343452)]
         }
     }
 
@@ -121,7 +119,7 @@ private struct ServiceHero: View {
                         identity
                         Spacer(minLength: 16)
                         livePanel
-                            .frame(width: 300)
+                            .frame(width: 320)
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 16) {
@@ -159,7 +157,13 @@ private struct ServiceHero: View {
                 .overlay(Capsule().stroke(.white.opacity(0.16), lineWidth: 0.8))
 
                 Eyebrow(text: "本地推理引擎", color: .white.opacity(0.55))
+
+                Spacer(minLength: 8)
+
+                ServiceControlGroup(state: state, onHero: true)
+                    .opacity(loading ? 0.6 : 1)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Text(title)
                 .font(.system(size: 36, weight: .bold))
@@ -258,6 +262,21 @@ private struct ServiceHero: View {
                 .foregroundStyle(.white.opacity(0.72))
             }
 
+            if loading {
+                SkeletonBar(width: 264, height: 40, radius: 8, opacity: 0.09)
+                    .transition(.opacity)
+            } else if samples.isEmpty {
+                Text("启动并生成一次回复后，这里会显示吞吐曲线")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.white.opacity(0.4))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(.opacity)
+            } else {
+                HeroSparkline(samples: samples, peak: peak)
+                    .frame(height: 40)
+                    .transition(.opacity)
+            }
+
             Rectangle()
                 .fill(.white.opacity(0.14))
                 .frame(height: 1)
@@ -347,170 +366,124 @@ private struct SkeletonMiniMetric: View {
     }
 }
 
-// MARK: - Throughput
+// MARK: - Hero sparkline
 
-private struct ThroughputCard: View {
-    @ObservedObject var state: AppState
+private struct HeroSparkline: View {
     let samples: [ThroughputSample]
     let peak: Double
-    let average: Double
+
+    var body: some View {
+        Chart {
+            ForEach(samples) { sample in
+                AreaMark(x: .value("时间", sample.at),
+                         y: .value("tok/s", sample.value))
+                    .interpolationMethod(.monotone)
+                    .foregroundStyle(
+                        LinearGradient(colors: [.white.opacity(0.30), .white.opacity(0.02)],
+                                       startPoint: .top, endPoint: .bottom)
+                    )
+
+                LineMark(x: .value("时间", sample.at),
+                         y: .value("tok/s", sample.value))
+                    .interpolationMethod(.monotone)
+                    .foregroundStyle(
+                        LinearGradient(colors: [Color(hex: 0xFFD60A), Color(hex: 0xFF9F0A)],
+                                       startPoint: .leading, endPoint: .trailing)
+                    )
+                    .lineStyle(StrokeStyle(lineWidth: 1.6, lineCap: .round))
+            }
+        }
+        .chartXAxis(.hidden)
+        .chartYAxis(.hidden)
+        .chartYScale(domain: 0...max(peak * 1.2, 10))
+    }
+}
+
+// MARK: - Metrics
+
+private struct MetricsCard: View {
+    @ObservedObject var state: AppState
     let loading: Bool
 
     var body: some View {
-        Card("解码吞吐",
-             subtitle: "tokens / second · 最近 \(state.throughputRange.rawValue)",
-             trailing: AnyView(
-                Picker("", selection: $state.throughputRange) {
-                    ForEach(ThroughputRange.allCases) { range in
-                        Text(range.rawValue).tag(range)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .controlSize(.small)
-                .frame(width: 138)
-             )) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                if loading {
-                    SkeletonBar(width: 96, height: 28, radius: 8, opacity: 0.10)
-                        .transition(.opacity)
-                } else {
-                    Text(String(format: "%.1f", samples.last?.value ?? 0))
-                        .font(.system(size: 34, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(Native.label)
-                        .contentTransition(.numericText())
-                        .transition(.opacity)
-                }
-                Text("tok/s")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Native.tertiary)
-                Spacer()
-                if loading {
-                    SkeletonBar(width: 126, height: 9, radius: 4, opacity: 0.07)
-                } else if !samples.isEmpty {
-                    Text("峰值 \(String(format: "%.0f", peak)) · 均值 \(String(format: "%.0f", average))")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Native.tertiary)
-                    Tag(text: "实时", tone: .success, icon: "circle.fill")
-                }
-            }
-
-            if loading {
-                ThroughputSkeleton()
-                    .transition(.opacity)
-            } else if samples.isEmpty {
-                EmptyHint(icon: "chart.xyaxis.line",
-                          title: "暂无吞吐数据",
-                          detail: "启动服务并生成一次回复后，这里会显示实时解码速度")
-                    .frame(height: 196)
-                    .transition(.opacity)
-            } else {
-                Chart {
-                    ForEach(samples) { sample in
-                        AreaMark(
-                            x: .value("时间", sample.at),
-                            y: .value("tok/s", sample.value)
-                        )
-                        .interpolationMethod(.monotone)
-                        .foregroundStyle(
-                            LinearGradient(colors: [Native.accent.opacity(0.42), Native.accent.opacity(0.02)],
-                                           startPoint: .top, endPoint: .bottom)
-                        )
-
-                        LineMark(
-                            x: .value("时间", sample.at),
-                            y: .value("tok/s", sample.value)
-                        )
-                        .interpolationMethod(.monotone)
-                        .foregroundStyle(LinearGradient(colors: [Native.accentSoft, Native.pink],
-                                                        startPoint: .leading, endPoint: .trailing))
-                        .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
-                    }
-                }
-                .chartYScale(domain: 0...max(peak * 1.15, 10))
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 6)) { _ in
-                        AxisGridLine().foregroundStyle(Native.overlay(0.10))
-                        AxisValueLabel(format: .dateTime.minute().second())
-                            .font(.system(size: 9))
-                            .foregroundStyle(Native.tertiary)
-                    }
-                }
-                .chartYAxis {
-                    AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { _ in
-                        AxisGridLine().foregroundStyle(Native.overlay(0.10))
-                        AxisValueLabel()
-                            .font(.system(size: 9))
-                            .foregroundStyle(Native.tertiary)
-                    }
-                }
-                .frame(height: 196)
+        Card("实时指标", subtitle: "prefill · 草稿命中 · 内存") {
+            VStack(spacing: 0) {
+                MetricRow(label: "预填充",
+                          value: state.stats?.prefillTokensPerSecond.map { Format.compact($0) } ?? "—",
+                          unit: "tok/s",
+                          loading: loading)
+                Hairline()
+                MetricRow(label: "草稿接受率",
+                          value: state.stats?.draftAcceptance.map { String(format: "%.0f", $0 * 100) } ?? "—",
+                          unit: "%",
+                          progress: state.stats?.draftAcceptance,
+                          progressTint: Native.violet,
+                          loading: loading)
+                Hairline()
+                MetricRow(label: "内存占用",
+                          value: state.stats?.memoryBytes.map { Format.bytes($0) } ?? "—",
+                          detail: state.stats?.peakMemoryBytes.map { "峰值 \(Format.bytes($0))" },
+                          progress: memoryFraction,
+                          progressTint: memoryFraction > 0.9 ? Native.red : Native.mint,
+                          loading: loading)
             }
         }
         .animation(.easeOut(duration: 0.2), value: loading)
-    }
-}
-
-private struct ThroughputSkeleton: View {
-    var body: some View {
-        ZStack {
-            SkeletonBlock(height: 196, radius: 12, opacity: 0.045)
-            VStack(spacing: 0) {
-                Spacer()
-                Hairline()
-                Spacer()
-                Hairline()
-                Spacer()
-                Hairline()
-                Spacer()
-            }
-            .padding(.horizontal, 4)
-        }
-        .frame(height: 196)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-}
-
-// MARK: - Metric column
-
-private struct MetricColumn: View {
-    @ObservedObject var state: AppState
-    let loading: Bool
-
-    var body: some View {
-        VStack(spacing: 12) {
-            StatTile(label: "预填充",
-                     value: state.stats?.prefillTokensPerSecond.map { Format.compact($0) } ?? "—",
-                     unit: "tok/s",
-                     detail: "引擎 prefill 采样",
-                     tint: Native.cyan,
-                     loading: loading)
-
-            StatTile(label: "草稿接受率",
-                     value: state.stats?.draftAcceptance.map { String(format: "%.0f", $0 * 100) } ?? "—",
-                     unit: "%",
-                     detail: state.activeEngine == .mtplx ? "MTP 草稿命中" : "DFlash2 草稿命中",
-                     badge: state.stats?.draftAcceptance.map { String(format: "%.0f%%", $0 * 100) },
-                     tint: Native.violet,
-                     progress: state.stats?.draftAcceptance,
-                     progressTint: Native.violet,
-                     loading: loading)
-
-            StatTile(label: "内存占用",
-                     value: state.stats?.memoryBytes.map { Format.bytes($0) } ?? "—",
-                     detail: state.stats?.peakMemoryBytes.map { "峰值 \(Format.bytes($0))" },
-                     tint: Native.mint,
-                     progress: memoryFraction,
-                     progressTint: memoryFraction > 0.9 ? Native.red : Native.mint,
-                     loading: loading)
-        }
     }
 
     private var memoryFraction: Double {
         guard let used = state.stats?.memoryBytes,
               let total = state.stats?.physicalMemoryBytes, total > 0 else { return 0 }
         return Double(used) / Double(total)
+    }
+}
+
+private struct MetricRow: View {
+    let label: String
+    let value: String
+    var unit: String? = nil
+    var detail: String? = nil
+    var progress: Double? = nil
+    var progressTint: Color = Native.accent
+    var loading: Bool = false
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Native.secondary)
+                if let detail {
+                    Text(detail)
+                        .font(.system(size: 10))
+                        .foregroundStyle(Native.tertiary)
+                }
+            }
+            Spacer(minLength: 12)
+            if loading {
+                SkeletonBar(width: 64, height: 14, radius: 6, opacity: 0.10)
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    Text(value)
+                        .font(.system(size: 16, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(Native.label)
+                        .contentTransition(.numericText())
+                    if let unit {
+                        Text(unit)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Native.tertiary)
+                    }
+                }
+            }
+            if let progress {
+                ProgressView(value: progress)
+                    .progressViewStyle(.linear)
+                    .tint(progressTint)
+                    .frame(width: 64)
+            }
+        }
+        .padding(.vertical, 11)
     }
 }
 
@@ -527,29 +500,25 @@ private struct RuntimeDetails: View {
                                    tone: loading ? .warning : state.health.tone,
                                    icon: "checkmark.seal"))) {
             VStack(spacing: 0) {
-                HStack(alignment: .top, spacing: 26) {
-                    VStack(spacing: 0) {
-                        KeyValueRow(label: "引擎", value: "\(state.activeEngine.rawValue) \(state.engineVersion)", mono: true)
-                        Hairline()
-                        KeyValueRow(label: "进程",
-                                    value: state.stats?.instancePid.map { "pid \($0)" } ?? "未运行",
-                                    mono: true,
-                                    loading: loading)
-                        Hairline()
-                        KeyValueRow(label: "设备", value: deviceText, loading: loading)
-                    }
-                    VStack(spacing: 0) {
-                        KeyValueRow(label: "热状态",
-                                    value: state.stats?.thermalText ?? "—",
-                                    valueColor: (state.stats?.thermal == nil || state.stats?.thermal == "nominal") ? Native.label : Native.orange,
-                                    loading: loading)
-                        Hairline()
-                        KeyValueRow(label: "内存压力",
-                                    value: state.stats?.memoryPressureText ?? "—",
-                                    loading: loading)
-                        Hairline()
-                        KeyValueRow(label: "已运行", value: uptimeText, loading: loading)
-                    }
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 26),
+                                    GridItem(.flexible(), spacing: 26),
+                                    GridItem(.flexible())],
+                          alignment: .leading,
+                          spacing: 10) {
+                    KeyValueRow(label: "引擎", value: "\(state.activeEngine.rawValue) \(state.engineVersion)", mono: true)
+                    KeyValueRow(label: "设备", value: deviceText, loading: loading)
+                    KeyValueRow(label: "进程",
+                                value: state.stats?.instancePid.map { "pid \($0)" } ?? "未运行",
+                                mono: true,
+                                loading: loading)
+                    KeyValueRow(label: "热状态",
+                                value: state.stats?.thermalText ?? "—",
+                                valueColor: (state.stats?.thermal == nil || state.stats?.thermal == "nominal") ? Native.label : Native.orange,
+                                loading: loading)
+                    KeyValueRow(label: "内存压力",
+                                value: state.stats?.memoryPressureText ?? "—",
+                                loading: loading)
+                    KeyValueRow(label: "已运行", value: uptimeText, loading: loading)
                 }
 
                 HStack(spacing: 6) {

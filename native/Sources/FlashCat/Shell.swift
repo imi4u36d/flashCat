@@ -61,14 +61,23 @@ struct ShellView: View {
     private var console: some View {
         ZStack(alignment: .leading) {
             DetailView(state: state)
-                .padding(.leading, showsSidebar ? Native.sidebarWidth : 0)
+                .padding(.leading, showsSidebar ? Native.sidebarWidth : Native.railWidth)
 
             SidebarView(state: state)
                 .frame(width: Native.sidebarWidth)
                 .offset(x: showsSidebar ? 0 : -Native.sidebarWidth)
                 .allowsHitTesting(showsSidebar)
                 .accessibilityHidden(!showsSidebar)
+
+            // Collapsed rail: navigation never fully disappears — the pages
+            // stay reachable as icons, with the engine status parked below.
+            if !showsSidebar {
+                SidebarRail(state: state)
+                    .frame(width: Native.railWidth)
+                    .transition(.opacity)
+            }
         }
+        .animation(.easeOut(duration: 0.18), value: showsSidebar)
         .background(Native.surface.ignoresSafeArea())
         .tint(Native.accent)
         // The toggle rides the sidebar's trailing edge: parked at the rail's
@@ -105,13 +114,16 @@ struct SidebarView: View {
                 .padding(.top, 42)
                 .padding(.bottom, 16)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    workspace
-                    recents
-                }
+            // 工作区菜单固定，只有最近对话列表滚动：
+            // 在历史里翻找时导航不会被顶走。
+            workspace
                 .padding(.horizontal, 10)
-                .padding(.bottom, 12)
+                .padding(.bottom, 8)
+
+            ScrollView {
+                recents
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 12)
             }
             .scrollIndicators(.never)
 
@@ -158,6 +170,78 @@ struct SidebarView: View {
                 }
             }
         }
+    }
+}
+
+/// Narrow icon-only column shown while the rail is collapsed, so page
+/// navigation survives without the full sidebar.
+struct SidebarRail: View {
+    @ObservedObject var state: AppState
+
+    var body: some View {
+        VStack(spacing: 8) {
+            // Clear the traffic-light row before the first icon.
+            Color.clear.frame(height: 52)
+
+            ForEach(Page.allCases) { page in
+                RailIcon(page: page, state: state)
+            }
+
+            Spacer(minLength: 12)
+
+            StatusDot(color: statusColor(state.serverState),
+                      diameter: 8,
+                      pulsing: state.isRunning || state.isSwitchingModel)
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(Native.overlay(0.06)))
+                .help(state.isReady ? "引擎在线" : "引擎待机")
+                .padding(.bottom, 14)
+        }
+        .background {
+            SidebarBackdrop()
+                .ignoresSafeArea(.container, edges: .top)
+                .overlay(alignment: .trailing) {
+                    Rectangle()
+                        .fill(Native.overlay(0.07))
+                        .frame(width: 1)
+                }
+        }
+    }
+}
+
+struct RailIcon: View {
+    let page: Page
+    @ObservedObject var state: AppState
+    @State private var hovering = false
+
+    private var selected: Bool { state.section == page }
+
+    var body: some View {
+        Button {
+            state.section = page
+        } label: {
+            ArcadeIcon(symbol: page.symbol,
+                       colors: page.iconColors,
+                       size: 32,
+                       glyphScale: 0.45,
+                       glow: selected)
+                .frame(width: 36, height: 36)
+                .background {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(selected ? Native.overlay(0.12)
+                                       : Native.overlay(hovering ? 0.06 : 0))
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .stroke(Native.overlay(selected ? 0.12 : 0), lineWidth: 0.8)
+                }
+                .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(page.rawValue)
+        .accessibilityLabel(page.rawValue)
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 
@@ -344,6 +428,14 @@ struct RecentRow: View {
 
 struct EngineCard: View {
     @ObservedObject var state: AppState
+    /// Collapsed to a one-line pill by default; hovering expands the full
+    /// card. Stays open on its own while a download runs so the progress
+    /// meter is never hidden underneath the pointer.
+    @State private var expanded = false
+
+    private var effectivelyExpanded: Bool {
+        expanded || state.downloadingModel != nil
+    }
 
     private var memoryFraction: Double {
         guard let used = state.stats?.memoryBytes,
@@ -366,6 +458,46 @@ struct EngineCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
+            if effectivelyExpanded {
+                expandedContent
+            } else {
+                collapsedContent
+            }
+        }
+        .padding(effectivelyExpanded ? 13 : 9)
+        .background {
+            GlassSurface(radius: 18,
+                         tint: state.isRunning ? Native.mint : .clear,
+                         elevated: false)
+        }
+        .animation(.easeOut(duration: 0.18), value: switching)
+        .animation(.easeOut(duration: 0.2), value: effectivelyExpanded)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.2)) { expanded = hovering }
+        }
+    }
+
+    /// One-line idle pill: status dot, stage text, endpoint hint, and the
+    /// service on/off controls so the engine stays reachable without hovering.
+    private var collapsedContent: some View {
+        HStack(spacing: 6) {
+            StatusDot(color: statusTint, diameter: 6, pulsing: state.isRunning || switching)
+            Text(statusText)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(Native.label.opacity(0.75))
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Text(verbatim: "\(state.activeEngine.displayName.lowercased()) \(state.port)")
+                .font(Native.monoSmall)
+                .foregroundStyle(Native.tertiary.opacity(0.8))
+                .lineLimit(1)
+            ServiceControlGroup(state: state)
+        }
+        .contentShape(Rectangle())
+    }
+
+    private var expandedContent: some View {
+        VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 6) {
                 StatusDot(color: statusTint, diameter: 7, pulsing: state.isRunning || switching)
                 Text(statusText)
@@ -381,20 +513,38 @@ struct EngineCard: View {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 9.5, weight: .semibold))
                             .foregroundStyle(Native.label.opacity(0.75))
+                            .rotationEffect(.degrees(state.serverState == .starting ? 360 : 0))
+                            .animation(state.serverState == .starting
+                                       ? .linear(duration: 0.9).repeatForever(autoreverses: false)
+                                       : .easeOut(duration: 0.2),
+                                       value: state.serverState == .starting)
                             .frame(width: 22, height: 22)
                             .background(Circle().fill(Native.overlay(0.07)))
                             .overlay(Circle().stroke(Native.overlay(0.10), lineWidth: 0.8))
                             .contentShape(Circle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CircleIconButtonStyle())
                     .help("重启引擎")
                     .accessibilityLabel("重启引擎")
                     .disabled(switching)
                     .opacity(switching ? 0.35 : 1)
                 }
 
-                Button(state.isRunning ? "停止" : "启动") {
+                Button {
                     state.toggleService()
+                } label: {
+                    HStack(spacing: 4) {
+                        if state.serverState == .starting || state.serverState == .stopping {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .frame(height: 10)
+                        } else {
+                            Image(systemName: state.isRunning ? "stop.fill" : "play.fill")
+                                .font(.system(size: 9, weight: .bold))
+                        }
+                        Text(state.isRunning ? "停止" : "启动")
+                    }
+                    .animation(.easeOut(duration: 0.18), value: state.isRunning)
                 }
                 .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
                 .disabled(state.runtimeMissing != nil || (switching && !state.isRunning))
@@ -421,8 +571,8 @@ struct EngineCard: View {
                         .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 } else if let stats = state.stats, stats.memoryPressure != "nominal" {
                     Tag(text: stats.memoryPressureText, tone: .warning)
-                } else {
-                    Tag(text: state.isReady ? "就绪" : "待机", tone: state.isReady ? .success : .neutral)
+                } else if state.isReady {
+                    Tag(text: "就绪", tone: .success)
                 }
             }
 
@@ -449,15 +599,113 @@ struct EngineCard: View {
                 }
             }
         }
-        .padding(13)
-        .background {
-            GlassSurface(radius: 18, tint: state.isRunning ? Native.mint : .clear, elevated: false)
+    }
+}
+
+// MARK: - Service controls
+
+/// 启动 / 停止（含重启）control group shared by the sidebar engine card and
+/// the overview hero, so service control lives wherever the engine status is
+/// read. `onHero` flips the palette to white-on-dark for the hero gradient.
+struct ServiceControlGroup: View {
+    @ObservedObject var state: AppState
+    var onHero = false
+
+    private var switching: Bool { state.isSwitchingModel }
+
+    private var pending: Bool {
+        state.serverState == .starting || state.serverState == .stopping
+    }
+
+    private var labelFill: Color {
+        onHero ? Color.white.opacity(0.16) : Native.overlay(0.10)
+    }
+
+    private var labelStroke: Color {
+        onHero ? Color.white.opacity(0.22) : Native.overlay(0.14)
+    }
+
+    private var labelText: Color {
+        onHero ? Color.white.opacity(0.95) : Native.label.opacity(0.9)
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if state.isRunning {
+                Button {
+                    state.restartService()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(labelText.opacity(0.8))
+                        .rotationEffect(.degrees(state.serverState == .starting ? 360 : 0))
+                        .animation(state.serverState == .starting
+                                   ? .linear(duration: 0.9).repeatForever(autoreverses: false)
+                                   : .easeOut(duration: 0.2),
+                                   value: state.serverState == .starting)
+                        .frame(width: 24, height: 24)
+                        .background(Circle().fill(labelFill))
+                        .overlay(Circle().stroke(labelStroke, lineWidth: 0.8))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(CircleIconButtonStyle())
+                .help("重启引擎")
+                .accessibilityLabel("重启引擎")
+                .disabled(switching)
+                .opacity(switching ? 0.35 : 1)
+                .transition(.opacity)
+            }
+
+            Button {
+                state.toggleService()
+            } label: {
+                HStack(spacing: 4) {
+                    if pending {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .frame(height: 10)
+                    } else {
+                        Image(systemName: state.isRunning ? "stop.fill" : "play.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(onHero
+                                             ? Color.white.opacity(0.9)
+                                             : (state.isRunning ? Native.red : Native.green).opacity(0.9))
+                    }
+                    Text(state.isRunning ? "停止" : "启动")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(labelText)
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(labelFill))
+                .overlay(Capsule().stroke(labelStroke, lineWidth: 0.8))
+                .contentShape(Capsule())
+                .animation(.easeOut(duration: 0.18), value: state.isRunning)
+            }
+            .buttonStyle(.plain)
+            .disabled(state.runtimeMissing != nil || (switching && !state.isRunning))
+            .opacity(state.runtimeMissing != nil ? 0.35 : 1)
+            .help(state.isRunning ? "停止本地推理服务" : "启动本地推理服务")
+            .accessibilityLabel(state.isRunning ? "停止本地推理服务" : "启动本地推理服务")
         }
-        .animation(.easeOut(duration: 0.18), value: switching)
+        .animation(.easeOut(duration: 0.18), value: state.isRunning)
     }
 }
 
 // MARK: - Detail
+
+/// Circular icon button (重启 etc.): press feedback matches the pill buttons.
+struct CircleIconButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && isEnabled ? 0.88 : 1)
+            .opacity(!isEnabled ? 0.35 : (configuration.isPressed ? 0.75 : 1))
+            .animation(.spring(response: 0.25, dampingFraction: 0.55), value: configuration.isPressed)
+            .contentShape(Circle())
+    }
+}
 
 struct DetailView: View {
     @ObservedObject var state: AppState
@@ -519,6 +767,9 @@ struct DetailView: View {
 /// service control, so the detail pane stays free of duplicate chrome.
 private struct DetailTopBar: View {
     @ObservedObject var state: AppState
+    /// Collapsed: status dot + start/stop icon. Hovering slides out the status
+    /// text and the labelled pill so the floating chrome stays minimal.
+    @State private var hovering = false
 
     @ViewBuilder
     var body: some View {
@@ -526,35 +777,49 @@ private struct DetailTopBar: View {
             HStack(spacing: 8) {
                 Spacer(minLength: 0)
 
-                glassButton(state.isRunning ? "stop.fill" : "play.fill",
-                            help: state.isRunning ? "停止本地推理服务" : "启动本地推理服务",
-                            tint: state.isRunning ? Native.red : Native.green) {
-                    state.toggleService()
+                HStack(spacing: 8) {
+                    StatusDot(color: statusColor(state.serverState),
+                              diameter: 7,
+                              pulsing: state.isRunning)
+
+                    Button {
+                        state.toggleService()
+                    } label: {
+                        HStack(spacing: 5) {
+                            if state.serverState == .starting || state.serverState == .stopping {
+                                ProgressView()
+                                    .controlSize(.mini)
+                                    .frame(height: 10)
+                            } else {
+                                Image(systemName: state.isRunning ? "stop.fill" : "play.fill")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle((state.isRunning ? Native.red : Native.green).opacity(0.9))
+                            }
+                            if hovering {
+                                Text(state.isRunning ? "停止" : "启动")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .foregroundStyle(Native.label.opacity(0.9))
+                                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+                            }
+                        }
+                        .padding(.horizontal, hovering ? 12 : 9)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(Native.overlay(hovering ? 0.12 : 0.08)))
+                        .overlay(Capsule().stroke(Native.overlay(0.12), lineWidth: 0.8))
+                        .contentShape(Capsule())
+                        .animation(.spring(response: 0.32, dampingFraction: 0.8), value: hovering)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(state.runtimeMissing != nil)
+                    .help(state.isRunning ? "停止本地推理服务" : "启动本地推理服务")
+                    .accessibilityLabel(state.isRunning ? "停止本地推理服务" : "启动本地推理服务")
                 }
-                .disabled(state.runtimeMissing != nil)
+                .onHover { hovering = $0 }
             }
             .padding(.leading, 18)
             .padding(.trailing, 18)
             .padding(.top, 14)
             .transition(.opacity.combined(with: .move(edge: .top)))
         }
-    }
-
-    private func glassButton(_ symbol: String,
-                             help: String,
-                             tint: Color = Native.label,
-                             action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(tint.opacity(0.85))
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(Native.overlay(0.08)))
-                .overlay(Circle().stroke(Native.overlay(0.12), lineWidth: 0.8))
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
-        .accessibilityLabel(help)
     }
 }

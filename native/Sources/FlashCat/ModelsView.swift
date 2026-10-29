@@ -10,8 +10,6 @@ struct ModelsView: View {
 
     @State private var query = ""
     @State private var filter: ModelsFilter = .all
-    @State private var customID = ""
-    @State private var customError: String?
     @State private var pendingImport: URL?
     @State private var removeTarget: ModelLibraryEntry?
     @State private var downloadTarget: ModelLibraryEntry?
@@ -53,10 +51,6 @@ struct ModelsView: View {
                     if !showsStartCard {
                         modelGrid(width: usable)
                     }
-
-                    customCard()
-                        .padding(.top, 18)
-                        .frame(maxWidth: 720)
                 }
                 .padding(.horizontal, Native.pagePadding)
                 .padding(.top, 30)
@@ -366,70 +360,6 @@ struct ModelsView: View {
         }
     }
 
-    private func customCard() -> some View {
-        Card("自定义模型 ID",
-             subtitle: "填写 Hub 上的 owner/repo，下载到 \(engine.displayName) 的模型库",
-             trailing: AnyView(Tag(text: "Hub", tone: .neutral, icon: "cube"))) {
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 8) {
-                    TextField("owner/repo，例如 mlx-community/Qwen3.8-27B-4bit", text: $customID)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12.5))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 6)
-                        .background(Native.raised,
-                                    in: RoundedRectangle(cornerRadius: Native.radiusSmall, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: Native.radiusSmall, style: .continuous)
-                                .stroke(customError == nil ? Native.hairline : Native.red.opacity(0.7), lineWidth: 1)
-                        )
-                        .onSubmit { applyCustom(customID) }
-                        .onChange(of: customID) { _, _ in customError = nil }
-
-                    Button("使用") { applyCustom(customID) }
-                        .buttonStyle(ArcadePillStyle(tone: .accent, compact: true))
-                        .disabled(customID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                  || state.downloadingModel != nil)
-                }
-
-                Text("下载进 \(engine.displayName) 的目录；Splash 走 install/models.py，oMLX 与 MTPLX 走包内 python 的 huggingface_hub。")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Native.tertiary)
-
-                if let customError {
-                    HStack(spacing: 5) {
-                        Image(systemName: "exclamationmark.circle")
-                            .font(.system(size: 10))
-                        Text(customError).font(.system(size: 10.5))
-                    }
-                    .foregroundStyle(Native.red)
-                }
-
-                let recent = Array(state.settings.recentModels.prefix(3))
-                if !recent.isEmpty {
-                    Hairline()
-                        .padding(.top, 4)
-                    ModelsFlowLayout(spacing: 6, lineSpacing: 6) {
-                        Text("最近使用")
-                            .font(.system(size: 10))
-                            .foregroundStyle(Native.tertiary)
-                            .frame(height: 20)
-                        ForEach(recent, id: \.self) { id in
-                            Button(ModelMeta.recentLabel(id)) {
-                                customID = id
-                                applyCustom(id)
-                            }
-                            .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
-                            .font(.system(size: 10.5))
-                            .disabled(state.downloadingModel != nil)
-                            .help(id)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     // MARK: Bindings
 
     private var pendingImportShown: Binding<Bool> {
@@ -488,18 +418,6 @@ struct ModelsView: View {
     }
 
     // MARK: Actions
-
-    private func applyCustom(_ raw: String) {
-        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return }
-        guard ModelPattern.test("^[\\w.-]+/[\\w.-]+(:\\w[\\w.-]*)?$", value) else {
-            customError = "格式应为 owner/repo 或 owner/repo:VARIANT"
-            return
-        }
-        customError = nil
-        customID = ""
-        state.useModel(value, engine: engine)
-    }
 
     private func pickModelsFolder() {
         let panel = NSOpenPanel()

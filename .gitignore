@@ -12,6 +12,9 @@ xcuserdata/
 __pycache__/
 *.pyc
 
+# Agent workspace memory (local notes, not project code)
+.workbuddy/
+
 # OS metadata
 .DS_Store
 
@@ -23,3 +26,6 @@ vendor/engines/
 
 # Downloaded release tarballs (build inputs; the app can fetch them)
 vendor/*.tar.gz
+
+# Bootstrap-cached tools (standalone uv downloaded by the engine pack scripts)
+.tools/

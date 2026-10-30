@@ -663,18 +663,22 @@ private struct LogsToolbar: View {
 
     private var liveActions: some View {
         HStack(spacing: 7) {
-            Toggle("自动滚动", isOn: $autoScroll)
-                .toggleStyle(.switch)
-                .controlSize(.mini)
-                .font(.system(size: 11))
-                .foregroundStyle(Native.secondary)
-                .fixedSize()
+            // Both controls share the compact pill language: the "on" states
+            // (following / paused) get the louder tone so the state of the
+            // stream is readable at a glance.
+            Button {
+                autoScroll.toggle()
+            } label: {
+                Label("自动滚动", systemImage: "arrow.down.to.line.compact")
+            }
+            .buttonStyle(ArcadePillStyle(tone: autoScroll ? .light : .glass, compact: true))
+            .help(autoScroll ? "关闭自动滚动" : "开启自动滚动")
 
             Button(action: onTogglePause) {
                 Label(paused ? "继续" : "暂停",
                       systemImage: paused ? "play.fill" : "pause.fill")
             }
-            .controlSize(.small)
+            .buttonStyle(ArcadePillStyle(tone: paused ? .accent : .glass, compact: true))
             .help(paused ? "继续实时输出" : "暂停实时输出")
         }
     }
@@ -711,7 +715,7 @@ private struct LogsSearchField: View {
             }
         }
         .padding(.horizontal, 7)
-        .frame(height: 24)
+        .frame(height: 26)
         .background(Native.raised,
                     in: RoundedRectangle(cornerRadius: Native.radiusSmall, style: .continuous))
         .overlay(

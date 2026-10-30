@@ -26,6 +26,21 @@ struct ShellView: View {
             } message: {
                 Text(switchConfirmationMessage)
             }
+            // A switch can only target an installed engine's runtime; when the
+            // pack is missing, offer the installer instead of a silent no-op.
+            .alert("\(state.pendingEngineInstall?.displayName ?? "该引擎") 还没安装",
+                   isPresented: engineInstallPrompt,
+                   presenting: state.pendingEngineInstall) { engine in
+                Button("去安装") { state.confirmEngineInstall() }
+                Button("取消", role: .cancel) { state.cancelEngineInstall() }
+            } message: { engine in
+                Text("这个模型由 \(engine.displayName) 引擎驱动，先安装 \(engine.displayName) 才能切换到它。")
+            }
+    }
+
+    private var engineInstallPrompt: Binding<Bool> {
+        Binding(get: { state.pendingEngineInstall != nil },
+                set: { if !$0 { state.cancelEngineInstall() } })
     }
 
     @ViewBuilder private var content: some View {
@@ -74,10 +89,14 @@ struct ShellView: View {
             if !showsSidebar {
                 SidebarRail(state: state)
                     .frame(width: Native.railWidth)
-                    .transition(.opacity)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
-        .animation(.easeOut(duration: 0.18), value: showsSidebar)
+        // Sidebar collapse/expand: glide the full column out and the rail in on
+        // one calm curve so the menu never snaps between shown and hidden. The
+        // detail pane's leading padding rides the same animation, so the canvas
+        // slides over in lock-step instead of popping.
+        .animation(.easeInOut(duration: 0.24), value: showsSidebar)
         .background(Native.surface.ignoresSafeArea())
         .tint(Native.accent)
         // The toggle rides the sidebar's trailing edge: parked at the rail's
@@ -88,6 +107,9 @@ struct ShellView: View {
                 SidebarTopToggle(state: state)
                     .position(x: showsSidebar ? Native.sidebarWidth - 30 : 84,
                               y: 14)
+                    // Keep the toggle in sync with the collapse — it travels
+                    // with the sidebar instead of jumping between the two rows.
+                    .animation(.easeInOut(duration: 0.24), value: showsSidebar)
             }
             .ignoresSafeArea(.container, edges: .top)
         }
@@ -114,18 +136,13 @@ struct SidebarView: View {
                 .padding(.top, 42)
                 .padding(.bottom, 16)
 
-            // 工作区菜单固定，只有最近对话列表滚动：
-            // 在历史里翻找时导航不会被顶走。
             workspace
                 .padding(.horizontal, 10)
                 .padding(.bottom, 8)
 
-            ScrollView {
-                recents
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 12)
-            }
-            .scrollIndicators(.never)
+            // 菜单变短后 VStack 会默认垂直居中，把品牌区顶到中间：
+            // 用 Spacer 把导航钉在顶部、引擎卡片钉在底部。
+            Spacer(minLength: 12)
 
             EngineCard(state: state)
                 .padding(.horizontal, 12)
@@ -147,27 +164,6 @@ struct SidebarView: View {
 
             ForEach(Page.allCases) { page in
                 SidebarNavRow(page: page, state: state)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var recents: some View {
-        if !state.threads.isEmpty {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Eyebrow(text: "最近对话", color: Native.tertiary)
-                    Spacer()
-                    Text(verbatim: "\(state.threads.count)")
-                        .font(.system(size: 9.5, weight: .bold))
-                        .foregroundStyle(Native.tertiary)
-                }
-                .padding(.horizontal, 10)
-                .padding(.bottom, 4)
-
-                ForEach(state.threads) { thread in
-                    RecentRow(thread: thread, state: state)
-                }
             }
         }
     }
@@ -242,6 +238,7 @@ struct RailIcon: View {
         .help(page.rawValue)
         .accessibilityLabel(page.rawValue)
         .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(.easeOut(duration: 0.14), value: selected)
     }
 }
 
@@ -364,6 +361,7 @@ struct SidebarNavRow: View {
                         .fill(Native.label)
                         .frame(width: 4, height: 4)
                         .shadow(color: Native.label.opacity(0.35), radius: 4)
+                        .transition(.scale.combined(with: .opacity))
                 }
             }
             .padding(.horizontal, 9)
@@ -378,51 +376,12 @@ struct SidebarNavRow: View {
                     .stroke(Native.overlay(selected ? 0.10 : 0), lineWidth: 0.8)
             }
             .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+            // Glide the highlight (fill, stroke, and the trailing dot) in and
+            // out as the active row changes, instead of snapping on tap.
+            .animation(.easeOut(duration: 0.16), value: selected)
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-    }
-}
-
-struct RecentRow: View {
-    let thread: ChatThread
-    @ObservedObject var state: AppState
-    @State private var hovering = false
-
-    var body: some View {
-        Button {
-            state.openThread(thread)
-        } label: {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "bubble.left.fill")
-                    .font(.system(size: 8.5, weight: .semibold))
-                    .foregroundStyle(Native.tertiary.opacity(hovering ? 1 : 0.72))
-                    .padding(.top, 3)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(thread.title)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Native.label.opacity(hovering ? 1 : 0.8))
-                        .lineLimit(1)
-                    Text(Format.relative(thread.updatedAt))
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(Native.tertiary.opacity(0.85))
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
-            .background {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(Native.overlay(hovering ? 0.05 : 0))
-            }
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .contextMenu {
-            Button("删除对话", role: .destructive) { state.deleteThread(thread) }
-        }
     }
 }
 
@@ -464,7 +423,9 @@ struct EngineCard: View {
                 collapsedContent
             }
         }
-        .padding(effectivelyExpanded ? 13 : 9)
+        // Constant padding: the collapsed row is the card's bottom row in
+        // both states, so any padding change would shift it on expand.
+        .padding(9)
         .background {
             GlassSurface(radius: 18,
                          tint: state.isRunning ? Native.mint : .clear,
@@ -498,63 +459,11 @@ struct EngineCard: View {
 
     private var expandedContent: some View {
         VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 6) {
-                StatusDot(color: statusTint, diameter: 7, pulsing: state.isRunning || switching)
-                Text(statusText)
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(Native.label.opacity(0.9))
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-
-                if state.isRunning {
-                    Button {
-                        state.restartService()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundStyle(Native.label.opacity(0.75))
-                            .rotationEffect(.degrees(state.serverState == .starting ? 360 : 0))
-                            .animation(state.serverState == .starting
-                                       ? .linear(duration: 0.9).repeatForever(autoreverses: false)
-                                       : .easeOut(duration: 0.2),
-                                       value: state.serverState == .starting)
-                            .frame(width: 22, height: 22)
-                            .background(Circle().fill(Native.overlay(0.07)))
-                            .overlay(Circle().stroke(Native.overlay(0.10), lineWidth: 0.8))
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(CircleIconButtonStyle())
-                    .help("重启引擎")
-                    .accessibilityLabel("重启引擎")
-                    .disabled(switching)
-                    .opacity(switching ? 0.35 : 1)
-                }
-
-                Button {
-                    state.toggleService()
-                } label: {
-                    HStack(spacing: 4) {
-                        if state.serverState == .starting || state.serverState == .stopping {
-                            ProgressView()
-                                .controlSize(.mini)
-                                .frame(height: 10)
-                        } else {
-                            Image(systemName: state.isRunning ? "stop.fill" : "play.fill")
-                                .font(.system(size: 9, weight: .bold))
-                        }
-                        Text(state.isRunning ? "停止" : "启动")
-                    }
-                    .animation(.easeOut(duration: 0.18), value: state.isRunning)
-                }
-                .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
-                .disabled(state.runtimeMissing != nil || (switching && !state.isRunning))
-            }
-
             ModelSwitcher(state: state, variant: .engine)
 
-            if state.availableEngines.count > 1 {
-                EngineSwitcherRow(state: state)
-            }
+            // Always on: installed engines switch in place, missing ones link
+            // to their installer, so the card never hides what else can run.
+            EngineSwitcherRow(state: state)
 
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(switching ? "—" : (rate > 0 ? String(format: "%.1f", rate) : "—"))
@@ -586,7 +495,7 @@ struct EngineCard: View {
                 Meter(fraction: memoryFraction,
                       tint: memoryFraction > 0.9 ? Native.red : (memoryFraction > 0.75 ? Native.orange : Native.cyan))
                 HStack {
-                    Text(verbatim: "\(state.activeEngine.displayName.lowercased()) \(state.engineVersion) · \(state.port)")
+                    Text(verbatim: state.activeEngine.displayName.lowercased() + " " + state.engineVersion)
                         .font(Native.monoSmall)
                         .foregroundStyle(Native.tertiary.opacity(0.9))
                         .lineLimit(1)
@@ -598,6 +507,11 @@ struct EngineCard: View {
                     }
                 }
             }
+
+            // The collapsed pill stays pinned at the bottom of the expanded
+            // card verbatim, so the status line, endpoint hint, and service
+            // controls occupy the same spot in both states.
+            collapsedContent
         }
     }
 }
@@ -674,7 +588,13 @@ struct ServiceControlGroup: View {
                     Text(state.isRunning ? "停止" : "启动")
                         .font(.system(size: 10.5, weight: .semibold))
                         .foregroundStyle(labelText)
+                        .lineLimit(1)
                 }
+                // 启动后行内会多出重启圆钮 + 更宽的 spinner，行宽吃紧时
+                // SwiftUI 会把这里的文字压成 0 宽，胶囊塌缩成"圆形"。
+                // fixedSize 让按钮永远保持 图标+文字 的完整胶囊形状，
+                // 不足的空间由左侧状态/端口提示文字截断让出。
+                .fixedSize()
                 .padding(.horizontal, 11)
                 .padding(.vertical, 6)
                 .background(Capsule().fill(labelFill))
@@ -743,7 +663,6 @@ struct DetailView: View {
                 case .overview: OverviewView(state: state)
                 case .chat: ChatView(state: state)
                 case .models: ModelsView(state: state)
-                case .engines: EnginesView(state: state, installs: state.installs)
                 case .logs: LogsView(state: state)
                 case .settings: SettingsView(state: state)
                 }

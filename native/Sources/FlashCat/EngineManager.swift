@@ -124,4 +124,13 @@ final class EngineManager {
     func dispose() {
         for controller in controllers { controller.dispose() }
     }
+
+    /// Runs once at launch, before this session starts anything: reaps engine
+    /// processes a crashed or force-quit previous session left resident. Each
+    /// controller only touches its own pack's directories.
+    func sweepOrphanEngines() {
+        for controller in controllers where controller.isInstalled {
+            controller.sweepOrphans()
+        }
+    }
 }

@@ -164,8 +164,6 @@ extension Page {
             return [Color(hex: 0x7C5CFF), Color(hex: 0x0A84FF), Color(hex: 0x00C7BE)]
         case .models:
             return [Color(hex: 0x30D158), Color(hex: 0x00C7BE), Color(hex: 0x0A84FF)]
-        case .engines:
-            return [Color(hex: 0x22D3EE), Color(hex: 0x5E5CE6), Color(hex: 0xBF5AF2)]
         case .logs:
             return [Color(hex: 0xFFD60A), Color(hex: 0xFF9F0A), Color(hex: 0xFF453A)]
         case .settings:
@@ -435,10 +433,23 @@ struct GlassChip: View {
 
 // MARK: - Buttons
 
+/// Wrapper that tracks pointer hover for a button style's body, so pill
+/// buttons get the same hover lift `IconAction` already has.
+private struct HoverObserving<Content: View>: View {
+    @State private var hovering = false
+    @ViewBuilder var content: (Bool) -> Content
+
+    var body: some View {
+        content(hovering)
+            .onHover { hovering = $0 }
+    }
+}
+
 /// Games-style pill button. `light` is the white primary action; `glass` is the
-/// translucent secondary; `accent` is the coloured call to action.
+/// translucent secondary; `accent` is the coloured call to action; `quietDanger`
+/// is a red-tinted glass for destructive row actions that must not shout.
 struct ArcadePillStyle: ButtonStyle {
-    enum Tone { case light, glass, accent, danger }
+    enum Tone { case light, glass, accent, danger, quietDanger }
 
     @Environment(\.isEnabled) private var isEnabled
 
@@ -450,6 +461,7 @@ struct ArcadePillStyle: ButtonStyle {
         case .light: return Native.pillText
         case .glass: return Native.label
         case .accent, .danger: return .white
+        case .quietDanger: return Native.red
         }
     }
 
@@ -459,30 +471,40 @@ struct ArcadePillStyle: ButtonStyle {
             return AnyShapeStyle(Native.pillFill)
         case .glass:
             return AnyShapeStyle(Native.overlay(0.12))
+        case .quietDanger:
+            return AnyShapeStyle(Native.red.opacity(0.14))
         case .accent:
-            return AnyShapeStyle(LinearGradient(colors: [Native.accent, Native.pink],
-                                                startPoint: .topLeading, endPoint: .bottomTrailing))
+            // Same-hue vertical shade instead of the loud accent→pink ramp:
+            // keeps the call to action warm without fighting the card tints.
+            return AnyShapeStyle(LinearGradient(colors: [Native.accent, Native.accent.opacity(0.82)],
+                                                startPoint: .top, endPoint: .bottom))
         case .danger:
             return AnyShapeStyle(Native.red.opacity(0.92))
         }
     }
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: compact ? 11.5 : 12.5, weight: .semibold))
-            .foregroundStyle(foreground)
-            .padding(.horizontal, compact ? 12 : 15)
-            .frame(height: compact ? 28 : 33)
-            .background(background, in: Capsule())
-            .overlay(Capsule().stroke(Native.overlay(0.16).opacity(tone == .light ? 0 : 1), lineWidth: 0.8))
-            .shadow(color: tone == .accent ? Native.accent.opacity(0.35) : .black.opacity(0.18),
-                    radius: tone == .accent ? 12 : 6,
-                    x: 0,
-                    y: tone == .accent ? 5 : 2)
-            .scaleEffect(configuration.isPressed && isEnabled ? 0.965 : 1)
-            .opacity(!isEnabled ? 0.34 : (configuration.isPressed ? 0.9 : 1))
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
-            .contentShape(Capsule())
+        HoverObserving { hovering in
+            configuration.label
+                .font(.system(size: compact ? 11.5 : 12.5, weight: .semibold))
+                .foregroundStyle(foreground)
+                .padding(.horizontal, compact ? 12 : 15)
+                .frame(height: compact ? 28 : 33)
+                .background(background, in: Capsule())
+                .overlay(Capsule().stroke(Native.overlay(0.16).opacity(tone == .light ? 0 : 1), lineWidth: 0.8))
+                .shadow(color: tone == .accent ? Native.accent.opacity(0.22) : .black.opacity(0.18),
+                        radius: tone == .accent ? 8 : 6,
+                        x: 0,
+                        y: tone == .accent ? 4 : 2)
+                .scaleEffect(!isEnabled
+                             ? 1
+                             : configuration.isPressed ? 0.965 : (hovering ? 1.02 : 1))
+                .brightness(hovering && isEnabled && tone != .light ? 0.07 : 0)
+                .opacity(!isEnabled ? 0.34 : (configuration.isPressed ? 0.9 : 1))
+                .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+                .animation(.easeOut(duration: 0.14), value: hovering)
+                .contentShape(Capsule())
+        }
     }
 }
 
@@ -827,6 +849,40 @@ struct Meter: View {
             }
         }
         .frame(height: height)
+    }
+}
+
+/// Determinate circular progress with the percent in the middle. Used by the
+/// engine cards so build + install read as one continuous run; the step text
+/// lives beside the ring, not inside it.
+struct ProgressRing: View {
+    let fraction: Double
+    var tint: Color = Native.accent
+    var size: CGFloat = 30
+    var lineWidth: CGFloat = 3.5
+
+    private var clamped: Double { min(max(fraction, 0), 1) }
+    private var percent: Int { Int((clamped * 100).rounded()) }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Native.overlay(0.10), lineWidth: lineWidth)
+            Circle()
+                .trim(from: 0, to: CGFloat(clamped))
+                .stroke(tint,
+                        style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .shadow(color: tint.opacity(0.4), radius: 2.5)
+            Text(verbatim: "\(percent)%")
+                .font(.system(size: size * 0.28, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Native.secondary)
+                .minimumScaleFactor(0.6)
+                .lineLimit(1)
+                .padding(.horizontal, 2)
+        }
+        .frame(width: size, height: size)
+        .animation(.easeOut(duration: 0.25), value: clamped)
     }
 }
 

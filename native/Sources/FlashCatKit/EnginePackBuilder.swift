@@ -23,9 +23,12 @@ public struct EnginePackBuildStep: Sendable, Equatable, Identifiable {
 /// The three engines have different sources, so the plans differ:
 /// - splash ships a release tarball → download it (with its `.sha256`), then unpack;
 /// - MTPLX comes from PyPI → the build script runs `uv pip install mtplx==<v>`;
-/// - oMLX is not on PyPI at all → the pack is assembled from a Homebrew keg, so
-///   the keg has to be upgraded first (`brew upgrade`), and a pre-release that the
-///   formula does not know about simply cannot be built.
+/// - oMLX is not on PyPI, but its upstream GitHub release ships a prebuilt cp311
+///   wheel → the build script downloads that wheel, verifies its sha256 against
+///   the release notes, and installs it into the pack's own CPython 3.11.
+///
+/// None of the plans rely on machine-local toolchains: every script bootstraps
+/// its own uv into `.tools/` and uses only /usr/bin tools otherwise.
 public enum EnginePackBuildPlanner {
     /// Directory of the release archives, relative to the repository root.
     public static let packsDirectory = "dist/packs"
@@ -38,10 +41,9 @@ public enum EnginePackBuildPlanner {
 
         switch id {
         case .omlx:
-            steps.append(EnginePackBuildStep(
-                id: "keg",
-                title: "升级 Homebrew 的 omlx keg",
-                command: #"brew upgrade omlx || brew install jundot/omlx/omlx || true"#))
+            // The build script fetches the upstream wheel itself; no local
+            // Homebrew keg (and no `brew upgrade`) is involved.
+            break
         case .splash:
             if let asset = release?.asset(prefix: "splash-\(version)-"),
                let checksum = release?.asset(named: asset.name + ".sha256") {
@@ -99,7 +101,7 @@ public enum EnginePackBuildError: Error, LocalizedError, Equatable {
         case .repositoryNotFound:
             return "找不到 flashCat 源码目录（需要 scripts/engines/）。设置 FLASHCAT_REPO_ROOT 指向仓库根目录。"
         case .stepFailed(let title, let status):
-            return "\(title) 失败（退出码 \(status)），详见下方输出"
+            return "「\(title)」失败（退出码 \(status)）"
         case .releaseFileMissing(let path):
             return "构建结束但没有生成 \(path)"
         }
@@ -142,8 +144,11 @@ public enum EnginePackBuildRunner {
         process.arguments = ["-lc", step.command]
         process.currentDirectoryURL = URL(fileURLWithPath: repository)
         var environment = ProcessInfo.processInfo.environment
+        // The build scripts bootstrap their own uv into <repo>/.tools/ and use
+        // only /usr/bin tools besides, so no Homebrew or other machine-local
+        // toolchain is added to the search path.
         let path = environment["PATH"] ?? "/usr/bin:/bin"
-        environment["PATH"] = "\(path):/opt/homebrew/bin:/usr/local/bin:\(NSHomeDirectory())/.envpilot/tools"
+        environment["PATH"] = path
         process.environment = environment
 
         let pipe = Pipe()

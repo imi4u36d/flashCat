@@ -107,6 +107,13 @@ enum Format {
         return String(format: "%.1f KB", Double(bytes) / 1024)
     }
 
+    /// Transfer speed for the download center, from the folder-watch deltas.
+    static func rate(_ bytesPerSecond: Double) -> String {
+        if bytesPerSecond >= 1_048_576 { return String(format: "%.1f MB/s", bytesPerSecond / 1_048_576) }
+        if bytesPerSecond >= 1024 { return String(format: "%.0f KB/s", bytesPerSecond / 1024) }
+        return "—"
+    }
+
     static func tokens(_ value: Int) -> String {
         if value >= 1000 { return String(format: "%.1fK", Double(value) / 1000) }
         return "\(value)"
@@ -155,22 +162,72 @@ func portOpen(_ port: Int) -> Bool {
     return connected == 0
 }
 
-/// Waits for the listener on `port` to disappear without ever blocking the main
-/// actor: `Task.sleep` releases it, so the process termination handler and the
-/// status poller keep running while a 20 GB weight map is being torn down.
-@MainActor
-func waitForPortFree(_ port: Int, _ seconds: Double) async -> Bool {
-    let deadline = Date().addingTimeInterval(seconds)
-    while Date() < deadline {
-        if !portOpen(port) { return true }
-        if Task.isCancelled { break }
-        try? await Task.sleep(nanoseconds: 200_000_000)
-    }
-    return !portOpen(port)
+@_silgen_name("proc_pidpath")
+private func proc_pidpath(_ pid: Int32, _ buffer: UnsafeMutableRawPointer, _ size: UInt32) -> Int32
+
+/// One snapshot entry of the kernel process table: the two pids the engine's
+/// process-tree bookkeeping walks.
+struct ProcessTableEntry {
+    let pid: Int32
+    let ppid: Int32
 }
 
-func sendSignal(_ pid: Int32, _ signal: Int32) -> Bool {
-    kill(pid, signal) == 0
+/// The whole process table in one sysctl call. An engine is never a single
+/// process — the pack python spawns the inference binary and pool workers — so
+/// killing only the direct child is what left weights resident in memory after
+/// a quit mid-startup.
+func allProcesses() -> [ProcessTableEntry] {
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL]
+    var size = 0
+    guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else { return [] }
+    // Processes come and go between the two calls, so over-allocate instead of
+    // retrying on ERANGE: an undersized sweep misses exactly the leftovers it
+    // was written to find.
+    var processes = [kinfo_proc](repeating: kinfo_proc(), count: size / MemoryLayout<kinfo_proc>.stride + 64)
+    size = processes.count * MemoryLayout<kinfo_proc>.stride
+    guard sysctl(&mib, 3, &processes, &size, nil, 0) == 0 else { return [] }
+    let count = size / MemoryLayout<kinfo_proc>.stride
+    return processes.prefix(count).map { entry in
+        ProcessTableEntry(pid: entry.kp_proc.p_pid, ppid: entry.kp_eproc.e_ppid)
+    }
+}
+
+/// Executable path of a live pid, or nil. Only processes flashCat itself
+/// spawned carry a path inside an engine pack root, so this is the residue
+/// marker for engines whose pid file was already removed.
+func processExecutablePath(_ pid: Int32) -> String? {
+    var buffer = [CChar](repeating: 0, count: 4096)
+    let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+    guard length > 0 else { return nil }
+    return String(cString: buffer)
+}
+
+/// Every pid below `root` in the ppid tree, from a single table snapshot.
+func descendantPids(of root: Int32, table: [ProcessTableEntry]) -> [Int32] {
+    var children: [Int32: [Int32]] = [:]
+    for entry in table where entry.ppid > 1 {
+        children[entry.ppid, default: []].append(entry.pid)
+    }
+    var descendants: [Int32] = []
+    var queue = [root]
+    while let current = queue.popLast() {
+        for child in children[current] ?? [] {
+            descendants.append(child)
+            queue.append(child)
+        }
+    }
+    return descendants
+}
+
+/// Signal the engine's whole process tree. The table is snapshotted *before*
+/// anything is signalled: once the root dies the children are re-parented to
+/// launchd and the chain is gone, so killing top-down as we walk would strand
+/// the very processes this exists to reap.
+func killTree(_ pid: Int32, _ signal: Int32) {
+    let victims = [pid] + descendantPids(of: pid, table: allProcesses())
+    for victim in victims where victim > 1 {
+        kill(victim, signal)
+    }
 }
 
 /// Foundation does not expose NSTask's pid; the child's pid is what the port

@@ -73,6 +73,37 @@ final class EngineTuningTests: XCTestCase {
         XCTAssertNil(tuning.omlxSettings, "a draft path alone says nothing about MTP/DFlash")
     }
 
+    // MARK: per-model DFlash2 draft assignment
+
+    func testDraftOverrideFallsBackToEngineTuningWhenAbsent() {
+        var tuning = EngineTuning()
+        tuning.mtp = true
+        XCTAssertEqual(tuning.omlxSettings(draftOverride: nil), tuning.omlxSettings)
+        XCTAssertEqual(tuning.omlxSettings(draftOverride: "  "), tuning.omlxSettings,
+                       "a blank override is no override")
+    }
+
+    func testDraftOverrideBindsTheCheckpointAndPicksDFlash() {
+        var tuning = EngineTuning()
+        tuning.mtp = true
+        tuning.mtpDepth = 3
+        let payload = tuning.omlxSettings(draftOverride: "incoai--Qwen3.8-Flash-Next-DFlash2-GGUF")
+        // The assignment means this model runs DFlash2 with that draft, which
+        // forces MTP off — the same exclusivity the engine enforces.
+        XCTAssertEqual(payload?["dflash_enabled"], .bool(true))
+        XCTAssertEqual(payload?["mtp_enabled"], .bool(false))
+        XCTAssertEqual(payload?["dflash_draft_model"], .string("incoai--Qwen3.8-Flash-Next-DFlash2-GGUF"))
+        XCTAssertNil(payload?["mtp_fixed_depth"], "the retired head's knobs leave the payload")
+    }
+
+    func testDraftOverrideWorksWhenTheEngineTuningSendsNothing() {
+        // All-default tuning produces no payload of its own, but a model with
+        // an assigned draft still needs its settings pushed before a hot load.
+        let payload = EngineTuning().omlxSettings(draftOverride: "/tmp/draft")
+        XCTAssertEqual(payload?["dflash_enabled"], .bool(true))
+        XCTAssertEqual(payload?["dflash_draft_model"], .string("/tmp/draft"))
+    }
+
     // MARK: PLE n-gram table offload
 
     func testSplashTakesTheNgramCacheSizeVerbatim() {
@@ -128,6 +159,40 @@ final class EngineTuningTests: XCTestCase {
         tuning.dflash = false
         XCTAssertNil(tuning.draftDirectory(automatic: "/models/draft"))
         XCTAssertTrue(tuning.draftsDisabled)
+    }
+
+    // MARK: speculative mode
+
+    func testSpeculativeModeFollowsEachEngineTuning() {
+        // Fresh tunings: splash runs DFlash2, oMLX MTP, MTPLX its own MTP.
+        XCTAssertEqual(EngineTuning().speculativeMode(for: .splash), .dflash)
+        XCTAssertEqual(EngineTuning().speculativeMode(for: .omlx), .mtp)
+        XCTAssertEqual(EngineTuning().speculativeMode(for: .mtplx), .mtp)
+
+        // Pack defaults reproduce the same answer through the fallback path.
+        for id in EngineID.allCases {
+            XCTAssertEqual(EngineTuning.defaults(for: id).speculativeMode(for: id),
+                           EngineTuning().speculativeMode(for: id))
+        }
+
+        // Splash only has DFlash2; turning it off leaves nothing.
+        var splash = EngineTuning()
+        splash.dflash = false
+        XCTAssertEqual(splash.speculativeMode(for: .splash), .off)
+
+        // oMLX picks whichever head is on, DFlash winning a conflict.
+        var omlx = EngineTuning()
+        omlx.dflash = true
+        XCTAssertEqual(omlx.speculativeMode(for: .omlx), .dflash)
+        omlx.mtp = false
+        XCTAssertEqual(omlx.speculativeMode(for: .omlx), .dflash)
+        omlx.dflash = false
+        XCTAssertEqual(omlx.speculativeMode(for: .omlx), .off)
+
+        // MTPLX only has MTP, and `nil` keeps the pack's on default.
+        var mtplx = EngineTuning()
+        mtplx.mtp = false
+        XCTAssertEqual(mtplx.speculativeMode(for: .mtplx), .off)
     }
 
     func testSplitArgumentsHandlesQuotes() {

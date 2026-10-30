@@ -12,6 +12,10 @@ struct EngineConfiguration: Codable, Equatable {
     /// Per-engine knobs edited on that engine's config page. Optional so a file
     /// written before the config page existed still decodes.
     var tuning: EngineTuning?
+    /// Which auxiliary DFlash2 draft each main model runs with, keyed by model
+    /// id. Engine scoping comes free: the map lives inside this engine's own
+    /// configuration. Absent key = follow the engine-level tuning.
+    var draftAssignments: [String: String]?
 }
 
 /// Reads and writes `engines.json`, and tells the UI where every engine's pack
@@ -20,6 +24,12 @@ struct EngineConfiguration: Codable, Equatable {
 @MainActor
 final class EngineStore {
     static let shared = EngineStore()
+
+    /// Posted after `setTuning`. The store is deliberately not observable, so
+    /// views that only read tuning indirectly (the overview's draft-acceptance
+    /// label) listen for this instead.
+    static let tuningDidChangeNotification =
+        Notification.Name("FlashCatEngineTuningDidChange")
 
     private(set) var configurations: [String: EngineConfiguration] = [:]
     private let fileURL: URL
@@ -60,6 +70,29 @@ final class EngineStore {
 
     func setTuning(_ value: EngineTuning, for id: EngineID) {
         update(id) { $0.tuning = value == EngineTuning.defaults(for: id) ? nil : value }
+        NotificationCenter.default.post(name: Self.tuningDidChangeNotification, object: nil)
+    }
+
+    /// The DFlash2 draft assigned to one model, or nil when it follows the
+    /// engine-level tuning.
+    func draftAssignment(for id: EngineID, model: String) -> String? {
+        configuration(for: id).draftAssignments?[model]
+    }
+
+    /// Bind (or with `nil`, unbind) a draft to a main model. Posts the tuning
+    /// notification so card views showing the pairing refresh.
+    func setDraftAssignment(_ draft: String?, engine: EngineID, model: String) {
+        update(engine) {
+            var assignments = $0.draftAssignments ?? [:]
+            let trimmed = draft?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if trimmed.isEmpty {
+                assignments.removeValue(forKey: model)
+            } else {
+                assignments[model] = trimmed
+            }
+            $0.draftAssignments = assignments.isEmpty ? nil : assignments
+        }
+        NotificationCenter.default.post(name: Self.tuningDidChangeNotification, object: nil)
     }
 
     func update(_ id: EngineID, _ change: (inout EngineConfiguration) -> Void) {
@@ -299,6 +332,20 @@ enum EngineModelLinker {
         var total = 0
         for case let entry as String in enumerator {
             let full = path + "/" + entry
+            // `attributesOfItem` reports a symlink's own size (the target-path
+            // string, ~100 bytes), not the weights it points at — linked GGUF
+            // folders would otherwise show up as a few KB. Resolve one hop.
+            if let attributes = try? manager.attributesOfItem(atPath: full),
+               attributes[.type] as? FileAttributeType == .typeSymbolicLink,
+               let target = try? manager.destinationOfSymbolicLink(atPath: full) {
+                let resolved = target.hasPrefix("/")
+                    ? target
+                    : (path as NSString).appendingPathComponent(target)
+                if let targetSize = try? manager.attributesOfItem(atPath: resolved)[.size] as? Int {
+                    total += targetSize
+                    continue
+                }
+            }
             guard let attributes = try? manager.attributesOfItem(atPath: full) else { continue }
             total += (attributes[.size] as? Int) ?? 0
         }

@@ -41,14 +41,21 @@ struct FlashCatApp: App {
                 Button("概览") { state.section = .overview }.keyboardShortcut("1", modifiers: .command)
                 Button("对话") { state.section = .chat }.keyboardShortcut("2", modifiers: .command)
                 Button("模型") { state.section = .models }.keyboardShortcut("3", modifiers: .command)
-                Button("引擎") { state.section = .engines }.keyboardShortcut("4", modifiers: .command)
-                Button("日志") { state.section = .logs }.keyboardShortcut("5", modifiers: .command)
-                Button("设置") { state.section = .settings }.keyboardShortcut("6", modifiers: .command)
+                Button("日志") { state.section = .logs }.keyboardShortcut("4", modifiers: .command)
+                Button("设置") { state.section = .settings }.keyboardShortcut("5", modifiers: .command)
                 Divider()
                 Button("折叠/展开侧边栏") { state.toggleSidebar() }
                     .keyboardShortcut("\\", modifiers: .command)
             }
         }
+
+        // 系统菜单栏常驻入口：点击弹出当前模型与运行信息面板。
+        MenuBarExtra {
+            MenuBarPanel(state: state)
+        } label: {
+            MenuBarStatusLabel(state: state)
+        }
+        .menuBarExtraStyle(.window)
     }
 }
 
@@ -96,12 +103,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        AppState.shared.controller?.dispose()
-        return true
+        // 菜单栏常驻：关掉主窗口应用继续留在菜单栏，引擎照常对外服务，
+        // 从面板上的"打开主窗口"或 Dock 图标随时回到窗口。彻底退出走
+        // 面板里的"退出 flashCat"。
+        return false
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        AppState.shared.controller?.dispose()
+        let state = AppState.shared
+        state.gateway.stop()
+        state.controller?.dispose()
     }
 
     @MainActor

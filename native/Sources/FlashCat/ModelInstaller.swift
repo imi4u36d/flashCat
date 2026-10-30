@@ -108,7 +108,10 @@ enum ModelInstaller {
         let script = try scriptPath()
         let repo = model.split(separator: ":", maxSplits: 1).first.map(String.init) ?? model
         let destination = destination(engine: engine, repo: repo)
-        Paths.ensureDirectory(destination)
+        // No ensureDirectory here: an empty folder up front is still an empty
+        // folder once the downloader starts filling it, and the model page
+        // scans these directories — the library must not see a half-built
+        // model as installed. hf_snapshot.py creates the folder itself.
 
         var arguments = [script, repo, destination]
         let trimmed = cache.trimmingCharacters(in: .whitespaces)
@@ -141,6 +144,12 @@ enum ModelInstaller {
         }
         let trimmed = cache.trimmingCharacters(in: .whitespaces)
         if !trimmed.isEmpty { environment["HF_HUB_CACHE"] = trimmed }
+        // Xet chunks land in HF_HOME/xet instead of the folder the download
+        // watch measures, so a shard can stream for minutes while the watched
+        // size holds still — the exact "进度卡住" report. Plain HTTP downloads
+        // write straight into the watched `.incomplete` files, and the mirror
+        // endpoints this app is used with do not speak xet anyway.
+        environment["HF_HUB_DISABLE_XET"] = "1"
         return environment
     }
 

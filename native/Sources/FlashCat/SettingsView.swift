@@ -112,6 +112,10 @@ struct SettingsView: View {
     @ObservedObject private var theme: ThemeController
     @StateObject private var store: SettingsDraftStore
     @State private var confirmReset = false
+    @State private var gatewayPortText = ""
+    /// Observed directly: the gateway publishes its own run state, which the
+    /// AppState pipeline does not forward.
+    @ObservedObject private var gateway: GatewayController = .shared
     @Environment(\.colorScheme) private var colorScheme
 
     /// Port the active engine is configured to use: the same value the engine
@@ -134,11 +138,13 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Native.gap) {
-                PageHeader(title: "设置", subtitle: "服务、模型与默认行为", eyebrow: "偏好设置")
+                PageHeader(title: "设置", subtitle: "服务、模型、引擎与默认行为", eyebrow: "偏好设置")
                 appearanceCard
                 serviceCard
+                gatewayCard
                 thinkingCard
                 modelCard
+                EngineRuntimeSection(state: state, installs: state.installs)
                 advancedCard
             }
             .padding(.horizontal, Native.pagePadding)
@@ -292,8 +298,88 @@ struct SettingsView: View {
         }
     }
 
-    private var thinkingCard: some View {
-        SettingsCard(title: "思考", detail: "默认推理行为与推理等级",
+    /// The unified local API gateway. Unlike the engine port this applies the
+    /// moment it is confirmed: the gateway holds no weights, so a restart is
+    /// free and the save bar has nothing to do with it.
+    private var gatewayCard: some View {
+        SettingsCard(title: "API 网关",
+                     detail: "OpenAI 与 Claude 双格式的统一本地接口",
+                     icon: "arrow.triangle.swap",
+                     tint: Native.mint,
+                     trailing: AnyView(gatewayTag)) {
+            SettingsRow(title: "启用 API 网关",
+                        detail: "在固定端口同时提供 OpenAI（`/v1/chat/completions`）与 Claude（`/v1/messages`）格式与统一模型列表，请求转发到当前运行的引擎",
+                        divider: false) {
+                switchToggle(Binding(
+                    get: { state.settings.gatewayEnabled },
+                    set: { newValue in
+                        state.settings.setGatewayEnabled(newValue)
+                        state.applyGatewaySettings()
+                    }), label: "启用 API 网关")
+            }
+            SettingsRow(title: "网关端口",
+                        detail: "独立于引擎端口；修改后点「应用」立即生效") {
+                HStack(spacing: 6) {
+                    TextField("9000", text: gatewayPortBinding)
+                        .textFieldStyle(.roundedBorder)
+                        .font(Native.monoFont)
+                        .frame(width: 92)
+                        .invalidRing(gatewayPortIssue != nil)
+                        .accessibilityLabel("网关端口")
+                        .onSubmit { applyGatewayPort() }
+                    Button("应用") { applyGatewayPort() }
+                        .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
+                        .disabled(gatewayPortIssue != nil
+                                  || Int(gatewayPortText) == state.settings.gatewayPort)
+                }
+            }
+        }
+    }
+
+    private var gatewayTag: some View {
+        HStack(spacing: 5) {
+            StatusDot(color: gateway.isRunning ? Native.green : Native.secondary, diameter: 6)
+            Text("127.0.0.1:\(gateway.port)")
+                .font(Native.monoSmall)
+                .foregroundStyle(Native.secondary)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Color(nsColor: .quaternaryLabelColor).opacity(0.3),
+                    in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .stroke(Native.hairline.opacity(0.7), lineWidth: 1)
+        )
+        .help(gateway.isRunning ? "网关运行中" : "网关未运行")
+    }
+
+    private var gatewayPortBinding: Binding<String> {
+        Binding(
+            get: { gatewayPortText.isEmpty ? String(state.settings.gatewayPort) : gatewayPortText },
+            set: { gatewayPortText = String($0.filter { $0.isNumber }.prefix(5)) }
+        )
+    }
+
+    private var gatewayPortIssue: String? {
+        let text = gatewayPortText.isEmpty ? String(state.settings.gatewayPort) : gatewayPortText
+        guard let value = Int(text), (1024...65535).contains(value) else {
+            return "端口需要是 1024 到 65535 之间的数字"
+        }
+        return nil
+    }
+
+    private func applyGatewayPort() {
+        let text = gatewayPortText.isEmpty ? String(state.settings.gatewayPort) : gatewayPortText
+        guard let value = Int(text), (1024...65535).contains(value),
+              value != state.settings.gatewayPort else { return }
+        state.settings.setGatewayPort(value)
+        state.applyGatewaySettings()
+        gatewayPortText = ""
+        state.toast("网关已切换到端口 \(value)")
+    }
+
+    private var thinkingCard: some View {        SettingsCard(title: "思考", detail: "默认推理行为与推理等级",
                      icon: "brain.head.profile", tint: Native.violet) {
             SettingsRow(title: "思考模式",
                         detail: draft.thinking.detail,
@@ -330,35 +416,19 @@ struct SettingsView: View {
         SettingsCard(title: "模型", detail: "启动服务时默认加载的权重",
                      icon: "shippingbox.fill", tint: Native.amber) {
             SettingsRow(title: "默认模型",
-                        detail: "从本地模型目录中选择，或填写下方自定义 ID",
+                        detail: "从本地模型目录中选择，或沿用当前模型",
                         divider: false) {
                 Picker("", selection: modelSelection) {
                     ForEach(state.catalog.machine, id: \.id) { model in
                         Text(model.id).tag(model.id)
                     }
-                    Text("自定义模型 ID…").tag("")
+                    Text("沿用当前模型").tag("")
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
                 .frame(width: 252)
                 .accessibilityLabel("默认模型")
                 .help("默认模型")
-            }
-            SettingsRow(title: "自定义模型 ID",
-                        detail: "Hub 上的 `owner/repo`，可带 `:VARIANT`；留空沿用当前模型",
-                        error: shownIssue(.model, modelIssue)) {
-                HStack(spacing: 8) {
-                    TextField("owner/repo", text: textBinding(\.model, .model))
-                        .textFieldStyle(.roundedBorder)
-                        .font(Native.monoSmall)
-                        .frame(width: 222)
-                        .invalidRing(shownIssue(.model, modelIssue) != nil)
-                        .accessibilityLabel("自定义模型 ID")
-                    if !draft.normalized.model.isEmpty {
-                        Tag(text: modelKnown ? "已安装" : "Hub",
-                            tone: modelKnown ? .success : .neutral)
-                    }
-                }
             }
         }
     }
@@ -381,15 +451,16 @@ struct SettingsView: View {
                         chooseCacheDirectory()
                     } label: {
                         Image(systemName: "folder")
-                            .font(.system(size: 11))
+                            .font(.system(size: 11, weight: .semibold))
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
                     .accessibilityLabel("选择缓存目录")
                     .help("选择 Hugging Face 缓存目录")
+                    Button("恢复默认…") { confirmReset = true }
+                        .buttonStyle(ArcadePillStyle(tone: .quietDanger, compact: true))
+                        .help("将端口、缓存目录与全部开关恢复为默认值")
                 }
             }
-            resetRow
         }
         .alert("恢复默认设置？", isPresented: $confirmReset) {
             Button("取消", role: .cancel) {}
@@ -448,34 +519,7 @@ struct SettingsView: View {
         )
     }
 
-    private var modelKnown: Bool {
-        let value = store.draft.normalized.model
-        return state.catalog.machine.contains { $0.id == value }
-    }
-
     // MARK: advanced helpers
-
-    private var resetRow: some View {
-        VStack(spacing: 0) {
-            Hairline().opacity(0.65)
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("恢复默认设置")
-                        .font(.system(size: 12.5, weight: .medium))
-                    Text("端口、缓存目录与全部开关恢复默认值")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Native.tertiary)
-                }
-                Spacer(minLength: 12)
-                Button("恢复默认…") { confirmReset = true }
-                    .buttonStyle(.bordered)
-                    .tint(Native.red)
-            }
-            .padding(.horizontal, Native.cardPadding)
-            .padding(.vertical, 11)
-            .background(Native.red.opacity(0.05))
-        }
-    }
 
     private func chooseCacheDirectory() {
         let panel = NSOpenPanel()
@@ -552,23 +596,24 @@ struct SettingsView: View {
             }
             Spacer(minLength: 12)
 
-            // Only offer actions while there is something to save. Saving with a
-            // live engine already restarts it, so a third "save and restart"
-            // button would duplicate the primary action.
+            // Two visual weights: `accent` marks the primary action (plain save
+            // vs save-then-start), `glass` the discard. Saving with a live
+            // engine already restarts it, so no separate "save and restart"
+            // button — the warning tag explains what saving will do.
             if isDirty {
                 if engineAffected {
                     if state.isRunning {
                         Tag(text: "保存后自动重启", tone: .warning)
                     } else {
                         Button("保存并启动服务") { save(restart: true) }
-                            .buttonStyle(ArcadePillStyle(tone: .accent, compact: true))
+                            .buttonStyle(ArcadePillStyle(tone: .light, compact: true))
                             .help("保存后启动推理服务")
                     }
                 }
                 Button("放弃更改") { discard() }
                     .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
                 Button("保存") { save(restart: false) }
-                    .buttonStyle(ArcadePillStyle(tone: .light, compact: true))
+                    .buttonStyle(ArcadePillStyle(tone: .accent, compact: true))
                     .keyboardShortcut("s", modifiers: .command)
             }
         }

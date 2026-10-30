@@ -173,6 +173,22 @@ final class AppSettings {
     }
     func setMaxTokens(_ value: Int) { defaults.set(value, forKey: "chat.maxTokens") }
 
+    // MARK: API gateway
+
+    /// The unified local gateway on its own fixed port. On by default: it is
+    /// what gives clients a stable OpenAI + Claude endpoint across engines.
+    var gatewayEnabled: Bool {
+        defaults.object(forKey: "gatewayEnabled") == nil ? true : defaults.bool(forKey: "gatewayEnabled")
+    }
+    func setGatewayEnabled(_ value: Bool) { defaults.set(value, forKey: "gatewayEnabled") }
+
+    /// 9000 keeps clear of the engine port blocks (8000/8100/8200 + 20 each).
+    var gatewayPort: Int {
+        let value = defaults.integer(forKey: "gatewayPort")
+        return (1024...65535).contains(value) ? value : 9000
+    }
+    func setGatewayPort(_ value: Int) { defaults.set(value, forKey: "gatewayPort") }
+
     func rememberModel(_ id: String) {
         var values = recentModels.filter { $0 != id }
         values.insert(id, at: 0)

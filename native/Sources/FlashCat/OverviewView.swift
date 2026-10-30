@@ -1,6 +1,8 @@
 import SwiftUI
 import Charts
 import AppKit
+import FlashCatKit
+import FlashCatKit
 
 struct OverviewView: View {
     @ObservedObject var state: AppState
@@ -56,8 +58,6 @@ struct OverviewView: View {
                         EndpointCard(state: state)
                             .frame(width: 336)
                     }
-
-                    RuntimeDetails(state: state, loading: loading)
                 }
                 .padding(.horizontal, Native.pagePadding)
                 .padding(.bottom, 30)
@@ -109,6 +109,21 @@ private struct ServiceHero: View {
         case .failed: return [Color(hex: 0xFF453A), Color(hex: 0x8B1E3F), Color(hex: 0x3A1030)]
         case .stopped: return [Color(hex: 0x9E9EB4), Color(hex: 0x64648A), Color(hex: 0x343452)]
         }
+    }
+
+    /// The hero title is now a plain label — model switching lives on the
+    /// Models page, so the overview no longer offers a switcher (no menu, no
+    /// chevron). Dropping the affordance keeps the big title from reading as
+    /// clickable.
+    private var modelTitle: some View {
+        Text(title)
+            .font(.system(size: 36, weight: .bold))
+            .tracking(-0.9)
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .truncationMode(.middle)
+            .contentTransition(.opacity)
     }
 
     var body: some View {
@@ -165,22 +180,8 @@ private struct ServiceHero: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(title)
-                .font(.system(size: 36, weight: .bold))
-                .tracking(-0.9)
-                .foregroundStyle(.white)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .truncationMode(.middle)
-                .contentTransition(.opacity)
+            modelTitle
                 .help(info?.id ?? state.selectedModel)
-
-            Text(info?.id ?? state.selectedModel)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.55))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .contentTransition(.opacity)
 
             if state.serverState == .failed, let failure = state.failureMessage {
                 Text(failure)
@@ -190,31 +191,8 @@ private struct ServiceHero: View {
                     .help(failure)
             }
 
-            FlowLayout(spacing: 6, lineSpacing: 6) {
-                if let info {
-                    GlassChip(text: info.origin.rawValue,
-                              tint: info.origin == .local ? Native.mint : Native.cyan)
-                    if info.draftPath != nil {
-                        GlassChip(icon: "bolt.fill", text: "DFlash2 就绪", tint: Native.mint)
-                    } else if state.catalog.draftRepository(info.id, family: info.family) != nil {
-                        GlassChip(text: "DFlash2 可下载")
-                    }
-                    if info.mmprojPath != nil {
-                        GlassChip(icon: "eye", text: "视觉")
-                    }
-                    GlassChip(text: info.sizeText)
-                }
-                if let device = state.stats?.deviceName {
-                    GlassChip(icon: "cpu", text: device)
-                } else if loading {
-                    SkeletonBar(width: 92, height: 22, radius: 11, opacity: 0.11)
-                        .transition(.opacity)
-                }
-                GlassChip(icon: "lock", text: "完全离线")
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 2)
-            .animation(.easeOut(duration: 0.2), value: loading)
+            HeroRuntimeDetails(state: state, loading: loading)
+                .padding(.top, 2)
         }
     }
 
@@ -405,18 +383,42 @@ private struct MetricsCard: View {
     @ObservedObject var state: AppState
     let loading: Bool
 
+    /// The row follows whatever speculative head the active engine is set to
+    /// run: DFlash2, MTP, or neither. Changing the knob on the engine's config
+    /// page (or switching engines) renames the row right away.
+    private var mode: SpeculativeMode { state.speculativeMode }
+
+    private var draftLabel: String {
+        switch mode {
+        case .dflash: return "DFlash2 接受率"
+        case .mtp: return "MTP 接受率"
+        case .off: return "草稿接受率"
+        }
+    }
+
+    private var draftDetail: String? {
+        switch mode {
+        case .dflash: return "当前引擎使用 DFlash2 草稿"
+        case .mtp: return "当前引擎使用 MTP 投机解码"
+        case .off: return "已在引擎设置中关闭投机解码"
+        }
+    }
+
     var body: some View {
-        Card("实时指标", subtitle: "prefill · 草稿命中 · 内存") {
+        Card("实时指标",
+             subtitle: mode == .off ? "prefill · 内存"
+                                    : "prefill · \(mode.headName) 命中 · 内存") {
             VStack(spacing: 0) {
                 MetricRow(label: "预填充",
                           value: state.stats?.prefillTokensPerSecond.map { Format.compact($0) } ?? "—",
                           unit: "tok/s",
                           loading: loading)
                 Hairline()
-                MetricRow(label: "草稿接受率",
-                          value: state.stats?.draftAcceptance.map { String(format: "%.0f", $0 * 100) } ?? "—",
-                          unit: "%",
-                          progress: state.stats?.draftAcceptance,
+                MetricRow(label: draftLabel,
+                          value: draftValue,
+                          unit: mode == .off ? nil : "%",
+                          detail: draftDetail,
+                          progress: mode == .off ? nil : state.stats?.draftAcceptance,
                           progressTint: Native.violet,
                           loading: loading)
                 Hairline()
@@ -429,6 +431,13 @@ private struct MetricsCard: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: loading)
+        .animation(.easeOut(duration: 0.2), value: mode)
+    }
+
+    private var draftValue: String {
+        if mode == .off { return "未启用" }
+        guard let acceptance = state.stats?.draftAcceptance else { return "—" }
+        return String(format: "%.0f", acceptance * 100)
     }
 
     private var memoryFraction: Double {
@@ -487,57 +496,121 @@ private struct MetricRow: View {
     }
 }
 
-// MARK: - Runtime details
+// MARK: - Runtime details (inside hero)
 
-private struct RuntimeDetails: View {
+/// Compact runtime details rendered inside the dark hero panel, where the
+/// model parameter chips used to be.
+private struct HeroRuntimeDetails: View {
     @ObservedObject var state: AppState
     let loading: Bool
 
     var body: some View {
-        Card("运行详情",
-             subtitle: "引擎、设备与当前状态",
-             trailing: AnyView(Tag(text: loading ? "同步中" : state.health.label,
-                                   tone: loading ? .warning : state.health.tone,
-                                   icon: "checkmark.seal"))) {
-            VStack(spacing: 0) {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 26),
-                                    GridItem(.flexible(), spacing: 26),
-                                    GridItem(.flexible())],
-                          alignment: .leading,
-                          spacing: 10) {
-                    KeyValueRow(label: "引擎", value: "\(state.activeEngine.rawValue) \(state.engineVersion)", mono: true)
-                    KeyValueRow(label: "设备", value: deviceText, loading: loading)
-                    KeyValueRow(label: "进程",
-                                value: state.stats?.instancePid.map { "pid \($0)" } ?? "未运行",
-                                mono: true,
-                                loading: loading)
-                    KeyValueRow(label: "热状态",
-                                value: state.stats?.thermalText ?? "—",
-                                valueColor: (state.stats?.thermal == nil || state.stats?.thermal == "nominal") ? Native.label : Native.orange,
-                                loading: loading)
-                    KeyValueRow(label: "内存压力",
-                                value: state.stats?.memoryPressureText ?? "—",
-                                loading: loading)
-                    KeyValueRow(label: "已运行", value: uptimeText, loading: loading)
-                }
-
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 9, weight: .semibold))
-                    Text("自动刷新 · 1s")
-                    Spacer()
-                    if loading {
-                        SkeletonBar(width: 150, height: 8, radius: 4, opacity: 0.07)
-                    } else {
-                        Text("\(state.stats?.requestsCompleted ?? 0) 完成 · \(state.stats?.requestsFailed ?? 0) 失败 · \(state.stats?.queuedRequests ?? 0) 排队")
-                    }
-                }
-                .font(.system(size: 10))
-                .foregroundStyle(Native.tertiary)
-                .padding(.top, 10)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 18) {
+                engineField
+                field("设备", value: deviceText, skeleton: loading)
+                field("进程",
+                      value: state.stats?.instancePid.map { "pid \($0)" } ?? "未运行",
+                      mono: true,
+                      skeleton: loading)
             }
+            HStack(alignment: .firstTextBaseline, spacing: 18) {
+                field("热状态",
+                      value: state.stats?.thermalText ?? "—",
+                      color: (state.stats?.thermal == nil || state.stats?.thermal == "nominal") ? .white : Native.orange,
+                      skeleton: loading)
+                field("内存压力", value: state.stats?.memoryPressureText ?? "—", skeleton: loading)
+                field("已运行", value: uptimeText, skeleton: loading)
+            }
+
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 9, weight: .semibold))
+                Text("自动刷新 · 1s")
+                Spacer()
+                if loading {
+                    SkeletonBar(width: 150, height: 8, radius: 4, opacity: 0.12)
+                } else {
+                    Text("\(state.stats?.requestsCompleted ?? 0) 完成 · \(state.stats?.requestsFailed ?? 0) 失败 · \(state.stats?.queuedRequests ?? 0) 排队")
+                }
+            }
+            .font(.system(size: 9.5))
+            .foregroundStyle(.white.opacity(0.45))
         }
         .animation(.easeOut(duration: 0.2), value: loading)
+    }
+
+    /// Engine name + version on the first row. With more than one runtime pack
+    /// installed it becomes a pull-down for one-click switching; the switch
+    /// itself stops the running engine and restarts it on the new one.
+    private var engineField: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text("引擎")
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.45))
+                .lineLimit(1)
+
+            let label = Text("\(state.activeEngine.rawValue) \(state.engineVersion)")
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+
+            if state.availableEngines.count > 1 {
+                Menu {
+                    ForEach(state.availableEngines, id: \.self) { id in
+                        Button {
+                            state.switchEngine(id)
+                        } label: {
+                            if state.activeEngine == id {
+                                Label(id.displayName, systemImage: "checkmark")
+                            } else {
+                                Text(id.displayName)
+                            }
+                        }
+                        .disabled(state.isSwitchingModel)
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        label
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 7.5, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.55))
+                    }
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("切换引擎")
+            } else {
+                label
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentTransition(.opacity)
+    }
+
+    private func field(_ label: String,
+                       value: String,
+                       mono: Bool = false,
+                       color: Color = .white,
+                       skeleton: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.45))
+                .lineLimit(1)
+            if skeleton {
+                SkeletonBar(width: 64, height: 13, radius: 6, opacity: 0.12)
+            } else {
+                Text(value)
+                    .font(.system(size: 12, weight: .semibold, design: mono ? .monospaced : .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var deviceText: String {
@@ -558,45 +631,30 @@ private struct RuntimeDetails: View {
 
 private struct EndpointCard: View {
     @ObservedObject var state: AppState
+    /// Observed directly: the gateway publishes its own run state, which the
+    /// AppState pipeline does not forward.
+    @ObservedObject private var gateway: GatewayController = .shared
 
     private var baseURL: String { "http://127.0.0.1:\(state.port)" }
 
     var body: some View {
-        Card("OpenAI 兼容接口", subtitle: "本地服务地址") {
+        Card("API 接口",
+             subtitle: "OpenAI + Claude 双格式 · 本地服务") {
             VStack(alignment: .leading, spacing: 10) {
-                Text(state.endpointURL)
-                    .font(Native.monoFont)
-                    .foregroundStyle(Native.label)
-                    .textSelection(.enabled)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .padding(.horizontal, 11)
-                    .padding(.vertical, 9)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Native.recess)
-                    }
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(Native.overlay(0.10), lineWidth: 0.8)
-                    }
+                gatewayField
+                Hairline()
+                KeyValueRow(label: "引擎直连（OpenAI）",
+                            value: state.endpointURL,
+                            detail: "端口 \(state.port) · \(state.activeEngine.displayName) · 随引擎启停",
+                            valueColor: Native.secondary)
 
                 HStack(spacing: 8) {
                     Button {
-                        state.copy(state.endpointURL, label: "接口地址已复制")
+                        state.copy(state.gatewayURL, label: "网关地址已复制")
                     } label: {
-                        Label("复制", systemImage: "doc.on.doc")
+                        Label("复制网关地址", systemImage: "doc.on.doc")
                     }
                     .buttonStyle(.arcadeGlassCompact)
-
-                    Button {
-                        if let url = URL(string: baseURL) { NSWorkspace.shared.open(url) }
-                    } label: {
-                        Label("打开聊天页", systemImage: "safari")
-                    }
-                    .buttonStyle(.arcadeGlassCompact)
-                    .disabled(!state.isRunning)
 
                     Spacer()
                 }
@@ -604,10 +662,54 @@ private struct EndpointCard: View {
                 Hairline()
 
                 KeyValueRow(label: "状态",
-                            value: state.isReady ? "就绪" : state.startupStage,
-                            detail: "端口 \(state.port)",
-                            valueColor: state.isReady ? Native.green : Native.secondary)
+                            value: gateway.isRunning
+                                ? "网关运行中" : (state.settings.gatewayEnabled ? "网关启动中" : "网关已停用"),
+                            detail: gatewayDetail,
+                            valueColor: gateway.isRunning ? Native.green : Native.secondary)
             }
         }
+    }
+
+    /// The gateway address is the one clients should pin: it survives engine
+    /// switches and engine port changes.
+    private var gatewayField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text("网关（推荐）")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .tracking(0.4)
+                    .foregroundStyle(Native.tertiary)
+                Tag(text: "OpenAI · Claude", tone: .neutral)
+            }
+            Text(state.gatewayURL)
+                .font(Native.monoFont)
+                .foregroundStyle(Native.label)
+                .textSelection(.enabled)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 9)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Native.recess)
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Native.overlay(0.10), lineWidth: 0.8)
+                }
+            Text("OpenAI `/v1/chat/completions` · Claude `/v1/messages` · 模型列表 `/v1/models`")
+                .font(.system(size: 10))
+                .foregroundStyle(Native.tertiary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+
+    private var gatewayDetail: String {
+        if !state.settings.gatewayEnabled { return "可在设置中重新开启" }
+        if gateway.isRunning { return "端口 \(gateway.port) · 转发到当前引擎" }
+        if let failure = gateway.failureMessage { return failure }
+        return "端口 \(gateway.port)"
     }
 }

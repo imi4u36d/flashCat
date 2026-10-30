@@ -14,6 +14,14 @@ struct ModelLibraryEntry: Identifiable {
     var installed: Bool { model.origin != .recommended }
     var downloadable: Bool { !installed }
 
+    /// Auxiliary DFlash2 draft weights. They only make sense attached to a main
+    /// model (the launcher hands them over as `dflash_draft_model`), so the page
+    /// never offers a launch/download action for them.
+    static func isDraftModel(_ id: String) -> Bool {
+        normalized(id).contains("dflash")
+    }
+    var isDraft: Bool { Self.isDraftModel(model.id) }
+
     /// Engines name the same weights differently — Splash keeps `owner/repo`
     /// while the packs serve the flat `owner--repo` link name — so matching a
     /// suggestion against what is installed needs one normal form.

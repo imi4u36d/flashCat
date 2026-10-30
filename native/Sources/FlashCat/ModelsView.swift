@@ -8,11 +8,14 @@ import FlashCatKit
 struct ModelsView: View {
     @ObservedObject var state: AppState
 
-    @State private var query = ""
     @State private var filter: ModelsFilter = .all
+    @State private var dropTargeted = false
     @State private var pendingImport: URL?
     @State private var removeTarget: ModelLibraryEntry?
     @State private var downloadTarget: ModelLibraryEntry?
+    @State private var showingDownloadCenter = false
+    /// Chip, memory and free disk, read once per visit to the page.
+    @State private var device = DeviceProfile.current()
 
     /// The library the page is showing. It is *not* the running engine: browsing
     /// (and downloading, importing, deleting) stays available for every engine,
@@ -24,26 +27,24 @@ struct ModelsView: View {
             let usable = max(320, proxy.size.width - Native.pagePadding * 2)
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    PageHeader(title: "模型", subtitle: subtitle, eyebrow: "MODEL LIBRARY")
-                        .padding(.bottom, 12)
+                    PageHeader(title: "模型", eyebrow: "MODEL LIBRARY")
+                        .padding(.bottom, 14)
 
                     engineScope
+                        .padding(.bottom, 14)
+
+                    toolbar
                         .padding(.bottom, 14)
 
                     if showsStartCard {
                         LibraryStartCard(state: state,
                                          engine: engine,
                                          installed: engineIsInstalled,
+                                         device: device,
                                          entries: recommendedEntries,
                                          onDownload: { entry in downloadTarget = entry })
                             .padding(.bottom, 16)
-                    } else {
-                        toolbar(width: usable)
-                            .padding(.bottom, 10)
                     }
-
-                    importBar
-                        .padding(.bottom, 16)
 
                     // The start card already lists every suggestion, so the
                     // grid would just repeat it; it appears with the first
@@ -56,12 +57,33 @@ struct ModelsView: View {
                 .padding(.top, 30)
                 .padding(.bottom, Native.pagePadding)
                 .pageColumn()
+                .animation(.easeOut(duration: 0.18), value: engine)
             }
             .scrollIndicators(.never)
+            .overlay {
+                if dropTargeted {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(Native.accent.opacity(0.6), lineWidth: 1.5)
+                        .padding(10)
+                        .allowsHitTesting(false)
+                }
+            }
+            .onDrop(of: [UTType.fileURL], isTargeted: $dropTargeted) { providers in
+                acceptDrop(providers)
+            }
         }
         .onChange(of: state.libraryEngine) { _, _ in
-            query = ""
             filter = .all
+        }
+        .animation(.easeOut(duration: 0.15), value: dropTargeted)
+        .alert("导入到 \(engine.displayName)？",
+               isPresented: pendingImportShown,
+               presenting: pendingImport) { url in
+            Button("复制") { startImport(url, move: false) }
+            Button("移动") { startImport(url, move: true) }
+            Button("取消", role: .cancel) { pendingImport = nil }
+        } message: { url in
+            Text("\(url.path)\n\n会放进 \(EnginePaths.modelsDirectory(engine))。“移动”适合同盘整理，“复制”保留原文件。大模型可能需要较长时间。")
         }
         .alert("切换引擎？",
                isPresented: pendingLibraryUseShown,
@@ -72,6 +94,9 @@ struct ModelsView: View {
             Button("取消", role: .cancel) { state.cancelLibraryUse() }
         } message: { request in
             Text(libraryUseMessage(request))
+        }
+        .sheet(isPresented: $showingDownloadCenter) {
+            DownloadCenterSheet(state: state)
         }
     }
 
@@ -112,7 +137,7 @@ struct ModelsView: View {
                         .font(.system(size: 10.5))
                         .foregroundStyle(Native.tertiary)
                     Button {
-                        state.section = .engines
+                        state.section = .settings
                     } label: {
                         Label("去安装", systemImage: "arrow.down.circle")
                             .font(.system(size: 10.5, weight: .medium))
@@ -143,7 +168,9 @@ struct ModelsView: View {
         let running = id == state.activeEngine && state.isRunning
         let installed = state.availableEngines.contains(id)
         return Button {
-            state.browseEngine(id)
+            withAnimation(.easeOut(duration: 0.2)) {
+                state.browseEngine(id)
+            }
         } label: {
             HStack(spacing: 5) {
                 Circle()
@@ -167,18 +194,33 @@ struct ModelsView: View {
 
     private var entries: [ModelLibraryEntry] { state.libraryEntries(for: engine) }
     private var installedEntries: [ModelLibraryEntry] { entries.filter(\.installed) }
-    private var recommendedEntries: [ModelLibraryEntry] { entries.filter(\.downloadable) }
+
+    /// Suggestions for this engine, best fit for this Mac first: among the
+    /// ones the machine can carry, the tier that uses the most of its memory
+    /// leads; the ones it cannot run sink to the end.
+    private var recommendedEntries: [ModelLibraryEntry] {
+        entries.filter(\.downloadable).sorted { deviceOrder($0) < deviceOrder($1) }
+    }
+
+    private func deviceOrder(_ entry: ModelLibraryEntry) -> (Int, Int) {
+        guard let recommendation = entry.recommendation else {
+            return (DeviceFit.good.rawValue, -entry.model.bytes)
+        }
+        switch device.fit(recommendation) {
+        case .good: return (0, -recommendation.minimumMemory)
+        case .unknown: return (1, recommendation.minimumMemory)
+        case .tight: return (2, recommendation.minimumMemory)
+        case .diskShort: return (3, recommendation.bytes)
+        }
+    }
 
     private var filteredEntries: [ModelLibraryEntry] {
-        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return entries.filter { entry in
-            if filter == .local && !entry.installed { return false }
-            if filter == .remote && entry.installed { return false }
-            guard !needle.isEmpty else { return true }
-            let model = entry.model
-            return model.id.lowercased().contains(needle)
-                || ModelMeta.owner(model).lowercased().contains(needle)
-                || ModelMeta.family(model).lowercased().contains(needle)
+        entries.filter { entry in
+            switch filter {
+            case .all: return true
+            case .local: return entry.installed
+            case .remote: return !entry.installed
+            }
         }
     }
 
@@ -191,45 +233,87 @@ struct ModelsView: View {
         installedEntries.isEmpty && !recommendedEntries.isEmpty
     }
 
-    private var subtitle: String {
-        let local = installedEntries.isEmpty ? "还没有本机模型" : "本机 \(localCount) 个"
-        return "\(engine.displayName) 的模型库 · \(local) · 推荐 \(remoteCount) 个"
-    }
-
     // MARK: Toolbar
 
-    @ViewBuilder
-    private func toolbar(width: CGFloat) -> some View {
-        if width >= 880 {
-            HStack(spacing: 8) {
-                ModelsSearchField(text: $query)
-                filterPicker.frame(width: 252)
-                Spacer(minLength: 4)
-                rescanButton
-                openFolderButton
-            }
-        } else {
-            VStack(alignment: .leading, spacing: 8) {
-                ModelsSearchField(text: $query)
-                HStack(spacing: 8) {
-                    filterPicker.frame(width: 238)
-                    Spacer(minLength: 4)
-                    rescanButton
-                    openFolderButton
-                }
-            }
+    private var toolbar: some View {
+        HStack(spacing: 8) {
+            filterPicker
+            deviceChip
+            Spacer(minLength: 4)
+            importButton
+            downloadCenterButton
+            rescanButton
+            openFolderButton
         }
     }
 
     private var filterPicker: some View {
-        Picker("筛选", selection: $filter) {
-            Text(verbatim: "全部 \(entries.count)").tag(ModelsFilter.all)
-            Text(verbatim: "本机 \(localCount)").tag(ModelsFilter.local)
-            Text(verbatim: "可下载 \(remoteCount)").tag(ModelsFilter.remote)
+        ModelsFilterPicker(selection: $filter,
+                           counts: [.all: entries.count,
+                                    .local: localCount,
+                                    .remote: remoteCount])
+    }
+
+    /// What this Mac offers, so the fit tags on the cards are explainable.
+    private var deviceChip: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "memorychip")
+                .font(.system(size: 9.5, weight: .bold))
+            Text(device.summary)
+                .font(.system(size: 10.5, weight: .medium))
+                .lineLimit(1)
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .controlSize(.small)
+        .foregroundStyle(Native.secondary)
+        .padding(.horizontal, 10)
+        .frame(height: 26)
+        .background(Capsule().fill(Native.overlay(0.05)))
+        .overlay(Capsule().strokeBorder(Native.overlay(0.08), lineWidth: 1))
+        .help("推荐模型会按本机内存与磁盘可用空间标注是否适配")
+    }
+
+    /// The download center entrance. While a transfer runs it shows the live
+    /// percentage; otherwise it is a plain pill with the paused/failed count.
+    @ViewBuilder
+    private var downloadCenterButton: some View {
+        if state.downloadingModel != nil {
+            Button {
+                showingDownloadCenter = true
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("下载中 \(Int(((state.downloadFraction ?? 0) * 100).rounded()))%")
+                        .font(.system(size: 11.5, weight: .semibold))
+                }
+                .foregroundStyle(Native.accent)
+                .padding(.horizontal, 12)
+                .frame(height: 28)
+                .background(Capsule().fill(Native.accent.opacity(0.14)))
+                .overlay(Capsule().stroke(Native.accent.opacity(0.3), lineWidth: 0.8))
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("打开下载中心：暂停、继续或取消下载")
+        } else {
+            let count = state.downloadTasks.count
+            Button {
+                showingDownloadCenter = true
+            } label: {
+                HStack(spacing: 5) {
+                    Text("下载中心")
+                    if count > 0 {
+                        Text("\(count)")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 0.5)
+                            .background(Capsule().fill(Native.accent.opacity(0.18)))
+                            .foregroundStyle(Native.accent)
+                    }
+                }
+            }
+            .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
+            .help("查看下载任务：进度、暂停、断点续传")
+        }
     }
 
     private var rescanButton: some View {
@@ -243,6 +327,37 @@ struct ModelsView: View {
     private var openFolderButton: some View {
         IconAction(systemName: "folder", help: "打开模型目录") {
             openModelsDirectory()
+        }
+    }
+
+    /// Import lives in the toolbar as one small pill: it opens the folder
+    /// picker while importing, and collapses into an accent progress chip
+    /// while a copy/move is running. Drag & drop onto the page stays active
+    /// everywhere (see `acceptDrop`).
+    @ViewBuilder
+    private var importButton: some View {
+        if let progress = state.importProgress {
+            let fraction = min(1, max(0, progress.fraction))
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.down.doc")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("导入中 \(Int((fraction * 100).rounded()))%")
+                    .font(.system(size: 11.5, weight: .semibold))
+            }
+            .foregroundStyle(Native.accent)
+            .padding(.horizontal, 12)
+            .frame(height: 28)
+            .background(Capsule().fill(Native.accent.opacity(0.14)))
+            .overlay(Capsule().stroke(Native.accent.opacity(0.3), lineWidth: 0.8))
+            .help(progress.message)
+        } else {
+            Button {
+                pickModelsFolder()
+            } label: {
+                Label("导入", systemImage: "folder.badge.plus")
+            }
+            .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
+            .help("导入本地模型文件夹，或直接把文件夹拖进页面")
         }
     }
 
@@ -304,6 +419,8 @@ struct ModelsView: View {
             entry: entry,
             selected: selected,
             contextTokens: tokens,
+            device: device,
+            draftChoices: entry.engine == .omlx ? state.installedDraftIds(for: entry.engine) : [],
             onUse: { state.useModel(entry.model.id, engine: entry.engine) },
             onReveal: entry.installed && !entry.model.path.isEmpty
                 ? { reveal(entry) }
@@ -315,49 +432,68 @@ struct ModelsView: View {
     }
 
     private var emptyIcon: String {
-        entries.isEmpty ? "shippingbox" : "magnifyingglass"
+        entries.isEmpty ? "shippingbox" : "tray"
     }
 
     private var emptyTitle: String {
-        entries.isEmpty ? "还没有模型" : "没有匹配的模型"
+        entries.isEmpty ? "还没有模型" : "没有符合条件的模型"
     }
 
     private var emptyDetail: String {
         if entries.isEmpty {
-            return "\(engine.displayName) 还找不到可用的权重：从 Hub 下载，或导入一个本地文件夹"
+            return "\(engine.displayName) 还找不到可用的权重：从「可下载」里挑一个，或点右上「导入」放一个本地文件夹"
         }
         switch filter {
         case .local:
             return localCount == 0
-                ? "\(engine.displayName) 下还没有模型。切到「可下载」挑一个，或点上方「重新扫描」"
-                : "试试别的关键词"
+                ? "\(engine.displayName) 下还没有本机模型。切到「可下载」挑一个，或点上方「重新扫描」"
+                : "换个筛选条件试试"
         case .remote:
-            return remoteCount == 0 ? "推荐模型都已下载到本机" : "试试别的关键词"
+            return remoteCount == 0 ? "推荐模型都已下载到本机" : "换个筛选条件试试"
         case .all:
-            return "试试别的关键词，或清空搜索"
+            return "换个筛选条件试试"
         }
     }
 
-    // MARK: Import bar
+    // MARK: Import
 
-    private var importBar: some View {
-        ModelsImportBar(
-            progress: state.importProgress,
-            disabled: state.importProgress != nil,
-            onPick: pickModelsFolder,
-            onDropDirectory: { url in pendingImport = url },
-            onReject: { state.notice = "请拖入包含 .gguf 或 MLX 权重的文件夹" }
-        )
-        .help("导入本地模型文件夹")
-        .alert("导入到 \(engine.displayName)？",
-               isPresented: pendingImportShown,
-               presenting: pendingImport) { url in
-            Button("复制") { startImport(url, move: false) }
-            Button("移动") { startImport(url, move: true) }
-            Button("取消", role: .cancel) { pendingImport = nil }
-        } message: { url in
-            Text("\(url.path)\n\n会放进 \(EnginePaths.modelsDirectory(engine))。“移动”适合同盘整理，“复制”保留原文件。大模型可能需要较长时间。")
+    /// The old dashed import card is gone; the whole page is the drop zone.
+    private func acceptDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard state.importProgress == nil,
+              let provider = providers.first(where: {
+                  $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+              }) else { return false }
+
+        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+            let url: URL?
+            if let data = item as? Data {
+                url = URL(dataRepresentation: data, relativeTo: nil)
+            } else if let value = item as? URL {
+                url = value
+            } else if let string = item as? String {
+                url = URL(fileURLWithPath: string)
+            } else {
+                url = nil
+            }
+            guard let url else { return }
+            let directory = Self.dropDirectory(url)
+            DispatchQueue.main.async {
+                if let directory {
+                    pendingImport = directory
+                } else {
+                    state.notice = "请拖入包含 .gguf 或 MLX 权重的文件夹"
+                }
+            }
         }
+        return true
+    }
+
+    private static func dropDirectory(_ url: URL) -> URL? {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return nil }
+        if isDirectory.boolValue { return url }
+        if url.pathExtension.lowercased() == "gguf" { return url.deletingLastPathComponent() }
+        return nil
     }
 
     // MARK: Bindings
@@ -457,6 +593,7 @@ private struct LibraryStartCard: View {
     @ObservedObject var state: AppState
     let engine: EngineID
     let installed: Bool
+    let device: DeviceProfile
     let entries: [ModelLibraryEntry]
     let onDownload: (ModelLibraryEntry) -> Void
 
@@ -475,11 +612,15 @@ private struct LibraryStartCard: View {
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(Native.label)
                     Text(installed
-                         ? "这三个是 \(engine.displayName) 最适配的 Qwen 档位，下载完就能直接启动。"
+                         ? "按本机配置挑的 \(engine.displayName) Qwen 档位，下载完就能直接启动。"
                          : "\(engine.displayName) 还没安装，先看看它适配的 Qwen 档位；装好引擎后在这里一键下载。")
                         .font(.system(size: 11.5))
                         .foregroundStyle(Native.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    Text("本机：\(device.summary)")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Native.tertiary)
+                        .lineLimit(1)
                 }
 
                 Spacer(minLength: 6)
@@ -507,6 +648,8 @@ private struct LibraryStartCard: View {
     private func row(_ entry: ModelLibraryEntry) -> some View {
         let model = entry.model
         let downloading = state.downloadingModel == model.id && state.downloadingEngine == engine
+        let task = state.downloadTasks.first { $0.engine == engine && $0.model == model.id }
+        let paused = !downloading && task?.status == .paused
         return HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(ModelMeta.displayName(model))
@@ -527,6 +670,18 @@ private struct LibraryStartCard: View {
             if let memory = entry.recommendation?.memoryText {
                 Tag(text: memory, tone: .neutral, icon: "memorychip")
             }
+            if let recommendation = entry.recommendation {
+                switch device.fit(recommendation) {
+                case .good:
+                    Tag(text: "适配本机", tone: .success, icon: "checkmark")
+                case .tight:
+                    Tag(text: "内存吃紧", tone: .warning, icon: "exclamationmark.triangle")
+                case .diskShort:
+                    Tag(text: "空间不足", tone: .danger, icon: "externaldrive.badge.exclamationmark")
+                case .unknown:
+                    EmptyView()
+                }
+            }
 
             if downloading {
                 HStack(spacing: 5) {
@@ -536,6 +691,35 @@ private struct LibraryStartCard: View {
                     ProgressView(value: state.downloadFraction ?? 0)
                         .progressViewStyle(.linear)
                         .frame(width: 56)
+                    Button {
+                        state.pauseDownload()
+                    } label: {
+                        Image(systemName: "pause.fill")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .frame(width: 22, height: 22)
+                            .background(Circle().fill(Native.overlay(0.08)))
+                    }
+                    .buttonStyle(.plain)
+                    .help("暂停下载（断点续传）")
+                }
+            } else if paused, let task {
+                HStack(spacing: 5) {
+                    Text(ModelMeta.percent(task.fraction))
+                        .font(Native.monoSmall)
+                        .foregroundStyle(Native.secondary)
+                    ProgressView(value: task.fraction ?? 0)
+                        .progressViewStyle(.linear)
+                        .frame(width: 56)
+                    Button {
+                        state.resumeDownload(task)
+                    } label: {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 9.5, weight: .bold))
+                            .frame(width: 22, height: 22)
+                            .background(Circle().fill(Native.overlay(0.08)))
+                    }
+                    .buttonStyle(.plain)
+                    .help("继续下载")
                 }
             } else {
                 Button {
@@ -573,44 +757,42 @@ private enum ModelsFilter: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-// MARK: - Search field
-
-private struct ModelsSearchField: View {
-    @Binding var text: String
-    @FocusState private var focused: Bool
+/// Capsule segmented control for the 全部 / 本机 / 可下载 filter. It replaces the
+/// native `.segmented` picker so the toolbar reads in the same glass language
+/// as the engine chips above it; the active segment gets the raised pill.
+private struct ModelsFilterPicker: View {
+    @Binding var selection: ModelsFilter
+    let counts: [ModelsFilter: Int]
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Native.tertiary)
-
-            TextField("搜索模型、机构或参数规模", text: $text)
-                .textFieldStyle(.plain)
-                .font(Native.bodyFont)
-                .focused($focused)
-
-            if !text.isEmpty {
+        HStack(spacing: 3) {
+            ForEach(ModelsFilter.allCases) { item in
+                let active = item == selection
                 Button {
-                    text = ""
+                    withAnimation(.easeOut(duration: 0.16)) { selection = item }
                 } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Native.tertiary)
+                    HStack(spacing: 4) {
+                        Text(item.rawValue)
+                            .font(.system(size: 11.5, weight: active ? .semibold : .medium))
+                        if let count = counts[item] {
+                            Text("\(count)")
+                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(active ? Native.label.opacity(0.55) : Native.tertiary)
+                        }
+                    }
+                    .foregroundStyle(active ? Native.label : Native.secondary)
+                    .padding(.horizontal, 12)
+                    .frame(height: 26)
+                    .background(Capsule().fill(active ? Native.raised : Color.clear))
+                    .overlay(Capsule().strokeBorder(active ? Native.overlay(0.14) : Color.clear, lineWidth: 1))
+                    .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .help("清除搜索")
             }
         }
-        .padding(.horizontal, 12)
-        .frame(height: 32)
-        .background(Capsule().fill(Native.overlay(0.075)))
-        .overlay(
-            Capsule().stroke(focused ? Native.accent.opacity(0.8) : Native.overlay(0.11),
-                             lineWidth: 1)
-        )
-        .contentShape(Rectangle())
-        .onTapGesture { focused = true }
+        .padding(3)
+        .background(Capsule().fill(Native.overlay(0.05)))
+        .overlay(Capsule().strokeBorder(Native.overlay(0.08), lineWidth: 1))
     }
 }
 
@@ -621,6 +803,10 @@ private struct ModelCardView: View {
     let entry: ModelLibraryEntry
     let selected: Bool
     let contextTokens: Int?
+    let device: DeviceProfile
+    /// Locally installed DFlash2 draft heads a main model can pair with.
+    /// Empty outside oMLX, the only engine with a per-model draft setting.
+    var draftChoices: [String] = []
     let onUse: () -> Void
     let onReveal: (() -> Void)?
     let onRemove: (() -> Void)?
@@ -636,9 +822,23 @@ private struct ModelCardView: View {
     private var downloading: Bool {
         state.downloadingModel == model.id && state.downloadingEngine == engine
     }
+    /// This card's center row, when the transfer is not running right now.
+    private var task: ModelDownloadTask? {
+        state.downloadTasks.first { $0.engine == engine && $0.model == model.id }
+    }
+    private var paused: Bool { !downloading && task?.status == .paused }
     private var busy: Bool { state.downloadingModel != nil }
     private var draftReady: Bool {
         installed && (model.draftPath != nil || draftRepository != nil)
+    }
+    /// The draft this card's model is bound to, if any.
+    private var assignedDraft: String? {
+        state.draftAssignment(for: engine, model: model.id)
+    }
+    /// Whether the draft pairing can be edited from this card: only oMLX has a
+    /// per-model draft setting, and a draft never pairs with another draft.
+    private var supportsDraftAssignment: Bool {
+        engine == .omlx && installed && !entry.isDraft && !draftChoices.isEmpty
     }
     /// A suggestion from another engine can only be used by switching to it, so
     /// the primary action says which engine it will start.
@@ -671,6 +871,8 @@ private struct ModelCardView: View {
 
             if downloading {
                 downloadBlock
+            } else if paused, let task {
+                pausedBlock(task)
             } else {
                 actions
             }
@@ -764,8 +966,23 @@ private struct ModelCardView: View {
             result.append(ModelTagSpec(text: text, tone: tone, icon: icon))
         }
 
+        // Device fit first: it is the verdict the page is asked for.
+        if let recommendation, !installed {
+            switch device.fit(recommendation) {
+            case .good:
+                add("适配本机", .success, "memorychip")
+            case .tight:
+                add("内存吃紧", .warning, "exclamationmark.triangle")
+            case .diskShort:
+                add("空间不足", .danger, "externaldrive.badge.exclamationmark")
+            case .unknown:
+                break
+            }
+        }
         if draftReady {
             add("DFlash2 就绪", .success, "bolt.fill")
+        } else if let assigned = assignedDraft {
+            add("辅助 \(shortName(assigned))", .accent, "bolt.fill")
         } else if draftRepository != nil {
             add("DFlash2 可下载", .accent, "bolt")
         } else if engine == .splash {
@@ -773,14 +990,14 @@ private struct ModelCardView: View {
         } else {
             // The pack engines decode with the model's own MTP head, so their
             // weights never need a separate draft repository.
-            add("MTP 解码", .accent, "bolt")
+            add("MTP 解码", .neutral, "bolt")
         }
         let vision = ModelMeta.isVision(model)
             || (recommendation?.tags.contains { $0.contains("视觉") } ?? false)
-        if vision { add("视觉", .accent, "eye") }
+        if vision { add("视觉", .neutral, "eye") }
         let moe = ModelMeta.isMoE(model)
             || (recommendation?.tags.contains { $0.lowercased().contains("moe") } ?? false)
-        if moe { add("MoE", .accent, nil) }
+        if moe { add("MoE", .neutral, nil) }
         if let active = ModelMeta.activeParams(model) {
             add("\(active) 激活", .neutral, nil)
         }
@@ -811,7 +1028,23 @@ private struct ModelCardView: View {
     private var actions: some View {
         if installed {
             HStack(spacing: 7) {
-                if selected {
+                if entry.isDraft {
+                    // Draft weights cannot be served on their own — they ride
+                    // along with the main model they are paired with.
+                    HStack(spacing: 5) {
+                        Image(systemName: "paperplane.fill")
+                            .font(.system(size: 10, weight: .bold))
+                        Text("辅助模型 · 依附主模型")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(Native.secondary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 33)
+                    .background(Capsule().fill(Native.overlay(0.05)))
+                    .overlay(Capsule().stroke(Native.overlay(0.10), lineWidth: 0.8))
+                    .help("这是投机解码的 draft 权重，由主模型在「… → DFlash2 辅助模型」里指定后随其加载，不单独启动")
+                } else if selected {
                     // A state chip occupies the primary slot instead of a disabled
                     // button repeating the old header tag.
                     HStack(spacing: 5) {
@@ -857,6 +1090,10 @@ private struct ModelCardView: View {
                                 Label("删除模型", systemImage: "trash")
                             }
                         }
+                        if supportsDraftAssignment {
+                            Divider()
+                            draftMenu
+                        }
                     } label: {
                         IconMenuLabel(systemName: "ellipsis")
                     }
@@ -877,15 +1114,46 @@ private struct ModelCardView: View {
                         Text("下载")
                     } icon: {
                         Image(systemName: "arrow.down.circle.fill")
-                            .foregroundStyle(Native.accentSoft)
                     }
                     .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(ArcadePillStyle(tone: .glass))
+                .buttonStyle(ArcadePillStyle(tone: .accent))
                 .disabled(busy)
                 .help("下载到 \(engine.displayName) 的模型库")
             }
         }
+    }
+
+    /// Pick which DFlash2 draft head runs with this model. "跟随引擎设置" clears
+    /// the override; a named draft binds it, and oMLX reloads to apply.
+    @ViewBuilder
+    private var draftMenu: some View {
+        Menu {
+            Button {
+                state.setDraftAssignment(nil, engine: engine, model: model.id)
+            } label: {
+                Label(assignedDraft == nil ? "✓ 跟随引擎设置" : "跟随引擎设置",
+                      systemImage: "wand.and.stars")
+            }
+            if !draftChoices.isEmpty {
+                Divider()
+            }
+            ForEach(draftChoices, id: \.self) { draft in
+                Button {
+                    state.setDraftAssignment(draft, engine: engine, model: model.id)
+                } label: {
+                    Label(assignedDraft == draft ? "✓ \(shortName(draft))" : shortName(draft),
+                          systemImage: assignedDraft == draft ? "checkmark" : "bolt.fill")
+                }
+            }
+        } label: {
+            Label("DFlash2 辅助模型", systemImage: "bolt.badge.clock")
+        }
+    }
+
+    /// Last path segment of a model id, for menus and tags.
+    private func shortName(_ id: String) -> String {
+        id.split(separator: "/").last.map(String.init) ?? id
     }
 
     private var downloadBlock: some View {
@@ -900,12 +1168,74 @@ private struct ModelCardView: View {
                 Text(ModelMeta.percent(state.downloadFraction))
                     .font(Native.monoSmall)
                     .foregroundStyle(Native.secondary)
+                miniIcon("pause.fill", "暂停下载（断点续传）") { state.pauseDownload() }
+                miniIcon("xmark", "取消下载") {
+                    if let task { state.cancelDownload(task) }
+                }
             }
             Meter(fraction: state.downloadFraction ?? 0, tint: Native.accent)
-            Text(engine == state.activeEngine ? "完成后自动切换" : "完成后可在 \(engine.displayName) 里启动")
+            Text(downloadStatusLine)
                 .font(.system(size: 10))
                 .foregroundStyle(Native.tertiary)
         }
+    }
+
+    /// Paused transfers keep the meter on the card, in the progress recorded
+    /// when the downloader was stopped.
+    private func pausedBlock(_ task: ModelDownloadTask) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Image(systemName: "pause.circle")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Native.orange)
+                Text("已暂停 · 断点续传")
+                    .font(.system(size: 11, weight: .medium))
+                Spacer(minLength: 4)
+                Text(ModelMeta.percent(task.fraction))
+                    .font(Native.monoSmall)
+                    .foregroundStyle(Native.secondary)
+                miniIcon("play.fill", "继续下载") { state.resumeDownload(task) }
+                miniIcon("xmark", "从下载中心移除") { state.cancelDownload(task) }
+            }
+            Meter(fraction: task.fraction ?? 0, tint: Native.orange)
+            Text(downloadStatusLine(for: task))
+                .font(.system(size: 10))
+                .foregroundStyle(Native.tertiary)
+        }
+    }
+
+    private func miniIcon(_ systemName: String, _ help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 9.5, weight: .bold))
+                .foregroundStyle(Native.secondary)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(Native.overlay(0.08)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    private var downloadStatusLine: String {
+        if let task {
+            return downloadStatusLine(for: task)
+        }
+        return engine == state.activeEngine ? "完成后自动切换" : "完成后可在 \(engine.displayName) 里启动"
+    }
+
+    private func downloadStatusLine(for task: ModelDownloadTask) -> String {
+        var parts: [String] = []
+        if task.totalBytes > 0 {
+            parts.append("\(Format.bytes(task.downloadedBytes)) / \(Format.bytes(task.totalBytes))")
+        }
+        if downloading, state.downloadSpeed > 0 {
+            parts.append(Format.rate(state.downloadSpeed))
+        }
+        if parts.isEmpty {
+            return engine == state.activeEngine ? "完成后自动切换" : "完成后可在 \(engine.displayName) 里启动"
+        }
+        return parts.joined(separator: " · ")
     }
 }
 
@@ -913,6 +1243,186 @@ private struct ModelTagSpec {
     let text: String
     let tone: TagTone
     let icon: String?
+}
+
+// MARK: - Download center
+
+/// Every model download flashCat knows about: the running transfer with live
+/// progress, plus paused and failed rows that can be resumed or dropped.
+/// Paused rows survive relaunches — the Hub's partial files stay in the
+/// destination's `.cache`, so 继续 never starts from zero.
+private struct DownloadCenterSheet: View {
+    @ObservedObject var state: AppState
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.down.circle")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Native.accent)
+                Text("下载中心")
+                    .font(.system(size: 15, weight: .semibold))
+                Spacer(minLength: 6)
+                if state.downloadingModel != nil {
+                    Text("同时只进行一个下载，其余任务可暂停后排队")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Native.tertiary)
+                }
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 24, height: 24)
+                        .background(Circle().fill(Native.overlay(0.08)))
+                }
+                .buttonStyle(.plain)
+                .help("关闭")
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 16)
+            .padding(.bottom, 12)
+
+            Divider().overlay(Native.overlay(0.08))
+
+            if state.downloadTasks.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "tray")
+                        .font(.system(size: 22))
+                        .foregroundStyle(Native.tertiary)
+                    Text("没有下载任务")
+                        .font(.system(size: 12.5, weight: .medium))
+                    Text("在模型卡片或「可下载」里点下载，进度会显示在这里")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Native.tertiary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(spacing: 10) {
+                        ForEach(state.downloadTasks) { task in
+                            DownloadTaskRow(state: state, task: task)
+                        }
+                    }
+                    .padding(16)
+                }
+            }
+        }
+        .frame(width: 560, height: state.downloadTasks.isEmpty ? 240 : 420)
+        .background(GlassSurface(radius: Native.radiusPanel))
+    }
+}
+
+private struct DownloadTaskRow: View {
+    @ObservedObject var state: AppState
+    let task: ModelDownloadTask
+
+    private var running: Bool {
+        state.downloadingModel == task.model && state.downloadingEngine == task.engine
+    }
+    private var fraction: Double? {
+        running ? state.downloadFraction : task.fraction
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Text(ModelMeta.shortName(ModelMeta.displayID(task.model)))
+                        .font(.system(size: 12.5, weight: .medium))
+                        .lineLimit(1)
+                        .help(task.model)
+                    Tag(text: task.engine.displayName, tone: .neutral, icon: nil)
+                    statusTag
+                }
+                if let fraction {
+                    Meter(fraction: fraction,
+                          tint: running ? Native.accent : (task.status == .failed ? Native.red : Native.orange))
+                }
+                Text(detailLine)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Native.tertiary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 6) {
+                if running {
+                    rowButton("pause.fill", "暂停（断点续传）") { state.pauseDownload() }
+                    rowButton("xmark", "取消下载") { state.cancelDownload(task) }
+                } else if task.status == .paused {
+                    rowButton("play.fill", "继续下载") { state.resumeDownload(task) }
+                    rowButton("xmark", "从下载中心移除") { state.cancelDownload(task) }
+                } else if task.status == .failed {
+                    rowButton("arrow.clockwise", "重试") { state.resumeDownload(task) }
+                    rowButton("xmark", "从下载中心移除") { state.removeTask(task) }
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: Native.radiusSmall, style: .continuous)
+                .fill(Native.overlay(0.045))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Native.radiusSmall, style: .continuous)
+                .strokeBorder(Native.overlay(0.07), lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private var statusTag: some View {
+        if running {
+            Tag(text: "下载中", tone: .accent, icon: nil)
+        } else {
+            switch task.status {
+            case .paused: Tag(text: "已暂停", tone: .warning, icon: "pause")
+            case .failed: Tag(text: "失败", tone: .danger, icon: "exclamationmark.triangle")
+            case .downloading: Tag(text: "排队", tone: .neutral, icon: "clock")
+            }
+        }
+    }
+
+    private var detailLine: String {
+        var parts: [String] = []
+        if task.totalBytes > 0 {
+            parts.append("\(Format.bytes(running ? Int((state.downloadFraction ?? 0) * Double(task.totalBytes)) : task.downloadedBytes)) / \(Format.bytes(task.totalBytes))")
+        }
+        if running, state.downloadSpeed > 0 {
+            parts.append(Format.rate(state.downloadSpeed))
+        }
+        if parts.isEmpty {
+            if running {
+                // A running Splash transfer reports nothing until the Hub
+                // resolver finishes and tqdm starts redrawing; say that
+                // instead of the queued-row text.
+                parts.append("已启动，等待下载器报告进度…")
+            } else {
+                switch task.status {
+                case .paused: parts.append("已暂停，继续后从断点接着下")
+                case .failed: parts.append("上次下载失败，可重试")
+                case .downloading: parts.append("等待当前下载结束")
+                }
+            }
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func rowButton(_ systemName: String, _ help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Native.secondary)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(Native.overlay(0.08)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
 }
 
 // MARK: - Wrapping tag row
@@ -969,140 +1479,6 @@ private struct ModelsFlowLayout: Layout {
             x += size.width + spacing
             lineHeight = max(lineHeight, size.height)
         }
-    }
-}
-
-// MARK: - Import bar
-
-/// One import affordance: the toolbar's old "导入模型" button, the dashed drop
-/// zone and the click-to-choose area were three copies of the same action.
-private struct ModelsImportBar: View {
-    let progress: AppState.ImportProgress?
-    let disabled: Bool
-    let onPick: () -> Void
-    let onDropDirectory: (URL) -> Void
-    let onReject: () -> Void
-
-    @State private var targeted = false
-    @State private var hovering = false
-
-    private var fraction: Double {
-        guard let progress else { return 0 }
-        return min(1, max(0, progress.fraction))
-    }
-
-    var body: some View {
-        Button(action: onPick) {
-            HStack(spacing: 12) {
-                ArcadeIcon(symbol: progress == nil ? "folder.badge.plus" : "arrow.down.doc",
-                           colors: [Native.accent, Native.pink],
-                           size: 34,
-                           glyphScale: 0.44,
-                           glow: false)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(progress == nil ? "导入本地模型" : "正在导入模型")
-                        .font(.system(size: 12.5, weight: .semibold))
-                    Text(progress?.message
-                         ?? "把包含 .gguf 或 MLX 权重的文件夹拖到这里，或点击选择")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Native.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-
-                Spacer(minLength: 10)
-
-                if let progress {
-                    HStack(spacing: 10) {
-                        Meter(fraction: fraction, tint: Native.accent)
-                            .frame(width: 120)
-                        Text("\(Int((fraction * 100).rounded()))%")
-                            .font(Native.monoSmall)
-                            .foregroundStyle(Native.secondary)
-                    }
-                    .help(progress.message)
-                } else {
-                    Text(targeted ? "松开以导入" : "选择文件夹…")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(targeted ? Native.accent : Native.label.opacity(0.85))
-                        .padding(.horizontal, 11)
-                        .frame(height: 26)
-                        .background(Capsule().fill(Native.overlay(0.10)))
-                        .overlay(Capsule().stroke(Native.overlay(0.14), lineWidth: 0.8))
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity)
-            .background(background)
-            .overlay(border)
-            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .disabled(disabled)
-        .opacity(disabled ? 0.95 : 1)
-        .onHover { hovering = $0 }
-        .onDrop(of: [UTType.fileURL], isTargeted: $targeted) { providers in
-            accept(providers)
-        }
-        .animation(.easeOut(duration: 0.14), value: targeted)
-        .animation(.easeOut(duration: 0.14), value: hovering)
-    }
-
-    private var background: some View {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .fill(targeted ? Native.accent.opacity(0.12)
-                  : Native.overlay(hovering ? 0.055 : 0.025))
-    }
-
-    private var border: some View {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1.2, dash: [6, 5]))
-    }
-
-    private var borderColor: Color {
-        if targeted || progress != nil { return Native.accent }
-        if hovering { return Native.accent.opacity(0.55) }
-        return Native.tertiary.opacity(0.35)
-    }
-
-    private func accept(_ providers: [NSItemProvider]) -> Bool {
-        guard !disabled else { return false }
-        guard let provider = providers.first(where: {
-            $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
-        }) else { return false }
-
-        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-            let url: URL?
-            if let data = item as? Data {
-                url = URL(dataRepresentation: data, relativeTo: nil)
-            } else if let value = item as? URL {
-                url = value
-            } else if let string = item as? String {
-                url = URL(fileURLWithPath: string)
-            } else {
-                url = nil
-            }
-            guard let url else { return }
-            let directory = Self.directoryURL(for: url)
-            DispatchQueue.main.async {
-                if let directory {
-                    onDropDirectory(directory)
-                } else {
-                    onReject()
-                }
-            }
-        }
-        return true
-    }
-
-    private static func directoryURL(for url: URL) -> URL? {
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return nil }
-        if isDirectory.boolValue { return url }
-        if url.pathExtension.lowercased() == "gguf" { return url.deletingLastPathComponent() }
-        return nil
     }
 }
 

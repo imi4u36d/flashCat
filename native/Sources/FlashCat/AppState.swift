@@ -7,7 +7,6 @@ enum Page: String, CaseIterable, Identifiable {
     case overview = "概览"
     case chat = "对话"
     case models = "模型"
-    case engines = "引擎"
     case logs = "日志"
     case settings = "设置"
 
@@ -18,7 +17,6 @@ enum Page: String, CaseIterable, Identifiable {
         case .overview: return "gauge.with.dots.needle.33percent"
         case .chat: return "bubble.left.and.text.bubble.right"
         case .models: return "shippingbox"
-        case .engines: return "shippingbox.and.arrow.backward"
         case .logs: return "doc.plaintext"
         case .settings: return "slider.horizontal.3"
         }
@@ -71,6 +69,12 @@ final class AppState: ObservableObject {
     /// with the same id, and only the one being written shows the progress bar.
     @Published private(set) var downloadingEngine: EngineID?
     @Published var downloadFraction: Double?
+    /// Live transfer speed of the running download, bytes per second.
+    @Published private(set) var downloadSpeed: Double = 0
+    /// Download center rows. Paused and failed transfers survive a relaunch
+    /// (the Hub keeps partial files in the destination's `.cache`), so the
+    /// list is persisted and "downloading" rows become "paused" on load.
+    @Published private(set) var downloadTasks: [ModelDownloadTask] = []
     /// Which engine's model library the model page shows. Browsing is
     /// deliberately independent of the running engine, so an engine that is
     /// stopped — or that has no weights at all — can still be inspected,
@@ -79,6 +83,14 @@ final class AppState: ObservableObject {
     /// Set when a model is picked for an engine that is not running: the switch
     /// is a bigger step than a model change, so it asks first.
     @Published var pendingLibraryUse: LibraryUseRequest?
+    /// Set when a switch targets an engine whose pack is not installed. The
+    /// weights can be on disk (browsing works without the runtime), so without
+    /// this the switch would silently do nothing while claiming success.
+    @Published var pendingEngineInstall: EngineID?
+
+    /// Bumped whenever any engine's tuning is saved. `speculativeMode` reads it
+    /// so a view showing the mode re-renders after the config page saves.
+    @Published private(set) var tuningRevision = 0
 
     private var toastWork: DispatchWorkItem?
     /// Polls the folder a snapshot download writes into, so the card can show
@@ -87,10 +99,30 @@ final class AppState: ObservableObject {
     /// Bytes the Hub says the whole repository needs, printed by the downloader
     /// before the transfer starts.
     private var downloadTotalBytes = 0
+    /// The running downloader child process; terminating it is how pause and
+    /// cancel stop the transfer while the Hub's partial files stay on disk.
+    private var downloadProcess: Process?
+    private var pauseRequested = false
+    private var cancelRequested = false
+    private var lastWatchBytes = 0
+    private var lastWatchDate: Date?
+    /// Hub cache folders the running download fills, discovered from the
+    /// child's `Fetching …` lines. Splash's tqdm only counts finished files —
+    /// its bar sits at 0% for minutes while one shard streams — so byte growth
+    /// under these folders is what actually moves the bar.
+    private var downloadWatchDirectories: [String] = []
+    /// Size of each watched folder when it joined the watch: bytes that were
+    /// already cached before this download started are not new progress.
+    private var downloadWatchBaselines: [String: Int] = [:]
     /// The single task that owns a model switch. Nothing else may touch the
     /// engine while it runs — the old weights must be confirmed gone before the
     /// new ones allocate.
     private var switchTask: Task<Void, Never>?
+    /// Active engine as of the last pack install/uninstall callback. When an
+    /// uninstall removes the engine in use, `rebuild()` silently falls back to
+    /// another pack (or to none); comparing against this snapshot is how the
+    /// models page and the selected model are pointed at the new reality.
+    private var installsObservedEngine: EngineID?
 
     let settings = AppSettings()
     /// Owns the day/night skin choice and applies it to AppKit.
@@ -98,6 +130,9 @@ final class AppState: ObservableObject {
     let history = ChatHistory()
     let conversation = ConversationStore()
     let chatClient = ChatClient()
+    /// The fixed-port API gateway (OpenAI + Claude formats). One instance for
+    /// the whole app; requests it serves read the live engine state from here.
+    let gateway = GatewayController.shared
     var engines: EngineManager?
     /// Pack installs shown on the engines page; owns its own installer actor.
     let installs = EngineInstallCenter()
@@ -122,6 +157,12 @@ final class AppState: ObservableObject {
         theme = ThemeController(settings: settings)
         let visible = UserDefaults.standard.object(forKey: "sidebarVisible") as? Bool ?? true
         sidebarVisibility = visible ? .all : .detailOnly
+        downloadTasks = ModelDownloadStore.load()
+        NotificationCenter.default.addObserver(forName: EngineStore.tuningDidChangeNotification,
+                                               object: nil,
+                                               queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.tuningRevision += 1 }
+        }
     }
 
     // MARK: derived
@@ -161,6 +202,33 @@ final class AppState: ObservableObject {
     }
 
     var endpointURL: String { "http://127.0.0.1:\(port)/v1" }
+
+    /// The gateway's address: engine-independent, so a client's Base URL never
+    /// needs to change when the engine or its port does.
+    var gatewayURL: String { "http://127.0.0.1:\(settings.gatewayPort)/v1" }
+
+    /// Start the gateway when enabled; restart it onto a new port when the
+    /// setting changed, or stop it when disabled.
+    func applyGatewaySettings() {
+        if !settings.gatewayEnabled {
+            gateway.stop()
+            return
+        }
+        let port = UInt16(settings.gatewayPort)
+        if gateway.isRunning, gateway.port == port { return }
+        if gateway.isRunning { gateway.stop() }
+        Task { [gateway] in
+            await gateway.start(port: port)
+        }
+    }
+
+    /// The speculative head the active engine runs with its stored tuning
+    /// (DFlash2, MTP or none). Reading `tuningRevision` keeps the dependency
+    /// alive for SwiftUI: views that show the mode refresh after a save.
+    var speculativeMode: SpeculativeMode {
+        _ = tuningRevision
+        return EngineStore.shared.tuning(for: activeEngine).speculativeMode(for: activeEngine)
+    }
 
     // MARK: lifecycle
 
@@ -203,6 +271,9 @@ final class AppState: ObservableObject {
         threads = history.load()
 
         attachEngines()
+        // A crashed or force-quit session can leave an engine resident with its
+        // weights; clear those before anything of this session starts.
+        engines?.sweepOrphanEngines()
         syncController()
 
         // Nothing installed yet: the launch page takes over and picks an engine.
@@ -221,6 +292,8 @@ final class AppState: ObservableObject {
         // models win.
         adoptSavedModel(for: activeEngine)
 
+        applyGatewaySettings()
+
         if settings.autoStart && !selectedModel.isEmpty {
             startService()
         }
@@ -235,13 +308,28 @@ final class AppState: ObservableObject {
         engines = manager
         // A finished install/uninstall changes which packs exist, so rebuild the
         // controllers and refresh whatever the models page is showing.
+        installsObservedEngine = manager.activeID
         installs.configure(onChange: { [weak self] in
             guard let self else { return }
             self.engines?.rebuild()
+            // 卸载正在使用的引擎会让 rebuild 悄悄回落到另一个包（或一个不剩）。
+            // 活动引擎因此变化时，模型页和选中模型必须跟上，不能指向已删除的包。
+            defer { self.installsObservedEngine = self.activeEngine }
+            if self.needsEngineSetup {
+                self.selectedModel = ""
+                self.libraryEngine = .splash
+            } else if self.installsObservedEngine != self.activeEngine {
+                self.libraryEngine = self.activeEngine
+                self.adoptSavedModel(for: self.activeEngine)
+            }
             self.reloadModels()
             self.syncController()
             self.objectWillChange.send()
         })
+        // 引擎安装/构建的成功与失败通过全局气泡弹出。
+        installs.onToast = { [weak self] message in
+            self?.toast(message)
+        }
     }
 
     /// Make a freshly installed engine the one this app runs.
@@ -268,13 +356,39 @@ final class AppState: ObservableObject {
 
     // MARK: engines
 
+    /// An engine counts as installed only when its pack produced a controller.
+    func engineIsInstalled(_ id: EngineID) -> Bool {
+        engines?.controller(id) != nil
+    }
+
+    /// Ask for the missing engine instead of pretending the switch happened:
+    /// `EngineManager.activate` no-ops without a controller, so a plain switch
+    /// would leave the old engine running under a success toast.
+    func requestEngineInstall(_ id: EngineID) {
+        pendingEngineInstall = id
+    }
+
+    func confirmEngineInstall() {
+        pendingEngineInstall = nil
+        section = .settings
+    }
+
+    func cancelEngineInstall() {
+        pendingEngineInstall = nil
+    }
+
     /// Only one engine runs at a time: two MLX engines would fight for the same
     /// unified memory, so switching stops the old one first.
-    func switchEngine(_ id: EngineID) {
-        guard let engines, id != engines.activeID else { return }
+    @discardableResult
+    func switchEngine(_ id: EngineID) -> Bool {
+        guard let engines, id != engines.activeID else { return false }
         guard !isSwitchingModel else {
             toast("正在切换模型，稍后再换引擎")
-            return
+            return false
+        }
+        guard engines.controller(id) != nil else {
+            requestEngineInstall(id)
+            return false
         }
         let wasRunning = isRunning
         engines.activate(id)
@@ -286,6 +400,7 @@ final class AppState: ObservableObject {
         syncController()
         if wasRunning { startService() }
         toast("已切换到 \(id.displayName)")
+        return true
     }
 
     /// Change the port an engine listens on. Only the stored preference moves
@@ -314,7 +429,18 @@ final class AppState: ObservableObject {
                             kind: nil, hidden: false, helper: false, engine: .splash)
             }
         }
-        return LocalEngineModels.scan(engine: id, directory: EnginePaths.modelsDirectory(id))
+        let scanned = LocalEngineModels.scan(engine: id, directory: EnginePaths.modelsDirectory(id))
+        // A half-downloaded snapshot already carries config.json and a
+        // tokenizer, which is enough for the scan to call it a servable model.
+        // Every download-center row means its folder is not finished (success
+        // removes the row), so hide those folders from the library until the
+        // downloader is done — the card then keeps showing live progress on
+        // the suggestion row instead of flipping to a "使用" button.
+        let unfinished = Set(downloadTasks.map { task -> String in
+            let repo = task.model.split(separator: ":", maxSplits: 1).first.map(String.init) ?? task.model
+            return ModelInstaller.folderName(for: repo)
+        })
+        return scanned.filter { !unfinished.contains($0.id) }
     }
 
     // MARK: model library
@@ -351,14 +477,58 @@ final class AppState: ObservableObject {
         libraryEngine = id
     }
 
+    // MARK: draft assignments
+
+    /// The DFlash2 draft assigned to one model, or nil when it follows the
+    /// engine-level tuning. Reading `tuningRevision` keeps card views that show
+    /// the pairing alive for SwiftUI.
+    func draftAssignment(for engine: EngineID, model: String) -> String? {
+        _ = tuningRevision
+        return EngineStore.shared.draftAssignment(for: engine, model: model)
+    }
+
+    /// Every locally installed draft head an engine could pair with a main model.
+    func installedDraftIds(for engine: EngineID) -> [String] {
+        engineModels(for: engine).map(\.id).filter(ModelLibraryEntry.isDraftModel).sorted()
+    }
+
+    /// Bind a draft from a main model's card menu. When this engine is live the
+    /// settings are pushed again and the resident model reloads, so the pairing
+    /// takes effect without touching the launch page.
+    func setDraftAssignment(_ draft: String?, engine: EngineID, model: String) {
+        EngineStore.shared.setDraftAssignment(draft, engine: engine, model: model)
+        if let draft, !draft.isEmpty {
+            toast("已为 \(shortModelName(model)) 指定辅助模型 \(shortModelName(draft))")
+        } else {
+            toast("已清除 \(shortModelName(model)) 的辅助模型，跟随引擎设置")
+        }
+        if engine == activeEngine, controller?.isRunning == true {
+            Task { [weak self] in
+                await self?.controller?.reapplyTuning()
+            }
+        }
+    }
+
     /// The card's one action. A model is bound to the engine that serves its
-    /// format, so using one from another engine's library is a switch, not a
-    /// model change, and it asks before stopping what runs now.
+    /// format, so using one from another engine is a switch, not a model
+    /// change. Weights already on disk hop silently; only a download — a
+    /// bigger commitment than a switch — still asks first.
     func useModel(_ id: String, engine: EngineID) {
         guard !isSwitchingModel else { return }
+        // Weights on disk do not imply a runtime: the library is browsable for
+        // an engine that is not installed, but using one of its models has to
+        // install the engine first or the switch below would be a no-op.
+        guard engineIsInstalled(engine) else {
+            requestEngineInstall(engine)
+            return
+        }
         let installed = engineModels(for: engine).contains { $0.id == id }
         if engine != activeEngine {
-            pendingLibraryUse = LibraryUseRequest(engine: engine, model: id, needsDownload: !installed)
+            if installed {
+                applyModelFromAnyEngine(id, engine: engine)
+            } else {
+                pendingLibraryUse = LibraryUseRequest(engine: engine, model: id, needsDownload: true)
+            }
             return
         }
         if installed {
@@ -371,7 +541,9 @@ final class AppState: ObservableObject {
     func confirmLibraryUse() {
         guard let request = pendingLibraryUse else { return }
         pendingLibraryUse = nil
-        switchEngine(request.engine)
+        // A failed switch (engine uninstalled between dialog and confirm, say)
+        // must not leave a download pointed at a runtime that is not there.
+        guard switchEngine(request.engine) else { return }
         if request.needsDownload {
             downloadModel(request.model, engine: request.engine)
         } else {
@@ -406,6 +578,70 @@ final class AppState: ObservableObject {
         selectedModel = id
         settings.setModel(id)
         settings.rememberModel(id)
+    }
+
+    /// Pick a model from any engine group in the switcher menu. A model
+    /// belongs to the engine that serves its format, so one from another
+    /// engine hops engines too — without another prompt, because the menu
+    /// only ever showed models and the hop is the switch the reader asked
+    /// for.
+    func applyModelFromAnyEngine(_ id: String, engine: EngineID) {
+        guard !isSwitchingModel else { return }
+        guard !generating else {
+            toast("正在生成，先停止再切换模型")
+            return
+        }
+        guard engineIsInstalled(engine) else {
+            requestEngineInstall(engine)
+            return
+        }
+        guard engineModels(for: engine).contains(where: { $0.id == id }) else {
+            toast("\(engine.displayName) 没有模型 \(shortModelName(id))")
+            return
+        }
+        guard engine != activeEngine else {
+            applyModel(id)
+            return
+        }
+        hopEngine(engine, model: id)
+    }
+
+    /// Make `engine` the running one and load `model` on it in one motion.
+    /// The sidebar still switches engines explicitly, but the model switcher
+    /// hides the hop: from the reader's point of view only the model changed.
+    private func hopEngine(_ engine: EngineID, model: String) {
+        guard let engines, engines.controller(engine) != nil else { return }
+        let wasRunning = isRunning
+        engines.activate(engine)
+        libraryEngine = engine
+        reloadModels()
+        // The picked model wins over the engine's remembered one.
+        selectModel(model)
+        engines.setModel(model, for: engine)
+        syncController()
+
+        guard wasRunning else {
+            toast("已切换到 \(engine.displayName) · \(shortModelName(model))")
+            return
+        }
+
+        // The old engine's weights are already gone (activate stops it), so
+        // the hop is purely a load. Keep the switcher's inline progress until
+        // the new engine reports ready, the same way a same-engine switch
+        // does.
+        switchingModel = model
+        switchStage = "加载新模型"
+        let controller = engines.controller(engine)
+        switchTask = Task { [weak self] in
+            guard let controller else { return }
+            await controller.start(localModel: self?.selectedModelInfo, requestedModel: model)
+            let ready = await controller.waitForReady(timeout: engine.startupTimeout)
+            guard let self, !Task.isCancelled else { return }
+            self.finishModelSwitch(outcome: ready
+                ? .ready
+                : .failed(controller.failureMessage ?? "\(engine.displayName) 未能在预期时间内就绪"))
+            self.switchTask = nil
+        }
     }
 
     /// Select a model and, if the engine is live, reload it on the new weights.
@@ -800,6 +1036,10 @@ final class AppState: ObservableObject {
     /// picks the single GGUF quant out of a repository that carries a dozen and
     /// prepares its assembly, while oMLX and MTPLX run flashCat's snapshot
     /// downloader straight into their own model folder.
+    ///
+    /// Pause and cancel terminate the child process; the Hub keeps partial
+    /// files in the destination's `.cache`, so resuming later — even after a
+    /// relaunch — continues from the bytes already on disk.
     func downloadModel(_ id: String, engine: EngineID) {
         guard downloadingModel == nil else {
             toast("正在下载另一个模型，先等它结束")
@@ -822,6 +1062,17 @@ final class AppState: ObservableObject {
             return
         }
 
+        pauseRequested = false
+        cancelRequested = false
+        downloadSpeed = 0
+        lastWatchBytes = 0
+        lastWatchDate = nil
+        downloadWatchDirectories = []
+        downloadWatchBaselines = [:]
+        upsertTask(engine: engine, model: id) { task in
+            task.status = .downloading
+            if task.addedAt.timeIntervalSinceNow < -60 * 60 * 24 * 30 { task.addedAt = Date() }
+        }
         downloadingModel = id
         downloadingEngine = engine
         downloadFraction = 0
@@ -839,38 +1090,131 @@ final class AppState: ObservableObject {
         process.standardError = pipe
         process.standardInput = FileHandle.nullDevice
 
+        // Where this child's Hub cache lives: splash downloads land there
+        // before the finished assembly is installed into the models folder.
+        let hubCacheRoot = plan.environment["HF_HUB_CACHE"]
+            ?? (plan.environment["HF_HOME"].map { $0 + "/hub" }
+                ?? (Paths.home + "/.cache/huggingface/hub"))
+
         TailReader.read(pipe) { line in
             DispatchQueue.main.async {
                 self.append(log: line, engine: engine)
                 if let total = Self.totalBytes(in: line) {
                     self.downloadTotalBytes = total
+                    self.upsertTask(engine: engine, model: id) { $0.totalBytes = max($0.totalBytes, total) }
                     if let directory = plan.watchDirectory {
-                        self.startDownloadWatch(directory: directory, engine: engine)
+                        if !self.downloadWatchDirectories.contains(directory) {
+                            self.downloadWatchDirectories.append(directory)
+                        }
+                        self.startDownloadWatch(engine: engine, model: id)
                     }
-                } else if let match = TextPattern.firstMatch("(\\d{1,3})%", line),
+                } else if let fetch = Self.fetchPlan(in: line) {
+                    // Splash's installer announces every repository it is
+                    // about to fetch with its exact byte size. Those sums are
+                    // the total, and the repos' Hub cache folders are what
+                    // fills up — watching them gives byte progress, which
+                    // tqdm alone never provides (its bar only counts finished
+                    // files, so it sits at 0% while a shard streams).
+                    self.downloadTotalBytes += fetch.bytes
+                    self.upsertTask(engine: engine, model: id) {
+                        $0.totalBytes = max($0.totalBytes, self.downloadTotalBytes)
+                    }
+                    let directory = hubCacheRoot + "/models--"
+                        + fetch.repo.replacingOccurrences(of: "/", with: "--")
+                    if !self.downloadWatchDirectories.contains(directory) {
+                        self.downloadWatchDirectories.append(directory)
+                    }
+                    self.startDownloadWatch(engine: engine, model: id)
+                } else if self.downloadTotalBytes == 0,
+                          let match = TextPattern.firstMatch("(\\d{1,3})%", line),
                           let value = Double(match[1]) {
-                    // Splash's installer reports its own percentage.
-                    self.downloadFraction = min(max(value / 100, 0), 1)
+                    // Fallback when no total is known: the downloader's own
+                    // percentage. Snapshot engines and splash both report
+                    // byte totals now, so this only covers unusual output.
+                    let fraction = min(max(value / 100, 0), 1)
+                    self.downloadFraction = fraction
+                    if self.downloadTotalBytes > 0 {
+                        self.upsertTask(engine: engine, model: id) {
+                            $0.downloadedBytes = Int(fraction * Double(self.downloadTotalBytes))
+                        }
+                    }
                 }
             }
         }
 
-        process.terminationHandler = { finished in
+        process.terminationHandler = { [weak self] finished in
             DispatchQueue.main.async {
-                self.finishDownload(engine: engine,
-                                    model: id,
-                                    status: finished.terminationStatus)
+                self?.finishDownload(engine: engine,
+                                     model: id,
+                                     status: finished.terminationStatus)
             }
         }
 
         do {
             try process.run()
+            downloadProcess = process
         } catch {
             downloadingModel = nil
             downloadingEngine = nil
             downloadFraction = nil
+            removeTask(engine: engine, model: id)
             notice = "无法启动下载：\(error.localizedDescription)"
         }
+    }
+
+    // MARK: Download center
+
+    /// Stop the running transfer. Partial files stay in the destination's
+    /// `.cache`, so 继续 picks up exactly where this left off.
+    func pauseDownload() {
+        guard let process = downloadProcess, let model = downloadingModel else { return }
+        pauseRequested = true
+        downloadSpeed = 0
+        append(log: "==> 暂停下载：\(model)，进度已保留", engine: downloadingEngine ?? .splash)
+        process.terminate()
+    }
+
+    /// Continue a paused transfer: the same snapshot downloader runs again and
+    /// the Hub resumes its partial files.
+    func resumeDownload(_ task: ModelDownloadTask) {
+        downloadModel(task.model, engine: task.engine)
+    }
+
+    /// Drop a task from the center. For a running transfer that means
+    /// terminating the child; partial files stay on disk so nothing else is
+    /// destroyed — a later download simply resumes them.
+    func cancelDownload(_ task: ModelDownloadTask) {
+        if let process = downloadProcess,
+           downloadingModel == task.model, downloadingEngine == task.engine {
+            cancelRequested = true
+            downloadSpeed = 0
+            append(log: "==> 取消下载：\(task.model)", engine: task.engine)
+            process.terminate()
+        } else {
+            removeTask(engine: task.engine, model: task.model)
+            toast("已从下载中心移除")
+        }
+    }
+
+    /// Remove a finished/failed/stale row from the center.
+    func removeTask(_ task: ModelDownloadTask) {
+        removeTask(engine: task.engine, model: task.model)
+    }
+
+    private func upsertTask(engine: EngineID, model: String, _ mutate: (inout ModelDownloadTask) -> Void) {
+        if let index = downloadTasks.firstIndex(where: { $0.engine == engine && $0.model == model }) {
+            mutate(&downloadTasks[index])
+        } else {
+            var task = ModelDownloadTask(engine: engine, model: model, status: .downloading)
+            mutate(&task)
+            downloadTasks.append(task)
+        }
+        ModelDownloadStore.save(downloadTasks)
+    }
+
+    private func removeTask(engine: EngineID, model: String) {
+        downloadTasks.removeAll { $0.engine == engine && $0.model == model }
+        ModelDownloadStore.save(downloadTasks)
     }
 
     private static func totalBytes(in line: String) -> Int? {
@@ -878,20 +1222,64 @@ final class AppState: ObservableObject {
         return Int(line.dropFirst(6).trimmingCharacters(in: .whitespaces))
     }
 
-    /// Watch the destination grow and turn bytes on disk into a percentage.
-    /// The walk happens off the main actor: a model folder holds thousands of
-    /// shards and the UI thread has a card to animate.
-    private func startDownloadWatch(directory: String, engine: EngineID) {
+    /// `Fetching 8 file(s), 20.43 GB, from owner/repo@38740b847e4c; cached
+    /// files are reused.` — how the Splash installer announces each repository
+    /// it is about to fetch, with its exact size (hub.py prints GB as 1e9
+    /// bytes). The repo's Hub cache folder is where those bytes land.
+    private static func fetchPlan(in line: String) -> (bytes: Int, repo: String)? {
+        guard let match = TextPattern.firstMatch(
+            "Fetching \\d+ file\\(s\\), ([\\d.]+) (GB|MB|KB), from ([^@\\s]+)@", line),
+              let value = Double(match[1]) else { return nil }
+        let multiplier: Double
+        switch match[2] {
+        case "GB": multiplier = 1e9
+        case "MB": multiplier = 1e6
+        default: multiplier = 1e3
+        }
+        return (Int((value * multiplier).rounded()), match[3])
+    }
+
+    /// Watch the folders the running download fills and turn bytes on disk
+    /// into a percentage, plus a smoothed transfer speed for the download
+    /// center. The walk happens off the main actor: a model folder holds
+    /// thousands of shards and the UI thread has a card to animate.
+    private func startDownloadWatch(engine: EngineID, model: String) {
         downloadWatchTask?.cancel()
         downloadWatchTask = Task { [weak self] in
             while !Task.isCancelled {
-                let bytes = await Task.detached(priority: .utility) {
-                    ModelInstaller.size(of: directory)
+                guard let self else { return }
+                let directories = self.downloadWatchDirectories
+                let sizes = await Task.detached(priority: .utility) {
+                    directories.map { ModelInstaller.size(of: $0) }
                 }.value
-                guard let self, !Task.isCancelled else { return }
+                guard !Task.isCancelled else { return }
+                // A folder's first sighting sets its baseline, so weights that
+                // were already in the cache before this download don't count.
+                var downloaded = 0
+                for (index, directory) in directories.enumerated() {
+                    if let baseline = self.downloadWatchBaselines[directory] {
+                        downloaded += max(sizes[index] - baseline, 0)
+                    } else {
+                        self.downloadWatchBaselines[directory] = sizes[index]
+                    }
+                }
+                let now = Date()
+                if let last = self.lastWatchDate,
+                   now.timeIntervalSince(last) > 0, downloaded > self.lastWatchBytes {
+                    let instant = Double(downloaded - self.lastWatchBytes) / now.timeIntervalSince(last)
+                    self.downloadSpeed = self.lastWatchBytes == 0
+                        ? instant
+                        : self.downloadSpeed * 0.65 + instant * 0.35
+                }
+                self.lastWatchBytes = downloaded
+                self.lastWatchDate = now
                 let total = self.downloadTotalBytes
                 if total > 0 {
-                    self.downloadFraction = min(max(Double(bytes) / Double(total), 0), 1)
+                    self.downloadFraction = min(max(Double(downloaded) / Double(total), 0), 1)
+                }
+                self.upsertTask(engine: engine, model: model) { task in
+                    task.downloadedBytes = downloaded
+                    task.totalBytes = max(task.totalBytes, total)
                 }
                 try? await Task.sleep(nanoseconds: 500_000_000)
             }
@@ -901,17 +1289,41 @@ final class AppState: ObservableObject {
     private func finishDownload(engine: EngineID, model: String, status: Int32) {
         downloadWatchTask?.cancel()
         downloadWatchTask = nil
+        downloadProcess = nil
         downloadingModel = nil
         downloadingEngine = nil
         downloadFraction = nil
         downloadTotalBytes = 0
+        downloadSpeed = 0
+        lastWatchBytes = 0
+        lastWatchDate = nil
+        downloadWatchDirectories = []
+        downloadWatchBaselines = [:]
         reloadModels()
 
-        guard status == 0 else {
-            append(log: "==> 下载失败，退出码 \(status)", engine: engine)
-            notice = "模型下载失败，退出码 \(status)"
+        if pauseRequested {
+            pauseRequested = false
+            upsertTask(engine: engine, model: model) { $0.status = .paused }
+            append(log: "==> 已暂停 \(model)，可从下载中心继续", engine: engine)
+            toast("已暂停下载，进度已保留")
             return
         }
+        if cancelRequested {
+            cancelRequested = false
+            removeTask(engine: engine, model: model)
+            append(log: "==> 已取消下载 \(model)", engine: engine)
+            toast("已取消下载")
+            return
+        }
+
+        guard status == 0 else {
+            upsertTask(engine: engine, model: model) { $0.status = .failed }
+            append(log: "==> 下载失败，退出码 \(status)", engine: engine)
+            notice = "模型下载失败，退出码 \(status)（下载中心里可重试）"
+            return
+        }
+
+        removeTask(engine: engine, model: model)
 
         // Splash addresses a model by its repository id, the packs by the
         // folder name flashCat gave it.
@@ -983,12 +1395,14 @@ final class TailReader {
                 return
             }
             buffer.append(chunk)
-            while let newline = buffer.firstIndex(of: 0x0A) {
-                let line = buffer.prefix(upTo: newline)
-                buffer.removeSubrange(...newline)
-                if let text = String(data: line, encoding: .utf8) {
-                    onLine(text)
-                }
+            // huggingface_hub's tqdm redraws its bar with carriage returns, so
+            // a Splash download only ever speaks \r until it exits. Split on
+            // both; a bare \r line is a redraw, not a new log entry.
+            while let index = buffer.firstIndex(where: { $0 == 0x0A || $0 == 0x0D }) {
+                let line = buffer.prefix(upTo: index)
+                buffer.removeSubrange(...index)
+                guard !line.isEmpty, let text = String(data: line, encoding: .utf8) else { continue }
+                onLine(text)
             }
         }
     }

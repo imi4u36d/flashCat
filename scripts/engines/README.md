@@ -14,13 +14,18 @@ scripts/engines/build-omlx-pack.sh      # -> vendor/engines/omlx/0.7.2   (~1.7 G
 ```
 
 - 两个脚本都用 `uv` 取 python-build-standalone：mtplx 要 **3.13 / cp313**，
-  omlx 要 **3.11 / cp311**（由包内二进制轮子的 ABI 决定）。
+  omlx 要 **3.11 / cp311**（由包内二进制轮子的 ABI 决定）。`uv` 不要求本机预装：
+  首次运行自动下载独立二进制缓存到 `.tools/uv`（已 gitignore），整条链路只依赖
+  macOS 自带工具（curl/tar/shasum）和网络，**不依赖 Homebrew**。
 - MTPLX 来自 PyPI（`mtplx==2.12.2`，mlx/mlx-metal/mlx-lm/nanobind 钉死版本 ——
   mlx 版本决定原生扩展缓存指纹）。构建期就编译 `_paged_ops` 放进 `cache/` 并在
   manifest 的 `warmup` 里声明，目标机无需编译器。
-- oMLX **不在 PyPI**（`pypi.org/pypi/omlx/json` → 404），所以从 Homebrew keg
-  只读复制 `libexec/lib/python3.11/site-packages`（默认 `/opt/homebrew/Cellar/omlx/<ver>`，
-  用 `OMLX_KEG` 可改）。别把它改成 `pip install omlx`。
+- oMLX **不在 PyPI**，但上游 GitHub Releases 每个版本都发 cp311 wheel
+  （`omlx-<ver>-cp311-cp311-macosx_15_0_universal2.whl`）。脚本直接下载该 wheel、
+  对照 GitHub release API 的 assets digest 校验 sha256（也可 `--sha256` 手动指定），
+  再装进 pack 自带的 CPython 3.11。不再从 Homebrew keg 复制 site-packages，
+  也不需要 `brew upgrade`。App 内更新同理：构建脚本自己拉取上游产物。
+- wheel 的平台 tag 是 `macosx_15_0`，pack 的 `minMacOS` 相应为 **15.0**。
 - pack **不可移动**：`_paged_ops` 的 rpath 是绝对路径，安装位置必须含版本号。
 
 ## 校验（用产物里的 python 起服务，验完杀进程释放端口）

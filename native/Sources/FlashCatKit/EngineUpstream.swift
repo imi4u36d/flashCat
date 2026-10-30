@@ -111,13 +111,22 @@ public actor EngineUpstreamChecker {
         self.apiBase = apiBase
     }
 
-    /// Newest release, pre-releases included (the user asked for dev/rc tags to
-    /// be visible), falling back to `/tags` for repositories that tag without
+    /// Newest *stable* release only — pre-releases (rc/dev tags) are ignored so
+    /// the engine page never nudges the reader toward an unfinished build. When
+    /// a repository has published no stable release at all, the newest
+    /// pre-release is used as a fallback so the engine is not left with nothing
+    /// to offer. Falls back to `/tags` for repositories that tag without
     /// cutting releases.
     public func latest(for id: EngineID) async throws -> EngineUpstreamRelease {
+        let pick = { (releases: [EngineUpstreamRelease]) -> EngineUpstreamRelease? in
+            if let stable = EngineUpstream.landingRelease(releases.filter { !$0.isPrerelease }) {
+                return stable
+            }
+            return EngineUpstream.landingRelease(releases)
+        }
         do {
             let releases = try await self.releases(for: id)
-            if let landing = EngineUpstream.landingRelease(releases) { return landing }
+            if let landing = pick(releases) { return landing }
             throw EngineUpstreamError.empty
         } catch EngineUpstreamError.empty {
             return try await tagFallback(for: id)

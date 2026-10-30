@@ -3,14 +3,18 @@
 # Build a self-contained oMLX runtime pack:
 #   <out>/omlx/<version>/{manifest.json,bin/,python/,models/}
 #
-# oMLX is NOT published on PyPI (https://pypi.org/pypi/omlx/json -> 404), so this
-# script bundles the site-packages tree of an already-installed Homebrew omlx
-# cell together with a python-build-standalone CPython 3.11 (ABI cp311 is
-# required by the prebuilt binary wheels inside that tree). The Homebrew cellar
-# is only read, never modified.
+# oMLX is NOT published on PyPI, but every upstream release on GitHub ships a
+# prebuilt cp311 wheel (omlx-<ver>-cp311-cp311-macosx_15_0_universal2.whl).
+# This script downloads that wheel straight from the GitHub release, verifies
+# its sha256 against the release notes, and installs it (with its PyPI
+# dependencies) into a python-build-standalone CPython 3.11 bundled in the pack.
+# Nothing here depends on Homebrew, a preinstalled uv, or any other local
+# toolchain — only /usr/bin tools (curl, tar, shasum) plus one bootstrap
+# download of the standalone uv binary.
 #
 # Usage:
 #   scripts/engines/build-omlx-pack.sh [--version 0.7.2] [--out DIR] [--force]
+#                                      [--sha256 HEX]
 #
 # No model weights are downloaded by this script.
 
@@ -24,14 +28,16 @@ ENGINE_NAME="oMLX"
 DEFAULT_VERSION="0.7.2"
 DEFAULT_OUT="$REPO_ROOT/vendor/engines"
 DEFAULT_PORT=8100
-# ABI-critical: every prebuilt .so in the Homebrew tree is .cpython-311-darwin.so
+UPSTREAM_REPO="jundot/omlx"
+# ABI-critical: the upstream wheel is built for cp311 only.
 PYTHON_SERIES="3.11"
-# Read-only source of the omlx distribution (Homebrew keg, not PyPI).
-SOURCE_KEG_DEFAULT="/opt/homebrew/Cellar/omlx"
+# macOS target of the upstream wheel (macosx_15_0_universal2).
+MIN_MACOS="15.0"
 
 VERSION="$DEFAULT_VERSION"
 OUT="$DEFAULT_OUT"
 FORCE=0
+WHEEL_SHA=""
 
 usage() {
   cat <<'EOF'
@@ -42,10 +48,9 @@ Usage: build-omlx-pack.sh [options]
   --version VER   omlx version to bundle (default: 0.7.2)
   --out DIR       output root; pack lands in DIR/omlx/VER (default: vendor/engines)
   --force         replace an existing pack directory
+  --sha256 HEX    expected sha256 of the upstream wheel; resolved from the
+                  GitHub release API automatically when omitted
   -h, --help      show this help
-
-Environment:
-  OMLX_KEG        Homebrew keg root (default: /opt/homebrew/Cellar/omlx)
 EOF
 }
 
@@ -58,33 +63,80 @@ while [[ $# -gt 0 ]]; do
     --version) VERSION="${2:?--version needs a value}"; shift 2 ;;
     --out)     OUT="${2:?--out needs a value}"; shift 2 ;;
     --force)   FORCE=1; shift ;;
+    --sha256)  WHEEL_SHA="${2:?--sha256 needs a value}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown argument: $1 (try --help)" ;;
   esac
 done
 
-find_uv() {
-  local candidates=(
-    "${HOME:-/nonexistent}/.envpilot/tools/uv"
-    /opt/homebrew/bin/uv
-    /usr/local/bin/uv
-  )
-  local c
-  for c in "${candidates[@]}"; do
-    [[ -x "$c" ]] && { printf '%s\n' "$c"; return 0; }
-  done
-  command -v uv 2>/dev/null && return 0
-  die "uv not found (looked in ~/.envpilot/tools, /opt/homebrew/bin, PATH)"
+# ------------------------------------------------------------- bootstrap uv
+# The pack build needs uv (python-build-standalone management + installs), but
+# requiring it to be preinstalled would tie the build to the local machine's
+# tooling. Instead, cache a standalone uv binary inside the repo and download
+# it on first use.
+ensure_uv() {
+  local uv_bin="$REPO_ROOT/.tools/uv"
+  if [[ -x "$uv_bin" ]]; then
+    printf '%s\n' "$uv_bin"
+    return 0
+  fi
+  step "Downloading standalone uv (one-time bootstrap into .tools/)"
+  local url="https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-apple-darwin.tar.gz"
+  local tmp
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/uv-bootstrap.XXXXXX")"
+  curl -fL --retry 2 -o "$tmp/uv.tar.gz" "$url"
+  mkdir -p "$REPO_ROOT/.tools"
+  tar -xzf "$tmp/uv.tar.gz" -C "$tmp"
+  mv "$tmp/uv-aarch64-apple-darwin/uv" "$uv_bin"
+  rm -rf "$tmp"
+  chmod +x "$uv_bin"
+  printf '    uv -> %s\n' "$uv_bin"
+  printf '%s\n' "$uv_bin"
 }
 
-KEG_ROOT="${OMLX_KEG:-$SOURCE_KEG_DEFAULT}"
-KEG="$KEG_ROOT/$VERSION"
-CELLAR_SITE="$KEG/libexec/lib/python${PYTHON_SERIES}/site-packages"
+# ------------------------------------------------- resolve the wheel + checksum
+WHEEL_NAME="omlx-${VERSION}-cp311-cp311-macosx_15_0_universal2.whl"
+WHEEL_URL="https://github.com/${UPSTREAM_REPO}/releases/download/v${VERSION}/${WHEEL_NAME}"
 
-[[ -d "$CELLAR_SITE" ]] || die "no omlx $VERSION in $KEG_ROOT (expected $CELLAR_SITE).
-       omlx is not on PyPI, so a local install is required: brew install omlx"
+# GitHub's release API reports a server-computed digest per asset
+# ("digest": "sha256:<hex>"); look up the one for our wheel.
+expected_sha_from_notes() {
+  local api_json
+  api_json="$(mktemp "${TMPDIR:-/tmp}/omlx-release.XXXXXX.json")"
+  if ! curl -fsSL --retry 2 -o "$api_json" \
+      "https://api.github.com/repos/${UPSTREAM_REPO}/releases/tags/v${VERSION}"; then
+    rm -f "$api_json"
+    return 1
+  fi
+  /usr/bin/python3 - "$WHEEL_NAME" "$api_json" <<'PYEOF'
+import json, sys
+wheel, path = sys.argv[1], sys.argv[2]
+try:
+    data = json.load(open(path, encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+for asset in data.get("assets", []):
+    if asset.get("name") == wheel:
+        digest = asset.get("digest") or ""
+        if digest.startswith("sha256:"):
+            print(digest.split(":", 1)[1])
+            raise SystemExit(0)
+raise SystemExit(1)
+PYEOF
+  local rc=$?
+  rm -f "$api_json"
+  return "$rc"
+}
 
-UV="$(find_uv)"
+if [[ -z "$WHEEL_SHA" ]]; then
+  step "Resolving the wheel sha256 from the ${UPSTREAM_REPO} release API"
+  WHEEL_SHA="$(expected_sha_from_notes || true)"
+  [[ -n "$WHEEL_SHA" ]] || die "could not read a sha256 for $WHEEL_NAME from the GitHub release API
+       (unreachable or rate-limited?). Pass --sha256 HEX explicitly."
+  printf '    expected: %s\n' "$WHEEL_SHA"
+fi
+
+UV="$(ensure_uv)"
 mkdir -p "$OUT"
 OUT="$(cd -- "$OUT" && pwd -P)"
 PACK_DIR="$OUT/$ENGINE_ID/$VERSION"
@@ -102,7 +154,6 @@ trap 'rm -rf "$WORK"' EXIT
 
 BUILD_START=$(date +%s)
 printf 'Pack target: %s\n' "$PACK_DIR"
-printf 'Source keg : %s (read-only)\n' "$KEG"
 
 # ---------------------------------------------------------------- 1. CPython 3.11
 step "Locating uv-managed CPython $PYTHON_SERIES"
@@ -124,26 +175,26 @@ cp -a "$PY_ROOT" "$PACK_DIR/python"
 chmod -R u+w "$PACK_DIR/python"
 PACK_SITE="$PACK_DIR/python/lib/python${PYTHON_SERIES}/site-packages"
 rm -f "$PACK_DIR/python/lib/python${PYTHON_SERIES}/EXTERNALLY-MANAGED"
-# Drop the standalone build's own site-packages (pip/setuptools) entirely: the
-# cellar tree ships its own, and merging two copies of both is asking for trouble.
-rm -rf "$PACK_SITE"
-mkdir -p "$PACK_SITE"
 PY="$PACK_DIR/python/bin/python3"
 [[ -x "$PY" ]] || die "pack interpreter missing: $PY"
 printf '    %s\n' "$("$PY" -VV)"
 elapsed "$T"
 
-# ------------------------------------------------- 2. copy the omlx site-packages
-step "Copying omlx site-packages from the Homebrew keg (read-only source)"
+# ------------------------------------- 2. download + install the upstream wheel
+step "Downloading $WHEEL_NAME from the upstream GitHub release"
 T=$(date +%s)
-cp -a "$CELLAR_SITE/." "$PACK_SITE/"
-chmod -R u+w "$PACK_SITE"
-printf '    %s\n' "$(du -sh "$PACK_SITE" | awk '{print $1}') copied"
-# Stale absolute references would silently point at the cellar instead of the pack.
-if find "$PACK_SITE" -maxdepth 1 -name '*.pth' -print -quit | grep -q .; then
-  printf '    warning: .pth files found next to the pack:\n'
-  find "$PACK_SITE" -maxdepth 1 -name '*.pth' | sed 's/^/      /'
+WHEEL_FILE="$WORK/$WHEEL_NAME"
+curl -fL --retry 2 -o "$WHEEL_FILE" "$WHEEL_URL"
+ACTUAL_SHA="$(shasum -a 256 "$WHEEL_FILE" | awk '{print $1}')"
+if [[ "$ACTUAL_SHA" != "$WHEEL_SHA" ]]; then
+  die "wheel sha256 mismatch: expected $WHEEL_SHA, got $ACTUAL_SHA"
 fi
+printf '    sha256 OK: %s\n' "$ACTUAL_SHA"
+elapsed "$T"
+
+step "Installing the wheel and its PyPI dependencies into the pack"
+T=$(date +%s)
+"$UV" pip install --python "$PY" --no-progress "$WHEEL_FILE"
 elapsed "$T"
 
 # --------------------------------------------------------------- 3. self-check
@@ -171,7 +222,7 @@ cat > "$PACK_DIR/manifest.json" <<EOF
   "version": "$VERSION",
   "kind": "bundled",
   "arch": "arm64",
-  "minMacOS": "14.0",
+  "minMacOS": "$MIN_MACOS",
   "entrypoint": "python/bin/python3",
   "workingDirectory": ".",
   "modelsSubdirectory": "models",
@@ -210,9 +261,7 @@ PYEOF
 
 step "Make the pack relocatable"
 # Any wheel that bakes the build machine's absolute LC_RPATH in would break an
-# installed copy; rewrite in-pack rpaths to @loader_path. No-op for this pack
-# today (its rpaths already point outside the pack), but it keeps the two build
-# scripts symmetric and future oMLX builds safe.
+# installed copy; rewrite in-pack rpaths to @loader_path.
 "$REPO_ROOT/scripts/engines/fix-pack-rpaths.sh" "$PACK_DIR"
 
 # --------------------------------------------------------------------- 5. summary

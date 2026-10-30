@@ -1,5 +1,26 @@
 import Foundation
 
+/// Which speculative-decoding head an engine runs with. The overview derives
+/// its draft-acceptance label from this, so the metric always names the head
+/// that is actually producing the rate.
+public enum SpeculativeMode: Equatable, Sendable {
+    /// Splash's DFlash2 draft / oMLX's DFlash head.
+    case dflash
+    /// Native multi-token prediction.
+    case mtp
+    /// Speculative decoding is off: no acceptance rate exists to show.
+    case off
+
+    /// Short head name for UI labels; empty when nothing is active.
+    public var headName: String {
+        switch self {
+        case .dflash: return "DFlash2"
+        case .mtp: return "MTP"
+        case .off: return ""
+        }
+    }
+}
+
 /// Per-engine knobs the reader can change from that engine's own config page.
 /// Everything is optional: `nil` means "leave it to the engine", which keeps a
 /// pack's own defaults intact and lets a new build add a knob without a
@@ -121,6 +142,34 @@ public struct EngineTuning: Codable, Equatable, Sendable {
 
     public var draftsDisabled: Bool { dflash == false }
 
+    /// The speculative head this tuning actually starts the engine with. An
+    /// unset knob falls back to the pack default — and MTPLX's own default is
+    /// MTP on — so a freshly installed engine already reports the right head.
+    /// Conflicting oMLX switches resolve to DFlash, matching `sanitized()` and
+    /// `omlxSettings`.
+    public func speculativeMode(for id: EngineID) -> SpeculativeMode {
+        let fallback = EngineTuning.defaults(for: id)
+        let dflashOn = dflash ?? fallback.dflash ?? false
+        let mtpOn: Bool
+        switch id {
+        case .splash, .omlx:
+            mtpOn = mtp ?? fallback.mtp ?? false
+        case .mtplx:
+            // The pack's own switch defaults to on; `nil` leaves it that way.
+            mtpOn = mtp ?? true
+        }
+        switch id {
+        case .splash:
+            // Splash only runs the DFlash2 draft; its mtp knob is ignored.
+            return dflashOn ? .dflash : .off
+        case .omlx:
+            if dflashOn { return .dflash }
+            return mtpOn ? .mtp : .off
+        case .mtplx:
+            return mtpOn ? .mtp : .off
+        }
+    }
+
     /// oMLX applies MTP/DFlash per model through
     /// `PUT /admin/api/models/{id}/settings`. The engine refuses a payload where
     /// both heads are on, so enabling one always switches the other off.
@@ -143,6 +192,23 @@ public struct EngineTuning: Codable, Equatable, Sendable {
         // resident load would leave no room to serve prompts.
         if let offload = pleSSDOffload { payload["qwen4_ple_ssd_offload"] = .bool(offload) }
         return payload.isEmpty ? nil : payload
+    }
+
+    /// The settings for one model, plus a DFlash2 draft the model page assigned
+    /// to it. An assignment means this model runs DFlash2 with that checkpoint
+    /// (oMLX's `dflash_draft_model`), which necessarily turns MTP off for it —
+    /// the same exclusivity the engine itself enforces. A `nil`/empty override
+    /// falls back to the engine-level tuning untouched.
+    public func omlxSettings(draftOverride: String?) -> [String: EngineSettingValue]? {
+        let draft = draftOverride?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !draft.isEmpty else { return omlxSettings }
+        var payload = omlxSettings ?? [:]
+        payload["dflash_enabled"] = .bool(true)
+        payload["mtp_enabled"] = .bool(false)
+        // The retired head's knob has no business in a DFlash payload.
+        payload.removeValue(forKey: "mtp_fixed_depth")
+        payload["dflash_draft_model"] = .string(draft)
+        return payload
     }
 
     /// oMLX's own constraint, mirrored here so the config page can keep the two
@@ -199,12 +265,15 @@ public struct EngineTuning: Codable, Equatable, Sendable {
 public enum EngineSettingValue: Equatable, Sendable {
     case bool(Bool)
     case int(Int)
+    /// A path or repository id, e.g. oMLX's `dflash_draft_model`.
+    case string(String)
     case null
 
     public var jsonObject: Any {
         switch self {
         case .bool(let value): return value
         case .int(let value): return value
+        case .string(let value): return value
         case .null: return NSNull()
         }
     }

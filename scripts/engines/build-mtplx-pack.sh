@@ -71,21 +71,32 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-find_uv() {
-  local candidates=(
-    "${HOME:-/nonexistent}/.envpilot/tools/uv"
-    /opt/homebrew/bin/uv
-    /usr/local/bin/uv
-  )
-  local c
-  for c in "${candidates[@]}"; do
-    [[ -x "$c" ]] && { printf '%s\n' "$c"; return 0; }
-  done
-  command -v uv 2>/dev/null && return 0
-  die "uv not found (looked in ~/.envpilot/tools, /opt/homebrew/bin, PATH)"
+# ------------------------------------------------------------- bootstrap uv
+# The pack build needs uv (python-build-standalone management + installs), but
+# requiring it to be preinstalled would tie the build to the local machine's
+# tooling. Instead, cache a standalone uv binary inside the repo and download
+# it on first use.
+ensure_uv() {
+  local uv_bin="$REPO_ROOT/.tools/uv"
+  if [[ -x "$uv_bin" ]]; then
+    printf '%s\n' "$uv_bin"
+    return 0
+  fi
+  step "Downloading standalone uv (one-time bootstrap into .tools/)"
+  local url="https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-apple-darwin.tar.gz"
+  local tmp
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/uv-bootstrap.XXXXXX")"
+  curl -fL --retry 2 -o "$tmp/uv.tar.gz" "$url"
+  mkdir -p "$REPO_ROOT/.tools"
+  tar -xzf "$tmp/uv.tar.gz" -C "$tmp"
+  mv "$tmp/uv-aarch64-apple-darwin/uv" "$uv_bin"
+  rm -rf "$tmp"
+  chmod +x "$uv_bin"
+  printf '    uv -> %s\n' "$uv_bin"
+  printf '%s\n' "$uv_bin"
 }
 
-UV="$(find_uv)"
+UV="$(ensure_uv)"
 mkdir -p "$OUT"
 OUT="$(cd -- "$OUT" && pwd -P)"
 PACK_DIR="$OUT/$ENGINE_ID/$VERSION"

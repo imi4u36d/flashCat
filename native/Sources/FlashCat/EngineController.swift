@@ -189,7 +189,10 @@ final class EngineController {
         do {
             try task.run()
             process = task
-            if let pid = processPid(task) { writePidFile(pid) }
+            if let pid = processPid(task) {
+                writePidFile(pid)
+                spawnWatchdog(enginePid: pid)
+            }
             state = .starting
             failureMessage = nil
             stats = nil
@@ -344,11 +347,13 @@ final class EngineController {
         onChange()
 
         if let process, let pid = processPid(process) {
-            sendSignal(pid, SIGINT)
+            // The pack python is only the trunk: the inference binary and pool
+            // workers below it hold the weights, so the whole tree is signalled.
+            killTree(pid, SIGINT)
             DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
                 if let current = self.process, processPid(current) == pid {
                     self.logs.append("==> 服务未在 20 秒内退出，强制结束", level: .system)
-                    sendSignal(pid, SIGKILL)
+                    killTree(pid, SIGKILL)
                 }
             }
         }
@@ -388,7 +393,7 @@ final class EngineController {
                 escalated = true
                 logs.append("==> \(id.displayName) 未在 \(Int(grace)) 秒内退出，强制结束（pid \(pid)）",
                             level: .system)
-                sendSignal(pid, SIGKILL)
+                killTree(pid, SIGKILL)
             }
             if Task.isCancelled { break }
             try? await Task.sleep(nanoseconds: 150_000_000)
@@ -416,18 +421,127 @@ final class EngineController {
         if isRunning { stop() } else { Task { await start(localModel: localModel) } }
     }
 
+    /// Runs at app termination. `applicationShouldTerminateAfterLastWindowClosed`
+    /// and `applicationWillTerminate` both call it on the same quit, so the work
+    /// must be idempotent. The whole tree is killed, not just the direct child:
+    /// a quit while weights are still loading means the python is wedged inside
+    /// a Metal call and cannot act on SIGINT, and its children would otherwise
+    /// keep the model resident after the app is gone.
+    private var disposed = false
     func dispose() {
+        guard !disposed else { return }
+        disposed = true
         pollTimer?.invalidate()
         pollTimer = nil
         if let process, let pid = processPid(process) {
-            sendSignal(pid, SIGINT)
+            killTree(pid, SIGINT)
             let deadline = Date().addingTimeInterval(8)
             while Date() < deadline && process.isRunning { Thread.sleep(forTimeInterval: 0.1) }
-            if process.isRunning { sendSignal(pid, SIGKILL) }
+            if process.isRunning { killTree(pid, SIGKILL) }
         }
         removePidFile()
         logs.close()
     }
+
+    // MARK: orphan watchdog
+
+    /// Detached last resort for a crashed or force-quit app — the paths where
+    /// `dispose` never runs. A python from the pack itself watches the app's
+    /// pid; once the app is gone it ends the engine's whole tree within
+    /// seconds, instead of leaving a half-loaded 20 GB model resident until
+    /// the next launch's sweep gets around to it. On a normal quit the
+    /// watchdog finds its engine already dead, kills nothing and exits, so it
+    /// needs no management from this side (splash additionally runs its own
+    /// python-side watchdog from flashcat_serve.py; the two overlap harmlessly).
+    private func spawnWatchdog(enginePid: Int32) {
+        let task = Process()
+        task.launchPath = installation.entrypoint.path
+        task.arguments = ["-u", "-c", Self.watchdogScript,
+                          String(enginePid),
+                          String(ProcessInfo.processInfo.processIdentifier),
+                          packMarkerDirectory]
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        task.standardInput = FileHandle.nullDevice
+        do {
+            try task.run()
+        } catch {
+            // Best effort only: dispose and the launch sweep remain the
+            // primary cleanup, the watchdog just narrows the crash window.
+            note("==> 未能启动引擎守护进程（不影响正常启停）：\(error)")
+        }
+    }
+
+    /// Runs as `python -u -c <script> <engine-pid> <app-pid> <pack-marker>`.
+    /// Every candidate is re-verified against the pack root through
+    /// proc_pidpath before a signal is sent, so a pid that died and was reused
+    /// in the polling gap is never hit. The descendant snapshot is taken while
+    /// the engine root is still alive — after its death the children are
+    /// re-parented to launchd and the chain would be lost.
+    private static let watchdogScript = #"""
+    import ctypes, os, signal, subprocess, sys, time
+
+    engine = int(sys.argv[1])
+    app = int(sys.argv[2])
+    marker = os.path.realpath(sys.argv[3])
+
+    libproc = None
+    try:
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
+    except OSError:
+        pass
+
+    def alive(pid):
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+    def ours(pid):
+        if libproc is None:
+            return False
+        try:
+            buf = ctypes.create_string_buffer(4096)
+            n = libproc.proc_pidpath(pid, buf, 4096)
+            path = buf.value.decode("utf-8", "replace") if n > 0 else ""
+        except Exception:
+            return False
+        return path.startswith(marker + "/")
+
+    def tree(pid):
+        pids, index = [pid], 0
+        while index < len(pids):
+            try:
+                out = subprocess.run(["/usr/bin/pgrep", "-P", str(pids[index])],
+                                     capture_output=True, text=True, timeout=5).stdout
+                pids.extend(int(line) for line in out.split())
+            except Exception:
+                pass
+            index += 1
+        return pids
+
+    snapshot = tree(engine)
+    while alive(app) and alive(engine):
+        snapshot = tree(engine)
+        time.sleep(2)
+
+    victims = [pid for pid in snapshot if alive(pid) and ours(pid)]
+    for pid in victims:
+        try:
+            os.kill(pid, signal.SIGINT)
+        except OSError:
+            pass
+    deadline = time.time() + 15
+    while victims and time.time() < deadline:
+        time.sleep(1)
+        victims = [pid for pid in victims if alive(pid)]
+    for pid in victims:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    """#
 
     func updateCatalog(_ value: ModelCatalog) { catalog = value }
 
@@ -754,32 +868,30 @@ final class EngineController {
     }
 
     /// Port the engine may bind, or nil when every candidate in its range is
-    /// taken. Stale pids from the previous session are ended first, so a crash
-    /// never leaves the engine unable to start on its own port again.
+    /// taken. A leftover engine from an earlier session is reaped first — and
+    /// the port being free proves nothing: a server killed mid-startup is still
+    /// loading weights, holds its memory for minutes and binds its port only
+    /// once the load finishes, exactly when a second engine would pile on top.
     private func claimPort(_ selectedModel: String) async -> Int? {
         let wanted = preferredPort
-        if !portOpen(wanted) {
-            if let stale = readPidFile(), processAlive(stale) {
-                note("==> 清理上次遗留的服务进程（pid \(stale)）…")
-                sendSignal(stale, SIGINT)
-                _ = await waitForPortFree(wanted, 10)
-            }
-            return wanted
-        }
-
-        // Occupied. The pid file is only written by this app, so it is the best
-        // evidence available that the listener is our own leftover engine.
-        if let stale = readPidFile(), processAlive(stale) {
-            note("==> 端口 \(wanted) 上是上次遗留的 \(id.displayName)（pid \(stale)），正在结束它…")
-            sendSignal(stale, SIGINT)
-            if await waitForPortFree(wanted, 60) {
+        if let stale = readPidFile() {
+            if processAlive(stale), processBelongsToPack(stale) {
+                guard await reclaimStaleEngine(stale) else {
+                    failureMessage = "遗留的服务进程（pid \(stale)）未能退出，无法启动 \(id.displayName)"
+                    onChange()
+                    return nil
+                }
+            } else {
+                // Stale bookkeeping: the pid is gone, or was reused by a
+                // process that is not this pack's engine. Either way it must
+                // not be signalled.
                 removePidFile()
-                return wanted
             }
-            failureMessage = "遗留的服务进程（pid \(stale)）未能退出，端口 \(wanted) 仍被占用"
-            return nil
         }
+        if !portOpen(wanted) { return wanted }
 
+        // Occupied with nothing on the pid file. This app has no evidence the
+        // listener is its own leftover, so it never kills blind — it moves on.
         for candidate in id.portRange.dropFirst() where candidate <= 65535 {
             if !portOpen(candidate) {
                 note("==> 端口 \(wanted) 被占用，自动改用 \(candidate)")
@@ -790,6 +902,63 @@ final class EngineController {
 
         failureMessage = "端口 \(wanted) 及其后 19 个端口都被占用，请在引擎设置中换一个端口"
         return nil
+    }
+
+    /// The engine pack this controller runs, one level up so a leftover from a
+    /// previous pack version (same engine, older directory) still matches.
+    /// Symlinks are resolved because proc_pidpath reports the canonical path:
+    /// a pack under /tmp would otherwise never match its own /private/tmp
+    /// executable paths.
+    private var packMarkerDirectory: String {
+        (installation.root.deletingLastPathComponent().path as NSString).resolvingSymlinksInPath
+    }
+
+    /// Launch-time sweep for processes a crashed or force-quit session left
+    /// behind. Nothing of this session runs yet, so any live executable inside
+    /// this engine's pack directories is residue: the pack python and the
+    /// binaries below it are started by nobody else. SIGKILL straight away —
+    /// a leftover stuck inside a weight load cannot act on SIGINT, and its pid
+    /// bookkeeping was already removed by the clean-quit path.
+    func sweepOrphans() {
+        let marker = packMarkerDirectory + "/"
+        for entry in allProcesses() where entry.pid != ProcessInfo.processInfo.processIdentifier {
+            guard let path = processExecutablePath(entry.pid), path.hasPrefix(marker) else { continue }
+            note("==> 清扫上次会话遗留的引擎进程（pid \(entry.pid)）")
+            killTree(entry.pid, SIGKILL)
+        }
+    }
+
+    /// The pid's executable lives inside this engine's pack directories — the
+    /// only processes this app ever starts there. Guards the reclaim against
+    /// firing on a reused pid.
+    private func processBelongsToPack(_ pid: Int32) -> Bool {
+        guard let path = processExecutablePath(pid) else { return false }
+        return path.hasPrefix(packMarkerDirectory + "/")
+    }
+
+    /// Ends a server left behind by an earlier session: SIGINT to the whole
+    /// tree, SIGKILL after the grace, and "gone" means the *process* exited —
+    /// not merely that the port came free, which a server still inside a Metal
+    /// weight load never signals.
+    private func reclaimStaleEngine(_ stale: Int32, grace: Double = 10) async -> Bool {
+        note("==> 清理上次遗留的 \(id.displayName) 服务进程（pid \(stale)）…")
+        killTree(stale, SIGINT)
+        let startedAt = Date()
+        var escalated = false
+        while Date().timeIntervalSince(startedAt) < 90 {
+            if !processAlive(stale) {
+                removePidFile()
+                note("==> 遗留进程已结束")
+                return true
+            }
+            if !escalated, Date().timeIntervalSince(startedAt) > grace {
+                escalated = true
+                note("==> 遗留进程未在 \(Int(grace)) 秒内退出，强制结束整棵进程树")
+                killTree(stale, SIGKILL)
+            }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        return !processAlive(stale)
     }
 
     private func processAlive(_ pid: Int32) -> Bool {
@@ -830,10 +999,15 @@ final class EngineController {
 
     private func pushTuning(for targets: [String]) async {
         guard id == .omlx, !targets.isEmpty else { return }
-        guard let tuning = EngineStore.shared.tuning(for: .omlx).omlxSettings, !tuning.isEmpty else { return }
-        let payload = tuning.mapValues { $0.jsonObject }
-        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        let tuning = EngineStore.shared.tuning(for: .omlx)
+        var failures = 0
         for target in targets {
+            // A model with an assigned draft gets `dflash_draft_model` merged
+            // into its payload; everyone else takes the engine-level tuning.
+            let override = EngineStore.shared.draftAssignment(for: id, model: target)
+            guard let settings = tuning.omlxSettings(draftOverride: override), !settings.isEmpty else { continue }
+            let payload = settings.mapValues { $0.jsonObject }
+            guard let data = try? JSONSerialization.data(withJSONObject: payload) else { continue }
             let response = await HTTP.put(port: port,
                                           path: EngineRoutes.modelSettings(target),
                                           json: data,
@@ -841,9 +1015,10 @@ final class EngineController {
             let status = response?.status ?? 0
             logs.append("==> \(target) 应用 MTP/DFlash 设置 -> HTTP \(status)",
                         level: status < 300 ? .system : .warning)
-            if status >= 300 {
-                failureMessage = "MTP/DFlash 设置未被 \(id.displayName) 接受（HTTP \(status)）"
-            }
+            if status >= 300 { failures += 1 }
+        }
+        if failures > 0 {
+            failureMessage = "MTP/DFlash 设置未被 \(id.displayName) 接受（\(failures) 个模型失败）"
         }
         onChange()
     }

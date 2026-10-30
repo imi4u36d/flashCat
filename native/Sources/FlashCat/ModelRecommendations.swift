@@ -62,7 +62,7 @@ enum ModelRecommendations {
     /// oMLX adds MTP-aware oQ quants on top of plain MLX, so all three tiers use
     /// the oMLX author's own oQ builds.
     static let omlx = [
-        "Jundot/Qwen3.6-35B-A3B-oQ6-mtp",
+        "Jundot/Qwen3.6-35B-A3B-oQ4e-mtp",
         "Jundot/Qwen3.8-27B-oQ4e-mtp",
         "Jundot/Qwen3.8-Flash-Next-oQ4e-mtp",
     ]
@@ -129,10 +129,10 @@ enum ModelRecommendations {
             summary: "27B 稠密 oQ4 混合精度，保留 MTP 草稿头",
             tags: ["oQ4", "MTP"],
             draftRepository: "incoai/Qwen3.8-27B-DFlash2"),
-        "Jundot/Qwen3.6-35B-A3B-oQ6-mtp": Detail(
-            bytes: 30_100_000_000, minimumMemory: 48,
-            summary: "MoE 的 oQ6 混合精度，保留 MTP 草稿头",
-            tags: ["oQ6", "MoE", "MTP"]),
+        "Jundot/Qwen3.6-35B-A3B-oQ4e-mtp": Detail(
+            bytes: 22_200_000_000, minimumMemory: 32,
+            summary: "MoE 的 oQ4 混合精度，保留 MTP 草稿头",
+            tags: ["oQ4", "MoE", "MTP"]),
         "Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed": Detail(
             bytes: 0, minimumMemory: 32,
             summary: "35B MoE，MTP 头单独放在 mtp.safetensors",

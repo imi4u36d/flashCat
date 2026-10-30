@@ -25,8 +25,10 @@ struct ChatView: View {
     @State private var stamps: [UUID: Date] = [:]
     @State private var undated: Set<UUID> = []
     @State private var suppressDating = false
+    /// Files attached through the composer's "+" picker (visual, not yet sent to
+    /// the local engine — mirrored from the reference input bar).
+    @State private var attachments: [URL] = []
 
-    @State private var generationStartedAt: Date?
     @State private var nearBottom = true
 
     private let bottomAnchor = "chat.bottom"
@@ -72,13 +74,6 @@ struct ChatView: View {
         .onAppear(perform: prepare)
         .onChange(of: draft) { _, value in ChatDraftCache.text = value }
         .onChange(of: state.messages.map(\.id)) { _, _ in syncStamps() }
-        .onChange(of: state.generating) { _, generating in
-            if generating {
-                generationStartedAt = Date()
-            } else {
-                generationStartedAt = nil
-            }
-        }
         .alert("清空当前对话？", isPresented: $showClearConfirm) {
             Button("取消", role: .cancel) {}
             Button("清空", role: .destructive) { clearConversation() }
@@ -89,7 +84,7 @@ struct ChatView: View {
             Button("取消", role: .cancel) {}
             Button("新建对话") { startNewConversation() }
         } message: {
-            Text("当前对话会记入侧栏的「最近」，可以随时重新打开；不会影响模型或推理服务。")
+            Text("当前对话会记入「最近对话」，可以从页顶菜单随时重新打开；不会影响模型或推理服务。")
         }
         .alert("清空最近对话？", isPresented: $showClearHistoryConfirm) {
             Button("取消", role: .cancel) {}
@@ -109,15 +104,7 @@ struct ChatView: View {
         PageHeader(title: topicTitle,
                    subtitle: "\(state.selectedModel.isEmpty ? "—" : state.selectedModel) · 本地上下文",
                    eyebrow: "对话") {
-            Tag(text: readyText, tone: readyTone, icon: "circle.fill")
-
-            IconAction(systemName: "slider.horizontal.3",
-                       help: "对话参数",
-                       active: showParameters) {
-                toggleParameters()
-            }
-
-            conversationMenu
+            recentThreadsMenu("最近对话")
 
             Button {
                 requestNewChat()
@@ -129,10 +116,33 @@ struct ChatView: View {
         }
     }
 
-    /// Copy, clear and history all act on the same conversation, so they live in
-    /// one overflow menu instead of four separate header icons.
-    private var conversationMenu: some View {
+    /// One pill handles everything around switching and maintaining the current
+    /// conversation: recent threads on top, then the copy/clear/parameter
+    /// actions that used to crowd the header as separate icons. `label` is the
+    /// title shown on the pill (the composer shows the active thread title to
+    /// read like a branch / session selector).
+    private func recentThreadsMenu(_ label: String) -> some View {
         Menu {
+            if state.threads.isEmpty {
+                Text("暂无历史对话")
+            } else {
+                ForEach(state.threads) { thread in
+                    Button {
+                        open(thread)
+                    } label: {
+                        Text("\(thread.title) · \(Format.relative(thread.updatedAt))")
+                    }
+                }
+            }
+
+            Divider()
+
+            Button {
+                toggleParameters()
+            } label: {
+                Label("对话参数…", systemImage: "slider.horizontal.3")
+            }
+
             Button {
                 copyConversation()
             } label: {
@@ -143,53 +153,39 @@ struct ChatView: View {
             Button {
                 requestClear()
             } label: {
-                Label("清空当前对话", systemImage: "trash")
+                Label("清空当前对话…", systemImage: "trash")
             }
             .disabled(state.messages.isEmpty)
 
-            Divider()
+            if !state.threads.isEmpty {
+                Divider()
 
-            if state.threads.isEmpty {
-                Text("暂无历史对话")
-            } else {
-                Menu("最近对话") {
-                    ForEach(state.threads) { thread in
-                        Button {
-                            open(thread)
-                        } label: {
-                            Text("\(thread.title) · \(Format.relative(thread.updatedAt))")
-                        }
-                    }
-                }
                 Button("清空最近对话…") { showClearHistoryConfirm = true }
             }
         } label: {
-            IconMenuLabel(systemName: "ellipsis")
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.branch")
+                    .font(.system(size: 11, weight: .semibold))
+                Text(label)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7.5, weight: .bold))
+                    .foregroundStyle(Native.secondary)
+            }
+            .foregroundStyle(Native.label)
+            .padding(.horizontal, 12)
+            .frame(height: 28)
+            .background(Capsule().fill(Native.overlay(0.08)))
+            .overlay(Capsule().stroke(Native.overlay(0.12), lineWidth: 0.8))
+            .contentShape(Capsule())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("对话操作：复制、清空、历史")
-        .accessibilityLabel("对话操作")
-    }
-
-    private var readyText: String {
-        switch state.serverState {
-        case .ready: return "就绪"
-        case .starting: return "启动中"
-        case .stopping: return "停止中"
-        case .failed: return "异常"
-        case .stopped: return "未就绪"
-        }
-    }
-
-    private var readyTone: TagTone {
-        switch state.serverState {
-        case .ready: return .success
-        case .starting, .stopping: return .warning
-        case .failed: return .danger
-        case .stopped: return .neutral
-        }
+        .help("切换最近对话，或管理当前对话")
+        .accessibilityLabel("最近对话")
     }
 
     // MARK: - Chat surface
@@ -197,17 +193,14 @@ struct ChatView: View {
     private var chatSurface: some View {
         VStack(spacing: 0) {
                 messageArea
-                if !state.isReady {
-                    serviceBanner
-                }
                 if state.generating, let message = state.messages.last, message.streaming {
                     LiveStrip(message: message,
-                              startedAt: generationStartedAt ?? Date(),
+                              startedAt: message.createdAt ?? Date(),
                               status: state.generationStatus)
                 }
                 Hairline()
                 composer
-                    .padding(10)
+                    .padding(12)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
@@ -346,7 +339,7 @@ struct ChatView: View {
                 }
             )
             .equatable()
-            .padding(.bottom, 18)
+            .padding(.bottom, 16)
         }
     }
 
@@ -360,105 +353,64 @@ struct ChatView: View {
         }
     }
 
-    // MARK: - Service banner
-
-    private var serviceBanner: some View {
-        let starting = state.serverState == .starting
-        let stopping = state.serverState == .stopping
-        let busy = starting || stopping
-        let missingRuntime = state.runtimeMissing != nil
-        let title: String
-        if missingRuntime {
-            title = "未找到内置推理运行时，无法启动对话服务。"
-        } else if starting {
-            title = "正在启动服务，就绪后即可对话…"
-        } else if stopping {
-            title = "正在停止服务…"
-        } else {
-            title = "推理服务未运行，启动后即可继续对话。"
-        }
-
-        return HStack(spacing: 9) {
-            if busy {
-                ProgressView()
-                    .controlSize(.mini)
-            } else {
-                Image(systemName: missingRuntime ? "exclamationmark.triangle" : "info.circle")
-                    .font(.system(size: 12))
-                    .foregroundStyle(missingRuntime ? Native.red : Native.orange)
-            }
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(missingRuntime ? Native.red : (busy ? Native.secondary : Native.orange))
-                Text(verbatim: missingRuntime ? "请重新安装应用以恢复运行时" : "端口 \(state.port) · \(state.startupStage)")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Native.tertiary)
-            }
-
-            Spacer(minLength: 8)
-
-            if !missingRuntime {
-                Button(busy ? (starting ? "启动中…" : "停止中…") : "启动服务") {
-                    state.startService()
-                }
-                .controlSize(.small)
-                .disabled(busy)
-
-                if state.isRunning {
-                    Button("停止") { state.stopService() }
-                        .controlSize(.small)
-                }
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background((missingRuntime ? Native.red : Native.orange).opacity(0.07))
-        .overlay(alignment: .top) { Hairline() }
-    }
-
     // MARK: - Composer
 
-    /// One unified card: text area on top, tool row inside the same card.
+    /// One unified card styled after a modern assistant input bar: a large
+    /// rounded surface, an optional attachment row, the text area, and a single
+    /// tool row. Left side holds attach / service-warning / parameters;
+    /// right side holds the busy spinner, model picker, mic and the send action.
     private var composer: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if !attachments.isEmpty {
+                attachmentRow
+                    .padding(.horizontal, 14)
+                    .padding(.top, 12)
+                    .padding(.bottom, 4)
+            }
+
             TextField(composerPlaceholder, text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13.5))
-                .lineSpacing(3)
+                .font(.system(size: 14))
+                .lineSpacing(3.5)
                 .lineLimit(1...8)
                 .focused($composerFocused)
                 .focusEffectDisabled()
                 .padding(.horizontal, 16)
-                .padding(.top, 13)
-                .padding(.bottom, 10)
+                .padding(.top, attachments.isEmpty ? 16 : 4)
+                .padding(.bottom, 11)
 
-            Hairline()
-
-            HStack(spacing: 6) {
-                modelChip
-                temperatureChip
-                thinkingChip
+            HStack(spacing: 8) {
+                parameterButton
 
                 Spacer(minLength: 8)
 
+                if state.generating {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .padding(.trailing, 2)
+                }
+                modelPill
                 sendButton
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 9)
+            .padding(.leading, 10)
+            .padding(.trailing, 10)
+            .padding(.top, 3)
+            .padding(.bottom, 10)
         }
         .background {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Native.overlay(composerFocused ? 0.09 : 0.06))
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Native.overlay(composerFocused ? 0.07 : 0.045))
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(composerFocused ? Native.accent.opacity(0.7) : Native.overlay(0.11),
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(composerFocused ? Native.accent.opacity(0.85) : Native.overlay(0.12),
                               lineWidth: 1)
         }
-        .shadow(color: Native.overlay(composerFocused ? 0.14 : 0.08), radius: 10, y: 3)
+        .shadow(color: composerFocused ? Native.accent.opacity(0.18) : Native.overlay(0.07),
+                radius: composerFocused ? 14 : 8, y: 4)
         .animation(.easeOut(duration: 0.15), value: composerFocused)
+        .animation(.easeOut(duration: 0.15), value: attachments.isEmpty)
+        .animation(.easeOut(duration: 0.15), value: state.isReady)
     }
 
     private var composerPlaceholder: String {
@@ -467,43 +419,70 @@ struct ChatView: View {
             : "启动本地服务后即可发送消息"
     }
 
-    private var modelChip: some View {
+    // MARK: Attachments
+
+    private var attachmentRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(attachments, id: \.self) { url in
+                    attachmentChip(url)
+                }
+            }
+        }
+    }
+
+    private func attachmentChip(_ url: URL) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: isImage(url) ? "photo" : "doc")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Native.secondary)
+            Text(url.lastPathComponent)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Native.label)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Button {
+                attachments.removeAll { $0 == url }
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Native.tertiary)
+                    .frame(width: 16, height: 16)
+            }
+            .buttonStyle(.plain)
+            .contentShape(Circle())
+            .help("移除附件")
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(Native.overlay(0.08)))
+        .overlay(Capsule().stroke(Native.overlay(0.12), lineWidth: 0.8))
+    }
+
+    private func isImage(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        return ["png", "jpg", "jpeg", "heic", "gif", "webp", "tiff", "bmp"].contains(ext)
+    }
+
+    // MARK: Tool row
+
+    private var modelPill: some View {
         ModelSwitcher(state: state, variant: .chip)
     }
 
-    private var temperatureChip: some View {
+    private var parameterButton: some View {
         Button {
             toggleParameters()
         } label: {
-            ComposerChipLabel(icon: "thermometer.medium",
-                              text: "温度 \(String(format: "%.2f", temperature))")
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Native.secondary)
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(Native.overlay(0.07)))
+                .overlay(Circle().stroke(Native.overlay(0.12), lineWidth: 0.8))
         }
         .buttonStyle(.plain)
-        .help("调整对话参数")
-    }
-
-    private var thinkingChip: some View {
-        Menu {
-            ForEach(ThinkingMode.allCases, id: \.self) { mode in
-                Button {
-                    setThinking(mode)
-                } label: {
-                    if mode == thinkingMode {
-                        Label(mode.label, systemImage: "checkmark")
-                    } else {
-                        Text(mode.label)
-                    }
-                }
-            }
-        } label: {
-            ComposerChipLabel(icon: "sparkles",
-                              text: "思考 \(thinkingMode.label)",
-                              chevron: true)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("思考模式")
+        .help("对话参数（温度 / 思考 / 系统提示词）")
     }
 
     private var canSend: Bool {
@@ -513,6 +492,8 @@ struct ChatView: View {
             && !state.selectedModel.isEmpty
     }
 
+    /// Black circular send button with a white arrow (white when stopped), red
+    /// with a stop glyph while generating — mirrors the reference input bar.
     private var sendButton: some View {
         Button {
             if state.generating {
@@ -525,21 +506,21 @@ struct ChatView: View {
             ZStack {
                 Circle()
                     .fill(state.generating ? AnyShapeStyle(Native.red)
-                          : (canSend ? AnyShapeStyle(LinearGradient(colors: [Native.accent, Native.accentSoft],
-                                                                    startPoint: .top, endPoint: .bottom))
-                                     : AnyShapeStyle(Native.overlay(0.10))))
+                          : (canSend ? AnyShapeStyle(Native.pillFill)
+                                     : AnyShapeStyle(Native.overlay(0.12))))
                 Image(systemName: state.generating ? "stop.fill" : "arrow.up")
-                    .font(.system(size: 12, weight: .heavy))
+                    .font(.system(size: 13, weight: .heavy))
                     .foregroundStyle(state.generating ? Color.white
-                                     : (canSend ? Color.white : Native.tertiary))
+                                     : (canSend ? Native.pillText : Native.tertiary))
             }
-            .frame(width: 30, height: 30)
-            .shadow(color: canSend || state.generating ? Native.accent.opacity(0.35) : .clear,
+            .frame(width: 32, height: 32)
+            .shadow(color: state.generating ? Native.red.opacity(0.35)
+                    : (canSend ? Color.black.opacity(0.18) : .clear),
                     radius: 7, y: 2)
         }
         .buttonStyle(.plain)
         .disabled(!state.generating && !canSend)
-        .opacity(state.generating || canSend ? 1 : 0.35)
+        .opacity(state.generating || canSend ? 1 : 0.5)
         .help(state.generating ? "停止生成" : "发送消息（⌘↩）")
         .accessibilityLabel(state.generating ? "停止生成" : "发送消息")
     }
@@ -795,7 +776,6 @@ struct ChatView: View {
         restoreStamps()
         seedStamps()
         draft = ChatDraftCache.text
-        if state.generating { generationStartedAt = Date() }
     }
 
     private func restoreStamps() {
@@ -916,6 +896,7 @@ struct ChatView: View {
             return
         }
         draft = ""
+        attachments.removeAll()
         composerFocused = true
         state.send(value)
         nearBottom = true
@@ -943,6 +924,7 @@ struct ChatView: View {
     private func clearConversation() {
         state.newConversation()
         draft = ""
+        attachments.removeAll()
         resetStamps()
         composerFocused = true
         state.toast("对话已清空")
@@ -963,6 +945,7 @@ struct ChatView: View {
     private func startNewConversation() {
         state.newConversation()
         draft = ""
+        attachments.removeAll()
         resetStamps()
         composerFocused = true
         state.toast("已开始新对话")
@@ -1308,7 +1291,7 @@ private struct MessageRow: View {
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .strokeBorder(.white.opacity(0.20), lineWidth: 0.8)
                 }
-                .shadow(color: Native.pink.opacity(0.22), radius: 12, y: 5)
+                .shadow(color: Native.pink.opacity(0.16), radius: 8, y: 3)
         } else if message.streaming && message.content.isEmpty {
             HStack(spacing: 7) {
                 ProgressView()
@@ -1324,26 +1307,51 @@ private struct MessageRow: View {
                 .lineSpacing(3)
                 .foregroundStyle(Native.red)
                 .textSelection(.enabled)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Native.red.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Native.red.opacity(0.22), lineWidth: 0.8)
+                )
         } else {
             MarkdownText(text: message.content, onCopyCode: onCopyCode)
                 .equatable()
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(Native.raised)
+                }
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(Native.hairline, lineWidth: 0.8)
+                )
         }
     }
 
+    private var metricParts: [String] {
+        var parts: [String] = []
+        if let rate = message.rateText { parts.append(rate) }
+        if message.tokenCount > 0 { parts.append("\(message.tokenCount) tokens") }
+        if let seconds = message.seconds { parts.append(String(format: "%.1fs", seconds)) }
+        if let first = message.firstTokenSeconds, first > 0 {
+            parts.append(String(format: "首字 %.0fms", first * 1000))
+        }
+        return parts
+    }
+
+    @ViewBuilder
     private var metrics: some View {
-        HStack(spacing: 5) {
-            if let rate = message.rateText {
-                MetricChip(text: rate)
-            }
-            if message.tokenCount > 0 {
-                MetricChip(text: "\(message.tokenCount) tokens")
-            }
-            if let seconds = message.seconds {
-                MetricChip(text: String(format: "%.1fs", seconds))
-            }
-            if let first = message.firstTokenSeconds, first > 0 {
-                MetricChip(text: String(format: "首字 %.0fms", first * 1000))
-            }
+        if !metricParts.isEmpty {
+            Text(metricParts.joined(separator: "  ·  "))
+                .font(.system(size: 10, design: .monospaced))
+                .monospacedDigit()
+                .foregroundStyle(Native.tertiary)
+                .padding(.top, 1)
         }
     }
 
@@ -1612,12 +1620,12 @@ private struct ComposerChipLabel: View {
     @State private var hovered = false
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 5) {
             Image(systemName: icon)
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(Native.tertiary)
             Text(text)
-                .font(.system(size: 10.5, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Native.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -1627,10 +1635,10 @@ private struct ComposerChipLabel: View {
                     .foregroundStyle(Native.tertiary)
             }
         }
-        .padding(.horizontal, 9)
-        .frame(height: 26)
-        .background(Capsule().fill(Native.overlay(hovered ? 0.12 : 0.065)))
-        .overlay(Capsule().stroke(Native.overlay(0.10), lineWidth: 0.8))
+        .padding(.horizontal, 11)
+        .frame(height: 28)
+        .background(Capsule().fill(Native.overlay(hovered ? 0.13 : 0.07)))
+        .overlay(Capsule().stroke(Native.overlay(0.12), lineWidth: 0.8))
         .contentShape(Capsule())
         .onHover { hovered = $0 }
     }
@@ -1653,12 +1661,12 @@ private struct MarkdownText: View {
 
     var body: some View {
         let blocks = parseMarkdownBlocks(text)
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 switch block {
                 case .paragraph(let value):
                     inlineText(value)
-                        .lineSpacing(3)
+                        .lineSpacing(4.5)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -1673,15 +1681,22 @@ private struct MarkdownText: View {
                     CodeBlockView(language: language, code: value, onCopy: onCopyCode)
 
                 case .quote(let value):
-                    HStack(alignment: .top, spacing: 8) {
-                        Rectangle()
-                            .fill(Native.accent.opacity(0.4))
-                            .frame(width: 2)
+                    HStack(alignment: .top, spacing: 10) {
+                        RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                            .fill(Native.secondary.opacity(0.45))
+                            .frame(width: 3)
                         inlineText(value)
-                            .lineSpacing(3)
+                            .lineSpacing(4)
                             .foregroundStyle(Native.secondary)
                             .textSelection(.enabled)
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Native.overlay(0.05))
+                    )
                     .fixedSize(horizontal: false, vertical: true)
 
                 case .bullet(let marker, let value):
@@ -1691,7 +1706,7 @@ private struct MarkdownText: View {
                             .foregroundStyle(Native.tertiary)
                             .frame(minWidth: 12, alignment: .trailing)
                         inlineText(value)
-                            .lineSpacing(3)
+                            .lineSpacing(4)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -1711,15 +1726,15 @@ private struct MarkdownText: View {
             interpretedSyntax: .inlineOnlyPreservingWhitespace
         )
         guard var attributed = try? AttributedString(markdown: source, options: options) else {
-            return Text(source).font(Native.bodyFont).foregroundStyle(Native.label)
+            return Text(source).font(.system(size: 13.5)).foregroundStyle(Native.label)
         }
         for run in attributed.runs {
             if let intent = run.inlinePresentationIntent, intent.contains(.code) {
-                attributed[run.range].font = .system(size: 11.5, design: .monospaced)
+                attributed[run.range].font = .system(size: 12, design: .monospaced)
             }
         }
         return Text(attributed)
-            .font(Native.bodyFont)
+            .font(.system(size: 13.5))
             .foregroundStyle(Native.label)
     }
 }

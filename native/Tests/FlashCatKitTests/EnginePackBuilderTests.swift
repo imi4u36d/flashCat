@@ -13,12 +13,17 @@ final class EnginePackBuildPlannerTests: XCTestCase {
         XCTAssertTrue(steps[1].command.contains("make-pack-index.sh"))
     }
 
-    func testOMLXPlanUpgradesTheKegFirst() {
-        let steps = EnginePackBuildPlanner.steps(for: .omlx, version: "0.7.3.dev2", release: nil)
-        XCTAssertEqual(steps.map(\.id), ["keg", "build", "release"])
-        XCTAssertTrue(steps[0].command.contains("brew upgrade omlx"))
-        XCTAssertTrue(steps[1].command.contains("build-omlx-pack.sh"))
-        XCTAssertFalse(steps.contains { $0.command.contains("curl") }, "oMLX has no release asset to download")
+    func testOMLXPlanNeedsNoLocalToolchain() {
+        // oMLX comes from the upstream GitHub release wheel; the build script
+        // downloads and verifies it itself, so the plan must not shell out to
+        // Homebrew (or any other machine-local tool) before building.
+        let steps = EnginePackBuildPlanner.steps(for: .omlx, version: "0.7.3rc1", release: nil)
+        XCTAssertEqual(steps.map(\.id), ["build", "release"])
+        XCTAssertTrue(steps[0].command.contains("build-omlx-pack.sh --version '0.7.3rc1'"))
+        XCTAssertFalse(steps.contains { $0.command.contains("brew") },
+                       "oMLX updates must not depend on Homebrew")
+        XCTAssertFalse(steps.contains { $0.command.contains("curl") },
+                       "the wheel download lives in the build script, not the plan")
     }
 
     func testSplashPlanDownloadsTheAssetAndVerifiesItsChecksum() {

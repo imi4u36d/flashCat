@@ -1,5 +1,4 @@
 import SwiftUI
-import AppKit
 import FlashCatKit
 
 /// Drives pack installs for the engine page: loads the release index once, then
@@ -9,9 +8,6 @@ final class EngineInstallCenter: ObservableObject {
     @Published private(set) var releases: [EngineID: [EnginePackRelease]] = [:]
     @Published private(set) var phases: [EngineID: EngineInstallPhase] = [:]
     @Published private(set) var installed: [EngineID: [String]] = [:]
-    /// Versions that live under flashCat's own installs directory, i.e. the ones
-    /// with a delete button. Bundled / checked-out packs are listed separately.
-    @Published private(set) var removable: [EngineID: Set<String>] = [:]
     @Published private(set) var indexError: String?
     @Published private(set) var indexLoaded = false
     /// One GitHub probe per engine, so a card can say "newer than what you have".
@@ -19,8 +15,16 @@ final class EngineInstallCenter: ObservableObject {
     @Published private(set) var upstreamCheckedAt: Date?
     /// The engine whose pack is being built right now (builds run one at a time).
     @Published private(set) var building: EngineID?
-    @Published private(set) var buildStep: [EngineID: String] = [:]
-    @Published private(set) var buildTail: [EngineID: [String]] = [:]
+    /// One continuous 0…1 fraction per engine covering the whole build-then-install
+    /// run, plus the step happening right now. The scrolling per-line build log
+    /// was dropped: the ring on the card and the percent on the button carry the
+    /// same information without a console.
+    @Published private(set) var progress: [EngineID: Double] = [:]
+    @Published private(set) var progressStep: [EngineID: String] = [:]
+    /// When the running build step began; feeds the within-step creep estimate.
+    private var stepStartedAt: [EngineID: Date] = [:]
+    /// Zero-based index of the build step currently running.
+    private var runningStepIndex: [EngineID: Int] = [:]
 
     private let checker = EngineUpstreamChecker()
     /// Last GitHub answer per engine, kept so a finished install can be compared
@@ -31,6 +35,8 @@ final class EngineInstallCenter: ObservableObject {
     /// Called after a pack finished installing; the launch page uses it to make
     /// the freshly installed engine the active one.
     var onInstalled: ((EngineID) -> Void)?
+    /// Success/failure bubbles surface through the app-wide toast.
+    var onToast: ((String) -> Void)?
 
     func configure(onChange: @escaping () -> Void) {
         self.onChange = onChange
@@ -48,13 +54,10 @@ final class EngineInstallCenter: ObservableObject {
 
     func refreshInstalled() {
         var result: [EngineID: [String]] = [:]
-        var deletable: [EngineID: Set<String>] = [:]
         for id in EngineID.allCases {
             result[id] = EngineInstallations.installed(id).map(\.version)
-            deletable[id] = EngineInstallations.removableVersions(id)
         }
         installed = result
-        removable = deletable
         // A pack that just landed must stop showing up as "update available"
         // without waiting for the next GitHub check.
         for (id, release) in upstreamReleases {
@@ -78,26 +81,136 @@ final class EngineInstallCenter: ObservableObject {
         }
     }
 
-    func install(_ release: EnginePackRelease, for id: EngineID) {
+    func install(_ release: EnginePackRelease, for id: EngineID, afterBuild: Bool = false) {
         guard phases[id]?.isBusy != true, let installer else { return }
         let isFirstInstall = (installed[id] ?? []).isEmpty
         phases[id] = .resolving
+        progress[id] = Self.installProgress(.resolving, afterBuild: afterBuild)
+        progressStep[id] = Self.stepLabel(.resolving)
         Task { [weak self] in
             do {
                 _ = try await installer.install(release, for: id) { phase in
-                    Task { @MainActor in self?.phases[id] = phase }
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.phases[id] = phase
+                        self.progress[id] = Self.installProgress(phase, afterBuild: afterBuild)
+                        if let label = Self.stepLabel(phase) {
+                            self.progressStep[id] = label
+                        }
+                    }
                 }
-                await MainActor.run {
-                    self?.phases[id] = .installed(version: release.version)
-                    self?.refreshInstalled()
-                    self?.onChange?()
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    phases[id] = .installed(version: release.version)
+                    progress[id] = nil
+                    progressStep[id] = nil
+                    refreshInstalled()
+                    onChange?()
+                    onToast?("\(id.displayName) \(release.version) 安装成功")
                     // Only a first install makes the engine the active one; an
                     // update must leave whatever the user was running alone.
-                    if isFirstInstall { self?.onInstalled?(id) }
+                    if isFirstInstall { onInstalled?(id) }
+                    // An update replaces the engine, so the previous removable
+                    // versions are pruned automatically to reclaim disk.
+                    pruneOldVersions(id, keeping: release.version)
                 }
             } catch {
-                await MainActor.run {
-                    self?.phases[id] = .failed(message: error.localizedDescription)
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    phases[id] = .failed(message: error.localizedDescription)
+                    progress[id] = nil
+                    progressStep[id] = nil
+                    onToast?("\(id.displayName) 安装失败：\(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    // MARK: Unified build + install progress
+
+    /// The build occupies 0…0.85 of the whole run; the pack install that follows
+    /// squeezes into the 0.85…1 tail. A direct install (no build) uses the full
+    /// span. Every phase lands on the curve — including 解包, 校验包 and 激活,
+    /// which have no measurable bytes — so the ring never drops back to a
+    /// frozen or indeterminate state mid-run.
+    private static func installProgress(_ phase: EngineInstallPhase, afterBuild: Bool) -> Double {
+        let base = afterBuild ? 0.85 : 0.0
+        let span = afterBuild ? 0.15 : 1.0
+        let local: Double
+        switch phase {
+        case .idle, .failed:
+            return base
+        case .resolving:
+            local = 0.04
+        case .downloading(let fraction, _, _):
+            local = 0.08 + 0.80 * min(max(fraction, 0), 1)
+        case .verifying:
+            local = 0.90
+        case .unpacking:
+            local = 0.93
+        case .validating:
+            local = 0.96
+        case .activating:
+            local = 0.985
+        case .installed:
+            local = 1.0
+        }
+        return base + span * local
+    }
+
+    /// Short label for the step shown beside the progress ring. Downloading
+    /// leaves the percent to the ring instead of repeating it in text.
+    private static func stepLabel(_ phase: EngineInstallPhase) -> String? {
+        switch phase {
+        case .resolving: "解析版本"
+        case .downloading: "下载中"
+        case .verifying: "校验 SHA256"
+        case .unpacking: "解包"
+        case .validating: "校验包"
+        case .activating: "激活"
+        case .idle, .installed, .failed: nil
+        }
+    }
+
+    /// Fraction for the build half. Steps are equally weighted and there is no
+    /// measurable sub-step progress, so the running step creeps forward on a
+    /// decaying time curve (capped below its slice end) — the percent always
+    /// moves instead of freezing for minutes, then snaps to the exact value
+    /// when the step completes.
+    private static func buildProgress(completed: Int, total: Int, elapsed: TimeInterval) -> Double {
+        let weight = 0.85
+        let slice = weight / Double(max(total, 1))
+        let within = (1 - exp(-elapsed / 75)) * 0.85
+        return min((Double(completed) + within) * slice, weight)
+    }
+
+    private func clearProgress(_ id: EngineID) {
+        progress[id] = nil
+        progressStep[id] = nil
+        stepStartedAt[id] = nil
+    }
+
+    // MARK: Old-version pruning
+
+    /// After an install/update lands, the previous removable versions are no
+    /// longer useful and only cost disk, so they are dropped automatically.
+    /// Bundled or checkout packs are never touched — `removableVersions`
+    /// excludes them, so the guard below leaves them in place.
+    private func pruneOldVersions(_ id: EngineID, keeping version: String) {
+        let deletable = EngineInstallations.removableVersions(id)
+        let stale = (installed[id] ?? []).filter { $0 != version && deletable.contains($0) }
+        guard !stale.isEmpty, let installer else { return }
+        Task { [weak self] in
+            for old in stale {
+                do {
+                    _ = try await installer.uninstall(id, version: old)
+                    await MainActor.run {
+                        self?.refreshInstalled()
+                        self?.onChange?()
+                    }
+                } catch {
+                    // A failed prune must not disturb the freshly installed
+                    // version's state; leave the old pack where it is.
                 }
             }
         }
@@ -132,121 +245,137 @@ final class EngineInstallCenter: ObservableObject {
 
     /// Builds the runtime pack for `release` on this machine and installs it.
     /// The three engines have different sources, so the plan differs per engine
-    /// (see `EnginePackBuildPlanner`); every output line is surfaced so a slow
-    /// `uv pip install` or `brew upgrade` is not a silent hang.
+    /// (see `EnginePackBuildPlanner`); progress streams into one ring instead of
+    /// a log so a slow `uv pip install` (bootstrapped by the scripts) is not a
+    /// silent hang.
     func buildAndInstall(_ release: EngineUpstreamRelease, for id: EngineID) {
         guard building == nil, installer != nil else { return }
         guard let repository = EnginePackBuildRunner.locateRepository() else {
             phases[id] = .failed(message: EnginePackBuildError.repositoryNotFound.localizedDescription)
+            onToast?("构建失败：\(EnginePackBuildError.repositoryNotFound.localizedDescription)")
             return
         }
         building = id
-        buildTail[id] = []
-        buildStep[id] = "准备"
+        stepStartedAt[id] = Date()
+        progressStep[id] = "准备"
+        progress[id] = 0
         phases[id] = .idle
 
         Task { [weak self] in
             guard let self else { return }
             do {
                 let steps = EnginePackBuildPlanner.steps(for: id, version: release.version, release: release)
+                let total = max(steps.count, 1)
+                let order = Dictionary(uniqueKeysWithValues: steps.enumerated().map { ($1.id, $0) })
                 try await EnginePackBuildRunner.run(steps: steps, in: repository) { step in
-                    Task { @MainActor in self.buildStep[id] = step.title }
-                } onLine: { line in
-                    Task { @MainActor in
-                        var tail = self.buildTail[id] ?? []
-                        tail.append(line)
-                        if tail.count > 8 { tail.removeFirst(tail.count - 8) }
-                        self.buildTail[id] = tail
+                    let index = order[step.id] ?? 0
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.runningStepIndex[id] = index
+                        self.stepStartedAt[id] = Date()
+                        self.progressStep[id] = step.title
+                        self.progress[id] = Self.buildProgress(completed: index, total: total, elapsed: 0)
+                    }
+                } onLine: { _ in
+                    // Output lines no longer surface as a log; they only nudge
+                    // the within-step creep forward so the percent keeps moving.
+                    Task { @MainActor [weak self] in
+                        guard let self, let started = self.stepStartedAt[id] else { return }
+                        let elapsed = Date().timeIntervalSince(started)
+                        let index = self.runningStepIndex[id] ?? 0
+                        self.progress[id] = Self.buildProgress(completed: index, total: total, elapsed: elapsed)
                     }
                 }
                 let path = repository + "/" + EnginePackBuildPlanner.releaseFile(for: id, version: release.version)
                 let pack = try EnginePackBuildRunner.loadRelease(at: path)
                 await self.loadIndexIfNeeded(force: true)
-                await MainActor.run {
-                    self.building = nil
-                    self.buildStep[id] = nil
-                    self.buildTail[id] = []
-                    self.install(pack, for: id)
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    building = nil
+                    runningStepIndex[id] = nil
+                    // Hand the remaining span to the install phase.
+                    progress[id] = Self.installProgress(.resolving, afterBuild: true)
+                    progressStep[id] = Self.stepLabel(.resolving)
+                    stepStartedAt[id] = nil
+                    install(pack, for: id, afterBuild: true)
                 }
             } catch {
-                await MainActor.run {
-                    self.building = nil
-                    self.buildStep[id] = nil
-                    self.phases[id] = .failed(message: error.localizedDescription)
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    building = nil
+                    runningStepIndex[id] = nil
+                    clearProgress(id)
+                    phases[id] = .failed(message: error.localizedDescription)
+                    onToast?("\(id.displayName) \(release.version) 构建失败：\(error.localizedDescription)")
                 }
             }
         }
     }
 
-    func uninstall(_ id: EngineID, version: String) {
-        guard let installer else { return }
-        Task {
-            do {
-                let removed = try await installer.uninstall(id, version: version)
-                await MainActor.run {
-                    // Only the installs directory belongs to us; a pack that ships
-                    // inside the app (or a checkout) cannot be removed and used to
-                    // fail without saying so.
-                    self.phases[id] = removed ? .idle : .failed(message: "\(version) 随应用内置，删不掉")
-                    self.refreshInstalled()
-                    self.onChange?()
-                }
-            } catch {
-                await MainActor.run {
-                    self.phases[id] = .failed(message: error.localizedDescription)
-                }
-            }
-        }
-    }
 }
 
-// MARK: - Page
+// MARK: - Engine section (embedded in Settings)
 
-struct EnginesView: View {
+/// 引擎管理区块：内嵌在设置页「模型」卡片之后。
+/// 引擎随模型自动切换，这里只负责上游版本的检测与更新，引擎自己的参数在「配置…」面板里。
+struct EngineRuntimeSection: View {
     @ObservedObject var state: AppState
     @ObservedObject var installs: EngineInstallCenter
     @State private var configuring: EngineID?
 
     var body: some View {
-        GeometryReader { proxy in
-            let usable = max(320, proxy.size.width - Native.pagePadding * 2)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    PageHeader(title: "引擎",
-                               subtitle: "同一时刻只运行一个推理引擎；每个引擎有自己的端口、模型目录与参数。",
-                               eyebrow: "RUNTIME PACKS") {
-                        Button("启动页…") { state.showsLaunchPage = true }
-                    }
-                    .padding(.bottom, 4)
+        VStack(alignment: .leading, spacing: 16) {
+            header
 
-                    ForEach(EngineID.allCases, id: \.self) { id in
-                        card(id, width: usable)
-                    }
-
-                    footer
+            // 三个引擎卡片横向并排，等宽分列；内容各自在卡内纵向排布。
+            HStack(alignment: .top, spacing: 12) {
+                ForEach(EngineID.allCases, id: \.self) { id in
+                    card(id)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.horizontal, Native.pagePadding)
-                .padding(.top, 30)
-                .padding(.bottom, Native.pagePadding)
-                .pageColumn()
             }
-            .scrollIndicators(.never)
+
+            footer
         }
         .task {
             installs.refreshInstalled()
             await installs.loadIndexIfNeeded()
-            await installs.checkUpstream()
+            // Auto-check on entry: the manual "重新检查" button was removed, so
+            // opening the settings page is now the only trigger.
+            await installs.checkUpstream(force: true)
         }
         .sheet(item: $configuring) { id in
             EngineConfigView(state: state, engine: id)
         }
     }
 
-    private func card(_ id: EngineID, width: CGFloat) -> some View {
+    /// 与设置页其他卡片的头部同一版式：图标 + 标题 + 说明，右侧放低频动作。
+    private var header: some View {
+        HStack(alignment: .center, spacing: 11) {
+            ArcadeIcon(symbol: "shippingbox.and.arrow.backward",
+                       colors: [Native.cyan, Native.cyan.opacity(0.55)],
+                       size: 32,
+                       glyphScale: 0.44,
+                       glow: false)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("引擎")
+                    .font(.system(size: 15, weight: .semibold))
+                Text("引擎随选择的模型自动切换；这里负责各引擎的版本更新")
+                    .font(Native.calloutFont)
+                    .foregroundStyle(Native.tertiary)
+            }
+            Spacer(minLength: 8)
+            Button("启动页…") { state.showsLaunchPage = true }
+                .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
+                .help("重新打开首次启动时的引擎选择页")
+        }
+        .padding(.top, 8)
+    }
+
+    private func card(_ id: EngineID) -> some View {
         let isActive = state.activeEngine == id
         let versions = installs.installed[id] ?? []
         let phase = installs.phases[id] ?? .idle
-        let offers = EnginePackOffers.offers(installed: versions, releases: installs.releases[id] ?? [])
 
         return VStack(alignment: .leading, spacing: 0) {
             // Header: identity on the left, actions on the right.
@@ -257,18 +386,7 @@ struct EnginesView: View {
                 Text(id.displayName)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Native.label)
-                if isActive {
-                    Tag(text: "当前引擎", tone: .success)
-                }
                 Spacer(minLength: 6)
-                if versions.isEmpty {
-                    Tag(text: "未安装", tone: .neutral)
-                }
-                if !isActive {
-                    Button("设为当前") { state.switchEngine(id) }
-                        .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
-                        .disabled(versions.isEmpty)
-                }
                 Button("配置…") { configuring = id }
                     .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
                     .disabled(versions.isEmpty)
@@ -276,103 +394,51 @@ struct EnginesView: View {
             .padding(.bottom, 12)
 
             // Install / build progress sits right under the header so a long
-            // download never pushes the rest of the card around visually.
-            if phase.isBusy {
-                Meter(fraction: phase.fraction ?? 0, tint: Native.cyan)
-                    .padding(.bottom, 6)
-            }
-            if phase != .idle {
+            // download never pushes the rest of the card around visually. One
+            // ring covers the whole run; the step text beside it says what is
+            // happening right now (构建 / 下载中 / 解包 / …).
+            if let fraction = installs.progress[id], let step = installs.progressStep[id] {
+                HStack(spacing: 9) {
+                    ProgressRing(fraction: fraction, tint: Native.cyan, size: 30, lineWidth: 3.5)
+                    Text(verbatim: step)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(Native.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .padding(.bottom, 10)
+            } else if phase.isFailure {
                 Text(phase.label)
                     .font(.system(size: 10.5))
-                    .foregroundStyle(phase.isFailure ? Native.red.opacity(0.9) : Native.secondary)
+                    .foregroundStyle(Native.red.opacity(0.9))
+                    .lineLimit(2)
+                    .padding(.bottom, 10)
+            } else if phase != .idle, !phase.isSettled {
+                Text(phase.label)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Native.secondary)
                     .lineLimit(2)
                     .padding(.bottom, 10)
             }
 
-            // 配置
-            VStack(alignment: .leading, spacing: 8) {
-                portField(id)
-                if let controller = state.engines?.controller(id), !versions.isEmpty {
-                    engineSummary(controller)
-                }
-            }
             cardDivider
 
             // 上游
             upstreamSection(id)
-            cardDivider
 
-            // 版本
-            VStack(alignment: .leading, spacing: 8) {
-                if versions.contains(where: { $0 != version(id) }) {
-                    let deletable = installs.removable[id] ?? []
-                    VStack(alignment: .leading, spacing: 6) {
-                        Eyebrow(text: "已安装版本", color: Native.tertiary)
-                        ForEach(versions, id: \.self) { installedVersion in
-                            HStack(spacing: 8) {
-                                Text(installedVersion)
-                                    .font(Native.monoSmall)
-                                    .foregroundStyle(Native.secondary)
-                                if installedVersion == version(id) {
-                                    Tag(text: "使用中", tone: .success)
-                                }
-                                if !deletable.contains(installedVersion) {
-                                    // Shipped in the app bundle / checkout: usable, not ours.
-                                    Tag(text: "内置", tone: .neutral)
-                                }
-                                Spacer(minLength: 4)
-                                if deletable.contains(installedVersion) {
-                                    Button("删除") {
-                                        installs.uninstall(id, version: installedVersion)
-                                    }
-                                    .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
-                                    .disabled(isActive && state.isRunning)
-                                    .help(isActive && state.isRunning
-                                          ? "正在运行的引擎不能删除，先停止"
-                                          : "删除 \(installedVersion)")
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if !offers.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(offers, id: \.release.version) { offer in
-                            let release = offer.release
-                            HStack(spacing: 8) {
-                                Eyebrow(text: "运行时包", color: Native.tertiary)
-                                Text(release.version)
-                                    .font(Native.monoSmall)
-                                    .foregroundStyle(Native.secondary)
-                                if offer.action == .reinstall {
-                                    Tag(text: "已装此版本", tone: .neutral)
-                                }
-                                if let bytes = release.bytes {
-                                    Text(verbatim: Format.bytes(bytes))
-                                        .font(.system(size: 9.5))
-                                        .foregroundStyle(Native.tertiary)
-                                }
-                                if let notes = release.notes, !notes.isEmpty {
-                                    Text(notes)
-                                        .font(.system(size: 9.5))
-                                        .foregroundStyle(Native.tertiary)
-                                        .lineLimit(1)
-                                }
-                            }
-                        }
-                    }
-                } else if versions.isEmpty {
-                    Text(installs.indexError.map { "没有可安装的版本：\($0)" }
-                         ?? "没有可安装的版本。用 scripts/engines/build-\(id.rawValue)-pack.sh 在本机构建，或配置 FLASHCAT_PACK_INDEX_URL。")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Native.tertiary)
-                }
+            // 尚未安装且上游暂时不可用时给出一条提示，避免卡片看起来像坏了。
+            if versions.isEmpty, installs.upstream[id]?.newerRelease == nil {
+                cardDivider
+                Text("尚未安装。检测到可用版本后可在此安装；也可以用 scripts/engines/build-\(id.rawValue)-pack.sh 在本机构建。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Native.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
         }
         .padding(14)
-        .frame(maxWidth: width, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background {
             GlassSurface(radius: 18, tint: isActive ? Native.mint : .clear, elevated: false)
         }
@@ -386,38 +452,20 @@ struct EnginesView: View {
             .padding(.vertical, 12)
     }
 
-    /// "What does GitHub have?" — the newest release, whether it is newer than
-    /// anything installed, and the two actions that follow from that: open the
-    /// release page, or build the pack here and install it.
+    /// "What does GitHub have?" — status text on the left, and when a newer
+    /// release exists the 安装 action on the right (which builds the pack here
+    /// and installs it). The upstream check runs automatically when the settings
+    /// page opens, so there is no manual re-check button.
     @ViewBuilder
     private func upstreamSection(_ id: EngineID) -> some View {
         let status = installs.upstream[id]
-        let busy = installs.building != nil
+        // Busy covers both halves of a run: the source build and the pack
+        // install that follows it.
+        let busy = installs.building != nil || (installs.phases[id]?.isBusy ?? false)
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
                 Eyebrow(text: "上游版本 (GitHub)", color: Native.tertiary)
-                switch status {
-                case .current(let version):
-                    Text(verbatim: "分支最新版 \(version)，本地已是最新。")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Native.tertiary)
-                case .unavailable(let reason):
-                    Text(reason)
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Native.tertiary)
-                        .lineLimit(1)
-                default:
-                    EmptyView()
-                }
-                Spacer(minLength: 4)
-                Button(status == nil ? "检查更新" : "重新检查") {
-                    Task { await installs.checkUpstream(force: true) }
-                }
-                .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
-            }
-
-            if case .update(let installed, let release) = status {
-                HStack(spacing: 8) {
+                if case .update(let installed, let release) = status {
                     Text(verbatim: "新版本 \(release.version)")
                         .font(Native.monoSmall)
                         .foregroundStyle(Native.cyan)
@@ -427,126 +475,46 @@ struct EnginesView: View {
                     Text(verbatim: installed.map { "已装 \($0)" } ?? "尚未安装")
                         .font(.system(size: 9.5))
                         .foregroundStyle(Native.tertiary)
-                    Spacer(minLength: 4)
-                    Button("发布说明") { NSWorkspace.shared.open(release.pageURL) }
-                        .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
-                    Button(installs.building == id ? "构建中…" : "构建并安装") {
+                } else {
+                    switch status {
+                    case .current(let version):
+                        Text(verbatim: "分支最新版 \(version)，本地已是最新。")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Native.tertiary)
+                    case .unavailable(let reason):
+                        Text(reason)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Native.tertiary)
+                            .lineLimit(1)
+                    default:
+                        EmptyView()
+                    }
+                }
+                Spacer(minLength: 4)
+                if case .update(_, let release) = status {
+                    // The button itself carries the percent while a build or
+                    // install is running; the ring on the card holds the detail.
+                    Button(self.installButtonLabel(id, busy: busy)) {
                         installs.buildAndInstall(release, for: id)
                     }
                     .buttonStyle(ArcadePillStyle(tone: .accent, compact: true))
                     .disabled(busy)
                 }
             }
-
-            if installs.building == id, let step = installs.buildStep[id] {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text(verbatim: "\(step)…")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Native.secondary)
-                }
-            }
-            if let tail = installs.buildTail[id], !tail.isEmpty {
-                ScrollView(.vertical) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        ForEach(Array(tail.enumerated()), id: \.offset) { entry in
-                            Text(verbatim: entry.element)
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundStyle(Native.tertiary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-                }
-                .frame(height: 62)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
-                .background {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Native.recess)
-                }
-            }
         }
     }
 
-    /// Editable port. Kept as a text field so the reader can type any free port;
-    /// the value only lands in the store when it parses.
-    private func portField(_ id: EngineID) -> some View {
-        HStack(spacing: 8) {
-            Text("端口")
-                .font(.system(size: 10.5))
-                .foregroundStyle(Native.tertiary)
-            TextField("", text: portBinding(id))
-                .textFieldStyle(.plain)
-                .font(Native.monoSmall)
-                .foregroundStyle(Native.label.opacity(0.9))
-                .frame(width: 70)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background {
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(Native.overlay(0.06))
-                }
-                .disabled(state.activeEngine == id && state.isRunning)
-            Text(verbatim: state.activeEngine == id && state.isRunning
-                 ? "运行中不能改端口"
-                 : "默认 \(id.defaultPort)，可顺延 \(id.portRange.count) 个")
-                .font(.system(size: 9.5))
-                .foregroundStyle(Native.tertiary.opacity(0.85))
-            Spacer(minLength: 0)
-        }
-    }
-
-    private func portBinding(_ id: EngineID) -> Binding<String> {
-        Binding(
-            get: { String(enginePort(id)) },
-            set: { text in
-                guard let value = Int(text.trimmingCharacters(in: .whitespaces)), (1024...65535).contains(value) else {
-                    return
-                }
-                EngineStore.shared.update(id) { $0.port = value }
-                state.switchEnginePort(id, port: value)
-            }
-        )
-    }
-
-    private func enginePort(_ id: EngineID) -> Int {
-        EngineStore.shared.configuration(for: id).port ?? id.defaultPort
-    }
-
-    private func version(_ id: EngineID) -> String? {
-        state.engines?.controller(id)?.installation.version
-    }
-
-    /// One line of what the engine is configured to do, so the page says more
-    /// than "installed".
-    private func engineSummary(_ controller: EngineController) -> some View {
-        let tuning = EngineStore.shared.tuning(for: controller.id).sanitized()
-        var parts: [String] = []
-        switch controller.id {
-        case .omlx:
-            if tuning.dflash == true { parts.append("DFlash2") }
-            if tuning.mtp == true { parts.append(tuning.mtpDepth.map { "MTP 深度 \($0)" } ?? "MTP 自适应") }
-        case .mtplx:
-            if tuning.mtp != false { parts.append("MTP") }
-            if let bits = tuning.mtpQuantBits { parts.append("MTP \(bits)-bit") }
-        case .splash:
-            if tuning.dflash != false { parts.append(tuning.draftModel == nil ? "DFlash2 自动" : "DFlash2 指定") }
-            if tuning.languageOnly == true { parts.append("仅语言") }
-        }
-        if let memory = tuning.maxMemory, !memory.isEmpty { parts.append("内存 \(memory)") }
-        if let context = tuning.maxContext, !context.isEmpty { parts.append("上下文 \(context)") }
-        return VStack(alignment: .leading, spacing: 3) {
-            Eyebrow(text: "当前配置", color: Native.tertiary)
-            Text(parts.isEmpty ? "使用引擎默认值" : parts.joined(separator: " · "))
-                .font(.system(size: 10.5))
-                .foregroundStyle(Native.tertiary)
-        }
+    /// Percent-only label while this engine's run is active, plain 安装 otherwise.
+    private func installButtonLabel(_ id: EngineID, busy: Bool) -> String {
+        guard busy, let fraction = installs.progress[id] else { return "安装" }
+        let percent = Int((min(max(fraction, 0), 1) * 100).rounded())
+        return "\(percent)%"
     }
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 6) {
             Eyebrow(text: "说明", color: Native.tertiary)
-            Text("三个引擎均从运行时包安装，不随应用打包；模型在各引擎自己的模型目录里管理，不在这里下载。")
+            Text("引擎随选择的模型自动切换，不需要手动指定；模型在各引擎自己的模型目录里管理，不在这里下载。")
                 .font(.system(size: 11))
                 .foregroundStyle(Native.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -558,6 +526,12 @@ struct EnginesView: View {
 private extension EngineInstallPhase {
     var isFailure: Bool {
         if case .failed = self { return true }
+        return false
+    }
+
+    /// 安装已完成（成功落地的终态），此时不再在卡片上重复展示「已安装」文案。
+    var isSettled: Bool {
+        if case .installed = self { return true }
         return false
     }
 }

@@ -20,6 +20,8 @@ struct ChatMessage: Identifiable {
     var seconds: Double?
     var tokensPerSecond: Double?
     var firstTokenSeconds: Double?
+    /// 思考模型的 reasoning 流，单独于正文展示（对话页的「思考过程」块）。
+    var reasoning: String?
     var streaming = false
 
     var tokenCount: Int { usage?.completionTokens ?? 0 }
@@ -59,6 +61,7 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
     private var transportError: Error?
 
     private var onDelta: (String) -> Void = { _ in }
+    private var onReasoning: (String) -> Void = { _ in }
     private var onUsage: (ChatUsage) -> Void = { _ in }
     private var onStatus: (String) -> Void = { _ in }
 
@@ -73,6 +76,7 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
               turns: [ChatTurn],
               options: ChatOptions,
               onDelta: @escaping (String) -> Void,
+              onReasoning: @escaping (String) -> Void,
               onUsage: @escaping (ChatUsage) -> Void,
               onStatus: @escaping (String) -> Void) async -> Result<String, ChatError> {
         cancel()
@@ -101,6 +105,7 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         self.onDelta = onDelta
+        self.onReasoning = onReasoning
         self.onUsage = onUsage
         self.onStatus = onStatus
         buffer = Data()
@@ -180,11 +185,17 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
         chunk = chunk ?? (json["delta"] as? [String: Any]) ?? (json["message"] as? [String: Any])
 
         if let chunk {
-            let piece = (chunk["content"] as? String)
-                ?? (chunk["reasoning_content"] as? String)
+            // 正文与思考流分开：reasoning_content 只进思考块，不混入回答。
+            if let content = chunk["content"] as? String, !content.isEmpty {
+                text += content
+                onDelta(content)
+            }
+            let reasoningPiece = (chunk["reasoning_content"] as? String)
                 ?? (chunk["reasoning"] as? String)
                 ?? ""
-            if !piece.isEmpty { text += piece; onDelta(piece) }
+            if !reasoningPiece.isEmpty {
+                onReasoning(reasoningPiece)
+            }
         }
         if let used = json["usage"] as? [String: Any] {
             usage.promptTokens = Self.intValue(used["prompt_tokens"])

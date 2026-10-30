@@ -4,11 +4,14 @@ import AppKit
 @main
 struct FlashCatApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    private let state = AppState.shared
+    // Scene 层的 `if state.isPresentingLaunchPage` 依赖这里的状态订阅：
+    // 普通 let 不会让 SwiftUI 重新求值 body，点击「开始使用」就永远切不进控制台。
+    @ObservedObject private var state = AppState.shared
 
     var body: some Scene {
         Window("flashCat", id: "main") {
-            ShellView(state: state)
+            // SwiftUI 只当壳：窗口内容（含启动页）全部是 WebUI 网页。
+            webConsole
         }
         .defaultSize(width: 1280, height: 820)
         .windowStyle(.hiddenTitleBar)
@@ -41,8 +44,9 @@ struct FlashCatApp: App {
                 Button("概览") { state.section = .overview }.keyboardShortcut("1", modifiers: .command)
                 Button("对话") { state.section = .chat }.keyboardShortcut("2", modifiers: .command)
                 Button("模型") { state.section = .models }.keyboardShortcut("3", modifiers: .command)
-                Button("日志") { state.section = .logs }.keyboardShortcut("4", modifiers: .command)
-                Button("设置") { state.section = .settings }.keyboardShortcut("5", modifiers: .command)
+                Button("引擎") { state.section = .engines }.keyboardShortcut("4", modifiers: .command)
+                Button("日志") { state.section = .logs }.keyboardShortcut("5", modifiers: .command)
+                Button("设置") { state.section = .settings }.keyboardShortcut("6", modifiers: .command)
                 Divider()
                 Button("折叠/展开侧边栏") { state.toggleSidebar() }
                     .keyboardShortcut("\\", modifiers: .command)
@@ -56,6 +60,12 @@ struct FlashCatApp: App {
             MenuBarStatusLabel(state: state)
         }
         .menuBarExtraStyle(.window)
+    }
+
+    /// WebUI 控制台壳：启动页、下载中心、引擎配置、确认弹窗都在网页里渲染，
+    /// 窗口内不再挂任何原生 sheet / alert。
+    private var webConsole: some View {
+        WebViewShell(state: state)
     }
 }
 

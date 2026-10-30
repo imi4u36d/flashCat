@@ -20,7 +20,8 @@ let package = Package(
             // `Resources/app-icon.png` is the single master artwork: the build
             // script turns it into AppIcon.icns and the in-app brand mark draws
             // it, so Dock, Finder and window chrome always show the same icon.
-            resources: [.process("Resources")]
+            // `WebUI/` is the「精密仪器」web console (see WebViewShell.swift).
+            resources: [.process("Resources"), .copy("WebUI")]
         ),
         .testTarget(
             name: "FlashCatKitTests",

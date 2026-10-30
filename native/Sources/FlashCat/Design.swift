@@ -3,12 +3,14 @@ import AppKit
 
 // MARK: - Palette
 //
-// The visual language mirrors Apple's Games app: full-bleed gradient key art,
-// glass panels with a soft top sheen, oversized rounded type, pill actions and
-// colourful squircle icons. Two skins share that language — the original night
-// canvas and a daylight one. Every token below resolves per appearance (see
-// Theme.swift), so views never branch on the skin. Key art stays saturated with
-// white type in both skins, the way a cover image does.
+// 设计方向：「精密仪器」（docs/ui/redesign-precision-instrument.html）。
+// 画布退后，数据向前，状态即视觉 —— 页面底色是暖纸白（日）/ 暖石墨（夜），
+// 卡片是纯色面板 + 1px 毛发描边，数字是等宽大读数，状态色是页面里
+// 饱和度最高的颜色。品牌日出渐变只允许出现在三处（App 图标与侧栏 Logo、
+// AI 消息头像、对话空状态），禁止扩散到画布和卡片。
+//
+// 两副皮肤共享同一套语义 token，取值随外观解析（见 Theme.swift），
+// 视图层永远不分支判断当前皮肤。
 
 extension Color {
     init(hex: UInt32, opacity: Double = 1) {
@@ -21,95 +23,77 @@ extension Color {
 }
 
 enum Native {
-    // Canvas
-    static let surface = Color.adaptive(dark: 0x07070A, light: 0xF2F2F5)
-    static let canvas = Color.adaptive(dark: 0x0B0B10, light: 0xFFFFFF)
-    static let sidebar = Color.adaptive(dark: 0x0B0B11, light: 0xECECF1)
-    static let panel = Color.adaptive(dark: 0xFFFFFF, light: 0x101014,
-                                      darkAlpha: 0.055, lightAlpha: 0.045)
-    static let raised = Color.adaptive(dark: 0xFFFFFF, light: 0x101014,
-                                       darkAlpha: 0.095, lightAlpha: 0.07)
-    static let hairline = Color.adaptive(dark: 0xFFFFFF, light: 0x101014,
-                                         darkAlpha: 0.10, lightAlpha: 0.10)
-    static let stroke = Color.adaptive(dark: 0xFFFFFF, light: 0x101014,
-                                       darkAlpha: 0.13, lightAlpha: 0.13)
+    // Canvas —— 页面画布（暖纸白 / 暖石墨）
+    static let surface = Color.adaptive(dark: 0x16130F, light: 0xF5F2EC)
+    // Panel —— 卡片面板（纯色，靠描边分层而非玻璃+投影）
+    static let canvas = Color.adaptive(dark: 0x1E1A15, light: 0xFFFFFF)
+    static let sidebar = Color.adaptive(dark: 0x1A1611, light: 0xECE7DE)
+    // 毛发描边：卡片 1px 分层线（hairline）与更强的分隔线（stroke）
+    static let hairline = Color.adaptive(dark: 0x322B22, light: 0xE7E1D7)
+    static let stroke = Color.adaptive(dark: 0x3E362A, light: 0xD8D0C3)
+    // 比画布更暗一档的凹槽面（输入框、地址栏）
+    static let recess = Color.adaptive(dark: 0x14110D, light: 0xEFEBE4)
+    // 面板上的弱填充小件（日志页行内 chip 等）
+    static let panel = Color.adaptive(dark: 0xFFFFFF, light: 0x221E1A,
+                                      darkAlpha: 0.05, lightAlpha: 0.045)
+    // 凹槽面板（日志正文区、输入框底）：比面板再沉一档
+    static let raised = Color.adaptive(dark: 0x241F19, light: 0xFBFAF7)
 
     /// The colour AppKit paints behind the hidden title bar.
-    static let windowBackground = NSColor.adaptive(dark: 0x07070A, light: 0xF2F2F5)
+    static let windowBackground = NSColor.adaptive(dark: 0x16130F, light: 0xF5F2EC)
 
-    // Type
-    static let label = Color.adaptive(dark: 0xF5F5F7, light: 0x121216)
-    static let secondary = Color.adaptive(dark: 0xA6A6B0, light: 0x56565F)
-    static let tertiary = Color.adaptive(dark: 0x767680, light: 0x82828B)
+    // Type —— 三级暖灰阶，全部 AA 达标（tertiary 是最浅可用文字色）
+    static let label = Color.adaptive(dark: 0xEFEAE1, light: 0x221E1A)
+    static let secondary = Color.adaptive(dark: 0xA79E91, light: 0x5F594F)
+    static let tertiary = Color.adaptive(dark: 0x8A8175, light: 0x736C64)
 
-    // Brand + accents. The daylight values are the same hues pushed deeper so
-    // they stay legible as type and still read as fills/gradients on white.
-    static let accent = Color.adaptive(dark: 0xFF6A3D, light: 0xDE4E1C)
-    static let accentSoft = Color.adaptive(dark: 0xFF8E5C, light: 0xC2410C)
+    // Brand + accents。accent 是唯一主强调色；accentSoft 是它的弱化底。
+    // metricNum 专用于 ≥20pt 的仪表大读数，正文强调一律用 accent。
+    static let accent = Color.adaptive(dark: 0xFF7A45, light: 0xC43E12)
+    static let accentSoft = Color.adaptive(dark: 0x33231A, light: 0xFBEDE5)
+    static let metricNum = Color.adaptive(dark: 0xFF9D6F, light: 0xB23A0F)
     static let pink = Color.adaptive(dark: 0xFF375F, light: 0xD81B45)
     static let violet = Color.adaptive(dark: 0x8B5CF6, light: 0x6D28D9)
     static let cyan = Color.adaptive(dark: 0x22D3EE, light: 0x0E7490)
-    static let mint = Color.adaptive(dark: 0x30D158, light: 0x15803D)
-    static let amber = Color.adaptive(dark: 0xFFB020, light: 0xA9600A)
+    static let mint = Color.adaptive(dark: 0x4CC96B, light: 0x1E7F3C)
+    static let amber = Color.adaptive(dark: 0xE8A33D, light: 0x9A6200)
     static let indigo = Color.adaptive(dark: 0x5E5CE6, light: 0x4338CA)
 
-    // Status
-    static let green = Color.adaptive(dark: 0x32D74B, light: 0x248A3D)
-    static let yellow = Color.adaptive(dark: 0xFFD60A, light: 0xA16207)
-    static let orange = Color.adaptive(dark: 0xFF9F0A, light: 0xC2410C)
-    static let red = Color.adaptive(dark: 0xFF453A, light: 0xD01B22)
-    static let blue = Color.adaptive(dark: 0x0A84FF, light: 0x0A6CD0)
+    // Status —— ok / warn / err / info，日间加深、夜间提亮保对比。
+    static let green = Color.adaptive(dark: 0x4CC96B, light: 0x1E7F3C)
+    static let yellow = Color.adaptive(dark: 0xE8A33D, light: 0x9A6200)
+    static let orange = Color.adaptive(dark: 0xE8A33D, light: 0x9A6200)
+    static let red = Color.adaptive(dark: 0xF26B58, light: 0xC03424)
+    static let blue = Color.adaptive(dark: 0x6FA8F5, light: 0x1F5FBF)
     static let purple = Color.adaptive(dark: 0xBF5AF2, light: 0x8944AB)
     static let teal = Color.adaptive(dark: 0x40C8E0, light: 0x0E7490)
-    static let gray = Color.adaptive(dark: 0x8E8E93, light: 0x8A8A8E)
+    static let gray = Color.adaptive(dark: 0x8A8175, light: 0x736C64)
 
-    // Surfaces that sit on the canvas and swap direction with the skin.
-    static let glassTop = Color.adaptive(dark: 0xFFFFFF, light: 0xFFFFFF,
-                                         darkAlpha: 0.080, lightAlpha: 0.92)
-    static let glassBottom = Color.adaptive(dark: 0xFFFFFF, light: 0xFFFFFF,
-                                            darkAlpha: 0.032, lightAlpha: 0.72)
-    static let glassEdgeTop = Color.adaptive(dark: 0xFFFFFF, light: 0x101014,
-                                             darkAlpha: 0.20, lightAlpha: 0.07)
-    static let glassEdgeBottom = Color.adaptive(dark: 0xFFFFFF, light: 0x101014,
-                                                darkAlpha: 0.05, lightAlpha: 0.02)
+    // 面板填充：日间纯白、夜间暖石墨，玻璃渐变已废弃；
+    // glassTop/glassBottom 仅剩 ChatView 的两处旧调用点，取同一值即为纯色。
+    static let glassTop = Color.adaptive(dark: 0x1E1A15, light: 0xFFFFFF)
+    static let glassBottom = Color.adaptive(dark: 0x1E1A15, light: 0xFFFFFF)
+    static let glassEdgeTop = Color.adaptive(dark: 0x322B22, light: 0xE7E1D7)
+    static let glassEdgeBottom = Color.adaptive(dark: 0x322B22, light: 0xE7E1D7)
     static let panelShadow = Color.adaptive(dark: 0x000000, light: 0x000000,
                                             darkAlpha: 0.38, lightAlpha: 0.07)
 
-    // Backdrop vignette: darkens the night canvas, gently lifts the day one.
-    static let backdropTop = Color.adaptive(dark: 0x000000, light: 0xFFFFFF,
-                                            darkAlpha: 0.48, lightAlpha: 0.55)
-    static let backdropTopSoft = Color.adaptive(dark: 0x000000, light: 0xFFFFFF,
-                                                darkAlpha: 0.12, lightAlpha: 0.18)
-    static let backdropBottom = Color.adaptive(dark: 0x000000, light: 0x101014,
-                                               darkAlpha: 0.28, lightAlpha: 0.03)
+    // 浮层基底（对话参数面板等）：直接用面板色。
+    static let sheetBase = Color.adaptive(dark: 0x241F19, light: 0xFBFAF7)
+    // 浮层（对话画布）唯一允许的一层投影 —— elevation 只到窗口级。
+    static let sheetShadow = Color.adaptive(dark: 0x000000, light: 0x000000,
+                                            darkAlpha: 0.35, lightAlpha: 0.10)
+    /// Dimming layer behind floating panels.
+    static let scrim = Color.adaptive(dark: 0x000000, light: 0x000000,
+                                      darkAlpha: 0.12, lightAlpha: 0.10)
 
-    // Primary (leading) pill: white on night, ink on day.
-    static let pillFill = Color.adaptive(dark: 0xF2F2F4, light: 0x17171B)
-    static let pillText = Color.adaptive(dark: 0x0B0B10, light: 0xFFFFFF)
-
-    // Glass chips that sit on key art.
-    static let chipFill = Color.adaptive(dark: 0x000000, light: 0xFFFFFF,
-                                         darkAlpha: 0.22, lightAlpha: 0.78)
-    static let chipText = Color.adaptive(dark: 0xF5F5F7, light: 0x14141A)
-    static let chipBorder = Color.adaptive(dark: 0xFFFFFF, light: 0xFFFFFF,
-                                           darkAlpha: 0.20, lightAlpha: 0.55)
+    // Primary（唯一主动作）胶囊：墨色底两副皮肤通用。
+    static let pillFill = Color.adaptive(dark: 0xEFEAE1, light: 0x221E1A)
+    static let pillText = Color.adaptive(dark: 0x16130F, light: 0xF5F2EC)
 
     // Toast capsule.
     static let toastFill = Color.adaptive(dark: 0x000000, light: 0xFFFFFF,
                                           darkAlpha: 0.35, lightAlpha: 0.92)
-
-    // Large content sheets (chat canvas, parameter panel): a faint base under the
-    // glass gradient so the panel separates from the page.
-    static let sheetBase = Color.adaptive(dark: 0x000000, light: 0xFFFFFF,
-                                         darkAlpha: 0.24, lightAlpha: 0.82)
-    static let sheetShadow = Color.adaptive(dark: 0x000000, light: 0x000000,
-                                           darkAlpha: 0.35, lightAlpha: 0.10)
-    /// Dimming layer behind floating panels.
-    static let scrim = Color.adaptive(dark: 0x000000, light: 0x000000,
-                                      darkAlpha: 0.12, lightAlpha: 0.10)
-    /// Recessed strip (live metrics bar): darker than the canvas both ways.
-    static let recess = Color.adaptive(dark: 0x000000, light: 0x101014,
-                                       darkAlpha: 0.22, lightAlpha: 0.04)
 
     /// Translucent overlay that flips direction with the skin: white lifts the
     /// night canvas, near-black recesses the daylight one.
@@ -117,18 +101,17 @@ enum Native {
         .adaptiveOverlay(opacity)
     }
 
-    // Geometry
-    static let radiusSmall: CGFloat = 10
-    static let radiusTile: CGFloat = 16
-    static let radiusPanel: CGFloat = 22
-    static let radiusHero: CGFloat = 28
-    static let pagePadding: CGFloat = 24
-    static let cardPadding: CGFloat = 18
-    static let gap: CGFloat = 16
+    // Geometry —— 仪器化圆角：小控件 7 / 行内卡 9 / 面板 12 / 窗口级 16
+    static let radiusSmall: CGFloat = 7
+    static let radiusTile: CGFloat = 9
+    static let radiusPanel: CGFloat = 12
+    static let radiusHero: CGFloat = 16
+    static let pagePadding: CGFloat = 20
+    static let cardPadding: CGFloat = 14
+    static let gap: CGFloat = 12
 
-    // Type scale
-    static let pageTitle = Font.system(size: 30, weight: .bold)
-    static let heroTitle = Font.system(size: 36, weight: .bold)
+    // Type scale —— 数字是主角：大读数用等宽 + tabular
+    static let pageTitle = Font.system(size: 28, weight: .bold)
     static let sectionTitle = Font.system(size: 19, weight: .bold)
     static let cardTitle = Font.system(size: 15, weight: .semibold)
     static let bodyFont = Font.system(size: 13)
@@ -137,7 +120,8 @@ enum Native {
     static let metricFont = Font.system(size: 13, weight: .semibold)
     static let monoFont = Font.system(size: 12, design: .monospaced)
     static let monoSmall = Font.system(size: 10.5, design: .monospaced)
-    static let metricLarge = Font.system(size: 34, weight: .bold, design: .rounded)
+    /// 仪表大读数（≥20pt 专用，配 Native.metricNum 取色）。
+    static let metricNumFont = Font.system(size: 30, weight: .bold, design: .monospaced)
 
     static let sidebarWidth: CGFloat = 244
     static let railWidth: CGFloat = 68
@@ -152,225 +136,24 @@ extension View {
     }
 }
 
-// MARK: - Page key colours
+// MARK: - Page backdrop
 
-extension Page {
-    /// Two-stop key colour used for the hero wash, page glow and nav icon.
-    var keyColors: [Color] {
-        switch self {
-        case .overview:
-            return [Color(hex: 0xFF9F0A), Color(hex: 0xFF375F), Color(hex: 0x7B2CBF)]
-        case .chat:
-            return [Color(hex: 0x7C5CFF), Color(hex: 0x0A84FF), Color(hex: 0x00C7BE)]
-        case .models:
-            return [Color(hex: 0x30D158), Color(hex: 0x00C7BE), Color(hex: 0x0A84FF)]
-        case .logs:
-            return [Color(hex: 0xFFD60A), Color(hex: 0xFF9F0A), Color(hex: 0xFF453A)]
-        case .settings:
-            return [Color(hex: 0x5E5CE6), Color(hex: 0xBF5AF2), Color(hex: 0xFF375F)]
-        }
-    }
-
-    var keyColor: Color { keyColors[0] }
-
-    var iconColors: [Color] { [keyColors[0], keyColors[1]] }
-}
-
-// MARK: - Texture
-
-/// One shared noise tile; blended at a few percent it removes gradient banding
-/// and gives glass panels a physical, printed feel.
-enum Grain {
-    static let image: NSImage = {
-        let side = 160
-        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil,
-                                         pixelsWide: side,
-                                         pixelsHigh: side,
-                                         bitsPerSample: 8,
-                                         samplesPerPixel: 4,
-                                         hasAlpha: true,
-                                         isPlanar: false,
-                                         colorSpaceName: .deviceRGB,
-                                         bytesPerRow: 0,
-                                         bitsPerPixel: 0),
-              let data = rep.bitmapData else { return NSImage() }
-        var seed: UInt64 = 0x9E3779B97F4A7C15
-        func next() -> UInt8 {
-            seed ^= seed << 13
-            seed ^= seed >> 7
-            seed ^= seed << 17
-            return UInt8(truncatingIfNeeded: seed >> 24)
-        }
-        for y in 0..<side {
-            for x in 0..<side {
-                let value = next()
-                let index = (y * side + x) * 4
-                data[index] = value
-                data[index + 1] = value
-                data[index + 2] = value
-                data[index + 3] = 255
-            }
-        }
-        let image = NSImage(size: NSSize(width: side, height: side))
-        image.addRepresentation(rep)
-        return image
-    }()
-}
-
-struct GrainOverlay: View {
-    var opacity: Double = 0.045
-
-    var body: some View {
-        Image(nsImage: Grain.image)
-            .resizable(resizingMode: .tile)
-            .opacity(opacity)
-            .blendMode(.softLight)
-            .allowsHitTesting(false)
-    }
-}
-
-// MARK: - Key art
-
-/// Radiating light streaks, the signature backdrop of the Games app hero.
-struct RayField: View {
-    var origin: UnitPoint = UnitPoint(x: 0.8, y: 0.38)
-    var intensity: Double = 1
-
-    var body: some View {
-        Canvas { context, size in
-            let anchor = CGPoint(x: size.width * origin.x, y: size.height * origin.y)
-            let reach = hypot(size.width, size.height) * 1.35
-            var seed: UInt64 = 0xA24BAED4963EE407
-            func next() -> Double {
-                seed ^= seed << 13
-                seed ^= seed >> 7
-                seed ^= seed << 17
-                return Double(seed % 1000) / 1000
-            }
-            for index in 0..<72 {
-                let angle = Double(index) / 72 * Double.pi * 2 + (next() - 0.5) * 0.035
-                let width = 0.6 + next() * 2.6
-                let alpha = (0.04 + next() * 0.18) * intensity
-                var path = Path()
-                path.move(to: anchor)
-                path.addLine(to: CGPoint(x: anchor.x + cos(angle) * reach,
-                                         y: anchor.y + sin(angle) * reach))
-                context.stroke(path,
-                               with: .color(.white.opacity(alpha)),
-                               lineWidth: width)
-            }
-        }
-        .blur(radius: 1.1)
-        .blendMode(.plusLighter)
-        .allowsHitTesting(false)
-    }
-}
-
-struct KeyArt: View {
-    var colors: [Color]
-    var rays: Bool = true
-
-    var body: some View {
-        GeometryReader { proxy in
-            let width = max(proxy.size.width, 1)
-            let height = max(proxy.size.height, 1)
-            ZStack {
-                LinearGradient(colors: colors.isEmpty ? [Native.canvas] : colors,
-                               startPoint: .topLeading,
-                               endPoint: .bottomTrailing)
-
-                RadialGradient(colors: [.white.opacity(0.38), .clear],
-                               center: UnitPoint(x: 0.82, y: 0.22),
-                               startRadius: 0,
-                               endRadius: width * 0.72)
-                    .blendMode(.softLight)
-
-                RadialGradient(colors: [colors.first?.opacity(0.55) ?? .clear, .clear],
-                               center: UnitPoint(x: 0.1, y: 0.95),
-                               startRadius: 0,
-                               endRadius: width * 0.7)
-                    .blendMode(.plusLighter)
-
-                if rays {
-                    RayField()
-                        .opacity(0.9)
-                }
-
-                LinearGradient(stops: [
-                    .init(color: .black.opacity(0.55), location: 0.0),
-                    .init(color: .black.opacity(0.12), location: 0.52),
-                    .init(color: .black.opacity(0.48), location: 1.0),
-                ], startPoint: .bottomLeading, endPoint: .topTrailing)
-
-                GrainOverlay(opacity: 0.07)
-            }
-            .frame(width: width, height: height)
-        }
-        .clipped()
-    }
-}
-
-/// Full-width hero card with key art behind arbitrary content.
-struct HeroPanel<Content: View>: View {
-    var colors: [Color]
-    var rays: Bool = true
-    var padding: CGFloat = 24
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        content()
-            .padding(padding)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                KeyArt(colors: colors, rays: rays)
-                    .clipShape(RoundedRectangle(cornerRadius: Native.radiusHero, style: .continuous))
-            }
-            .overlay(
-                RoundedRectangle(cornerRadius: Native.radiusHero, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(colors: [.white.opacity(0.35), .white.opacity(0.06)],
-                                       startPoint: .top, endPoint: .bottom),
-                        lineWidth: 1)
-            )
-            .shadow(color: (colors.first ?? .clear).opacity(0.28),
-                    radius: 32, x: 0, y: 16)
-    }
-}
-
-/// Ambient page backdrop: canvas, two soft colour washes, fine grain.
+/// Page backdrop: a single warm canvas — the instrument direction keeps the
+/// page quiet so status and numbers are the loudest elements.
 struct ArcadeBackdrop: View {
     var colors: [Color]
 
     var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                Native.surface
-                RadialGradient(colors: [(colors.first ?? .clear).opacity(0.15), .clear],
-                               center: UnitPoint(x: 0.02, y: -0.05),
-                               startRadius: 0,
-                               endRadius: max(proxy.size.width, 900) * 0.7)
-                RadialGradient(colors: [(colors.count > 1 ? colors[1] : colors.first ?? .clear).opacity(0.075), .clear],
-                               center: UnitPoint(x: 0.95, y: 0.05),
-                               startRadius: 0,
-                               endRadius: max(proxy.size.width, 800) * 0.55)
-                LinearGradient(stops: [
-                    .init(color: Native.backdropTop, location: 0),
-                    .init(color: Native.backdropTopSoft, location: 0.16),
-                    .init(color: .clear, location: 0.42),
-                    .init(color: Native.backdropBottom, location: 1),
-                ], startPoint: .top, endPoint: .bottom)
-                GrainOverlay(opacity: 0.03)
-            }
-        }
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
+        Native.surface
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
     }
 }
 
-// MARK: - Glass
+// MARK: - Surface
 
-/// Translucent panel fill with a top sheen and hairline edge — the core surface
-/// of the whole app.
+/// 面板表面：纯色填充 + 1px 毛发描边。以「描边分层」替代旧版的
+/// 玻璃渐变 + 投影分层；卡内不再用投影，投影只保留在窗口级浮层。
 struct GlassSurface: View {
     var radius: CGFloat = Native.radiusPanel
     var tint: Color = .clear
@@ -379,62 +162,22 @@ struct GlassSurface: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         shape
-            .fill(
-                LinearGradient(colors: [Native.glassTop, Native.glassBottom],
-                               startPoint: .top, endPoint: .bottom)
-            )
+            .fill(tint == .clear ? Native.canvas : tint.opacity(0.10))
             .overlay {
                 if tint != .clear {
-                    shape.fill(tint.opacity(0.12))
+                    shape.fill(tint.opacity(0.06))
                 }
             }
             .overlay(
-                shape.strokeBorder(
-                    LinearGradient(colors: [Native.glassEdgeTop, Native.glassEdgeBottom],
-                                   startPoint: .top, endPoint: .bottom),
-                    lineWidth: 1)
+                shape.strokeBorder(Native.hairline, lineWidth: 1)
             )
-            .shadow(color: Native.panelShadow.opacity(elevated ? 1 : 0),
-                    radius: elevated ? 20 : 0,
-                    x: 0,
-                    y: elevated ? 10 : 0)
-    }
-}
-
-/// Small glass capsule used for tags, chips and status labels. They normally sit
-/// on key art, so they keep a dark-glass look at night and a frosted light one by
-/// day — both are readable because the label colour flips with the fill.
-struct GlassChip: View {
-    var icon: String? = nil
-    var text: String
-    var tint: Color = .white
-    var solid: Bool = false
-
-    var body: some View {
-        HStack(spacing: 5) {
-            if let icon {
-                Image(systemName: icon)
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(solid ? Native.pillText.opacity(0.75) : tint)
-            }
-            Text(text)
-                .font(.system(size: 11, weight: .semibold))
-                .lineLimit(1)
-                .foregroundStyle(solid ? Native.pillText.opacity(0.9) : Native.chipText)
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 4)
-        .background {
-            Capsule().fill(solid ? Native.pillFill : Native.chipFill)
-        }
-        .overlay(Capsule().stroke(Native.chipBorder.opacity(solid ? 0 : 1), lineWidth: 0.8))
     }
 }
 
 // MARK: - Buttons
 
 /// Wrapper that tracks pointer hover for a button style's body, so pill
-/// buttons get the same hover lift `IconAction` already has.
+/// buttons get the same hover feedback `IconAction` already has.
 private struct HoverObserving<Content: View>: View {
     @State private var hovering = false
     @ViewBuilder var content: (Bool) -> Content
@@ -445,9 +188,9 @@ private struct HoverObserving<Content: View>: View {
     }
 }
 
-/// Games-style pill button. `light` is the white primary action; `glass` is the
-/// translucent secondary; `accent` is the coloured call to action; `quietDanger`
-/// is a red-tinted glass for destructive row actions that must not shout.
+/// 胶囊按钮。`light` 是墨色主胶囊（唯一主动作样式）；`glass` 是描边次级；
+/// `accent` 是强调色胶囊；`quietDanger` 是弱化的红字危险操作。
+/// 交互规则：hover 不缩放不上浮，只轻提亮 —— 动效收敛到 120ms ease-out。
 struct ArcadePillStyle: ButtonStyle {
     enum Tone { case light, glass, accent, danger, quietDanger }
 
@@ -470,14 +213,11 @@ struct ArcadePillStyle: ButtonStyle {
         case .light:
             return AnyShapeStyle(Native.pillFill)
         case .glass:
-            return AnyShapeStyle(Native.overlay(0.12))
+            return AnyShapeStyle(Native.overlay(0.10))
         case .quietDanger:
-            return AnyShapeStyle(Native.red.opacity(0.14))
+            return AnyShapeStyle(Native.red.opacity(0.12))
         case .accent:
-            // Same-hue vertical shade instead of the loud accent→pink ramp:
-            // keeps the call to action warm without fighting the card tints.
-            return AnyShapeStyle(LinearGradient(colors: [Native.accent, Native.accent.opacity(0.82)],
-                                                startPoint: .top, endPoint: .bottom))
+            return AnyShapeStyle(Native.accent)
         case .danger:
             return AnyShapeStyle(Native.red.opacity(0.92))
         }
@@ -489,20 +229,14 @@ struct ArcadePillStyle: ButtonStyle {
                 .font(.system(size: compact ? 11.5 : 12.5, weight: .semibold))
                 .foregroundStyle(foreground)
                 .padding(.horizontal, compact ? 12 : 15)
-                .frame(height: compact ? 28 : 33)
+                .frame(height: compact ? 28 : 32)
                 .background(background, in: Capsule())
-                .overlay(Capsule().stroke(Native.overlay(0.16).opacity(tone == .light ? 0 : 1), lineWidth: 0.8))
-                .shadow(color: tone == .accent ? Native.accent.opacity(0.22) : .black.opacity(0.18),
-                        radius: tone == .accent ? 8 : 6,
-                        x: 0,
-                        y: tone == .accent ? 4 : 2)
-                .scaleEffect(!isEnabled
-                             ? 1
-                             : configuration.isPressed ? 0.965 : (hovering ? 1.02 : 1))
-                .brightness(hovering && isEnabled && tone != .light ? 0.07 : 0)
+                .overlay(Capsule().stroke(Native.overlay(0.14).opacity(tone == .light ? 0 : 1), lineWidth: 0.8))
+                .brightness(hovering && isEnabled && tone != .light ? 0.06 : 0)
                 .opacity(!isEnabled ? 0.34 : (configuration.isPressed ? 0.9 : 1))
+                .scaleEffect(configuration.isPressed && isEnabled ? 0.975 : 1)
                 .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
-                .animation(.easeOut(duration: 0.14), value: hovering)
+                .animation(.easeOut(duration: 0.12), value: hovering)
                 .contentShape(Capsule())
         }
     }
@@ -517,7 +251,8 @@ extension ButtonStyle where Self == ArcadePillStyle {
     static var arcadeGlassCompact: ArcadePillStyle { ArcadePillStyle(tone: .glass, compact: true) }
 }
 
-/// Colourful squircle icon tile, like the app icons on a game shelf.
+/// Colourful squircle icon tile — reserved for content illustration
+/// (empty states, engine tiles). Never used for page navigation.
 struct ArcadeIcon: View {
     var symbol: String
     var colors: [Color]
@@ -548,10 +283,6 @@ struct ArcadeIcon: View {
                                startPoint: .top, endPoint: .bottom),
                 lineWidth: 0.8)
         )
-        .shadow(color: glow ? (colors.first ?? .clear).opacity(0.45) : .clear,
-                radius: glow ? size * 0.42 : 0,
-                x: 0,
-                y: glow ? size * 0.16 : 0)
     }
 }
 
@@ -586,16 +317,12 @@ struct BrandMark: View {
             }
         }
         .frame(width: size, height: size)
-        .shadow(color: glow ? Native.accent.opacity(0.35) : .clear,
-                radius: glow ? size * 0.32 : 0,
-                x: 0,
-                y: glow ? size * 0.12 : 0)
         .accessibilityLabel("flashCat")
     }
 
     /// Resolved once: the artwork is a 1024 px PNG, and every bubble badge
-    /// would otherwise re-decode it.
-    @MainActor private static let artwork: NSImage? = loadArtwork()
+    /// would otherwise re-decode it. Shared with the menu bar status icon.
+    @MainActor static let artwork: NSImage? = loadArtwork()
 
     @MainActor private static func loadArtwork() -> NSImage? {
         let bundleName = "FlashCat_FlashCat.bundle"
@@ -661,26 +388,26 @@ enum TagTone {
 
     var foreground: Color {
         switch self {
-        case .neutral: return Color.adaptive(dark: 0xC9C9D3, light: 0x4C4C55)
-        case .accent: return Color.adaptive(dark: 0xFFA07A, light: 0xB23A11)
-        case .success: return Color.adaptive(dark: 0x5BE38B, light: 0x18743A)
-        case .warning: return Color.adaptive(dark: 0xFFD166, light: 0x8A5A08)
-        case .danger: return Color.adaptive(dark: 0xFF7A72, light: 0xBC1F1B)
+        case .neutral: return Color.adaptive(dark: 0xC9C1B6, light: 0x5F594F)
+        case .accent: return Color.adaptive(dark: 0xFF9D6F, light: 0xB23A0F)
+        case .success: return Color.adaptive(dark: 0x4CC96B, light: 0x1E7F3C)
+        case .warning: return Color.adaptive(dark: 0xE8A33D, light: 0x8A5A08)
+        case .danger: return Color.adaptive(dark: 0xF26B58, light: 0xBC1F1B)
         }
     }
 
     var background: Color {
         switch self {
-        case .neutral: return Native.overlay(0.09)
-        case .accent: return Native.accent.opacity(0.20)
-        case .success: return Native.green.opacity(0.18)
-        case .warning: return Native.orange.opacity(0.20)
-        case .danger: return Native.red.opacity(0.20)
+        case .neutral: return Native.overlay(0.07)
+        case .accent: return Native.accent.opacity(0.14)
+        case .success: return Native.green.opacity(0.14)
+        case .warning: return Native.orange.opacity(0.14)
+        case .danger: return Native.red.opacity(0.14)
         }
     }
 }
 
-/// Inline capsule label. Replaces the old squared tag.
+/// Inline capsule label.
 struct Tag: View {
     let text: String
     var tone: TagTone = .neutral
@@ -705,7 +432,7 @@ struct Tag: View {
 
 struct Eyebrow: View {
     var text: String
-    var color: Color = Native.secondary.opacity(0.9)
+    var color: Color = Native.tertiary
 
     var body: some View {
         Text(text)
@@ -716,7 +443,8 @@ struct Eyebrow: View {
     }
 }
 
-/// Quiet inset card with a glass surface. Header, optional trailing view, body.
+/// Quiet instrument card: flat panel fill + 1px hairline. Header, optional
+/// trailing view, body.
 struct Card<Content: View>: View {
     var title: String? = nil
     var subtitle: String? = nil
@@ -764,7 +492,7 @@ struct Card<Content: View>: View {
     }
 }
 
-/// One number plus a caption, used on the overview grid.
+/// One number plus a caption. 仪表读数：等宽数字 + Native.metricNum。
 struct StatTile: View {
     let label: String
     let value: String
@@ -780,7 +508,7 @@ struct StatTile: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text(label)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(Native.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
@@ -796,15 +524,15 @@ struct StatTile: View {
             } else {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(value)
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundStyle(Native.label)
+                        .font(.system(size: 26, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Native.metricNum)
                         .monospacedDigit()
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                         .contentTransition(.numericText())
                     if let unit {
                         Text(unit)
-                            .font(.system(size: 10.5, weight: .semibold))
+                            .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(Native.tertiary)
                     }
                 }
@@ -826,9 +554,146 @@ struct StatTile: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background { GlassSurface(radius: Native.radiusTile, tint: tint) }
+        .padding(14)
+        .background { GlassSurface(radius: Native.radiusPanel, tint: tint) }
         .animation(.easeOut(duration: 0.2), value: loading)
+    }
+}
+
+/// 仪表指标卡（高保真稿 MOCKUP A 的指标带单元）。
+/// `hero` 变体用 accentSoft 底 + accent 描边，是页面里唯一大声的数字。
+struct MetricCard: View {
+    let label: String
+    var tag: String? = nil
+    let value: String
+    var unit: String? = nil
+    var hint: String? = nil
+    var hero: Bool = false
+    var loading: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(label)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(hero ? Native.secondary : Native.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if let tag {
+                    Text(tag)
+                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        .tracking(0.8)
+                        .foregroundStyle(Native.tertiary)
+                }
+            }
+
+            if loading {
+                SkeletonBar(width: 104, height: 30, radius: 7, opacity: 0.10)
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(value)
+                        .font(.system(size: hero ? 30 : 23, weight: .bold, design: .monospaced))
+                        .monospacedDigit()
+                        .foregroundStyle(Native.metricNum)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .contentTransition(.numericText())
+                    if let unit {
+                        Text(unit)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Native.tertiary)
+                    }
+                }
+            }
+
+            if loading {
+                SkeletonBar(width: 90, height: 9, radius: 4, opacity: 0.07)
+            } else if let hint {
+                Text(hint)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Native.tertiary)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 15)
+        .padding(.vertical, 12)
+        .background {
+            let shape = RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous)
+            shape.fill(hero ? Native.accentSoft : Native.canvas)
+                .overlay {
+                    shape.strokeBorder(hero ? Native.accent.opacity(0.28) : Native.hairline,
+                                       lineWidth: 1)
+                }
+        }
+        .animation(.easeOut(duration: 0.2), value: loading)
+    }
+}
+
+/// 引擎状态条（高保真稿 MOCKUP A 第一行）：
+/// 色点 + 状态词 + mono 元信息 + 右侧弱提示。状态色是页面里饱和度最高的颜色。
+/// 启停唯一入口在侧栏引擎卡（R1），这里只做诚实的状态播报。
+struct StatusStrip: View {
+    var dotColor: Color
+    var statusText: String
+    var pulsing: Bool = false
+    var meta: [String] = []
+    var hint: String? = nil
+    var failure: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 14) {
+                HStack(spacing: 8) {
+                    StatusDot(color: dotColor, diameter: 8, pulsing: pulsing)
+                    Text(statusText)
+                        .font(.system(size: 13.5, weight: .bold))
+                        .foregroundStyle(Native.label)
+                        .lineLimit(1)
+                        .contentTransition(.opacity)
+                }
+
+                HStack(spacing: 14) {
+                    ForEach(meta, id: \.self) { item in
+                        Text(verbatim: item)
+                            .font(.system(size: 11.5, design: .monospaced))
+                            .foregroundStyle(Native.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 12)
+
+                if let hint {
+                    Text(hint)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Native.tertiary)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            if let failure {
+                VStack(alignment: .leading, spacing: 0) {
+                    Hairline()
+                    Text(failure)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Native.red)
+                        .lineLimit(2)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 9)
+                }
+                .transition(.opacity)
+            }
+        }
+        .background {
+            let shape = RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous)
+            shape.fill(Native.canvas)
+                .overlay { shape.strokeBorder(Native.hairline, lineWidth: 1) }
+        }
+        .animation(.easeOut(duration: 0.16), value: statusText)
+        .animation(.easeOut(duration: 0.16), value: failure)
     }
 }
 
@@ -840,15 +705,14 @@ struct Meter: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
-                Capsule().fill(Native.overlay(0.10))
+                Capsule().fill(Native.overlay(0.08))
                 Capsule()
-                    .fill(LinearGradient(colors: [tint, tint.opacity(0.62)],
-                                         startPoint: .leading, endPoint: .trailing))
+                    .fill(tint)
                     .frame(width: max(0, min(1, fraction)) * proxy.size.width)
-                    .shadow(color: tint.opacity(0.55), radius: 5, x: 0, y: 0)
             }
         }
         .frame(height: height)
+        .animation(.easeOut(duration: 0.24), value: fraction)
     }
 }
 
@@ -873,7 +737,6 @@ struct ProgressRing: View {
                 .stroke(tint,
                         style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-                .shadow(color: tint.opacity(0.4), radius: 2.5)
             Text(verbatim: "\(percent)%")
                 .font(.system(size: size * 0.28, weight: .semibold, design: .monospaced))
                 .foregroundStyle(Native.secondary)
@@ -964,6 +827,7 @@ struct KeyValueRow: View {
             } else {
                 Text(value)
                     .font(mono ? Native.monoFont : Native.bodyFont)
+                    .monospacedDigit()
                     .foregroundStyle(valueColor)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -975,7 +839,7 @@ struct KeyValueRow: View {
                 }
             }
         }
-        .padding(.vertical, 7)
+        .padding(.vertical, 6)
     }
 }
 
@@ -1003,7 +867,7 @@ struct PageHeader<Actions: View>: View {
                 }
                 Text(title)
                     .font(Native.pageTitle)
-                    .tracking(-0.7)
+                    .tracking(-0.6)
                     .foregroundStyle(Native.label)
                 if let subtitle {
                     Text(subtitle)
@@ -1027,7 +891,7 @@ extension PageHeader where Actions == EmptyView {
     }
 }
 
-/// Round glass icon button used in headers and toolbars.
+/// Round icon button used in headers and toolbars.
 struct IconAction: View {
     let systemName: String
     var help: String = ""
@@ -1045,12 +909,10 @@ struct IconAction: View {
                 .frame(width: 30, height: 30)
                 .background {
                     Circle()
-                        .fill(active ? AnyShapeStyle(LinearGradient(colors: [Native.accent, Native.pink],
-                                                                    startPoint: .topLeading,
-                                                                    endPoint: .bottomTrailing))
-                                     : AnyShapeStyle(Native.overlay(hovering ? 0.14 : 0.08)))
+                        .fill(active ? AnyShapeStyle(Native.accent)
+                                     : AnyShapeStyle(Native.overlay(hovering ? 0.12 : 0.07)))
                 }
-                .overlay(Circle().stroke(Native.overlay(0.12).opacity(active ? 0 : 1), lineWidth: 0.8))
+                .overlay(Circle().stroke(Native.hairline.opacity(active ? 0 : 1), lineWidth: 1))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -1060,7 +922,7 @@ struct IconAction: View {
     }
 }
 
-/// Circular glass label for a `Menu`, so a menu reads exactly like `IconAction`.
+/// Circular label for a `Menu`, so a menu reads exactly like `IconAction`.
 struct IconMenuLabel: View {
     let systemName: String
     var active: Bool = false
@@ -1072,13 +934,10 @@ struct IconMenuLabel: View {
             .frame(width: 30, height: 30)
             .background {
                 Circle()
-                    .fill(active
-                          ? AnyShapeStyle(LinearGradient(colors: [Native.accent, Native.pink],
-                                                         startPoint: .topLeading,
-                                                         endPoint: .bottomTrailing))
-                          : AnyShapeStyle(Native.overlay(0.08)))
+                    .fill(active ? AnyShapeStyle(Native.accent)
+                                 : AnyShapeStyle(Native.overlay(0.07)))
             }
-            .overlay(Circle().stroke(Native.overlay(0.12).opacity(active ? 0 : 1), lineWidth: 0.8))
+            .overlay(Circle().stroke(Native.hairline.opacity(active ? 0 : 1), lineWidth: 1))
             .contentShape(Circle())
     }
 }
@@ -1118,7 +977,7 @@ struct ToastView: View {
         HStack(spacing: 9) {
             Image(systemName: "sparkles")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Native.accentSoft)
+                .foregroundStyle(Native.accent)
             Text(message)
                 .font(.system(size: 12.5, weight: .medium))
                 .foregroundStyle(Native.label)

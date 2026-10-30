@@ -7,6 +7,7 @@ enum Page: String, CaseIterable, Identifiable {
     case overview = "概览"
     case chat = "对话"
     case models = "模型"
+    case engines = "引擎"
     case logs = "日志"
     case settings = "设置"
 
@@ -17,6 +18,7 @@ enum Page: String, CaseIterable, Identifiable {
         case .overview: return "gauge.with.dots.needle.33percent"
         case .chat: return "bubble.left.and.text.bubble.right"
         case .models: return "shippingbox"
+        case .engines: return "gearshape"
         case .logs: return "doc.plaintext"
         case .settings: return "slider.horizontal.3"
         }
@@ -196,8 +198,10 @@ final class AppState: ObservableObject {
 
     /// Fixed 30-second window for the hero sparkline; older samples are dropped
     /// at the sampler so this only filters late arrivals.
-    func recentThroughput() -> [ThroughputSample] {
-        let cutoff = Date().addingTimeInterval(-30)
+    /// 吞吐卡（MOCKUP A）的三个时间窗：45 秒 / 5 分钟 / 全部。
+    func recentThroughput(window: TimeInterval) -> [ThroughputSample] {
+        guard window > 0 else { return throughput }
+        let cutoff = Date().addingTimeInterval(-window)
         return throughput.filter { $0.at >= cutoff }
     }
 
@@ -840,6 +844,15 @@ final class AppState: ObservableObject {
                             self.messages[assistantIndex].firstTokenSeconds = Date().timeIntervalSince(started)
                         }
                         self.messages[assistantIndex].content += piece
+                    }
+                },
+                onReasoning: { piece in
+                    Task { @MainActor in
+                        guard assistantIndex < self.messages.count else { return }
+                        self.messages[assistantIndex].reasoning = (self.messages[assistantIndex].reasoning ?? "") + piece
+                        if self.messages[assistantIndex].content.isEmpty {
+                            self.generationStatus = "思考中"
+                        }
                     }
                 },
                 onUsage: { usage in

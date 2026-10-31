@@ -27,8 +27,9 @@ docs/
 # Engine runtime packs (GB-scale build output; install via scripts/engines)
 vendor/engines/
 
-# Downloaded release tarballs (build inputs; the app can fetch them)
+# Downloaded release tarballs + checksums (build inputs; the app can fetch them)
 vendor/*.tar.gz
+vendor/*.sha256
 
 # Bootstrap-cached tools (standalone uv downloaded by the engine pack scripts)
 .tools/

@@ -114,7 +114,7 @@ window.__fc__ = {
 const SHELL_FIELDS = ["page", "appearance", "toast", "engine", "port",
                       "selectedModel", "threads", "pending", "pendingInstall"];
 const PAGE_FIELDS = {
-  overview: ["stats", "throughput", "acceptance", "draftLabel", "endpointURL",
+  overview: ["stats", "throughput", "sessions", "draftLabel", "endpointURL",
              "gatewayURL", "gatewayClaudeURL", "modelsMenu", "context"],
   chat: ["messages", "generating", "generationStatus", "modelsMenu", "library", "settings"],
   models: ["library", "downloads", "modelsMenu"],
@@ -651,6 +651,7 @@ function handleAction(act, arg) {
     case "cancelUse": cmd("cancelLibraryUse"); break;
     case "confirmSwitch": cmd("confirmModelSwitch"); break;
     case "cancelSwitch": cmd("cancelModelSwitch"); break;
+    case "abortSwitch": cmd("abortModelSwitch"); break;
     case "confirmInstall": cmd("confirmEngineInstall"); break;
     case "cancelInstall": cmd("cancelEngineInstall"); break;
     case "chartRange": UI.chartRange = Number(arg); render(); break;
@@ -745,7 +746,7 @@ function renderSide() {
   const running = st.running;
   // starting/stopping 必须先于 running 判断：进程一拉起 running 就为 true，
   // 但此刻引擎还在加载权重，卡片不能提前报"运行中"。
-  const statusText = st.switching ? "切换中"
+  const statusText = st.switching ? `切换中${stageLabel(st) ? " · " + stageLabel(st) : ""}`
     : (st.state === "starting" ? `启动中${stageLabel(st) ? " · " + stageLabel(st) : ""}`
     : (st.state === "stopping" ? "停止中"
     : (running ? "运行中" : (st.state === "failed" ? "异常" : "已停止"))));
@@ -903,13 +904,81 @@ function metricCard(label, tag, value, unit, hint, hero, loading) {
   </div>`;
 }
 
+// 会话格子里的小曲线：一格 CPU 核心那种「这一路最近在吐多少 token」的侧影。
+// values 是网关按 250ms 打点的历史，一格一个 tok/s 采样值。
+function miniSpark(values) {
+  const pts = (values || []).map((v) => (v > 0 ? v : 0));
+  if (pts.length < 4 || !pts.some((v) => v > 0)) return `<div class="sess-spark idle"></div>`;
+  const W = 220, H = 34;
+  const max = Math.max(...pts, 1);
+  const step = W / (pts.length - 1);
+  const xy = pts.map((v, i) => [i * step, H - (v / max) * (H - 8) - 2]);
+  const line = xy.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+  const area = `${line} L${W},${H} L0,${H} Z`;
+  return `<svg class="sess-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+    <path d="${area}" fill="color-mix(in srgb, var(--w-accent) 16%, transparent)"/>
+    <path d="${line}" fill="none" stroke="var(--w-accent)" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
+}
+
+// 一格 = 一路请求。序号是网关自增的，从请求进来那一刻到结束都是同一个号。
+// 客户端重试会换号，所以同一个会话发两轮在格子里是两格——这是任务管理器
+// 那种「每个线程一行」的读法，不假装它是持久会话。
+// 上下文 = prompt + 已生成，分母是本次加载的窗口（S.context.total）。
+function sessionTile(s, total) {
+  const state = s.state || "decode";
+  const rate = state === "done"
+    ? (s.elapsed ? (s.completionTokens || 0) / s.elapsed : 0)
+    : (s.decodeRate || 0);
+  // 串行引擎上一个请求在解码时，其他请求虽然已经拿到首字、状态还是「解码」，
+  // 实际在排队等这一轮。速度掉到 0 就是排队的信号——别把它写成「解码 0.0」。
+  const sinceFirst = s.ttft != null ? Math.max(0, (s.elapsed || 0) - s.ttft / 1000) : 0;
+  const waiting = state === "decode" && rate < 0.5 && sinceFirst > 2;
+  const label = state === "failed" ? "失败"
+    : (state === "done" ? "完成"
+    : (state === "prefill" ? "预填充"
+    : (waiting ? "等待解码" : "解码")));
+  const dot = state === "failed" ? "err"
+    : (state === "done" ? ""
+    : (state === "prefill" ? "warn pulse"
+    : (waiting ? "warn" : "ok pulse")));
+  const ctx = s.ctxTokens || 0;
+  const pct = total ? Math.min(100, (ctx / total) * 100) : 0;
+  const tone = pct >= 90 ? "err" : (pct >= 70 ? "warn" : "ok");
+  const rateText = state === "prefill" ? "…" : (waiting ? "—" : rate.toFixed(1));
+  const ttft = s.ttft == null ? "—" : (s.ttft >= 1000 ? `${(s.ttft / 1000).toFixed(1)}s` : `${Math.round(s.ttft)}ms`);
+  // 输入 token 数：串行引擎上「预填充速度」其实是 prompt/首字时间，而首字时间里
+  // 混着排队，算出来的值会低到没意义（实测排队 5.7s 摊出 4 tok/s）。所以这里
+  // 只报事实——输入多少 token、首字多久——速度交给上面的解码读数。
+  const prompt = s.promptTokens ? `${s.promptTokens} tok` : "—";
+  return `<div class="sess ${state}">
+    <div class="sess-hd">
+      <span class="dot ${dot}"></span>
+      <span class="sess-id">#${esc(String(s.id))}</span>
+      <span class="sess-state">${esc(label)}</span>
+      <span class="sess-rate"><b>${esc(rateText)}</b><i>tok/s</i></span>
+    </div>
+    <div class="sess-model" title="${esc(s.model || "")}">${esc(shortModel(s.model) || "未知模型")}<span class="sess-fmt ${s.dialect === "claude" ? "c" : "o"}">${s.dialect === "claude" ? "Claude" : "OpenAI"}</span></div>
+    ${miniSpark(s.history)}
+    <div class="sess-ft">
+      <span>输入 ${esc(prompt)}</span><span>首字 ${esc(ttft)}</span>
+      <span class="sess-ctx">${esc(ctx ? fmtTokens(ctx) : "0")} / ${esc(total ? fmtTokens(total) : "—")}</span>
+    </div>
+    <div class="sess-bar"><i class="${tone}" style="width:${pct.toFixed(1)}%"></i></div>
+  </div>`;
+}
+
 // 概览主卡：引擎状态 + 当前模型 + 启停控制。模型名本身是下拉触发器，点开复用分组模型菜单切换。
 // 把原来那条细状态条展开成控制台：模型信息一眼可读，切换和启停不用离页。
 function engineHero(st, stats, statusText, dotCls, stage, busy) {
   const meta = ENGINE_META[st.id]
     || { name: (st.id || "ENGINE").toUpperCase(), grad: "linear-gradient(135deg,#8E8E93,#636366)" };
   const isRun = running();
-  const actions = busy
+  // 切换中留一个「取消等待」：真正干活的引擎不该被打断（权重搬到一半的进程
+  // 吃 SIGINT 要等 20 秒强杀），但界面不能只能死等。取消之后状态交回引擎自己
+  // 的启动阶段，进度和秒数继续走。
+  const actions = st.switching
+    ? `<button class="btn-p ghost" disabled>${esc(statusText)}…</button><button class="btn-p" data-act="abortSwitch" title="不再等这次切换；引擎仍在后台加载">取消等待</button>`
+    : busy
     ? `<button class="btn-p ghost" disabled>${esc(statusText)}…</button>`
     : (isRun
       ? `<button class="btn-p ghost" data-act="restart" title="重启服务以重新加载当前模型">重启</button><button class="btn-p danger" data-act="stop">停止</button>`
@@ -922,6 +991,21 @@ function engineHero(st, stats, statusText, dotCls, stage, busy) {
   if (isRun) {
     metaBits.push(`<span id="uptime">UP ${esc(fmtUptime(stats && stats.startedAt))}</span>`);
     if (stats && stats.instancePid) metaBits.push(`<span>PID ${stats.instancePid}</span>`);
+    // 设备 / 热状态 / 请求统计原先住在「运行详情」表格里。表格拆掉之后它们
+    // 并进这行 meta：都属于「这台引擎现在什么状态」，不该占一整块面板。
+    if (stats && stats.deviceName) {
+      metaBits.push(`<span>${esc(stats.deviceName)}${stats.gpuCores ? " · " + stats.gpuCores + "C" : ""}</span>`);
+    }
+    if (stats) {
+      metaBits.push(`<span${stats.requestsFailed ? ' style="color:var(--w-warn)"' : ""}>请求 ${stats.requestsCompleted} 完成 · ${stats.requestsFailed} 失败</span>`);
+    }
+    // 并发/排队：真有人在并跑（>1）才染信息色——那是「下面那张解码速度已经被
+    // 聚合」的信号。splash 报在跑条数、oMLX 报 active_requests、MTPLX 报 active。
+    const active = (stats && stats.activeRequests) || 0;
+    const queued = (stats && stats.queuedRequests) || 0;
+    if (active > 0 || queued > 0) {
+      metaBits.push(`<span${active > 1 ? ' style="color:var(--w-info)"' : ""}>并发 ${active}${queued ? ` · 排队 ${queued}` : ""}</span>`);
+    }
     // 上下文一律给「已用 / 总量」：只报总量看不出这一轮还剩多少余量。
     const ctxTotal = (S.context && S.context.total) || (stats && stats.maximumContextTokens) || 0;
     const ctxUsed = (S.context && S.context.used) || 0;
@@ -931,22 +1015,34 @@ function engineHero(st, stats, statusText, dotCls, stage, busy) {
     }
     if (stats && stats.thermal && stats.thermal !== "nominal") metaBits.push(`<span style="color:var(--w-warn)">TEMP ${esc(stats.thermalText)}</span>`);
   }
+  // 网关地址进模型卡：它就是「这台引擎怎么被外面调」，和模型、端口是同一件事。
+  // Claude 侧给根地址（Anthropic SDK 自己拼 /v1/messages）。
+  const claudeURL = S.gatewayClaudeURL || String(S.gatewayURL || "").replace(/\/v1$/, "");
   return `
     <div class="hero">
       <div class="hero-top">
         <div class="hero-status"><span class="dot ${dotCls}"></span><span class="hero-st">${esc(statusText)}</span>${stage ? `<span class="hero-stage">${esc(stage)}…</span>` : ""}</div>
         <div class="hero-actions">${actions}</div>
       </div>
-      <div class="hero-model switch" id="heroModelSwitcher" data-menu="modelSwitcher"
-           title="点击切换模型" role="button" tabindex="0" aria-haspopup="menu">
-        <span class="hm-eng" style="background:${meta.grad}">${esc(meta.name)}</span>
-        <span class="hm-name" title="${esc(S.selectedModel || "")}">${esc(shortModel(S.selectedModel) || "未选择模型")}</span>
-        <span class="hm-switch">
-          <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          切换模型
-        </span>
+      <div class="hero-body">
+        <div class="hero-left">
+          <div class="hero-model switch" id="heroModelSwitcher" data-menu="modelSwitcher"
+               title="点击切换模型" role="button" tabindex="0" aria-haspopup="menu">
+            <span class="hm-eng" style="background:${meta.grad}">${esc(meta.name)}</span>
+            <span class="hm-name" title="${esc(S.selectedModel || "")}">${esc(shortModel(S.selectedModel) || "未选择模型")}</span>
+            <span class="hm-switch">
+              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              切换模型
+            </span>
+          </div>
+          <div class="hero-meta">${metaBits.join("")}</div>
+        </div>
+        <div class="hero-api">
+          <div class="endpoint"><span class="fmt o">OpenAI</span><span class="url">${esc(S.gatewayURL)}</span><span class="copy" data-act="copyGateway" data-arg="openai">复制</span></div>
+          <div class="endpoint"><span class="fmt c">Claude</span><span class="url">${esc(claudeURL)}</span><span class="copy" data-act="copyGateway" data-arg="claude">复制</span></div>
+          <div class="gw-hint">Claude 填根地址即可，SDK 会自行拼上 /v1/messages</div>
+        </div>
       </div>
-      <div class="hero-meta">${metaBits.join("")}</div>
     </div>`;
 }
 
@@ -955,8 +1051,13 @@ function pageOverview() {
   const stats = S.stats;
   const loading = st.switching || st.state === "starting" || (st.ready && !stats);
   const busyState = st.switching || st.state === "starting" || st.state === "stopping";
-  const stage = st.switching ? (st.switchStage || "")
-    : (st.state === "starting" ? stageLabel(st) : "");
+  const stg = stageLabel(st);
+  // 切换中不要把引擎的真实阶段盖掉：跨引擎跳过去的那一步本身就是一次冷启动。
+  // 固定显示 switchStage 时，一个正在正常推进的加载看起来和卡死一模一样。
+  // failed/stopped 时 startupStage 已经是状态词（启动失败/已停止），不重复。
+  const engineStage = (st.state === "failed" || st.state === "stopped") ? "" : stg;
+  const stage = [st.switchStage || "", engineStage].filter(Boolean).join(" · ")
+    || (st.switching ? "等待引擎就绪" : "");
   const statusText = st.switching ? "切换中"
     : (st.state === "starting" ? "启动中"
     : (st.state === "stopping" ? "停止中"
@@ -970,91 +1071,77 @@ function pageOverview() {
   const decodeWindow = (S.throughput || []).filter((s) => !cut || s.t >= cut);
   const samples = decodeWindow.length ? decodeWindow : tailRun(S.throughput);
   const idle = !decodeWindow.length && samples.length > 0;
-  // 接受率曲线与吞吐共用同一个时间窗，两张图一起滚动。
-  const accWindow = (S.acceptance || []).filter((s) => !cut || s.t >= cut);
-  const accSamples = accWindow.length ? accWindow : tailRun(S.acceptance);
-  const accLabel = S.draftLabel || (stats && stats.dflashLabel) || "草稿接受率";
-  const accNow = stats && stats.draftAcceptance != null ? Math.round(stats.draftAcceptance * 100) + "%" : "—";
-  const accEmpty = !stats ? "引擎启动后显示"
-    : (stats.draftAcceptance == null ? "当前引擎未上报接受率数据（DFlash2 / MTP）"
-      : "生成一次回复后开始绘制");
+  // 会话网格的数据来自网关打点（Swift 侧 GatewayMeter），不是引擎自报：
+  // 引擎只给聚合值，而「这一路现在多少 tok/s」只有网关知道。
+  // 在跑的排前面（解码 → 预填充），跑完的垫底，同一类里按请求号。
+  const sessRank = (s) => (s.state === "decode" ? 0 : (s.state === "prefill" ? 1 : (s.state === "failed" ? 2 : 3)));
+  const sessions = (S.sessions || []).slice()
+    .sort((a, b) => sessRank(a) - sessRank(b) || a.id - b.id);
+  const runningCount = sessions.filter((s) => s.state === "prefill" || s.state === "decode").length;
   // 生成期间的本地测速（Swift 侧按流式增量算出来的 tok/s），比引擎自报的
   // 累计均值更真实——oMLX 的 avg_generation_tps 整个生成过程一动不动。
   const liveRate = S.generating && stats && stats.liveDecodeRate != null ? stats.liveDecodeRate : null;
+  // 并发口径：只有一路在跑时「引擎自报值」和「这一个请求的速度」是一回事；
+  // 两路以上它已经是整台引擎的聚合吞吐（splash 的 decode_tokens_per_second 是
+  // 累计 output_tokens / 累计 decode 墙钟），这时候还标 LIVE 就是在骗人——
+  // 并发确实会让它变大，但每个请求都变慢了。
+  const active = (stats && stats.activeRequests) || 0;
+  const queued = (stats && stats.queuedRequests) || 0;
+  const sharedEngine = active > 1;
+  // 引擎自报的 TTFT 也是这样：splash 给的是全量 p50，MTPLX 给的是最近一条。
+  const engineTtft = !!(stats && stats.ttftMilliseconds != null);
   // 引擎不报 TTFT（oMLX）时回落到应用内最近一次回复的本地测量值。
   const lastTtft = (() => {
     const msgs = (S.messages || []).filter((m) => m.role === "assistant" && m.ttft != null);
     return msgs.length ? msgs[msgs.length - 1].ttft : null;
   })();
   const mem = stats && stats.memoryBytes && stats.physicalMemoryBytes;
-  // 当前会话上下文：used 来自引擎回报的 usage，total 取模型上限与引擎窗口的小值。
-  // 两个数都由 Swift 侧算好（S.context），前端只负责换算显示。
+  // 每一格的「上下文大小」= prompt + 已生成，分母用本次加载的窗口
+  // （模型上限与引擎窗口取小，Swift 侧算好放在 S.context.total）。
   const ctxTotal = (S.context && S.context.total) || (stats && stats.maximumContextTokens) || 0;
-  const ctxRaw = (S.context && S.context.used) || 0;
-  const ctxUsed = ctxTotal ? Math.min(ctxRaw, ctxTotal) : ctxRaw;
-  const ctxPct = ctxTotal ? Math.min(100, ctxUsed / ctxTotal * 100) : 0;
-  const ctxTone = ctxPct >= 90 ? "err" : (ctxPct >= 70 ? "warn" : "ok");
-  // 总量已知时「0」比「—」实在：新会话确实是 0，不是没数据。
-  const ctxUsedText = ctxUsed ? fmtTokens(ctxUsed) : (ctxTotal ? "0" : "—");
-  const ctxHint = !ctxTotal ? "引擎上报窗口后显示"
-    : (!ctxUsed ? "发送第一条消息后开始计量"
-      : `剩余 ${fmtTokens(ctxTotal - ctxUsed)} tok${ctxPct >= 90 ? " · 接近上限，建议新建会话" : ""}`);
   // 解码均值跟随图表区间（45 秒 / 5 分钟 / 全部）；空闲时回落到上一轮任务的均值。
   const avgDecode = samples.length ? samples.reduce((a, s) => a + s.v, 0) / samples.length : null;
+  const currentDecode = samples.length ? samples[samples.length - 1].v : null;
   const rangeLabel = UI.chartRange === 45 ? "45 秒" : (UI.chartRange === 300 ? "5 分钟" : "全部");
   const decodeHint = avgDecode != null
-    ? `均值 ${avgDecode.toFixed(1)} tok/s · ${idle ? "上次任务" : rangeLabel}`
+    ? (sharedEngine && liveRate == null
+      ? `全局聚合 · 均值 ${avgDecode.toFixed(1)} tok/s · ${idle ? "上一段流量" : rangeLabel}`
+      : `均值 ${avgDecode.toFixed(1)} tok/s · ${idle ? "上次任务" : rangeLabel}`)
     : "等待生成请求";
-  // Claude 侧用根地址（Anthropic SDK 自己拼 /v1/messages）；快照缺字段时从 OpenAI 地址回退。
-  const claudeURL = S.gatewayClaudeURL || String(S.gatewayURL || "").replace(/\/v1$/, "");
-  const kv = [
-    ["设备", stats ? `${stats.deviceName || "—"}${stats.gpuCores ? " · " + stats.gpuCores + "C" : ""}` : "—"],
-    ["进程", stats && stats.instancePid ? `PID ${stats.instancePid}` : "未运行"],
-    ["热状态", stats ? (stats.thermalText || "—") : "—", stats && stats.thermal && stats.thermal !== "nominal"],
-    ["请求统计", stats ? `${stats.requestsCompleted} 完成 · ${stats.requestsFailed} 失败` : "—"],
-    [stats && stats.dflashLabel ? stats.dflashLabel : "草稿接受率", stats && stats.draftAcceptance != null ? Math.round(stats.draftAcceptance * 100) + "%" : (stats ? "未上报" : "—")],
-    ["上下文窗口", stats && stats.maximumContextTokens ? (stats.maximumContextTokens >= 1000 ? Math.round(stats.maximumContextTokens / 1000) + "K tok" : stats.maximumContextTokens + " tok") : "—"],
-  ].map(([k, v, warn]) => `<div class="r"><span class="k">${esc(k)}</span><span class="v" ${warn ? 'style="color:var(--w-warn)"' : ""}>${esc(v)}</span></div>`).join("");
+  const sessionBody = sessions.length
+    ? `<div class="sess-grid">${sessions.map((s) => sessionTile(s, ctxTotal)).join("")}</div>`
+    : `<div class="sess-empty">还没有请求经过网关 —— 应用内对话和外部 API 调用（${esc(String(S.gatewayURL || "").replace(/\/v1$/, ""))}）都会以实时一格出现在这里</div>`;
+  const headNum = idle ? `均值 ${avgDecode != null ? avgDecode.toFixed(1) : "—"}` : (currentDecode != null ? `当前 ${currentDecode.toFixed(1)}` : "");
+  const rangeBtn = (value, label) => `<button type="button" class="${UI.chartRange === value ? "on" : ""}" data-act="chartRange" data-arg="${value}">${label}</button>`;
 
   return `
     <h2 class="pg">概览</h2>
     ${st.failure ? `<div class="confirm-strip" style="border-color:color-mix(in srgb, var(--w-err) 40%,transparent);color:var(--w-err);background:color-mix(in srgb, var(--w-err) 9%,transparent)">${esc(st.failure)}</div>` : ""}
     ${engineHero(st, stats, statusText, dotCls, stage, busyState)}
     <div class="metrics">
-      ${metricCard("解码速度", loading ? "SYNC" : "LIVE", liveRate != null ? liveRate.toFixed(1) : (stats && stats.decodeTokensPerSecond ? stats.decodeTokensPerSecond.toFixed(1) : "—"), "tok/s", decodeHint, true, loading)}
-      ${metricCard("首字延迟", "TTFT", stats && stats.ttftMilliseconds != null ? Math.round(stats.ttftMilliseconds) : (lastTtft != null ? Math.round(lastTtft * 1000) : "—"), "ms", "最近请求", false, loading)}
-      ${metricCard("预填充", "PREFILL", stats && stats.prefillTokensPerSecond ? Math.round(stats.prefillTokensPerSecond) : "—", "tok/s", "引擎 prefill 采样", false, loading)}
+      ${metricCard("解码速度", loading ? "SYNC" : (liveRate != null ? "LIVE" : (sharedEngine ? `聚合 ${active} 路` : "LIVE")), liveRate != null ? liveRate.toFixed(1) : (stats && stats.decodeTokensPerSecond ? stats.decodeTokensPerSecond.toFixed(1) : "—"), "tok/s", decodeHint, true, loading)}
+      ${metricCard("首字延迟", sharedEngine && engineTtft ? "含并发" : "TTFT", stats && stats.ttftMilliseconds != null ? Math.round(stats.ttftMilliseconds) : (lastTtft != null ? Math.round(lastTtft * 1000) : "—"), "ms", sharedEngine && engineTtft ? `${active} 路并跑下的统计值` : "最近请求", false, loading)}
+      ${metricCard("预填充", sharedEngine ? "含并发" : "PREFILL", stats && stats.prefillTokensPerSecond ? Math.round(stats.prefillTokensPerSecond) : "—", "tok/s", "引擎 prefill 采样", false, loading)}
       ${metricCard("内存压力", "MEM", stats && mem ? Math.round(stats.memoryBytes / stats.physicalMemoryBytes * 100) : "—", "%",
         mem ? `${stats.memoryPressureText && stats.memoryPressureText !== "正常" ? stats.memoryPressureText + " · " : ""}${fmtBytes(stats.memoryBytes)} / ${fmtBytes(stats.physicalMemoryBytes)}` : "引擎运行后显示", false, loading)}
     </div>
-    <div class="chart-row">
-      <div class="chart-card">
-        <div class="hd"><span class="t">解码吞吐${idle ? " · 空闲" : ""}</span>
-          <span class="range"><span class="${UI.chartRange === 45 ? "on" : ""}" data-act="chartRange" data-arg="45">45 秒</span><span class="${UI.chartRange === 300 ? "on" : ""}" data-act="chartRange" data-arg="300">5 分钟</span><span class="${UI.chartRange === 0 ? "on" : ""}" data-act="chartRange" data-arg="0">全部</span></span>
-        </div>
-        ${loading ? '<div class="skeleton" style="height:88px"></div>' : sparkSVG(samples, { id: "decode" })}
+    <div class="chart-card wide">
+      <div class="hd">
+        <span class="t">解码吞吐 · ${esc(idle ? "上一段流量" : rangeLabel)}</span>
+        <span class="hd-right">
+          <span class="now">${esc(headNum)}${headNum ? " tok/s" : ""}</span>
+          <span class="seg">${rangeBtn(45, "45 秒")}${rangeBtn(300, "5 分钟")}${rangeBtn(0, "全部")}</span>
+        </span>
       </div>
-      <div class="chart-card">
-        <div class="hd"><span class="t">${esc(accLabel)}</span><span class="now">${esc(accNow)}</span></div>
-        ${loading ? '<div class="skeleton" style="height:88px"></div>'
-          : sparkSVG(accSamples, { id: "accept", color: "var(--w-ok)", max: 1, guide: 0.5, empty: accEmpty })}
-      </div>
+      ${loading ? '<div class="skeleton" style="height:96px"></div>' : sparkSVG(samples, { id: "decode" })}
+      <div class="chart-foot">${esc(decodeHint)}</div>
     </div>
-    <div class="cols">
-      <div class="panel"><div class="t">运行详情</div><div class="kv">${kv}</div>
-        <div class="ctx">
-          <div class="ctx-hd"><span>当前会话上下文</span>
-            <span class="ctx-num">${esc(ctxUsedText)} / ${esc(fmtTokens(ctxTotal))} tok${ctxTotal ? `<small>${Math.round(ctxPct)}%</small>` : ""}</span>
-          </div>
-          <div class="ctx-track"><div class="ctx-fill ${ctxTone}" style="width:${ctxPct.toFixed(1)}%"></div></div>
-          <div class="ctx-hint">${esc(ctxHint)}</div>
-        </div>
+    <div class="panel sessions">
+      <div class="sess-head">
+        <div class="t">会话</div>
+        <div class="sess-sub">${sessions.length ? `${runningCount} 路在跑 · 共 ${sessions.length} 路请求` : "网关实时打点"}</div>
       </div>
-      <div class="panel"><div class="t">API 网关</div>
-        <div class="endpoint"><span class="fmt o">OpenAI</span><span class="url">${esc(S.gatewayURL)}</span><span class="copy" data-act="copyGateway" data-arg="openai">复制</span></div>
-        <div class="endpoint"><span class="fmt c">Claude</span><span class="url">${esc(claudeURL)}</span><span class="copy" data-act="copyGateway" data-arg="claude">复制</span></div>
-        <div class="gw-hint">Claude 填根地址即可，SDK 会自行拼上 /v1/messages</div>
-      </div>
+      ${sessionBody}
     </div>`;
 }
 
@@ -1419,12 +1506,13 @@ const ENGINE_META = {
 const ENGINE_CAPS = {
   splash: ["DFlash2 投机解码", "视觉多模态"],
   omlx: ["多模型热切换", "热加载"],
-  mtplx: ["MTP 投机解码", "长上下文"],
+  mtplx: ["MTP 投机解码", "长上下文", "仅支持串行"],
 };
+const ENGINE_CAP_WARN = new Set(["仅支持串行"]);
 const ENGINE_BLURB = {
   splash: "Apple Silicon 上的自管运行时，专注单模型：DFlash2 投机解码、KV 缓存与视觉多模态都在同一个包里。",
   omlx: "多模型热切换：常驻多个模型，按请求路由，MTP / DFlash2 按模型开关。",
-  mtplx: "以 MTP 投机解码为主的引擎，量化与草稿参数通过命令行开关控制。",
+  mtplx: "以 MTP 投机解码为主的引擎，量化与草稿参数通过命令行开关控制。注意它是串行调度的：同一时刻只处理一个请求，并发调用会排队等待，不会像前两个引擎那样合批并行。",
 };
 
 function pageEngines() {
@@ -1995,7 +2083,7 @@ function pageLaunch() {
       <div class="lc-head">
         <span class="eng-ico" style="background:${meta.grad}">${meta.name[0]}</span>
         <div class="lc-name"><b>${meta.name}</b>
-          <span class="mtags">${(ENGINE_CAPS[id] || []).map((t) => `<span class="mtag">${esc(t)}</span>`).join("")}
+          <span class="mtags">${(ENGINE_CAPS[id] || []).map((t) => `<span class="mtag${ENGINE_CAP_WARN.has(t) ? " warn" : ""}">${esc(t)}</span>`).join("")}
           ${newestInstalled ? (S.engine.id === id ? `<span class="mtag ok">当前引擎</span>` : `<span class="mtag">已安装 v${esc(newestInstalled)}</span>`) : ""}</span></div>
         <div class="lc-side">
           ${latestVersion ? `<span class="lc-ver ${latestInstalled ? "dim" : ""}">最新 v${esc(latestVersion)}${rel && rel.bytes ? " · " + fmtBytes(rel.bytes) : ""}</span>` : ""}
@@ -2003,6 +2091,8 @@ function pageLaunch() {
         </div>
       </div>
       <div class="lc-blurb">${esc(ENGINE_BLURB[id] || "")}</div>
+      ${(ENGINE_CAPS[id] || []).includes("仅支持串行")
+        ? `<p class="lc-serial">串行引擎：并发请求只会排队，概览里的解码速度始终是单请求的速度。</p>` : ""}
       ${progressLine}
     </div>`;
   }).join("");

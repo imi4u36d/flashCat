@@ -489,6 +489,7 @@ body.side-anim .msg { content-visibility: auto; contain-intrinsic-size: auto 72p
 .mtags { display: flex; gap: 5px; flex-wrap: wrap; }
 .mtag { font-size: 9.5px; color: var(--w-ink-2); border: 1px solid var(--w-line); border-radius: 6px; padding: 1px 7px; }
 .mtag.ok { background: var(--w-ok-soft); color: var(--w-ok); border-color: transparent; font-weight: 600; }
+.mtag.warn { background: var(--w-warn-soft); color: var(--w-warn); border-color: transparent; font-weight: 600; }
 .model-card .ft { margin-top: auto; display: flex; align-items: center; gap: 8px; }
 /* sz 弹性占满剩余宽度：让「使用 / 下载」和「⋯」统一靠右成组，草稿卡（无操作
    按钮）也能把「⋯」推到最右，不依赖 .btn-p 的 margin-left:auto 凑布局。 */
@@ -628,6 +629,7 @@ body.launch-mode .main { flex: 1 1 100%; }
 .launch-card .lc-ver { font-size: 11px; color: var(--w-ink-2); }
 .launch-card .lc-ver.dim { color: var(--w-ink-3); }
 .launch-card .lc-blurb { font-size: 11.5px; color: var(--w-ink-2); margin-top: 8px; line-height: 1.55; }
+.launch-card .lc-serial { font-size: 11px; font-weight: 600; color: var(--w-warn); background: var(--w-warn-soft); border-radius: 8px; padding: 6px 10px; margin: 8px 0 0; line-height: 1.5; }
 .launch-progress { display: flex; align-items: center; gap: 9px; margin-top: 9px; font-size: 11px; font-weight: 600; color: var(--w-ink-2); }
 .launch-note { font-size: 10.5px; color: var(--w-ink-3); line-height: 1.6; margin-top: 14px; }
 .launch-start { display: flex; justify-content: center; margin-top: 18px; }
@@ -642,3 +644,68 @@ body.launch-mode .main { flex: 1 1 100%; }
   transition: max-height var(--side-t), margin var(--side-t), padding var(--side-t),
               border-width var(--side-t), opacity .13s ease, background-color .12s ease; }
 .side-dl:hover { background: var(--w-accent-soft); }
+
+/* ---------- 概览：模型卡里的网关地址 + 会话网格 ---------- */
+/* 网关地址并进模型卡右侧：它和模型名、端口同属「这台引擎怎么被外面调用」。
+   原来那块独立 panel 占掉右半屏，只装两行 URL，纯浪费。 */
+.hero-body { display: flex; align-items: flex-start; justify-content: space-between; gap: 28px; }
+.hero-left { min-width: 0; flex: 1 1 auto; }
+.hero-api { flex: none; width: 330px; max-width: 42%; }
+.hero-api .endpoint { margin-bottom: 6px; padding: 7px 9px; font-size: 11.5px; }
+.hero-api .gw-hint { font-size: 10px; }
+
+/* 解码吞吐改通栏：接受率那张卡去掉之后，曲线该占满整行。 */
+.chart-card.wide { margin-bottom: 14px; }
+.chart-card .hd-right { display: flex; align-items: center; gap: 14px; }
+.chart-foot { font-size: 10.5px; color: var(--w-ink-3); margin-top: 6px; }
+
+/* 区间选择器：原来是三个裸 <span>，字号 10.5px、间隔 8px，字间空隙就是
+   死区——点不准就表现为「这个选择不生效」。改成分段按钮，热区撑到 22px 高。 */
+.chart-card .hd .seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px;
+  background: var(--w-panel-2); border: 1px solid var(--w-line); }
+.chart-card .hd .seg button { font: inherit; font-size: 11px; line-height: 1.4; padding: 3px 10px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--w-ink-2); cursor: pointer; }
+.chart-card .hd .seg button:hover { color: var(--w-ink); background: color-mix(in srgb, var(--w-ink) 6%, transparent); }
+.chart-card .hd .seg button.on { color: var(--w-accent); font-weight: 600; background: var(--w-panel);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--w-ink) 10%, transparent); }
+
+/* 会话网格：类 Windows 任务管理器的 CPU 核心图——一路请求一格，格子里的
+   曲线是这一路最近这两分钟在吐多少 token。数据来自网关打点，不是引擎自报。 */
+.panel.sessions { margin-top: 0; }
+.sess-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+.sess-head .t { margin-bottom: 0; }
+.sess-sub { font-size: 11px; color: var(--w-ink-3); }
+.sess-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(258px, 1fr)); gap: 10px; }
+.sess { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 9px;
+  border: 1px solid var(--w-line); border-radius: 10px; background: var(--w-panel-2); min-width: 0; }
+.sess.done { opacity: .62; }
+.sess.failed { border-color: color-mix(in srgb, var(--w-err) 45%, transparent); }
+.sess-hd { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--w-ink-3); }
+.sess-hd .dot { width: 7px; height: 7px; }
+.sess-id { font-variant-numeric: tabular-nums; }
+.sess-state { color: var(--w-ink-2); }
+.sess-rate { margin-left: auto; display: flex; align-items: baseline; gap: 3px; }
+.sess-rate b { font-size: 15px; font-weight: 700; color: var(--w-ink); font-variant-numeric: tabular-nums; }
+.sess-rate i { font-style: normal; font-size: 10px; color: var(--w-ink-3); }
+.sess-model { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--w-ink-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sess-fmt { flex: none; font-size: 9.5px; border-radius: 5px; padding: 1px 6px; }
+.sess-fmt.o { background: var(--w-ok-soft); color: var(--w-ok); }
+.sess-fmt.c { background: color-mix(in srgb, var(--w-info) 14%, transparent); color: var(--w-info); }
+.sess-spark { display: block; width: 100%; height: 34px; }
+.sess-spark.idle { border-radius: 6px; background: color-mix(in srgb, var(--w-ink) 4%, transparent); }
+.sess-ft { display: flex; align-items: baseline; gap: 10px; font-size: 10.5px; color: var(--w-ink-3);
+  font-variant-numeric: tabular-nums; }
+.sess-ctx { margin-left: auto; color: var(--w-ink-2); }
+.sess.done .sess-rate b, .sess.done .sess-state { color: var(--w-ink-2); }
+.sess.failed .sess-rate b { color: var(--w-err); }
+.sess-bar { height: 3px; border-radius: 2px; overflow: hidden; background: color-mix(in srgb, var(--w-ink) 8%, transparent); }
+.sess-bar i { display: block; height: 100%; border-radius: 2px; background: var(--w-ok); transition: width .3s ease; }
+.sess-bar i.warn { background: var(--w-warn); }
+.sess-bar i.err { background: var(--w-err); }
+.sess-empty { padding: 22px 12px; text-align: center; font-size: 11.5px; color: var(--w-ink-3); line-height: 1.6; }
+
+@media (max-width: 1080px) {
+  .hero-body { flex-direction: column; gap: 14px; }
+  .hero-api { width: 100%; max-width: none; }
+}

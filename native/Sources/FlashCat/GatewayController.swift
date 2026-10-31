@@ -208,15 +208,24 @@ final class GatewayController: ObservableObject {
                                       anthropic: request.isAnthropicStyle)
         }
 
-        let wantsStream = (Self.parseObject(request.body)?["stream"] as? Bool) ?? false
+        let openaiPayload = Self.parseObject(request.body)
+        let wantsStream = (openaiPayload?["stream"] as? Bool) ?? false
+        // 引擎侧没有 per-session 指标，网关是唯一知道「这一路什么时候进来、第一个
+        // token 什么时候到、一共吐了多少字」的地方，概览页的会话网格就从这里取数。
+        let meterID = GatewayMeter.shared.begin(
+            model: (openaiPayload?["model"] as? String) ?? "",
+            dialect: "openai",
+            promptTokens: TokenEstimator.promptTokens(messages: openaiPayload?["messages"]))
         if wantsStream {
             guard let response = await GatewayUpstream.postStreaming(port: upstream.port,
                                                                      path: request.path,
                                                                      body: request.body) else {
+                GatewayMeter.shared.finish(meterID, failed: true)
                 return Self.errorResponse(GatewayAPIError.overloaded("无法连接引擎（127.0.0.1:\(upstream.port)）"),
                                           anthropic: false)
             }
             if response.status >= 300 {
+                GatewayMeter.shared.finish(meterID, failed: true)
                 return await Self.drainAsResponse(response)
             }
             return GatewayResponse.sse { session in
@@ -231,11 +240,17 @@ final class GatewayController: ObservableObject {
                             ended = true
                             break
                         }
+                        // 顺手解析每一片：既算实时速率，也接住末片的 usage。
+                        if let data = GatewayUpstream.dataPayload(ofLine: trimmed),
+                           let chunk = Self.parseObject(Data(data.utf8)) {
+                            GatewayMeter.shared.ingest(meterID, chunk: chunk)
+                        }
                         _ = session.write(trimmed + "\n\n")
                     }
                 } catch {
                     // Upstream vanished: the client sees the stream end.
                 }
+                GatewayMeter.shared.finish(meterID)
                 if !ended { _ = session.write("data: [DONE]\n\n") }
                 session.close()
             }
@@ -244,8 +259,14 @@ final class GatewayController: ObservableObject {
         guard let response = await GatewayUpstream.postJSON(port: upstream.port,
                                                             path: request.path,
                                                             body: request.body) else {
+            GatewayMeter.shared.finish(meterID, failed: true)
             return Self.errorResponse(GatewayAPIError.overloaded("无法连接引擎（127.0.0.1:\(upstream.port)）"),
                                       anthropic: false)
+        }
+        if (200..<300).contains(response.status) {
+            GatewayMeter.shared.ingestResponse(meterID, body: response.body)
+        } else {
+            GatewayMeter.shared.finish(meterID, failed: true)
         }
         var out = GatewayResponse()
         out.status = response.status == 0 ? 502 : response.status
@@ -281,16 +302,21 @@ final class GatewayController: ObservableObject {
                                       anthropic: true)
         }
         let model = (openai["model"] as? String) ?? ""
+        let meterID = GatewayMeter.shared.begin(model: model,
+                                               dialect: "claude",
+                                               promptTokens: AnthropicCodec.countInputTokens(payload))
 
         if stream {
             let inputTokens = AnthropicCodec.countInputTokens(payload)
             guard let response = await GatewayUpstream.postStreaming(port: upstream.port,
                                                                      path: "/v1/chat/completions",
                                                                      body: openaiBody) else {
+                GatewayMeter.shared.finish(meterID, failed: true)
                 return Self.errorResponse(GatewayAPIError.overloaded("无法连接引擎（127.0.0.1:\(upstream.port)）"),
                                           anthropic: true)
             }
             if response.status >= 300 {
+                GatewayMeter.shared.finish(meterID, failed: true)
                 return await Self.drainAsAnthropicError(response)
             }
             return GatewayResponse.sse { session in
@@ -301,6 +327,7 @@ final class GatewayController: ObservableObject {
                         if session.isClosed { break }
                         guard let payload = GatewayUpstream.dataPayload(ofLine: line),
                               let chunk = Self.parseObject(Data(payload.utf8)) else { continue }
+                        GatewayMeter.shared.ingest(meterID, chunk: chunk)
                         for frame in translator.consume(chunk: chunk)
                         where !session.write(frame) { return }
                     }
@@ -308,6 +335,7 @@ final class GatewayController: ObservableObject {
                     // Upstream vanished mid-stream: finishEvents below closes
                     // what is open so the client sees a well-formed message.
                 }
+                GatewayMeter.shared.finish(meterID)
                 for frame in translator.finishEvents() where !session.write(frame) { return }
                 session.close()
             }
@@ -316,10 +344,12 @@ final class GatewayController: ObservableObject {
         guard let response = await GatewayUpstream.postJSON(port: upstream.port,
                                                             path: "/v1/chat/completions",
                                                             body: openaiBody) else {
+            GatewayMeter.shared.finish(meterID, failed: true)
             return Self.errorResponse(GatewayAPIError.overloaded("无法连接引擎（127.0.0.1:\(upstream.port)）"),
                                       anthropic: true)
         }
         guard (200..<300).contains(response.status) else {
+            GatewayMeter.shared.finish(meterID, failed: true)
             var out = GatewayResponse()
             out.status = response.status == 0 ? 502 : response.status
             out.body = Data((try? JSONSerialization.data(
@@ -329,10 +359,12 @@ final class GatewayController: ObservableObject {
             return out
         }
         guard let openaiResponse = Self.parseObject(response.body) else {
+            GatewayMeter.shared.finish(meterID, failed: true)
             return Self.errorResponse(GatewayAPIError(status: 502, type: "api_error",
                                                       message: "引擎返回了无法解析的响应"),
                                       anthropic: true)
         }
+        GatewayMeter.shared.ingestResponse(meterID, body: response.body)
         return GatewayResponse.json(AnthropicCodec.translateResponse(openaiResponse))
     }
 

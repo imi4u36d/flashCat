@@ -254,6 +254,7 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
         case "cancelLibraryUse": state.cancelLibraryUse()
         case "confirmModelSwitch": state.confirmModelSwitch()
         case "cancelModelSwitch": state.cancelModelSwitchRequest()
+        case "abortModelSwitch": state.abortModelSwitch()
         case "toast": state.toast(body["message"] as? String ?? "")
         default: break
         }
@@ -616,6 +617,11 @@ enum WebSnapshot {
                 "thermalText": stats.thermalText,
                 "requestsCompleted": stats.requestsCompleted,
                 "requestsFailed": stats.requestsFailed,
+                // 并发与排队：菜单栏一直在显示，概览页此前根本拿不到。并发一开，
+                // 「解码速度」就变成整台引擎的聚合值，页面上却没有任何地方说明
+                // 同时有几路在跑——数字变大、体验变慢，还不给解释。
+                "activeRequests": stats.activeRequests,
+                "queuedRequests": stats.queuedRequests,
                 "draftAcceptance": stats.draftAcceptance ?? NSNull(),
                 // 应用内生成期间的本地测速（tok/s）；空闲时为 null，前端回落到
                 // 引擎自报的 decodeTokensPerSecond。
@@ -773,6 +779,9 @@ enum WebSnapshot {
             "acceptance": state.recentAcceptance(window: 0).map { sample in
                 ["t": sample.at.timeIntervalSince1970 * 1000, "v": sample.value] as [String: Any]
             },
+            // 网关侧的按请求打点：概览页的「会话」网格靠它拿到每一路请求的
+            // 实时 decode / prefill / 上下文占用（引擎侧没有 per-session 指标）。
+            "sessions": GatewayMeter.shared.snapshot(),
             "threads": state.threads.map { thread in
                 ["id": thread.id, "title": thread.title,
                  "updatedAt": thread.updatedAt.timeIntervalSince1970 * 1000] as [String: Any]

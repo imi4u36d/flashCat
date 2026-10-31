@@ -50,6 +50,13 @@ final class AppState: ObservableObject {
     /// Stage the running switch is in ("卸载旧模型" / "加载新模型"). Shown in the
     /// switcher instead of a generic spinner so the wait is explainable.
     @Published private(set) var switchStage: String = ""
+    /// 每次切换领一个号，只有当代的结尾允许改「切换中」状态。被接管或被取消的
+    /// 旧任务回来时代数已经不同，它就静默退出：既不会抹掉新切换的状态，也没人
+    /// 能把界面永久留在「切换中」。
+    private var switchGeneration = 0
+    /// 切换进行中又选了一个本引擎的模型：排到这次切换之后，只保留最后一次。
+    /// 以前这里直接丢弃，读者看到的是「点了没反应」。
+    private var queuedSwitchModel: String?
     /// Non-nil while a model switch is waiting for the reader to confirm that
     /// the model that is loaded now gets stopped first. Switching weights means
     /// unloading the resident model, so the engine is briefly unusable — that is
@@ -377,7 +384,9 @@ final class AppState: ObservableObject {
         }
 
         let now = Date()
-        let cutoff = now.addingTimeInterval(-300)
+        // 保留 30 分钟：概览的区间选择器有「45 秒 / 5 分钟 / 全部」三档，
+        // 序列只留 5 分钟的话「全部」永远等于「5 分钟」，看起来就像没生效。
+        let cutoff = now.addingTimeInterval(-1800)
         // 引擎空闲时不会把指标清零，而是把「最后一次」原样回报：splash 请求结束后
         // metrics.decode_tokens_per_second 会一直停在最后一格（实测 116.2899403）。
         // 这种重复读数不是新数据。照抄进序列，曲线会凭空续出一段平线，均值也会被
@@ -433,7 +442,7 @@ final class AppState: ObservableObject {
         streamWindowTokens = 0
         streamWindowStart = now
         liveDecodeRate = rate
-        let cutoff = now.addingTimeInterval(-300)
+        let cutoff = now.addingTimeInterval(-1800)
         throughput.append(ThroughputSample(at: now, value: rate))
         throughput.removeAll { $0.at < cutoff }
     }
@@ -575,10 +584,10 @@ final class AppState: ObservableObject {
     @discardableResult
     func switchEngine(_ id: EngineID) -> Bool {
         guard let engines, id != engines.activeID else { return false }
-        guard !isSwitchingModel else {
-            toast("正在切换模型，稍后再换引擎")
-            return false
-        }
+        // 换引擎本身就是重启进程：正在进行的切换（包括跨引擎跳过去的那一半）
+        // 已经没有意义，直接作废。以前这里 toast 一句就 return，读者再点最多
+        // 的选择都没反应，而那个被跳过的切换还在原地挂着。
+        if isSwitchingModel { retireModelSwitch() }
         guard engines.controller(id) != nil else {
             requestEngineInstall(id)
             return false
@@ -707,7 +716,6 @@ final class AppState: ObservableObject {
     /// change. Weights already on disk hop silently; only a download — a
     /// bigger commitment than a switch — still asks first.
     func useModel(_ id: String, engine: EngineID) {
-        guard !isSwitchingModel else { return }
         // Weights on disk do not imply a runtime: the library is browsable for
         // an engine that is not installed, but using one of its models has to
         // install the engine first or the switch below would be a no-op.
@@ -779,7 +787,6 @@ final class AppState: ObservableObject {
     /// only ever showed models and the hop is the switch the reader asked
     /// for.
     func applyModelFromAnyEngine(_ id: String, engine: EngineID) {
-        guard !isSwitchingModel else { return }
         guard !generating else {
             toast("正在生成，先停止再切换模型")
             return
@@ -805,6 +812,10 @@ final class AppState: ObservableObject {
     private func hopEngine(_ engine: EngineID, model: String) {
         guard let engines, engines.controller(engine) != nil else { return }
         let wasRunning = isRunning
+        // 跨引擎的新选择必须立刻生效：上一次切换（可能是另一台引擎上几分钟的
+        // 权重加载）在这里作废，而不是排队等它结束——排队就是「点了新模型，
+        // 界面还停在旧的那一次切换里」。
+        retireModelSwitch()
         engines.activate(engine)
         libraryEngine = engine
         reloadModels()
@@ -824,16 +835,20 @@ final class AppState: ObservableObject {
         // does.
         switchingModel = model
         switchStage = "加载新模型"
-        let controller = engines.controller(engine)
+        let generation = switchGeneration
         switchTask = Task { [weak self] in
-            guard let controller else { return }
-            await controller.start(localModel: self?.selectedModelInfo, requestedModel: model)
-            let ready = await controller.waitForReady(timeout: engine.startupTimeout)
-            guard let self, !Task.isCancelled else { return }
-            self.finishModelSwitch(outcome: ready
+            guard let self, let controller = self.controller else {
+                self?.settleModelSwitch(generation: generation,
+                                        outcome: .failed("\(engine.displayName) 没有可用的控制器"))
+                return
+            }
+            await controller.start(localModel: self.selectedModelInfo, requestedModel: model)
+            // 等「真的加载完」而不是「HTTP 壳子绿了」，否则界面会在权重刚
+            // 开始搬的时候就退出「切换中」（见 waitForSwitchReady 里的日志）。
+            let ready = await controller.waitForSwitchReady(model, timeout: engine.startupTimeout)
+            self.settleModelSwitch(generation: generation, outcome: ready
                 ? .ready
                 : .failed(controller.failureMessage ?? "\(engine.displayName) 未能在预期时间内就绪"))
-            self.switchTask = nil
         }
     }
 
@@ -842,12 +857,26 @@ final class AppState: ObservableObject {
     /// ready, so a slow weight load never looks like an ignored click.
     func applyModel(_ id: String) {
         let target = id.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !target.isEmpty, target != selectedModel else { return }
+        guard !target.isEmpty else { return }
+        if target == selectedModel {
+            // 选回正在切的那一个（或已生效的那一个）= 没必要再动；如果刚才排过
+            // 一次别的选择，这次点击就是「改主意」，把队列清掉。
+            if isSwitchingModel { queuedSwitchModel = nil }
+            return
+        }
         guard !generating else {
             toast("正在生成，先停止再切换模型")
             return
         }
-        guard !isSwitchingModel else { return }
+        if isSwitchingModel {
+            // 同引擎的第二次选择不能打断已经在跑的加载（EngineController 单飞），
+            // 排到这次切换之后；队列只留最后一次，读者连点三下就是最后一下生效。
+            if target != switchingModel {
+                queuedSwitchModel = target
+                toast("正在切换模型，完成后自动切到 \(shortModelName(target))")
+            }
+            return
+        }
 
         // The menu only offers this engine's models, but a stale list or an id
         // typed into settings must not reach the wire: the engine would answer
@@ -931,28 +960,62 @@ final class AppState: ObservableObject {
     /// design fired a process restart from the view model and a hot load from
     /// here at the same time, which is what wedged the engine mid-switch.
     private func beginModelSwitch(to id: String) {
-        switchTask?.cancel()
-        switchTask = nil
-
         guard isRunning, let controller else {
             // Nothing is resident, so there is nothing to unload: the choice only
             // takes effect on the next start.
-            switchingModel = nil
-            switchStage = ""
+            retireModelSwitch()
             toast("已切换到 \(shortModelName(id))")
             return
         }
 
+        // 上一次切换（比如跨引擎跳过来的那一次加载）先作废，这一次从头开始。
+        retireModelSwitch()
+        let generation = switchGeneration
         switchingModel = id
         switchStage = "准备切换"
         switchTask = Task { [weak self] in
             let outcome = await controller.switchModel(id) { stage in
-                self?.switchStage = stage
+                // 被接管之后就不要再往新切换的阶段行里写了。
+                guard let self, generation == self.switchGeneration else { return }
+                self.switchStage = stage
             }
-            guard let self, !Task.isCancelled else { return }
-            self.finishModelSwitch(outcome: outcome)
-            self.switchTask = nil
+            self?.settleModelSwitch(generation: generation, outcome: outcome)
         }
+    }
+
+    /// 上一次切换作废：取消任务、推进代数、清掉「切换中」。跨引擎再选、换引擎、
+    /// 用户主动放弃都走这里。以前这些入口要么静默 return，要么只 cancel 任务而
+    /// 把状态交给一个再也不会回来的结尾去清——界面就永久停在「切换中」，只能
+    /// 重启应用。
+    private func retireModelSwitch() {
+        switchTask?.cancel()
+        switchTask = nil
+        switchGeneration &+= 1
+        switchingModel = nil
+        switchStage = ""
+    }
+
+    /// 切换的唯一出口。先核对代数：被接管/被取消的旧任务到这里就静默退出，
+    /// 既不会抹掉新切换的状态，也不会把自己忘在「切换中」。当代的结尾负责清
+    /// 状态，并把排队的那次选择接着做掉。
+    private func settleModelSwitch(generation: Int, outcome: EngineController.ModelSwitchOutcome) {
+        guard generation == switchGeneration else { return }
+        switchTask = nil
+        finishModelSwitch(outcome: outcome)
+        guard let next = queuedSwitchModel else { return }
+        queuedSwitchModel = nil
+        beginModelSwitch(to: next)
+    }
+
+    /// 切换中读者的退路：放弃这次等待，状态交回引擎自己的启动阶段（进度、
+    /// 已等待秒数、日志都还在推进）。引擎继续在后台加载，不打断已经搬了
+    /// 一半的权重。
+    func abortModelSwitch() {
+        guard switchingModel != nil else { return }
+        let engine = activeEngine
+        queuedSwitchModel = nil
+        retireModelSwitch()
+        toast("已取消等待 · \(engine.displayName) 仍在后台加载")
     }
 
     /// Keep the stage line honest if the engine moves on its own between stages.
@@ -975,10 +1038,8 @@ final class AppState: ObservableObject {
     }
 
     private func cancelModelSwitch() {
-        switchTask?.cancel()
-        switchTask = nil
-        switchingModel = nil
-        switchStage = ""
+        queuedSwitchModel = nil
+        retireModelSwitch()
     }
 
     func shortModelName(_ id: String) -> String {

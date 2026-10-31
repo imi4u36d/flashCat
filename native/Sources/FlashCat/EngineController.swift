@@ -113,7 +113,18 @@ final class EngineController {
 
     var startupStage: String {
         switch state {
-        case .ready: return EngineStartupStage.ready.rawValue
+        case .ready:
+            // 热加载引擎的 HTTP 壳子先绿、权重后到：uvicorn 打出 application
+            // startup complete 的那一刻 /health 就 200 了，而 oMLX 往往要到下
+            // 一秒才开始搬权重。这时报「就绪」，界面会在权重还在往显存里搬的
+            // 时候显示运行中，用户再点一个模型就会把加载中的进程 SIGINT 掉。
+            // 要的模型还没进 loaded_models，就仍然按「加载权重」报阶段。
+            if id.switchMode == .hot, let wanted = desiredModel, !wanted.isEmpty,
+               let live = status, live.model != wanted,
+               live.loadedModels.contains(wanted) == false {
+                return EngineStartupStage.loadingWeights.rawValue
+            }
+            return EngineStartupStage.ready.rawValue
         case .failed: return "启动失败"
         case .stopped: return "已停止"
         case .stopping: return "停止中"
@@ -429,6 +440,30 @@ final class EngineController {
         return state == .ready
     }
 
+    /// 切换/跳引擎的「真的就绪」判据，比 `waitForReady` 严一档。
+    /// 健康检查 200 只说明 HTTP 壳子起来了：oMLX 的 uvicorn 在权重还没搬完的
+    /// 时候就返回 200（日志实测：22:02:06 application startup complete，
+    /// 22:02:07 才开始 Loading model）。只看健康检查会把一次 27B 的加载在开头
+    /// 就判成完成——界面退出「切换中」，读者接着再点一个模型，那台还在搬权重的
+    /// 进程就被 SIGINT，要等 20 秒强杀才让出显存。热加载引擎必须等它自己把要的
+    /// 模型列进 loaded_models。
+    func waitForSwitchReady(_ target: String, timeout: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if Task.isCancelled { return false }
+            switch state {
+            case .failed, .stopped: return false
+            case .starting, .stopping: break
+            case .ready:
+                if id.switchMode != .hot { return true }
+                if status?.model == target { return true }
+                if status?.loadedModels.contains(target) == true { return true }
+            }
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        }
+        return false
+    }
+
     func toggle(localModel: ModelInfo? = nil) {
         if isRunning { stop() } else { Task { await start(localModel: localModel) } }
     }
@@ -742,6 +777,15 @@ final class EngineController {
     func switchModel(_ target: String, stage: @escaping (String) -> Void) async -> ModelSwitchOutcome {
         let wanted = target.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !wanted.isEmpty else { return .failed("模型标识为空") }
+        // 上一次切换可能刚被读者取消/被新选择接管：主线程已经放弃了它，但它还
+        // 没走完 defer（正在等 unload 或 load 收尾）。等它让出单飞位，而不是把
+        // 这次新选择判成失败——那正是「再点一次没反应」的另一半原因。
+        if switchInFlight {
+            let deadline = Date().addingTimeInterval(8)
+            while switchInFlight, Date() < deadline, !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+            }
+        }
         guard !switchInFlight else { return .failed("已有切换在进行") }
         switchInFlight = true
         defer { switchInFlight = false }
@@ -780,6 +824,7 @@ final class EngineController {
                 onChange()
                 return .failed("旧模型未能退出")
             }
+            if Task.isCancelled { return .failed("切换已取消") }
             stage("加载新模型")
             let local = catalog.machineModel(wanted)
             await start(localModel: local, requestedModel: wanted)

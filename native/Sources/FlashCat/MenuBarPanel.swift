@@ -314,7 +314,18 @@ struct MenuBarPanel: View {
     /// minutes warming up without printing a line.
     private var stageText: String {
         if state.isSwitchingModel {
-            return state.switchStage.isEmpty ? "切换中" : "切换中 · \(state.switchStage)"
+            // 跨引擎跳过去的那一步本身就是一次真正的冷启动：把引擎自己的阶段和
+            // 已等待秒数并进来。只写固定的 switchStage 时，一次正常推进的加载
+            // 和卡死看起来完全一样。
+            var parts = ["切换中"]
+            if !state.switchStage.isEmpty { parts.append(state.switchStage) }
+            let stage = state.startupStage
+            if !stage.isEmpty, stage != "就绪", stage != "已停止",
+               stage != state.switchStage {
+                parts.append(stage)
+            }
+            parts.append("已等待 " + Self.clock(state.startupSeconds))
+            return parts.joined(separator: " · ")
         }
         var parts = [state.serverState.rawValue]
         let stage = state.startupStage
@@ -341,16 +352,27 @@ struct MenuBarPanel: View {
 
     private var actions: some View {
         HStack(spacing: 8) {
-            Button {
-                running ? state.stopService() : state.startService()
-            } label: {
-                Label(running ? "停止服务" : "启动服务",
-                      systemImage: running ? "stop.fill" : "play.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(maxWidth: .infinity)
+            if state.isSwitchingModel {
+                // 切换中留一条退路：引擎继续在后台加载，界面不用只能死等。
+                Button {
+                    state.abortModelSwitch()
+                } label: {
+                    Label("取消等待", systemImage: "xmark.circle")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.arcadeGlass)
+            } else {
+                Button {
+                    running ? state.stopService() : state.startService()
+                } label: {
+                    Label(running ? "停止服务" : "启动服务",
+                          systemImage: running ? "stop.fill" : "play.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(running ? .arcadeGlass : .arcadeAccent)
             }
-            .buttonStyle(running ? .arcadeGlass : .arcadeAccent)
-            .disabled(state.isSwitchingModel)
         }
     }
 

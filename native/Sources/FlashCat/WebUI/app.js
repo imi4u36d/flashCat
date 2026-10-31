@@ -115,7 +115,7 @@ const SHELL_FIELDS = ["page", "appearance", "toast", "engine", "port",
                       "selectedModel", "threads", "pending", "pendingInstall"];
 const PAGE_FIELDS = {
   overview: ["stats", "throughput", "acceptance", "draftLabel", "endpointURL",
-             "gatewayURL", "gatewayClaudeURL", "modelsMenu"],
+             "gatewayURL", "gatewayClaudeURL", "modelsMenu", "context"],
   chat: ["messages", "generating", "generationStatus", "modelsMenu", "library", "settings"],
   models: ["library", "downloads", "modelsMenu"],
   engines: ["enginesInstall", "packIndex"],
@@ -240,6 +240,11 @@ function fmtBytes(n) {
 function fmtRate(v) {
   if (!v || v <= 0) return "";
   return fmtBytes(v) + "/s";
+}
+// token 数按「千」收敛：概览里 262144 → 262K，四位数以下原样给。
+function fmtTokens(n) {
+  if (!n || n <= 0) return "—";
+  return n >= 1000 ? Math.round(n / 1000) + "K" : String(n);
 }
 function fmtUptime(startedAt) {
   if (!startedAt) return "—";
@@ -917,9 +922,12 @@ function engineHero(st, stats, statusText, dotCls, stage, busy) {
   if (isRun) {
     metaBits.push(`<span id="uptime">UP ${esc(fmtUptime(stats && stats.startedAt))}</span>`);
     if (stats && stats.instancePid) metaBits.push(`<span>PID ${stats.instancePid}</span>`);
-    if (stats && stats.maximumContextTokens) {
-      const ctx = stats.maximumContextTokens >= 1000 ? Math.round(stats.maximumContextTokens / 1000) + "K" : stats.maximumContextTokens;
-      metaBits.push(`<span>CTX ${ctx} tok</span>`);
+    // 上下文一律给「已用 / 总量」：只报总量看不出这一轮还剩多少余量。
+    const ctxTotal = (S.context && S.context.total) || (stats && stats.maximumContextTokens) || 0;
+    const ctxUsed = (S.context && S.context.used) || 0;
+    if (ctxTotal || ctxUsed) {
+      const left = ctxUsed ? fmtTokens(ctxUsed) : "0";
+      metaBits.push(`<span>CTX ${esc(left)} / ${esc(ctxTotal ? fmtTokens(ctxTotal) : "—")} tok</span>`);
     }
     if (stats && stats.thermal && stats.thermal !== "nominal") metaBits.push(`<span style="color:var(--w-warn)">TEMP ${esc(stats.thermalText)}</span>`);
   }
@@ -979,6 +987,18 @@ function pageOverview() {
     return msgs.length ? msgs[msgs.length - 1].ttft : null;
   })();
   const mem = stats && stats.memoryBytes && stats.physicalMemoryBytes;
+  // 当前会话上下文：used 来自引擎回报的 usage，total 取模型上限与引擎窗口的小值。
+  // 两个数都由 Swift 侧算好（S.context），前端只负责换算显示。
+  const ctxTotal = (S.context && S.context.total) || (stats && stats.maximumContextTokens) || 0;
+  const ctxRaw = (S.context && S.context.used) || 0;
+  const ctxUsed = ctxTotal ? Math.min(ctxRaw, ctxTotal) : ctxRaw;
+  const ctxPct = ctxTotal ? Math.min(100, ctxUsed / ctxTotal * 100) : 0;
+  const ctxTone = ctxPct >= 90 ? "err" : (ctxPct >= 70 ? "warn" : "ok");
+  // 总量已知时「0」比「—」实在：新会话确实是 0，不是没数据。
+  const ctxUsedText = ctxUsed ? fmtTokens(ctxUsed) : (ctxTotal ? "0" : "—");
+  const ctxHint = !ctxTotal ? "引擎上报窗口后显示"
+    : (!ctxUsed ? "发送第一条消息后开始计量"
+      : `剩余 ${fmtTokens(ctxTotal - ctxUsed)} tok${ctxPct >= 90 ? " · 接近上限，建议新建会话" : ""}`);
   // 解码均值跟随图表区间（45 秒 / 5 分钟 / 全部）；空闲时回落到上一轮任务的均值。
   const avgDecode = samples.length ? samples.reduce((a, s) => a + s.v, 0) / samples.length : null;
   const rangeLabel = UI.chartRange === 45 ? "45 秒" : (UI.chartRange === 300 ? "5 分钟" : "全部");
@@ -1021,7 +1041,15 @@ function pageOverview() {
       </div>
     </div>
     <div class="cols">
-      <div class="panel"><div class="t">运行详情</div><div class="kv">${kv}</div></div>
+      <div class="panel"><div class="t">运行详情</div><div class="kv">${kv}</div>
+        <div class="ctx">
+          <div class="ctx-hd"><span>当前会话上下文</span>
+            <span class="ctx-num">${esc(ctxUsedText)} / ${esc(fmtTokens(ctxTotal))} tok${ctxTotal ? `<small>${Math.round(ctxPct)}%</small>` : ""}</span>
+          </div>
+          <div class="ctx-track"><div class="ctx-fill ${ctxTone}" style="width:${ctxPct.toFixed(1)}%"></div></div>
+          <div class="ctx-hint">${esc(ctxHint)}</div>
+        </div>
+      </div>
       <div class="panel"><div class="t">API 网关</div>
         <div class="endpoint"><span class="fmt o">OpenAI</span><span class="url">${esc(S.gatewayURL)}</span><span class="copy" data-act="copyGateway" data-arg="openai">复制</span></div>
         <div class="endpoint"><span class="fmt c">Claude</span><span class="url">${esc(claudeURL)}</span><span class="copy" data-act="copyGateway" data-arg="claude">复制</span></div>

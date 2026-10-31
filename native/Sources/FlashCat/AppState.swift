@@ -57,6 +57,26 @@ final class AppState: ObservableObject {
     @Published var confirmingModelSwitch: String?
     @Published var messages: [ChatMessage] = []
     @Published var threads: [ChatThread] = []
+    /// 当前会话在「最近对话」里的 id。以前每轮生成结束都新建一条线程，同一段
+    /// 对话会在侧栏堆成好几份（概览读到的上下文也可能来自旧副本）；现在这个 id
+    /// 跟着 `conversation.json` 一起用，`history.save` 原地覆盖而不是 insert。
+    /// 落在 UserDefaults，重启后续着同一条。
+    private var threadID: String {
+        get {
+            let defaults = UserDefaults.standard
+            if let existing = defaults.string(forKey: "chat.threadID"), !existing.isEmpty {
+                return existing
+            }
+            let fresh = Self.newThreadID()
+            defaults.set(fresh, forKey: "chat.threadID")
+            return fresh
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "chat.threadID") }
+    }
+
+    static func newThreadID() -> String {
+        String(Int(Date().timeIntervalSince1970 * 1_000_000))
+    }
     @Published var generating = false
     @Published var generationStatus: String?
     /// Persistent banner for errors that need the reader's attention.
@@ -197,10 +217,22 @@ final class AppState: ObservableObject {
            let path = catalog.machineModel(model)?.path, !path.isEmpty {
             window = EngineModelStore.meta(of: path).maximumContextTokens
         }
-        let value: Int? = (window ?? 0) > 0 ? window : nil
+        // GGUF 权重里没有 config.json，引擎停着时上面两条都拿不到值；记住上次
+        // 真正拿到的窗口（落 UserDefaults），引擎停下或重开应用后概览「总量」
+        // 才不会退成「—」。
+        let value: Int?
+        if let window, window > 0 {
+            UserDefaults.standard.set(window, forKey: Self.contextWindowKey(key))
+            value = window
+        } else {
+            let remembered = UserDefaults.standard.integer(forKey: Self.contextWindowKey(key))
+            value = remembered > 0 ? remembered : nil
+        }
         contextWindowCache = (key, value, Date())
         return value
     }
+
+    private static func contextWindowKey(_ key: String) -> String { "contextWindow." + key }
 
     /// 聊天参数留空「最大生成 tokens」时的默认值：先取模型自身上限，再用引擎
     /// **生效窗口**封顶，两者都没报时退回 32768。
@@ -210,14 +242,49 @@ final class AppState: ObservableObject {
     /// 拿它当默认，等于让支持 262144 的模型只拿到 32768，甚至拿不到模型上限。
     var effectiveMaxTokens: Int {
         if settings.maxTokens > 0 { return settings.maxTokens }
+        return contextWindowTokens ?? 32_768
+    }
+
+    /// 本次加载**实际可用**的上下文窗口：模型自身上限与引擎生效窗口取小。
+    /// 聊天参数留空时用它封顶；两者都没报时为 nil。
+    var contextWindowTokens: Int? {
         var engineWindow: Int?
         if let reported = stats?.maximumContextTokens, reported > 0 { engineWindow = reported }
         switch (modelContextWindow(selectedModel), engineWindow) {
         case let (model?, window?): return min(model, window)
         case let (model?, nil): return model
         case let (nil, window?): return window
-        case (nil, nil): return 32_768
+        case (nil, nil): return nil
         }
+    }
+
+    /// 概览页「已用 / 总量」的右半边：**模型的上下文上限**。
+    ///
+    /// 引擎可能把窗口压低（splash 的 `--max-context`、KV 预算），那是「这次能用
+    /// 多少」；这里回答的是「这个模型最多吃多少」，所以不看引擎窗口。GGUF 权重
+    /// 没有 config.json，引擎也没在跑的时候只能靠记忆：每次拿到值就按
+    /// `engine|model` 落到 UserDefaults，停引擎/重启后依然显示 262K 而不是「—」。
+    var contextWindowCeiling: Int? {
+        guard !selectedModel.isEmpty else { return nil }
+        if let model = modelContextWindow(selectedModel) { return model }
+        let key = Self.contextWindowKey("\(activeEngine.rawValue)|\(selectedModel)")
+        if let reported = stats?.maximumContextTokens, reported > 0 {
+            UserDefaults.standard.set(reported, forKey: key)
+            return reported
+        }
+        let remembered = UserDefaults.standard.integer(forKey: key)
+        return remembered > 0 ? remembered : nil
+    }
+
+    /// 当前会话已占用的上下文 tokens：**只认引擎回报的真实 usage**。
+    ///
+    /// 取最近一条带 `prompt_tokens` 的回复，`prompt + completion` 就是那一轮
+    /// 结束时真正躺在 KV 里的量。还没跑完第一轮（或旧数据没带 usage）时返回 0——
+    /// 按字符估算出来的数看着像真实值，反而误导。
+    var contextUsedTokens: Int {
+        guard let last = messages.last(where: { $0.role == "assistant" && ($0.usage?.promptTokens ?? 0) > 0 }),
+              let usage = last.usage else { return 0 }
+        return usage.promptTokens + usage.completionTokens
     }
 
     var isSwitchingModel: Bool { switchingModel != nil }
@@ -1051,7 +1118,7 @@ final class AppState: ObservableObject {
             }
             generating = false
             conversation.save(messages)
-            history.save(messages: messages)
+            history.save(messages: messages, threadID: threadID)
             threads = history.load()
         }
     }
@@ -1099,6 +1166,7 @@ final class AppState: ObservableObject {
         cancelGeneration()
         messages.removeAll()
         conversation.clear()
+        threadID = Self.newThreadID()
     }
 
     func openThread(_ thread: ChatThread) {
@@ -1109,18 +1177,22 @@ final class AppState: ObservableObject {
                         seconds: $0.seconds, tokensPerSecond: $0.tokensPerSecond,
                         firstTokenSeconds: $0.firstTokenSeconds)
         }
+        threadID = thread.id
         section = .chat
     }
 
     func deleteThread(_ thread: ChatThread) {
         history.delete(id: thread.id)
         threads = history.load()
+        // 删掉的是当前这段对话：下一轮算新会话，别写回刚删掉的 id。
+        if thread.id == threadID { threadID = Self.newThreadID() }
         toast("已删除对话「\(thread.title)」")
     }
 
     func clearThreads() {
         for thread in threads { history.delete(id: thread.id) }
         threads = history.load()
+        threadID = Self.newThreadID()
     }
 
     func resetChatParameters() {

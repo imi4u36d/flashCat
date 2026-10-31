@@ -373,6 +373,17 @@ body.launch-mode .main::before { left: 0; }
 .kv .r { display: flex; justify-content: space-between; font-size: 12px; padding: 4px 0; border-bottom: 1px dashed var(--w-line); gap: 10px; }
 .kv .r .k { color: var(--w-ink-2); flex: none; }
 .kv .r .v { font-variant-numeric: tabular-nums; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 当前会话上下文：一眼看出还剩多少。条宽就是占比，颜色随接近上限升档。 */
+.ctx { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--w-line); }
+.ctx .ctx-hd { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; color: var(--w-ink-2); margin-bottom: 6px; }
+.ctx .ctx-num { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; color: var(--w-ink); }
+.ctx .ctx-num small { font-size: 10.5px; color: var(--w-ink-3); margin-left: 6px; }
+.ctx .ctx-track { height: 6px; border-radius: 999px; background: color-mix(in srgb, var(--w-ink) 8%, transparent); overflow: hidden; }
+.ctx .ctx-fill { height: 100%; border-radius: 999px; transition: width .35s cubic-bezier(.4,0,.2,1), background-color .2s ease; }
+.ctx .ctx-fill.ok { background: var(--w-accent); }
+.ctx .ctx-fill.warn { background: var(--w-warn); }
+.ctx .ctx-fill.err { background: var(--w-err); }
+.ctx .ctx-hint { font-size: 10.5px; color: var(--w-ink-3); margin-top: 6px; }
 .endpoint { display: flex; align-items: center; gap: 8px; background: var(--w-panel-2); border: 1px solid var(--w-line); border-radius: 9px; padding: 9px 10px; font-size: 12px; margin-bottom: 8px; }
 .endpoint .url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .endpoint .copy { margin-left: auto; font-size: 10.5px; border: 1px solid var(--w-line-strong); border-radius: 6px; padding: 2px 9px; color: var(--w-ink-2); background: var(--w-panel); flex: none; }

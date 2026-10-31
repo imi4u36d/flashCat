@@ -759,6 +759,13 @@ enum WebSnapshot {
             "gatewayURL": state.gatewayURL,
             "gatewayClaudeURL": state.gatewayClaudeURL,
             "selectedModel": state.selectedModel,
+            // 概览页的「当前会话上下文」：used 是本会话已占用的 tokens，
+            // total 是本次加载可用的窗口（模型上限与引擎窗口取小）。
+            // total 为 0 表示引擎还没报窗口，前端显示「—」。
+            "context": [
+                "used": state.contextUsedTokens,
+                "total": state.contextWindowCeiling ?? 0,
+            ] as [String: Any],
             "stats": stats != nil ? statsDict : NSNull(),
             "throughput": state.recentThroughput(window: 0).map { sample in
                 ["t": sample.at.timeIntervalSince1970 * 1000, "v": sample.value] as [String: Any]

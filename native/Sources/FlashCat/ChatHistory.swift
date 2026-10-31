@@ -31,6 +31,35 @@ final class ChatHistory {
     }
 
     func load() -> [ChatThread] {
+        let threads = loadStored()
+        let (kept, dropped) = pruned(threads)
+        // 旧版本每轮都新建线程，同一段对话在侧栏里堆成多份；读盘时顺手清掉，
+        // 免得重复条目一直留着（清理只在真的摘掉东西时才写盘）。
+        if dropped { write(kept) }
+        return kept
+    }
+
+    /// 去掉「内容是别人前缀」的旧副本：同一段对话早先几轮存下的短版本。
+    /// 内容完全相同的两条按 `updatedAt` 只留较新的那条。
+    private func pruned(_ threads: [ChatThread]) -> (kept: [ChatThread], dropped: Bool) {
+        func contains(_ short: [ChatMessage], _ long: [ChatMessage]) -> Bool {
+            guard short.count <= long.count else { return false }
+            return zip(short, long).allSatisfy { $0.role == $1.role && $0.content == $1.content }
+        }
+        var kept: [ChatThread] = []
+        var dropped = false
+        for thread in threads {
+            let covered = threads.contains { other in
+                guard other.id != thread.id, contains(thread.messages, other.messages) else { return false }
+                // 更长的版本一定更完整；长度相同则留更新过的那个。
+                return other.messages.count > thread.messages.count || other.updatedAt > thread.updatedAt
+            }
+            if covered { dropped = true } else { kept.append(thread) }
+        }
+        return (kept, dropped)
+    }
+
+    private func loadStored() -> [ChatThread] {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: Paths.historyFile)) else {
             return []
         }
@@ -138,29 +167,23 @@ final class ChatHistory {
         }
     }
 
-    func save(messages: [ChatMessage]) {
+    /// 同一段对话只占一条：`threadID` 已存在就原地覆盖并提到最前，只有新会话
+    /// 才 insert。以前这里无条件 insert 新 id，而每轮生成结束都会调一次，于是
+    /// 一段三轮对话会在「最近对话」里留下 6/8 两条、侧栏看起来像两段。
+    func save(messages: [ChatMessage], threadID: String) {
         let completed = messages.filter { !$0.streaming && !$0.content.isEmpty }
         guard !completed.isEmpty else { return }
 
-        Paths.ensureDirectory(Paths.supportDirectory)
         var threads = load()
         let firstUser = completed.first(where: { $0.role == "user" })?.content ?? "未命名对话"
         let title = firstUser.split(separator: "\n").first.map(String.init) ?? "未命名对话"
 
-        threads.insert(ChatThread(id: String(Int(Date().timeIntervalSince1970 * 1_000_000)),
-                                 title: title,
-                                 updatedAt: Date(),
-                                 messages: completed), at: 0)
-        threads = Array(threads.prefix(limit))
-
-        let stored = threads.map { thread in
-            StoredThread(id: thread.id, title: thread.title,
-                        updatedAt: thread.updatedAt.timeIntervalSince1970,
-                        messages: thread.messages.map(Self.stored))
+        if let index = threads.firstIndex(where: { $0.id == threadID }) {
+            threads.remove(at: index)
         }
-        if let data = try? JSONEncoder().encode(stored) {
-            try? data.write(to: URL(fileURLWithPath: Paths.historyFile))
-        }
+        threads.insert(ChatThread(id: threadID, title: title, updatedAt: Date(),
+                                  messages: completed), at: 0)
+        write(Array(threads.prefix(limit)))
     }
 }
 

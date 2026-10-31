@@ -176,6 +176,50 @@ final class AppState: ObservableObject {
     // MARK: derived
 
     var selectedModelInfo: ModelInfo? { catalog.machineModel(selectedModel) }
+
+    /// 窗口是快照每一帧都要问的值，而取它要么重扫模型目录、要么读 config.json，
+    /// 这里跟 EngineModelStore.meta 用同一档 20s 缓存，避免把扫描塞进推送热路径。
+    private var contextWindowCache: (key: String, value: Int?, at: Date)?
+
+    /// 模型**自身**支持的上下文（config.json 的 max_position_embeddings），
+    /// 不是引擎本次加载收敛后的窗口。模型库扫盘结果对 omlx / mtplx 就带这一项；
+    /// splash 的机型目录只有路径，得现读 config.json（仍走 20s TTL 缓存）。
+    func modelContextWindow(_ model: String) -> Int? {
+        guard !model.isEmpty else { return nil }
+        let key = "\(activeEngine.rawValue)|\(model)"
+        if let cache = contextWindowCache, cache.key == key,
+           Date().timeIntervalSince(cache.at) < 20 {
+            return cache.value
+        }
+        var window = engineModels(for: activeEngine)
+            .first { $0.id == model }?.maximumContextTokens
+        if window == nil || window == 0,
+           let path = catalog.machineModel(model)?.path, !path.isEmpty {
+            window = EngineModelStore.meta(of: path).maximumContextTokens
+        }
+        let value: Int? = (window ?? 0) > 0 ? window : nil
+        contextWindowCache = (key, value, Date())
+        return value
+    }
+
+    /// 聊天参数留空「最大生成 tokens」时的默认值：先取模型自身上限，再用引擎
+    /// **生效窗口**封顶，两者都没报时退回 32768。
+    ///
+    /// 引擎窗口只是本次加载收敛后的值——splash 会被 `--max-context` 和 KV 预算
+    /// 压低，omlx 的 `/api/status` 干脆不报（解析层只从 health 兜底）。以前直接
+    /// 拿它当默认，等于让支持 262144 的模型只拿到 32768，甚至拿不到模型上限。
+    var effectiveMaxTokens: Int {
+        if settings.maxTokens > 0 { return settings.maxTokens }
+        var engineWindow: Int?
+        if let reported = stats?.maximumContextTokens, reported > 0 { engineWindow = reported }
+        switch (modelContextWindow(selectedModel), engineWindow) {
+        case let (model?, window?): return min(model, window)
+        case let (model?, nil): return model
+        case let (nil, window?): return window
+        case (nil, nil): return 32_768
+        }
+    }
+
     var isSwitchingModel: Bool { switchingModel != nil }
     var isRunning: Bool { controller?.isRunning ?? false }
     var isReady: Bool { controller?.isReady ?? false }
@@ -907,13 +951,10 @@ final class AppState: ObservableObject {
         streamWindowTokens = 0
         streamWindowStart = nil
 
-        // 最大生成 tokens：思考与正文共享的总输出上限。未自定义时默认取
-        // 模型支持的最大上下文（引擎侧会自行收敛），4096 那种小默认会让
+        // 最大生成 tokens：思考与正文共享的总输出上限。留空时取模型自身上限
+        // 并按引擎生效窗口封顶（见 effectiveMaxTokens），4096 那种小默认会让
         // 思考模型一开思考就被 finish_reason=length 硬截断。
-        let maxTokensLimit: Int = {
-            if settings.maxTokens > 0 { return settings.maxTokens }
-            return stats?.maximumContextTokens ?? 32_768
-        }()
+        let maxTokensLimit = effectiveMaxTokens
         let options = ChatOptions(temperature: settings.temperature,
                                   topP: settings.topP,
                                   maxTokens: maxTokensLimit,
@@ -1085,7 +1126,8 @@ final class AppState: ObservableObject {
     func resetChatParameters() {
         settings.setTemperature(0.7)
         settings.setTopP(0.95)
-        settings.setMaxTokens(4096)
+        // 0 = 留空，交回「模型自身上限」；写死 4096 会让思考模型连正文都发不出来。
+        settings.setMaxTokens(0)
         settings.setSystemPrompt("")
         settings.setThinkingMode(.automatic)
         toast("已恢复默认对话参数")

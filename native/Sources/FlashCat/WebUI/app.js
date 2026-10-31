@@ -660,6 +660,7 @@ function handleAction(act, arg) {
     case "removeTask": { const t = taskArg(arg); cmd("removeTask", t); break; }
     case "saveEngineConfig": saveEngineConfig(); break;
     case "saveChatParams": saveChatParams(); break;
+    case "resetChatParams": resetChatParams(); break;
     case "logMenu": logMenu(); break;
     case "clearLogs": cmd("clearLogs"); break;
     case "rescan": cmd("rescan", { engine: arg }); break;
@@ -1264,6 +1265,10 @@ function chatParamsDraft() {
 
 function chatParamsBody() {
   const d = chatParamsDraft();
+  // 留空时真正发出去的上限由快照算好（模型自身上限，引擎生效窗口封顶），
+  // placeholder 直接显示它，不要再写一句无从核对的「默认」。
+  const cap = (S.settings && S.settings.effectiveMaxTokens) || 0;
+  const capText = cap > 0 ? (cap >= 1000 ? Math.round(cap / 1000) + "K tok" : cap + " tok") : "自动";
   return `
     <div class="modal-body">
       <div class="set-row"><div class="lab"><b>温度</b><small>越高越有创造性，越低越确定</small></div>
@@ -1272,15 +1277,22 @@ function chatParamsBody() {
       <div class="set-row"><div class="lab"><b>Top P</b><small>核采样概率质量上限</small></div>
         <div class="ctl"><input type="range" min="0" max="1" step="0.05" value="${d.topP}" data-cprange="topP" style="width:150px">
         <span class="field" style="min-width:52px" id="cpv-topP">${Number(d.topP).toFixed(2)}</span></div></div>
-      <div class="set-row"><div class="lab"><b>最大生成 tokens</b><small>留空 = 模型最大上下文；思考与正文共享该上限</small></div>
-        <div class="ctl"><input class="field" data-key="cpMaxTokens" data-cpnum="maxTokens" placeholder="默认（最大上下文）" value="${esc(d.maxTokens)}"></div></div>
+      <div class="set-row"><div class="lab"><b>最大生成 tokens</b><small>留空 = 模型自身上限，按引擎生效窗口封顶；思考与正文共享该上限</small></div>
+        <div class="ctl"><input class="field" data-key="cpMaxTokens" data-cpnum="maxTokens" placeholder="默认（${capText}）" value="${esc(d.maxTokens)}"></div></div>
       <div class="set-row" style="align-items:flex-start"><div class="lab"><b>系统提示词</b><small>对每次请求生效，留空则不发送</small></div>
         <div class="ctl"><textarea class="cp-sys" data-key="cpSystem" data-cptext="systemPrompt" rows="4" placeholder="例如：你是一个简洁的本地助手。">${esc(d.systemPrompt)}</textarea></div></div>
     </div>
     <div class="modal-foot">
+      <button class="btn-quiet" data-act="resetChatParams">恢复默认</button>
       <button class="btn-quiet" data-act="closeChatParams">取消</button>
       <button class="btn-main" data-act="saveChatParams">应用</button>
     </div>`;
+}
+
+// 只把草稿打回默认值，真正的提交仍走「应用」——一键改配置太容易误伤。
+function resetChatParams() {
+  UI.chatParamsDraft = { temperature: 0.7, topP: 0.95, maxTokens: "", systemPrompt: "" };
+  render();
 }
 
 function saveChatParams() {

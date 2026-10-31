@@ -712,6 +712,8 @@ enum WebSnapshot {
             "temperature": state.settings.temperature,
             "topP": state.settings.topP,
             "maxTokens": state.settings.maxTokens,
+            // 留空时实际会发出去的上限，聊天参数弹层的 placeholder 显示它。
+            "effectiveMaxTokens": state.effectiveMaxTokens,
             "systemPrompt": state.settings.systemPrompt,
             "thinkingMode": state.settings.thinkingMode.webName,
             "thinkingModeLabel": state.settings.thinkingMode.label,

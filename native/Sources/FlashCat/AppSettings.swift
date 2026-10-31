@@ -59,6 +59,19 @@ final class AppSettings {
 
     init() {
         importLegacyPreferences()
+        migrateLegacyMaxTokensDefault()
+    }
+
+    /// 旧 SwiftUI 聊天页把 4096 当作「默认值」并会落盘（`恢复默认` 至今仍写
+    /// 4096）。4k 对思考模型是灾难：思考一个人就吃掉 4077 tokens，正文被
+    /// `finish_reason=length` 硬截断。现在留空（0）的语义是「模型自身上限」，
+    /// 所以这个历史默认值一次性清掉；真想要 4096 重新填一次即可。
+    private func migrateLegacyMaxTokensDefault() {
+        let flag = "native.migratedMaxTokensDefault"
+        guard !defaults.bool(forKey: flag) else { return }
+        defaults.set(true, forKey: flag)
+        guard defaults.integer(forKey: "chat.maxTokens") == 4096 else { return }
+        defaults.removeObject(forKey: "chat.maxTokens")
     }
 
     /// The Flutter client kept its settings in the same defaults domain under
@@ -152,15 +165,17 @@ final class AppSettings {
 
     var recentModels: [String] { defaults.stringArray(forKey: "recentModels") ?? [] }
 
+    /// 0 是合法值（温度 0 = 贪心解码），不能用「读到 0 就当未设置」判断，
+    /// 否则把温度拉到 0 的用户重启后又跑回 0.7。按 key 是否存在区分。
     var temperature: Double {
-        let value = defaults.double(forKey: "chat.temperature")
-        return value == 0 ? 0.7 : value
+        guard let stored = defaults.object(forKey: "chat.temperature") as? NSNumber else { return 0.7 }
+        return stored.doubleValue
     }
     func setTemperature(_ value: Double) { defaults.set(value, forKey: "chat.temperature") }
 
     var topP: Double {
-        let value = defaults.double(forKey: "chat.topP")
-        return value == 0 ? 0.95 : value
+        guard let stored = defaults.object(forKey: "chat.topP") as? NSNumber else { return 0.95 }
+        return stored.doubleValue
     }
     func setTopP(_ value: Double) { defaults.set(value, forKey: "chat.topP") }
 
@@ -168,7 +183,7 @@ final class AppSettings {
     func setSystemPrompt(_ value: String) { defaults.set(value, forKey: "chat.system") }
 
     /// 0 = 未设置：请求不带自定义上限，默认用模型支持的最大上下文
-    /// （`AppState.send` 用运行模型的 maximumContextTokens 计算）。
+    /// （`AppState.effectiveMaxTokens`：模型自身上限，按引擎生效窗口封顶）。
     var maxTokens: Int { defaults.integer(forKey: "chat.maxTokens") }
     func setMaxTokens(_ value: Int) { defaults.set(value, forKey: "chat.maxTokens") }
 

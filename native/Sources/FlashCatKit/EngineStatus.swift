@@ -26,6 +26,11 @@ public struct EngineStatus: Sendable, Equatable {
     /// Engine-specific extras the generic UI does not render. oMLX fills
     /// `cache_efficiency`/`total_cached_tokens`, MTPLX its MTP statistics.
     public var extras: [String: Double]
+    /// Reasoning effort tokens the loaded model supports, as the engine itself
+    /// reports them (oMLX `/v1/models/status` per-model `reasoning_efforts`,
+    /// MTPLX snapshot `settings.reasoning_policy.effort_levels`). nil = the
+    /// engine does not say, and the caller falls back to the built-in list.
+    public var reasoningEfforts: [String]?
 
     public init(state: EngineRunState = .stopped,
                 model: String? = nil,
@@ -45,7 +50,8 @@ public struct EngineStatus: Sendable, Equatable {
                 uptimeSeconds: Double? = nil,
                 processIdentifier: Int32? = nil,
                 detail: String? = nil,
-                extras: [String: Double] = [:]) {
+                extras: [String: Double] = [:],
+                reasoningEfforts: [String]? = nil) {
         self.state = state
         self.model = model
         self.loadedModels = loadedModels
@@ -65,6 +71,7 @@ public struct EngineStatus: Sendable, Equatable {
         self.processIdentifier = processIdentifier
         self.detail = detail
         self.extras = extras
+        self.reasoningEfforts = reasoningEfforts
     }
 
     public var isReady: Bool { state == .ready }

@@ -9,11 +9,20 @@
 .nav-item, .recent, .filter, .echip, .cap, .btn-p, .engine-card .act,
 .seg span, .icon-btn, .endpoint .copy, .tgl, .chart-card .hd .range span,
 .popover .item, .savebar .btn-main, .savebar .btn-quiet,
-.modal .btn-main, .modal .btn-quiet, .side-dl, .import-bar {
+.modal .btn-main, .modal .btn-quiet, .side-dl {
   transition: background-color .12s ease, color .12s ease, border-color .12s ease;
 }
 
 html, body { height: 100%; margin: 0; }
+
+/* 整个窗口按原生应用处理：文字不可拖选、不出现 I 形光标、不拖成图片。
+   只有表单控件（和各处 data-selectable 区域）能选中——复制内容走各页自带的
+   「复制」按钮，不再靠拖蓝。 */
+html, body { -webkit-user-select: none; user-select: none; }
+img, svg { -webkit-user-drag: none; user-drag: none; }
+input, textarea, [contenteditable], [data-selectable] {
+  -webkit-user-select: text; user-select: text; cursor: text;
+}
 
 body {
   /* 日间皮肤（默认） */
@@ -27,10 +36,22 @@ body {
   --w-side: #ECE7DE;
   --w-num: #B23A0F;
 
+  /* 原生标题栏那一行的高度（红绿灯居中在这一行里）。WebView 现在铺满整个窗口，
+     这一行也由网页来画，红绿灯浮在网页上面。 */
+  --tb: 28px;
+  /* 侧栏折叠的时长与曲线只定义一次：列宽、文字淡出、内容收折全部引用它，
+     否则几条过渡曲线各走各的，怎么调都「不齐」。
+     曲线要「两头速度为 0」：强 ease-out（.32,.72,0,1 之类）前 90ms 就冲完 90%，
+     然后拖着 150ms 只走剩下几像素——看上去就是猛地一顿再慢慢蹭。
+     (.4,0,.2,1) 起步和收尾都减速，起手不钝、落地不撞。 */
+  --side-t: .26s cubic-bezier(.4, 0, .2, 1);
+
   font-family: -apple-system, system-ui, "SF Pro Text", sans-serif;
   font-size: 13px; line-height: 1.5;
   background: var(--w-canvas); color: var(--w-ink);
-  display: grid; grid-template-columns: 218px 1fr;
+  /* 两栏用 flex 而不是 grid：侧栏折叠要动画列宽，flex-basis 在 WebKit 里
+     过渡稳定，grid-template-columns 的插值支持则看版本。 */
+  display: flex;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
   user-select: none; cursor: default;
@@ -48,7 +69,7 @@ body[data-mode="dark"] {
 }
 
 .mono, .brand .s, .side .group, .engine-card .foot, .engine-card .model,
-.crumb, .statusbar .meta, .metric .val, .metric .lb .tag, .chart-card .hd .range,
+.crumb, .hero-meta, .metric .val, .metric .lb .tag, .chart-card .hd .range,
 .kv .r .v, .endpoint, .fmt, .echip, .mtag, .model-card .nm, .model-card .sz,
 .eng-card .nm small, .kvrow b, .log-console, .search, .nav-item .badge,
 .think .th, .msg-meta, .field, .side .group, .cap small {
@@ -56,71 +77,268 @@ body[data-mode="dark"] {
 }
 
 /* ---------- 侧栏 ---------- */
-.side { background: var(--w-side); border-right: 1px solid var(--w-line); padding: 14px 12px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; }
+/* 展开 218px / 折叠 68px 图标 rail：导航不消失，只让出宽度。
+   折叠时「消失」的那些东西一律用 opacity / max-width 过渡，绝不在 t=0 换 display ——
+   一旦某层瞬间塌掉，列宽却还在动，看上去就是先僵一下再跳一格。 */
+.side {
+  flex: 0 0 218px; width: 218px; position: relative;
+  background: var(--w-side); border-right: 1px solid var(--w-line);
+  /* 顶部让出标题栏那一行，侧栏底色因此一路铺到窗口顶边（红绿灯压在它上面） */
+  padding: calc(var(--tb) + 14px) 12px 12px;
+  /* 外壳永不滚动，滚动只发生在「最近对话」自己那一块（见 .recents）。
+     这里以前是 overflow-y:auto：展开动画的前 70ms 里有几帧内容会临时高过窗口
+     （引擎卡那一行被挤成多行，见 .row1 的注释），于是一条滚动条突然冒出来、
+     等宽度涨上去又消失——就是那一下闪。外壳不滚，这条闪烁就不可能发生。 */
+  display: flex; flex-direction: column; gap: 4px; overflow: hidden;
+  /* 把侧栏内部的重排/重绘关在自己这一格：折叠动画每帧都在改列宽，
+     没有 contain 时 WebKit 会把「内部某个 max-width 变了」的失效范围往外扩，
+     连带主区一起重算。paint 顺带把它提成独立合成层（它本来就 overflow:hidden，
+     裁切语义不变）。 */
+  contain: layout paint;
+  transition: flex-basis var(--side-t), width var(--side-t);
+}
 .brand { display: flex; align-items: center; gap: 10px; padding: 6px 8px 14px; }
-.brand .logo { width: 30px; height: 30px; border-radius: 9px; background: linear-gradient(135deg, #FF9F0A, #FF375F 70%, #7B2CBF); position: relative; flex: none; }
-.brand .logo::after { content: "⚡"; position: absolute; inset: 0; display: grid; place-items: center; font-size: 14px; filter: grayscale(1) brightness(3); }
-.brand .t { font-weight: 700; font-size: 14px; }
-.brand .s { font-size: 10.5px; color: var(--w-ink-3); margin-top: -2px; }
-.side .group { font-size: 10px; letter-spacing: .12em; color: var(--w-ink-3); padding: 10px 8px 4px; }
+/* logo 是内联 SVG 猫头（app.js 的 LOGO_SVG），与应用图标同一条轮廓；
+   这里只管尺寸与过渡，不再画渐变底和 ⚡。 */
+.brand .logo { width: 30px; height: 30px; flex: none; transition: opacity var(--side-t); }
+.brand .logo svg { width: 100%; height: 100%; display: block; }
+/* 品牌文字块：折叠时收成 0 宽并淡出，logo 留在 rail 顶部当锚点 */
+.brand .txt { min-width: 0; max-width: 200px; overflow: hidden; transition: max-width var(--side-t), opacity .13s ease; }
+.brand .t { font-weight: 700; font-size: 14px; white-space: nowrap; }
+.brand .s { font-size: 10.5px; color: var(--w-ink-3); margin-top: -2px; white-space: nowrap; }
+.side .group {
+  font-size: 10.5px; letter-spacing: .12em; color: var(--w-ink-3);
+  padding: 12px 10px 5px; overflow: hidden; max-height: 40px;
+  transition: max-height var(--side-t), padding var(--side-t), opacity .13s ease;
+}
+/* 「最近对话」整段：用 grid-template-rows 1fr → 0fr 收，插值按内容高度走，
+   用 max-height 的话（给一个远大于内容的值）前 200ms 几乎不动、最后一下塌完。
+   对话很多时由它自己滚（flex-shrink + min-height:0），品牌、导航、引擎卡都不动。 */
+.recents { display: grid; grid-template-rows: 1fr; overflow: hidden;
+  flex: 0 1 auto; min-height: 0;
+  transition: grid-template-rows var(--side-t), opacity .14s ease; }
+.recents > div { min-height: 0; overflow: hidden auto; overscroll-behavior: contain;
+  scrollbar-width: none; }
+/* 列表这条滚动条一律不画，但滚动本身照旧（滚轮/触控板/键盘都能滚）。
+   为什么不去「只在过渡期藏」：列表视口高度是跟着 grid-template-rows 从 0 长到内容高的，
+   中间十几帧视口都比内容矮（实测 0 → 172.5，内容恒为 173），overflow:auto 就会把滚动条
+   画出来，动画结束再收回去——「展开时闪一下滚动条」就是这么来的。而在过渡期临时挂个
+   类名来藏它，等于每次折叠都让这条滚动条在「原生 overlay ↔ 自定义」两种模式之间切一次，
+   WebKit 每次切换都要重建滚动条、重算这一格的布局，代价比它解决的问题还大。
+   所以这条规则常驻：模式稳定，永不闪，也永不占宽（自定义模式宽 0）。
+   形状上参照 macOS 的 overlay 滚动条——看不见，但滚起来有效果。 */
+.recents > div::-webkit-scrollbar { width: 0; height: 0; }
 .nav-item {
-  display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 8px;
-  color: var(--w-ink-2); font-size: 13px; position: relative; border: 1px solid transparent;
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px;
+  color: var(--w-ink-2); font-size: 14px; font-weight: 500; letter-spacing: .01em;
+  position: relative; border: 1px solid transparent; width: 100%;
+  transition: width var(--side-t), padding var(--side-t), gap var(--side-t),
+              background-color .12s ease, color .12s ease, border-color .12s ease;
 }
 .nav-item:hover { color: var(--w-ink); }
-.nav-item .ico { width: 15px; text-align: center; opacity: .8; font-size: 12px; }
+.nav-item .lbl { white-space: nowrap; max-width: 120px; overflow: hidden;
+  transition: max-width var(--side-t), opacity .13s ease; }
+/* 图标位固定 18×18：不同 SVG 轮廓的视觉重量靠 box 对齐，不靠字体基线 */
+.nav-item .ico { width: 18px; height: 18px; flex: none; display: grid; place-items: center; color: var(--w-ink-3); }
+.nav-item .ico svg { width: 17px; height: 17px; display: block; fill: currentColor; overflow: visible; }
+.nav-item:hover .ico { color: var(--w-ink-2); }
 .nav-item.active { background: var(--w-panel); color: var(--w-ink); font-weight: 600; border-color: var(--w-line); }
+.nav-item.active .ico { color: var(--w-accent); }
 .nav-item.active::before {
   content: ""; position: absolute; left: -12px; top: 8px; bottom: 8px; width: 3px;
   border-radius: 3px; background: var(--w-accent);
 }
 .nav-item .badge {
-  margin-left: auto; font-size: 10px;
+  margin-left: auto; font-size: 10px; flex: none;
   color: var(--w-ink-3); background: var(--w-panel); border: 1px solid var(--w-line);
   border-radius: 6px; padding: 0 6px;
+  transition: opacity .13s ease;
 }
-.recent { font-size: 12px; color: var(--w-ink-2); padding: 5px 9px; border-radius: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent { font-size: 12.5px; color: var(--w-ink-2); padding: 5px 10px; border-radius: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recent:hover { background: var(--w-panel); color: var(--w-ink); }
 .recent .tm { color: var(--w-ink-3); font-size: 10.5px; margin-left: 6px; }
 
-/* 引擎卡 */
-.engine-card { margin-top: auto; background: var(--w-panel); border: 1px solid var(--w-line); border-radius: 11px; padding: 11px 12px; }
-.engine-card .row1 { display: flex; align-items: center; gap: 7px; }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--w-ink-3); flex: none; }
+/* 引擎卡：常态只留「状态点 + 状态文字 + 启停按钮」这一行；鼠标悬停（或键盘聚焦）时，
+   模型切换、引擎 chip、版本行作为一块浮层从卡片顶边向上展开，盖在导航之上。
+   浮层是绝对定位，卡片自身高度不变 —— 所以展开/收起都不会挪动常态那一行和它上面的
+   导航、下面的下载条，收起后原样回到只有状态和启停按钮。 */
+.engine-card { margin-top: auto; position: relative; z-index: 5; background: var(--w-panel); border: 1px solid var(--w-line); border-radius: 11px; padding: 11px 12px;
+  transition: padding var(--side-t), background-color .2s ease, border-color .2s ease; }
+.engine-card .more {
+  position: absolute; left: -1px; right: -1px; bottom: calc(100% - 1px); z-index: 6;
+  background: var(--w-panel); border: 1px solid var(--w-line-strong);
+  border-radius: 11px 11px 4px 4px; padding: 10px 12px 11px;
+  box-shadow: 0 -10px 26px -18px rgba(0, 0, 0, .32);
+  opacity: 0; visibility: hidden; transform: translateY(5px); pointer-events: none;
+  transition: opacity .15s ease, transform .18s ease, visibility 0s linear .18s;
+}
+.engine-card:hover .more,
+.engine-card:focus-within .more {
+  opacity: 1; visibility: visible; transform: none; pointer-events: auto;
+  transition: opacity .15s ease, transform .18s ease, visibility 0s;
+}
+.engine-card:hover, .engine-card:focus-within { border-color: var(--w-line-strong); }
+/* 这一行必须恒为单行、行高恒定。rail 态下 .st/.act 是绝对定位（不占位），展开的一瞬间
+   它们回到常规流，而此刻侧栏才 68px 宽 —— 一旦允许换行，「已停止」+「启动」会被挤成
+   三行，卡片从 28 涨到 76，整列内容瞬间高过窗口，滚动条就是这时冒出来的。
+   固定 min-height 之后，rail ↔ full 之间卡片只剩 padding 在变，行高一动不动。
+   超长状态（「启动中 · 加载权重」）用省略号截断，不靠换行兜底。 */
+.engine-card .row1 { display: flex; align-items: center; gap: 7px;
+  min-height: 22px; white-space: nowrap; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--w-ink-3); flex: none;
+  transition: transform var(--side-t); }
 .dot.ok { background: var(--w-ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--w-ok) 18%, transparent); }
 .dot.warn { background: var(--w-warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--w-warn) 18%, transparent); }
 .dot.err { background: var(--w-err); box-shadow: 0 0 0 3px color-mix(in srgb, var(--w-err) 18%, transparent); }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
 .dot.pulse { animation: pulse 1.6s ease-in-out infinite; }
-.engine-card .st { font-weight: 600; font-size: 12.5px; }
-.engine-card .act { margin-left: auto; font-size: 11px; border: 1px solid var(--w-line-strong); border-radius: 7px; padding: 2px 9px; color: var(--w-ink-2); }
+.engine-card .st { font-weight: 600; font-size: 12.5px; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; }
+.engine-card .act { flex: none; margin-left: auto; font-size: 11px; border: 1px solid var(--w-line-strong); border-radius: 7px; padding: 2px 9px; color: var(--w-ink-2); }
 .engine-card .act:hover { color: var(--w-ink); border-color: var(--w-ink-3); }
 .engine-card .act.busy { opacity: .5; pointer-events: none; }
-.engine-card .model { font-size: 11px; color: var(--w-ink-2); margin-top: 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.engine-card .model { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--w-ink-2); cursor: pointer; }
+.engine-card .model .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.engine-card .model .caret { flex: none; margin-left: auto; color: var(--w-ink-3); font-size: 12px; line-height: 1; }
+.engine-card .model:hover .nm { color: var(--w-ink); }
 .engine-card .chips { display: flex; gap: 4px; margin-top: 8px; }
 .echip { font-size: 10px; border-radius: 6px; padding: 2px 8px; border: 1px solid var(--w-line); color: var(--w-ink-3); }
 .echip.on { background: var(--w-accent-soft); color: var(--w-accent); border-color: color-mix(in srgb, var(--w-accent) 35%, transparent); font-weight: 600; }
 .engine-card .foot { display: flex; justify-content: space-between; margin-top: 9px; font-size: 10.5px; color: var(--w-ink-3); }
 
+/* 折叠手柄：一枚安静的「面板」图标按钮，永远待在标题栏那一行上（top 2 + 24 高 → 中心 y=14，
+   和红绿灯同轴）。横向两个停靠点：
+     · 展开态 left 182 → 侧栏右缘 218 内缩 12，正好贴在侧栏标题栏那一行的右端；
+     · 折叠态 left 72  → 红绿灯（实测占 x 10…61）右侧留 11px。
+   所以它既属于侧栏、又在侧栏收没之后仍有地方站：整段位移是 110px 的横滑，
+   和列宽用同一条曲线，看着就是「侧栏缩回去，按钮退到红绿灯旁边」。
+   注意它必须挂在 #side 之外（见 index.html）：折叠态 x=72 已经在 68 宽的侧栏外面，
+   放在里面会被 overflow:hidden / contain:paint 裁没。
+   不用边框：这一栏里带边框的都代表「块」，孤零零一个描边方块会读成异类。 */
+.side-toggle {
+  -webkit-appearance: none; appearance: none;
+  position: fixed; top: 2px; left: 182px; z-index: 40;
+  width: 24px; height: 24px; padding: 0; border: 0; border-radius: 7px;
+  display: grid; place-items: center;
+  background: transparent; color: var(--w-ink-2); cursor: pointer;
+  transition: left var(--side-t), background-color .12s ease, color .12s ease, transform .12s ease;
+}
+.side-toggle svg { width: 16px; height: 16px; display: block; }
+/* 字色分级而不是透明度分级：16px 描边图标一降 alpha 就毛边。
+   常态 ink-2（5.4:1，非文本 3:1 之上）——安静但不虚；自己悬停才加深并加浅底。 */
+.side-toggle:hover { color: var(--w-ink); background: color-mix(in srgb, var(--w-ink) 8%, transparent); }
+.side-toggle:active { transform: scale(.93); }
+/* 键盘焦点：主题色实心环（不降 alpha，保证 3:1 以上可见度），只在 Tab 进入时出现 */
+.side-toggle:focus-visible { outline: 2px solid var(--w-accent); outline-offset: 1px; }
+body.launch-mode .side-toggle { display: none; }
+
+/* ---------- 折叠态（图标 rail） ---------- */
+body[data-side="rail"] .side { flex-basis: 68px; width: 68px; }
+body[data-side="rail"] .side-toggle svg { width: 17px; height: 17px; }
+/* 折叠态：按钮退到红绿灯右侧 11px 处（灯占 10…61），和展开态同一行、同一高度，
+   只横滑不改纵坐标——所以整段动画只有一个方向，不会看着「往下掉」。 */
+body[data-side="rail"] .side-toggle { left: 72px; }
+/* 品牌：只留 logo 当 rail 顶部的锚点，文字块收成 0 宽 */
+body[data-side="rail"] .brand .txt { max-width: 0; opacity: 0; }
+/* 分组标题、最近对话、下载条：高度收 0，不换 display（换 display 等于 t=0 直接塌） */
+body[data-side="rail"] .side .group { max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; }
+body[data-side="rail"] .recents { grid-template-rows: 0fr; opacity: 0; }
+/* 图标居中靠内边距而不是 justify-content：后者不能过渡，t=0 一切换图标就从
+   左端跳到中间。12 让 18 的图标落在 rail 中轴（12 + 1 描边 + 12 + 9 = 34）。 */
+body[data-side="rail"] .nav-item { padding: 8px 12px; }
+/* 折叠后图标是唯一信息：放一档到 19px，别在 68px 的 rail 里显小 */
+body[data-side="rail"] .nav-item .ico svg { width: 19px; height: 19px; }
+body[data-side="rail"] .nav-item .lbl { max-width: 0; opacity: 0; }
+/* 徽标改为绝对定位 + 淡出：留在 flex 流里会把居中的图标挤偏 */
+body[data-side="rail"] .nav-item .badge { position: absolute; right: 6px; opacity: 0; }
+body[data-side="rail"] .nav-item.active::before { left: -7px; }
+/* 下载条：rail 里没有它的位置，高度收 0（不换 display，避免 t=0 直接消失） */
+body[data-side="rail"] .side-dl { max-height: 0; margin: 0; padding: 0; border-width: 0; opacity: 0; overflow: hidden; }
+/* 引擎卡在 rail 里只留状态点：内边距/底色/描边都过渡，状态文字挪出文档流后淡出。
+   点本身要落在 rail 中轴上，用 transform 平移（不参与布局，也不会有 justify-content
+   那种「t=0 先跳到中间再滑回来」）——17 = 34 - 13 - 4，从卡片左内边距挪到中轴。
+   上下内边距取 5 而不是 9：.row1 现在恒为 22 高（见其注释），9 会把卡片撑到 42，
+   5 让 22 + 5×2 + 描边 2 = 34，状态点正好落在卡片中轴（1 + 5 + 11 = 17）。 */
+body[data-side="rail"] .engine-card { padding: 5px 0; background: transparent; border-color: transparent; }
+body[data-side="rail"] .engine-card:hover,
+body[data-side="rail"] .engine-card:focus-within { border-color: transparent; box-shadow: none; }
+body[data-side="rail"] .engine-card .dot { transform: translateX(17px); }
+body[data-side="rail"] .engine-card .st,
+body[data-side="rail"] .engine-card .act { position: absolute; opacity: 0; pointer-events: none; }
+body[data-side="rail"] .engine-card .more,
+body[data-side="rail"] .engine-card .model,
+body[data-side="rail"] .engine-card .chips,
+body[data-side="rail"] .engine-card .foot { display: none; }
+
 /* ---------- 主区 ---------- */
-.main { padding: 22px 26px; overflow-y: auto; position: relative; }
+/* 顶部让出标题栏那一行：正文统一从 y = 28 + 22 开始，和改造前的位置一模一样 */
+.main { flex: 1 1 0; min-width: 0; padding: calc(var(--tb) + 22px) 26px 22px; overflow-y: auto; position: relative; }
+/* 正文滚上去时不要从红绿灯底下穿过去：盖一条与画布同色的标题栏底。
+   left 跟着侧栏边界走（和列宽同一条曲线），折叠时不会在中间留一道旧位置的白边。 */
+.main::before {
+  content: ""; position: fixed; top: 0; left: 218px; right: 0; height: var(--tb);
+  background: var(--w-canvas); z-index: 30; pointer-events: none;
+  transition: left var(--side-t);
+}
+body[data-side="rail"] .main::before { left: 68px; }
+body.launch-mode .main::before { left: 0; }
 /* 切页淡入：弱化整页 innerHTML 替换的闪烁感 */
 @keyframes pageIn { from { opacity: .3; } to { opacity: 1; } }
 .main.page-in > :not(.popover) { animation: pageIn .16s ease-out; }
-.crumb { font-size: 10.5px; letter-spacing: .1em; color: var(--w-ink-3); text-transform: uppercase; }
-.main h2.pg { font-size: 21px; font-weight: 800; letter-spacing: -0.01em; margin: 2px 0 2px; }
-.main .sub { font-size: 12.5px; color: var(--w-ink-2); margin-bottom: 18px; }
+.main h2.pg { font-size: 21px; font-weight: 800; letter-spacing: -0.01em; margin: 2px 0 16px; }
 
-/* 状态条 */
-.statusbar {
-  display: flex; align-items: center; gap: 14px;
+/* 概览主卡：状态 + 模型信息 + 启停 + 模型/引擎切换，一卡搞定 */
+.hero {
   background: var(--w-panel); border: 1px solid var(--w-line);
-  border-radius: 12px; padding: 12px 16px; margin-bottom: 14px;
+  border-radius: 14px; padding: 15px 18px 13px; margin-bottom: 14px;
 }
-.statusbar .lead { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13.5px; }
-.statusbar .meta { font-size: 11.5px; color: var(--w-ink-2); display: flex; gap: 14px; flex-wrap: wrap; }
-.statusbar .hint { margin-left: auto; font-size: 11px; color: var(--w-ink-3); }
-.statusbar .errline { width: 100%; font-size: 11.5px; color: var(--w-err); background: color-mix(in srgb, var(--w-err) 9%, transparent); border-radius: 6px; padding: 4px 10px; }
+.hero-top { display: flex; align-items: center; gap: 16px; }
+.hero-status { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.hero-status .dot { width: 11px; height: 11px; }
+.hero-st { font-size: 15px; font-weight: 800; letter-spacing: .01em; }
+.hero-stage { font-size: 11.5px; color: var(--w-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hero-actions { margin-left: auto; display: flex; gap: 8px; flex: none; }
+.hero-actions .btn-p { margin-left: 0; font-size: 12px; padding: 5px 16px; }
+.btn-p.danger { background: var(--w-err); color: #fff; margin-left: 0; }
+/* 模型切换：整块做成有边界、有常驻动作的按钮，而不是一行「标题 + 小箭头」。
+   边界 + 右侧胶囊共同给出「这里可点」的信号；hover 时描边与胶囊一起转成强调色。 */
+.hero-model {
+  display: flex; align-items: center; gap: 10px;
+  margin: 12px 0 8px; min-width: 0; max-width: 100%;
+}
+.hero-model.switch {
+  width: fit-content; cursor: pointer;
+  padding: 7px 12px 7px 9px; border-radius: 12px;
+  border: 1px solid var(--w-line-strong); background: var(--w-panel-2);
+  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+.hero-model.switch:hover {
+  border-color: color-mix(in srgb, var(--w-accent) 55%, var(--w-line-strong));
+  background: var(--w-accent-soft);
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--w-accent) 16%, transparent);
+}
+.hero-model.switch:active { box-shadow: inset 0 1px 3px color-mix(in srgb, var(--w-ink) 12%, transparent); }
+.hero-model.switch:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--w-accent) 70%, transparent);
+  outline-offset: 2px;
+}
+.hm-eng { font-size: 10px; color: #fff; border-radius: 6px; padding: 2.5px 9px; font-weight: 700; letter-spacing: .04em; flex: none; }
+.hm-name { font-size: 21px; font-weight: 800; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* 动作胶囊：常驻可见，不等 hover 才提示「可以切换」 */
+.hm-switch {
+  flex: none; display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 9px 3px 7px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; letter-spacing: .02em; white-space: nowrap;
+  color: var(--w-accent); background: var(--w-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--w-accent) 30%, transparent);
+  transition: background-color .15s ease, color .15s ease, border-color .15s ease;
+}
+.hm-switch svg { width: 11px; height: 11px; display: block; transition: transform .15s ease; }
+.hero-model.switch:hover .hm-switch {
+  background: var(--w-accent); color: #fff; border-color: transparent;
+}
+.hero-model.switch:hover .hm-switch svg { transform: translateY(1px); }
+.hero-meta { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11px; color: var(--w-ink-2); }
 
 /* 指标带 */
 .metrics { display: grid; grid-template-columns: 1.6fr 1fr 1fr 1fr; gap: 12px; margin-bottom: 14px; }
@@ -140,7 +358,12 @@ body[data-mode="dark"] {
 .chart-card .hd .range { font-size: 10.5px; color: var(--w-ink-3); display: flex; gap: 8px; }
 .chart-card .hd .range span { cursor: pointer; }
 .chart-card .hd .range .on { color: var(--w-accent); font-weight: 600; }
+.chart-card .hd .now { font-size: 11px; color: var(--w-ink-2); font-variant-numeric: tabular-nums; }
 .spark { display: block; width: 100%; height: 88px; }
+/* 吞吐 + 接受率并排，共用同一时间窗 */
+.chart-row { display: grid; grid-template-columns: 1.3fr 1fr; gap: 12px; margin-bottom: 14px; }
+.chart-row .chart-card { margin-bottom: 0; min-width: 0; }
+@media (max-width: 820px) { .chart-row { grid-template-columns: 1fr; } }
 
 /* 底部两栏 */
 .cols { display: grid; grid-template-columns: 1.4fr 1fr; gap: 12px; }
@@ -150,18 +373,22 @@ body[data-mode="dark"] {
 .kv .r { display: flex; justify-content: space-between; font-size: 12px; padding: 4px 0; border-bottom: 1px dashed var(--w-line); gap: 10px; }
 .kv .r .k { color: var(--w-ink-2); flex: none; }
 .kv .r .v { font-variant-numeric: tabular-nums; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.endpoint { display: flex; align-items: center; gap: 8px; background: var(--w-panel-2); border: 1px solid var(--w-line); border-radius: 9px; padding: 9px 12px; font-size: 12px; margin-bottom: 8px; }
-.endpoint .url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: text; cursor: text; }
-.endpoint .copy { margin-left: auto; font-size: 10.5px; border: 1px solid var(--w-line-strong); border-radius: 6px; padding: 2px 9px; color: var(--w-ink-2); background: var(--w-panel); }
+.endpoint { display: flex; align-items: center; gap: 8px; background: var(--w-panel-2); border: 1px solid var(--w-line); border-radius: 9px; padding: 9px 10px; font-size: 12px; margin-bottom: 8px; }
+.endpoint .url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.endpoint .copy { margin-left: auto; font-size: 10.5px; border: 1px solid var(--w-line-strong); border-radius: 6px; padding: 2px 9px; color: var(--w-ink-2); background: var(--w-panel); flex: none; }
 .endpoint .copy:hover { color: var(--w-ink); border-color: var(--w-ink-3); }
-.fmt-badges { display: flex; gap: 6px; flex-wrap: wrap; }
-.fmt { font-size: 10px; border-radius: 6px; padding: 2px 8px; }
+.gw-hint { font-size: 10.5px; color: var(--w-ink-3); line-height: 1.5; }
+.fmt { font-size: 10px; border-radius: 6px; padding: 2px 7px; letter-spacing: .02em; flex: none; }
 .fmt.o { background: var(--w-ok-soft); color: var(--w-ok); }
-.fmt.c { background: var(--w-info); color: #fff; opacity: .92; }
+.fmt.c { background: color-mix(in srgb, var(--w-info) 14%, transparent); color: var(--w-info); }
 
 /* ---------- 对话 ---------- */
-.chat-main { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
-.chat-head { display: flex; align-items: center; gap: 10px; padding: 14px 22px; border-bottom: 1px solid var(--w-line); background: var(--w-panel); }
+/* 对话页自己是贴边的两段式（顶栏 + 输入框），padding 归零；
+   但顶部那条标题栏仍要让出来，否则顶栏会被 .main::before 的标题栏底盖住半截。 */
+.chat-main { display: flex; flex-direction: column; padding: var(--tb) 0 0; overflow: hidden; }
+/* 顶栏与输入条不再铺白底：整页同用画布底色，去掉对话页那两块白，
+   气泡与输入框自身的面板底保留，层次靠边线区分。 */
+.chat-head { display: flex; align-items: center; gap: 10px; padding: 14px 22px; border-bottom: 1px solid var(--w-line); background: transparent; }
 .chat-head .mdl { font-weight: 700; font-size: 13px; cursor: pointer; min-width: 0; }
 .chat-head .mdl:hover { color: var(--w-accent); }
 .chat-head .mdl small { display: block; font-size: 10px; font-weight: 400; color: var(--w-ink-3); }
@@ -175,22 +402,35 @@ body[data-mode="dark"] {
 .icon-btn:hover { color: var(--w-ink); }
 
 .msgs { flex: 1; padding: 20px 26px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
+/* 侧栏折叠动画每帧都在改主区宽度 → 主区整块逐帧重排。content-visibility 让
+   视口外的消息不参与布局/绘制，长对话（几百条）时主区每帧只剩屏幕上十几条要
+   重排——这是折叠动画在对话页卡顿的大头。contain-intrinsic-size 用 auto 档：
+   渲染过一次就记住真实高度，滚动条高度自校正，不会来回跳。 */
 .msg { display: flex; gap: 11px; max-width: 76%; }
+/* 侧栏折叠动画每帧都在改主区宽度 → 主区整块逐帧重排。content-visibility 让
+   视口外的消息不参与布局/绘制，长对话（几百条）时主区每帧只剩屏幕上十几条要
+   重排——这是折叠动画在对话页卡顿的大头。contain-intrinsic-size 用 auto 档：
+   渲染过一次就记住真实高度，滚动条高度自校正，不会来回跳。
+   但它只在折叠/展开的动画窗口内（body.side-anim，见 app.js applySidebar）开着：
+   CV 下新插入的 DOM 在当帧不排视口外内容，scrollHeight 严重偏低（实测 601 vs
+   1944），恢复滚动位的 scrollTop 赋值会被钳位到 0 且不可逆——引擎启动期间
+   每秒一次重绘，对话就被一次次弹回顶部。平时必须保持关闭。 */
+body.side-anim .msg { content-visibility: auto; contain-intrinsic-size: auto 72px; }
 .msg .av { width: 28px; height: 28px; border-radius: 9px; flex: none; }
 .msg.user { align-self: flex-end; flex-direction: row-reverse; }
 .msg.user .av { background: var(--w-ink); color: var(--w-canvas); display: grid; place-items: center; font-size: 10px; font-weight: 700; }
 .msg.ai .av { background: linear-gradient(135deg, #FF9F0A, #FF375F 70%, #7B2CBF); }
-.bubble { border-radius: 14px; padding: 10px 14px; font-size: 13px; user-select: text; cursor: auto; min-width: 0; overflow-wrap: break-word; }
+.bubble { border-radius: 14px; padding: 10px 14px; font-size: 13px; min-width: 0; overflow-wrap: break-word; }
 .msg.user .bubble { background: var(--w-ink); color: var(--w-canvas); border-bottom-right-radius: 4px; }
 .msg.ai .bubble { background: var(--w-panel); border: 1px solid var(--w-line); border-bottom-left-radius: 4px; }
 .bubble p { margin: 0 0 8px; } .bubble p:last-child { margin-bottom: 0; }
-.bubble pre { background: var(--w-panel-2); border: 1px solid var(--w-line); border-radius: 8px; padding: 10px 12px; overflow-x: auto; font-family: ui-monospace, monospace; font-size: 11.5px; user-select: text; }
+.bubble pre { background: var(--w-panel-2); border: 1px solid var(--w-line); border-radius: 8px; padding: 10px 12px; overflow-x: auto; font-family: ui-monospace, monospace; font-size: 11.5px; }
 .bubble code { font-family: ui-monospace, monospace; font-size: 12px; background: var(--w-panel-2); border: 1px solid var(--w-line); border-radius: 4px; padding: 0 4px; }
 .bubble pre code { border: none; background: none; padding: 0; }
 .think { border-left: 2px solid var(--w-accent); padding: 2px 0 2px 12px; margin-bottom: 8px; cursor: pointer; }
 .think .th { font-size: 10px; letter-spacing: .1em; color: var(--w-accent); margin-bottom: 3px; }
 .think .tb { font-size: 12px; color: var(--w-ink-3); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.think.open .tb { display: block; user-select: text; }
+.think.open .tb { display: block; }
 .msg-meta { font-size: 10px; color: var(--w-ink-3); margin-top: 6px; display: flex; gap: 10px; }
 .msg-meta .lnk { cursor: pointer; } .msg-meta .lnk:hover { color: var(--w-ink); }
 .livestrip { display: flex; align-items: center; gap: 10px; padding: 8px 22px; border-top: 1px solid var(--w-line); background: var(--w-panel-2); font-size: 11px; color: var(--w-accent); font-weight: 600; }
@@ -199,7 +439,7 @@ body[data-mode="dark"] {
 .spinner { width: 12px; height: 12px; border: 2px solid color-mix(in srgb, var(--w-accent) 30%, transparent); border-top-color: var(--w-accent); border-radius: 50%; animation: spin .8s linear infinite; flex: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.inputbar { border-top: 1px solid var(--w-line); background: var(--w-panel); padding: 12px 22px 14px; }
+.inputbar { border-top: 1px solid var(--w-line); background: transparent; padding: 12px 22px 14px; }
 .inputbox { border: 1px solid var(--w-line-strong); border-radius: 12px; background: var(--w-panel-2); padding: 10px 14px 8px; }
 .inputbox:focus-within { border-color: color-mix(in srgb, var(--w-accent) 55%, transparent); }
 .inputbox textarea {
@@ -223,13 +463,14 @@ body[data-mode="dark"] {
 
 /* ---------- 模型 ---------- */
 .chipbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
-.search { display: flex; align-items: center; gap: 8px; background: var(--w-panel); border: 1px solid var(--w-line-strong); border-radius: 9px; padding: 6px 12px; font-size: 12.5px; color: var(--w-ink-3); min-width: 200px; }
+/* 模型页筛选条里的引擎 chip 与 .filter 同排：形状必须一致（胶囊），否则一行里
+   方圆混杂。只作用于 chipbar，侧栏 / 总览里作静态标签的 .echip 保持小方角。 */
+.chipbar .echip { font-size: 11.5px; border-radius: 999px; padding: 3px 12px; cursor: pointer; }
+.search { display: flex; align-items: center; gap: 8px; background: var(--w-panel); border: 1px solid var(--w-line-strong); border-radius: 999px; padding: 6px 14px; font-size: 12.5px; color: var(--w-ink-3); min-width: 200px; }
 .search input { border: none; outline: none; background: transparent; font-family: inherit; font-size: 12.5px; color: var(--w-ink); width: 100%; }
 .filter { font-size: 11.5px; border: 1px solid var(--w-line); border-radius: 999px; padding: 3px 12px; color: var(--w-ink-2); cursor: pointer; background: transparent; }
 .filter:hover { color: var(--w-ink); border-color: var(--w-line-strong); }
 .filter.on { background: var(--w-ink); color: var(--w-canvas); border-color: var(--w-ink); }
-.import-bar { border: 1.5px dashed var(--w-line-strong); border-radius: 10px; padding: 9px 14px; font-size: 12px; color: var(--w-ink-2); display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
-.import-bar .plus { color: var(--w-accent); font-weight: 700; }
 .model-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .model-card { background: var(--w-panel); border: 1px solid var(--w-line); border-radius: 12px; padding: 13px 15px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .model-card.inuse { border-color: color-mix(in srgb, var(--w-ok) 45%, transparent); }
@@ -238,12 +479,16 @@ body[data-mode="dark"] {
 .mtag { font-size: 9.5px; color: var(--w-ink-2); border: 1px solid var(--w-line); border-radius: 6px; padding: 1px 7px; }
 .mtag.ok { background: var(--w-ok-soft); color: var(--w-ok); border-color: transparent; font-weight: 600; }
 .model-card .ft { margin-top: auto; display: flex; align-items: center; gap: 8px; }
-.model-card .sz { font-size: 10.5px; color: var(--w-ink-3); }
+/* sz 弹性占满剩余宽度：让「使用 / 下载」和「⋯」统一靠右成组，草稿卡（无操作
+   按钮）也能把「⋯」推到最右，不依赖 .btn-p 的 margin-left:auto 凑布局。 */
+.model-card .sz { font-size: 10.5px; color: var(--w-ink-3); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .btn-p { margin-left: auto; background: var(--w-ink); color: var(--w-canvas); font-size: 11.5px; font-weight: 600; border-radius: 999px; padding: 4px 14px; cursor: pointer; border: none; }
 .btn-p.ghost { background: transparent; color: var(--w-ink-2); border: 1px solid var(--w-line-strong); font-weight: 500; }
 .btn-p.ghost:hover { color: var(--w-ink); border-color: var(--w-ink-3); }
 .btn-p.dl { background: var(--w-accent); color: #fff; margin-left: 0; }
 .btn-p[disabled] { opacity: .5; pointer-events: none; }
+/* 模型卡的「⋯」：胶囊 ghost 款，与「使用 / 下载」同高同形，收在一组靠右。 */
+.btn-p.more { margin-left: 0; padding: 4px 10px; line-height: 1; }
 
 /* ---------- 引擎 ---------- */
 .eng-list { display: flex; flex-direction: column; gap: 12px; }
@@ -251,19 +496,36 @@ body[data-mode="dark"] {
 .eng-card .hd { display: flex; align-items: center; gap: 11px; margin-bottom: 10px; }
 .eng-ico { width: 34px; height: 34px; border-radius: 10px; flex: none; display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 13px; }
 .eng-card .nm { font-weight: 700; font-size: 14px; }
-.eng-card .nm small { display: block; font-weight: 400; font-size: 10px; color: var(--w-ink-3); }
 .eng-card .hd .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .kvrow { display: flex; gap: 22px; font-size: 12px; color: var(--w-ink-2); flex-wrap: wrap; }
 .kvrow b { color: var(--w-ink); font-weight: 600; }
 .kvrow .upd { color: var(--w-warn); }
 .eng-card .ft { margin-top: 11px; display: flex; gap: 8px; align-items: center; }
 .eng-card .ft .btn-p { margin-left: 0; }
-.eng-card .ft .btn-p.right { margin-left: auto; }
+/* 引擎卡片的「⋯」与模型卡、对话页、日志页同款：icon-btn 方形图标按钮，靠右。 */
+.eng-card .ft .icon-btn { margin-left: auto; }
 
 /* ---------- 日志 ---------- */
-.log-console { background: var(--w-panel-2); border: 1px solid var(--w-line); border-radius: 12px; padding: 12px 16px; font-size: 11px; line-height: 2.0; overflow-y: auto; user-select: text; cursor: auto; }
-.log-line { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--w-ink-2); border-radius: 5px; }
-.log-line .ts { color: var(--w-ink-3); margin-right: 10px; }
+.log-console { background: var(--w-panel-2); border: 1px solid var(--w-line); border-radius: 12px; padding: 10px 12px; font-size: 11px; line-height: 1.9; overflow-y: auto; }
+/* 日志页整页不滚：标题 + 筛选条固定在顶部，只有 #logConsole 内滚。
+   flex:1 + min-height:0 让控制台吃掉剩余高度，overflow-y:auto 才真正生效
+   （否则它被内容撑高，滚动又落回 .main 整页）。 */
+.main.logs-main { display: flex; flex-direction: column; overflow-y: hidden; }
+.main.logs-main .log-console { flex: 1 1 0; min-height: 0; overscroll-behavior: contain; }
+/* 一条一行：正文超出用省略号截断，点击展开完整详情（保留原始换行/长串）。 */
+/* 一条一行：正文超出用省略号截断，点击展开完整详情（保留原始换行/长串）。
+   content-visibility 同 .msg 的理由：800 行日志在折叠动画里每帧全量重排是
+   日志页卡顿的大头；视口外的行直接不排。 */
+.log-line { display: flex; align-items: baseline; gap: 8px; padding: 1px 4px; border-radius: 5px; color: var(--w-ink-2); cursor: pointer; }
+/* CV 只在折叠/展开动画窗口内开（body.side-anim），理由同 .msg：
+   平时开着会让秒级心跳重绘后的滚动位恢复被钳位回 0。 */
+body.side-anim .log-line { content-visibility: auto; contain-intrinsic-size: auto 22px; }
+.log-line:hover { background: color-mix(in srgb, var(--w-ink) 6%, transparent); }
+.log-line .ts { color: var(--w-ink-3); flex: none; font-variant-numeric: tabular-nums; }
+.log-line .lv { flex: none; }
+.log-line .body { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.log-line.open { align-items: flex-start; background: color-mix(in srgb, var(--w-ink) 4%, transparent); box-shadow: inset 2px 0 0 var(--w-line-strong); }
+.log-line.open .body { white-space: pre-wrap; overflow-wrap: anywhere; overflow: visible; text-overflow: clip; }
 .lv { display: inline-block; width: 48px; font-weight: 600; }
 .lv.i { color: var(--w-info); } .lv.w { color: var(--w-warn); } .lv.e { color: var(--w-err); }
 .log-line.err { background: color-mix(in srgb, var(--w-err) 9%, transparent); }
@@ -271,7 +533,7 @@ body[data-mode="dark"] {
 
 /* ---------- 设置 ---------- */
 .set-card { background: var(--w-panel); border: 1px solid var(--w-line); border-radius: 12px; padding: 4px 18px; margin-bottom: 12px; }
-.set-row { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--w-line); font-size: 13px; }
+.set-row { display: flex; align-items: center; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--w-line); font-size: 13px; }
 .set-row:last-child { border-bottom: none; }
 .set-row .lab b { display: block; font-weight: 600; font-size: 13px; }
 .set-row .lab small { color: var(--w-ink-3); font-size: 11px; }
@@ -294,7 +556,6 @@ body[data-mode="dark"] {
 /* 确认条（切换模型等） */
 .confirm-strip { display: flex; align-items: center; gap: 10px; background: var(--w-warn-soft); border: 1px solid color-mix(in srgb, var(--w-warn) 40%, transparent); border-radius: 11px; padding: 10px 16px; font-size: 12.5px; color: var(--w-warn); font-weight: 600; margin-bottom: 12px; }
 .confirm-strip .btn-main { margin-left: auto; background: var(--w-ink); color: var(--w-canvas); font-size: 12px; border-radius: 999px; padding: 5px 16px; cursor: pointer; border: none; }
-.confirm-strip .btn-ghost { background: transparent; border: 1px solid color-mix(in srgb, var(--w-warn) 40%, transparent); color: var(--w-warn); font-size: 12px; border-radius: 999px; padding: 5px 14px; cursor: pointer; }
 
 /* Toast */
 #toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(6px); background: var(--w-ink); color: var(--w-canvas); font-size: 12.5px; border-radius: 999px; padding: 8px 20px; opacity: 0; pointer-events: none; transition: all .2s; z-index: 60; }
@@ -311,17 +572,17 @@ body[data-mode="dark"] {
 .mask { position: absolute; inset: 0; background: color-mix(in srgb, var(--w-ink) 28%, transparent); display: grid; place-items: center; pointer-events: auto; }
 .modal { background: var(--w-panel); border: 1px solid var(--w-line-strong); border-radius: 14px; box-shadow: 0 24px 60px -16px rgb(0 0 0 / .45); width: 400px; max-width: calc(100vw - 80px); max-height: calc(100vh - 100px); display: flex; flex-direction: column; overflow: hidden; }
 .modal.wide { width: 620px; }
-.modal-title { font-weight: 700; font-size: 14px; padding: 14px 18px 10px; display: flex; align-items: baseline; gap: 8px; }
+.modal-title { font-weight: 700; font-size: 14px; padding: 16px 20px 12px; display: flex; align-items: baseline; gap: 8px; }
 .modal-title small { font-weight: 400; font-size: 10.5px; color: var(--w-ink-3); }
-.modal-text { font-size: 12.5px; color: var(--w-ink-2); padding: 0 18px 6px; line-height: 1.6; }
-.modal-body { overflow-y: auto; padding: 0 18px; }
-.modal-body .set-card { margin-bottom: 10px; padding: 2px 4px; border-color: var(--w-line); }
-.modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px 14px; }
+.modal-text { font-size: 12.5px; color: var(--w-ink-2); padding: 0 20px 6px; line-height: 1.6; }
+.modal-body { overflow-y: auto; padding: 2px 20px 10px; }
+.modal-body .set-card { margin-bottom: 12px; padding: 4px 16px; border-color: var(--w-line); }
+.modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 20px 16px; }
 .modal .btn-main { background: var(--w-accent); color: #fff; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 5px 16px; cursor: pointer; border: none; }
 .modal .btn-quiet { background: transparent; color: var(--w-ink-2); border: 1px solid var(--w-line-strong); font-size: 12px; border-radius: 999px; padding: 5px 14px; cursor: pointer; }
-.card-hd { font-weight: 700; font-size: 12.5px; padding: 10px 0 6px; }
+.card-hd { font-weight: 700; font-size: 12.5px; padding: 12px 0 8px; }
 .card-hd small { font-weight: 400; color: var(--w-ink-3); font-size: 10.5px; margin-left: 6px; }
-.set-note { font-size: 10.5px; color: var(--w-ink-3); padding: 4px 0 10px; line-height: 1.5; }
+.set-note { font-size: 11px; color: var(--w-ink-3); padding: 6px 0 12px; line-height: 1.55; }
 .tgl.disabled { opacity: .45; pointer-events: none; }
 .field[disabled] { opacity: .5; }
 .cp-sys { width: 260px; font-family: inherit; font-size: 12px; color: var(--w-ink); background: var(--w-panel-2); border: 1px solid var(--w-line-strong); border-radius: 8px; padding: 7px 10px; resize: vertical; }
@@ -339,8 +600,9 @@ body[data-mode="dark"] {
 .dl-btns { display: flex; gap: 6px; flex: none; }
 
 /* ---------- 启动页 ---------- */
-/* 启动页隐藏侧栏后 body 网格退化为单列：两列模板下 main 会掉进 218px 窄列，整页塌陷 */
-body.launch-mode { grid-template-columns: 1fr; }
+/* 启动页隐藏侧栏（脚本置 display:none），main 独占整幅宽度 */
+body.launch-mode .side { display: none; }
+body.launch-mode .main { flex: 1 1 100%; }
 .main.launch-main { display: block; }
 .launch-wrap { max-width: 700px; margin: 4vh auto 0; padding-bottom: 40px; }
 .launch-title { font-size: 24px; font-weight: 800; letter-spacing: -0.01em; margin: 26px 0 6px; }
@@ -359,5 +621,13 @@ body.launch-mode { grid-template-columns: 1fr; }
 .launch-note { font-size: 10.5px; color: var(--w-ink-3); line-height: 1.6; margin-top: 14px; }
 .launch-start { display: flex; justify-content: center; margin-top: 18px; }
 .launch-start .btn-p { margin-left: 0; font-size: 13px; padding: 7px 30px; }
-.side-dl { margin-top: 8px; font-size: 11px; color: var(--w-accent); border: 1px dashed color-mix(in srgb, var(--w-accent) 40%, transparent); border-radius: 8px; padding: 5px 9px; cursor: pointer; }
+/* overflow:hidden 必须写在基类，不能只写在 rail 那条规则里：rail 态下它靠
+   max-height:0 收成 0 高，靠 overflow:hidden 把内容切掉。展开的瞬间 max-height 还是 0、
+   而 overflow 一失去 hidden 就变成 visible —— 那 28px 的文字虽然看不见，却以
+   「溢出内容」的身份算进了祖先的滚动区域（实测让 scrollHeight 多出 38px），
+   滚动条就是这么冒出来的。nowrap 同理：别在这时候被挤成两行。 */
+.side-dl { margin-top: 8px; font-size: 11px; color: var(--w-accent); border: 1px dashed color-mix(in srgb, var(--w-accent) 40%, transparent); border-radius: 8px; padding: 5px 9px; cursor: pointer; max-height: 40px;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  transition: max-height var(--side-t), margin var(--side-t), padding var(--side-t),
+              border-width var(--side-t), opacity .13s ease, background-color .12s ease; }
 .side-dl:hover { background: var(--w-accent-soft); }

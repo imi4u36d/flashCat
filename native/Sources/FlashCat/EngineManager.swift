@@ -2,6 +2,11 @@ import Foundation
 import FlashCatKit
 
 extension ServerStats {
+    /// Host facts are process-wide constants; reading them once keeps the 1 s
+    /// poll from re-running sysctl on every refresh.
+    private static let hostChipName = DeviceProfile.current().chipName
+    private static let hostPhysicalMemory = Int(ProcessInfo.processInfo.physicalMemory)
+
     /// Bridge the engine-neutral status into the shape the dashboards already
     /// render. Fields the other engines do not report keep their last value.
     init(engineStatus status: EngineStatus, previous: ServerStats?) {
@@ -20,8 +25,12 @@ extension ServerStats {
         requestsFailed = status.requestsFailed
         startedAt = status.startedAt
         instancePid = status.processIdentifier.map(Int.init)
-        deviceName = previous?.deviceName
-        physicalMemoryBytes = previous?.physicalMemoryBytes
+        // Every engine runs on this machine, so device facts come straight
+        // from the host. The old `previous?` hand-down could never be filled
+        // (ServerStats.parse is not on this path), which left 内存压力 and
+        // 设备 showing "—" forever.
+        deviceName = Self.hostChipName
+        physicalMemoryBytes = Self.hostPhysicalMemory
         gpuCores = previous?.gpuCores
         vision = previous?.vision
         kvFormat = previous?.kvFormat
@@ -103,9 +112,9 @@ final class EngineManager {
         activeID = id
         EngineStore.shared.update(id) { $0.enabled = true }
         EngineStore.shared.rememberActive(id)
-        // Point the engine at flashCat's own model folder, then make sure the
-        // links into the user's existing weights are in place.
-        EngineModelLinker.synchronize(id)
+        // Point the engine at flashCat's own model folder. Nothing is linked in
+        // from outside, so this only settles any folder an older build left.
+        EngineModelStore.adoptExistingWeights(id)
         let saved = EngineStore.shared.configuration(for: id).lastModel
         if let saved, !saved.isEmpty, saved != settings.model {
             settings.setModel(saved)

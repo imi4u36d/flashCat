@@ -43,33 +43,39 @@ struct LibraryUseRequest: Identifiable {
 }
 
 enum ModelLibrary {
-    /// Installed weights first, then the suggestions that are not installed yet,
-    /// in the order the engine's list names them.
+    /// The fixed catalog, in the order the engine's list names it.
+    ///
+    /// Only pinned rows appear. Weights scanned from the model folder are used
+    /// purely as evidence that a pinned row is installed — a folder that is not
+    /// in the catalog is not offered anywhere, because the page has no import
+    /// action that could have put it there.
     static func entries(installed: [ModelInfo],
                         engine: EngineID,
                         recommendations: [ModelRecommendation],
                         draftRepository: (String) -> String?) -> [ModelLibraryEntry] {
-        var seen = Set<String>()
-        var result: [ModelLibraryEntry] = []
-        for model in installed where seen.insert(ModelLibraryEntry.normalized(model.id)).inserted {
-            result.append(ModelLibraryEntry(model: model,
-                                            engine: engine,
-                                            recommendation: nil,
-                                            draftRepository: draftRepository(model.id)))
+        var onDisk: [String: ModelInfo] = [:]
+        for model in installed where onDisk[ModelLibraryEntry.normalized(model.id)] == nil {
+            onDisk[ModelLibraryEntry.normalized(model.id)] = model
         }
-        for recommendation in recommendations {
-            guard seen.insert(ModelLibraryEntry.normalized(recommendation.id)).inserted else { continue }
-            let model = ModelInfo(id: recommendation.id,
-                                  path: "",
-                                  bytes: recommendation.bytes,
-                                  origin: .recommended,
-                                  targetName: "",
-                                  approximateSize: recommendation.bytes > 0)
-            result.append(ModelLibraryEntry(model: model,
-                                            engine: engine,
-                                            recommendation: recommendation,
-                                            draftRepository: recommendation.draftRepository))
+
+        return recommendations.map { recommendation in
+            let key = ModelLibraryEntry.normalized(recommendation.id)
+            let found = onDisk[key]
+            let scannedBytes = found?.bytes ?? 0
+            let model = ModelInfo(id: found?.id ?? recommendation.id,
+                                  path: found?.path ?? "",
+                                  bytes: scannedBytes > 0 ? scannedBytes : recommendation.bytes,
+                                  origin: found?.origin ?? .recommended,
+                                  targetName: found?.targetName ?? "",
+                                  family: found?.family,
+                                  draftPath: found?.draftPath,
+                                  mmprojPath: found?.mmprojPath,
+                                  approximateSize: found == nil && recommendation.bytes > 0)
+            return ModelLibraryEntry(model: model,
+                                     engine: engine,
+                                     recommendation: recommendation,
+                                     draftRepository: recommendation.draftRepository
+                                         ?? (found == nil ? nil : draftRepository(model.id)))
         }
-        return result
     }
 }

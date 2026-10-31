@@ -108,16 +108,22 @@ final class ThemeController: ObservableObject {
         }
     }
 
-    /// Applies the choice to the whole app: AppKit-backed controls, the SwiftUI
-    /// canvas (whose `colorScheme` derives from the window) and the canvas colour
-    /// behind the hidden title bar.
+    /// Applies the choice to the app's windows: AppKit-backed controls, the
+    /// SwiftUI canvas (whose `colorScheme` derives from the window) and the
+    /// canvas colour behind the hidden title bar.
+    ///
+    /// 刻意**不设** `NSApp.appearance`：全局外观会把菜单栏常驻项也染成皮肤色，
+    /// 浅色菜单栏项落在深色菜单栏上时，系统会给它补一块浅色底板（图标因此带
+    /// 白底）。菜单栏图标应当始终跟随系统菜单栏着色，所以皮肤只作用到窗口。
     func apply() {
         AppAppearance.current = mode
-        NSApp.appearance = resolved
         for window in NSApp.windows where window.canBecomeMain {
             apply(to: window)
         }
     }
+
+    /// 当前皮肤对应的具体外观，供 popover 这类不在窗口列表里的界面使用。
+    var resolvedAppearance: NSAppearance? { resolved }
 
     func apply(to window: NSWindow) {
         window.appearance = resolved

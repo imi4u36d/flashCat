@@ -8,6 +8,12 @@ struct ChatTurn {
 struct ChatUsage {
     var promptTokens: Int = 0
     var completionTokens: Int = 0
+    /// usage.completion_tokens_details.reasoning_tokens —— 思考流的 token 数。
+    /// 引擎按思考预算收束思考时，该值正好等于预算，可据此判定"思考被截断"。
+    var reasoningTokens: Int?
+    /// 本轮结束原因（choice.finish_reason）。`length` 意味着输出触及
+    /// max_tokens 上限被硬截断——思考与正文共享该上限，思考一长正文就没了。
+    var finishReason: String?
 }
 
 struct ChatMessage: Identifiable {
@@ -40,6 +46,9 @@ struct ChatOptions {
     var maxTokens: Int
     var reasoningEffort: String?
     var systemPrompt: String
+    /// 引擎侧生效的思考截断预算（splash `--thinking-token-budget` / oMLX
+    /// `thinking_budget_tokens`），只用于本地判定截断，不随请求下发。
+    var thinkingBudget: Int? = nil
 }
 
 struct ChatError: Error {
@@ -56,6 +65,9 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
     private var trailing = Data()
     private var text = ""
     private var raw = ""
+    /// 本次流里出现过思考内容。思考被 max_tokens 掐断时正文为空，
+    /// 这不应算失败——思考块还得留在对话里给人看。
+    private var reasoned = false
     private var usage = ChatUsage()
     private var status = 0
     private var transportError: Error?
@@ -86,6 +98,8 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
             "stream": true,
             "temperature": options.temperature,
             "top_p": options.topP,
+            // 流式也要拿 usage（含 reasoning_tokens），否则截断无从判定。
+            "stream_options": ["include_usage": true],
         ]
         if options.maxTokens > 0 { body["max_tokens"] = options.maxTokens }
         if let effort = options.reasoningEffort, !effort.isEmpty { body["reasoning_effort"] = effort }
@@ -112,6 +126,7 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
         trailing = Data()
         text = ""
         raw = ""
+        reasoned = false
         usage = ChatUsage()
         status = 0
         transportError = nil
@@ -150,7 +165,7 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
                 onDelta(content)
             }
         }
-        if text.isEmpty {
+        if text.isEmpty && !reasoned {
             onStatus("失败")
             return .failure(ChatError(message: "服务没有返回内容"))
         }
@@ -179,8 +194,10 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
         }
         // OpenAI chunk shape: {"choices":[{"delta":{"content":"…"}}]}
         var chunk: [String: Any]?
+        var finishReason: String?
         if let choices = json["choices"] as? [[String: Any]], let first = choices.first {
             chunk = (first["delta"] as? [String: Any]) ?? (first["message"] as? [String: Any])
+            finishReason = first["finish_reason"] as? String
         }
         chunk = chunk ?? (json["delta"] as? [String: Any]) ?? (json["message"] as? [String: Any])
 
@@ -194,12 +211,20 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
                 ?? (chunk["reasoning"] as? String)
                 ?? ""
             if !reasoningPiece.isEmpty {
+                reasoned = true
                 onReasoning(reasoningPiece)
             }
+        }
+        if let finishReason, finishReason != "stop" {
+            usage.finishReason = finishReason
         }
         if let used = json["usage"] as? [String: Any] {
             usage.promptTokens = Self.intValue(used["prompt_tokens"])
             usage.completionTokens = Self.intValue(used["completion_tokens"])
+            if let details = used["completion_tokens_details"] as? [String: Any] {
+                let reasoning = Self.intValue(details["reasoning_tokens"])
+                if reasoning > 0 { usage.reasoningTokens = reasoning }
+            }
         }
     }
 

@@ -81,10 +81,34 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
             webView.loadFileURL(index, allowingReadAccessTo: index.deletingLastPathComponent())
         }
         webView.setValue(false, forKey: "drawsBackground") // 皮肤底色由页面接管
+        // 外壳不是浏览器：捏合缩放会把整页版面放大到错位，双指返回也关掉。
+        webView.allowsMagnification = false
+        webView.allowsBackForwardNavigationGestures = false
 
         // 任何 @Published 变化 → 去抖后推送快照。
         state.objectWillChange
             .debounce(for: .milliseconds(100), scheduler: RunLoop.main)
+            .sink { [weak self] _ in self?.schedulePush() }
+            .store(in: &cancellables)
+
+        // 侧栏折叠走轻量专线：objectWillChange 的 100ms 去抖会把折叠快照压到
+        // 动画开始后 120ms 才到（⌘\ 先钝一下再动）。全量快照里 sidebar 本来就
+        // 不参与指纹，专线只推一个布尔，网页立刻切 rail 一档。
+        state.$showsSidebar
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] visible in
+                self?.webView.evaluateJavaScript(
+                    "window.__fc__.setSidebar(\(visible ? "true" : "false"));",
+                    completionHandler: nil)
+            }
+            .store(in: &cancellables)
+
+        // 换页单独走一次即时推送：objectWillChange 的 100ms 去抖在引擎跑着的时候
+        // 几乎永远等不到安静窗口（stats 每秒都在变），⌘1…⌘6 切页会明显发钝。
+        state.$section
+            .dropFirst()
+            .removeDuplicates()
             .sink { [weak self] _ in self?.schedulePush() }
             .store(in: &cancellables)
 
@@ -136,6 +160,10 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
                     }
                 }
             }
+        case "toggleSidebar": state.toggleSidebar()
+        // 网页画了标题栏那一行，空白处按住要能把窗口拖走。
+        case "dragWindow":
+            if let event = NSApp.currentEvent { webView.window?.performDrag(with: event) }
         case "startService": state.startService()
         case "stopService": state.stopService()
         case "restartService": state.restartService()
@@ -146,7 +174,7 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
         case "downloadModel":
             if let engine, let id = body["id"] as? String { state.downloadModel(id, engine: engine) }
         case "removeModel":
-            if let engine, let id = body["id"] as? String { state.removeModel(id, engine: engine) }
+            if let engine, let id = body["id"] as? String { confirmRemoveModel(id, engine: engine) }
         case "revealModel":
             if let engine, let id = body["id"] as? String {
                 let entry = state.libraryEntries(for: engine).first { $0.id == id }
@@ -174,7 +202,10 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
             state.copy(body, label: "已复制整段对话")
         case "copyText":
             state.copy(body["text"] as? String ?? "", label: body["label"] as? String ?? "已复制")
-        case "copyGateway": state.copy(state.gatewayURL, label: "网关地址已复制")
+        case "copyGateway":
+            let claude = (body["style"] as? String) == "claude"
+            state.copy(claude ? state.gatewayClaudeURL : state.gatewayURL,
+                       label: claude ? "Claude 接口地址已复制" : "OpenAI 接口地址已复制")
         case "copyLogText":
             if let text = body["text"] as? String, !text.isEmpty {
                 state.copy(text, label: "已复制筛选后的日志")
@@ -182,10 +213,9 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
         case "clearLogs": state.clearLogs()
         case "openFinder": openFinder(body)
         case "rescan":
-            _ = EngineModelLinker.synchronize(engine ?? state.activeEngine)
+            EngineModelStore.adoptExistingWeights(engine ?? state.activeEngine)
             state.reloadModels()
             state.toast("已重新扫描 \((engine ?? state.activeEngine).displayName) 的模型目录")
-        case "importModels": pickAndImport(engine: engine)
         case "installEngine":
             if let engine {
                 installEngine(engine, adoptOnFirstInstall: (body["launch"] as? Bool) ?? state.needsEngineSetup)
@@ -219,6 +249,7 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
                 state.theme.set(mode)
             }
         case "saveSettings": saveSettings(body)
+        case "setEffort": setEffort(body)
         case "confirmLibraryUse": state.confirmLibraryUse()
         case "cancelLibraryUse": state.cancelLibraryUse()
         case "confirmModelSwitch": state.confirmModelSwitch()
@@ -263,17 +294,18 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
         }
     }
 
-    private func pickAndImport(engine: EngineID?) {
-        let target = engine ?? state.libraryEngine
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "导入"
-        panel.message = "选择要导入 \(target.displayName) 的模型目录"
-        if panel.runModal() == .OK, let url = panel.url {
-            state.importModel(url.path, move: false, engine: target)
-        }
+    /// 删除现在是真删权重（不再只是解链），所以先问一次，并把要删的大小摆出来。
+    private func confirmRemoveModel(_ id: String, engine: EngineID) {
+        let path = EnginePaths.modelsDirectory(engine) + "/" + id
+        let bytes = EngineModelStore.size(of: path)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "删除 \(id)？"
+        alert.informativeText = "会从 \(engine.displayName) 的模型目录里删除权重文件（\(Format.size(bytes))），无法恢复。"
+        alert.addButton(withTitle: "删除")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        state.removeModel(id, engine: engine)
     }
 
     /// 按 engine+model 定位下载中心里的任务行（网页不持有任务对象）。
@@ -377,7 +409,8 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
         if let topP = body["topP"] as? Double, topP != settings.topP {
             settings.setTopP(topP)
         }
-        if let maxTokens = body["maxTokens"] as? Int, maxTokens >= 16, maxTokens != settings.maxTokens {
+        // 0 = 清空自定义值，回落到「模型最大上下文」默认。
+        if let maxTokens = body["maxTokens"] as? Int, maxTokens == 0 || maxTokens >= 16, maxTokens != settings.maxTokens {
             settings.setMaxTokens(maxTokens)
         }
         if let systemPrompt = body["systemPrompt"] as? String, systemPrompt != settings.systemPrompt {
@@ -399,6 +432,22 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
 
     // MARK: Swift → JS
 
+    /// 思考等级的轻量切换（对话页下拉框）：只落盘，不重启引擎。等级随每次
+    /// 聊天请求下发（AppState.send → reasoning_effort），下一条消息即生效；
+    /// 关闭状态下选等级视为要思考，顺手切到「开启」。
+    private func setEffort(_ body: [String: Any]) {
+        guard let raw = body["effort"] as? String,
+              let value = ReasoningEffort(webName: raw) else { return }
+        let settings = state.settings
+        if settings.thinkingMode == .off {
+            settings.setThinkingMode(.on)
+        }
+        if value != settings.reasoningEffort {
+            settings.setReasoningEffort(value)
+        }
+        state.toast("思考等级：\(value.label)")
+    }
+
     func schedulePush() {
         guard !pushScheduled else { return }
         pushScheduled = true
@@ -411,8 +460,24 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
     }
 
     func pushSnapshot() {
+        // 侧栏动画进行中：序列化占 App 主线程（拖慢 CA 提交）、JSON.parse 占
+        // WebContent 线程（直接吃动画帧）。整笔推迟到收口之后，数据晚 ~0.35s
+        // 上屏无感；推迟后只补推一次，心跳/去抖的下一次推送自然接上。
+        let until = state.sidebarAnimUntil
+        let now = Date()
+        if now < until {
+            DispatchQueue.main.asyncAfter(deadline: .now() + until.timeIntervalSince(now) + 0.02) { [weak self] in
+                self?.pushSnapshot()
+            }
+            return
+        }
         guard let json = WebSnapshot.json(state: state) else { return }
-        webView.evaluateJavaScript("window.__fc__.push(\(json));", completionHandler: nil)
+        // 快照以「字符串字面量 + JSON.parse」进页，而不是对象字面量直排：
+        // push({...}) 会让 JSC 把整段快照当代码编译出 AST（几百 KB 的对话/日志
+        // 就是一二十毫秒），侧栏折叠动画每帧都在重排，这一下正好把它顶掉几帧；
+        // JSON.parse 走原生解析，代价小一个量级。字符串本身再用 JSON 转义包一层。
+        let literal = WebSnapshot.jsStringLiteral(json)
+        webView.evaluateJavaScript("window.__fc__.push(JSON.parse(\(literal)));", completionHandler: nil)
     }
 
     func pushToast(_ message: String) {
@@ -501,6 +566,24 @@ enum WebSnapshot {
         return text
     }
 
+    /// 把任意文本包成安全的 JS 字符串字面量（含引号）。复用 JSON 的字符串转义：
+    /// JSON 字符串是 JS 字符串的子集（引号、反斜杠、控制字符全部转义）。
+    static func jsStringLiteral(_ text: String) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: text, options: [.fragmentsAllowed]),
+              let quoted = String(data: data, encoding: .utf8) else { return "\"\"" }
+        return quoted
+    }
+
+    /// 引擎报告的思考等级 → 下拉框选项 [{value, label}]。引擎没报告（splash，
+    /// 或模型不分级）时退回内置的六档，保证入口永远可用。
+    private static func effortOptions(state: AppState) -> [[String: String]] {
+        let reported = state.engines?.controller(state.activeEngine)?.status?.reasoningEfforts
+        let tokens = (reported?.isEmpty == false) ? reported! : ReasoningEffort.allCases.map { $0.webName }
+        return tokens.map { token in
+            ["value": token, "label": ReasoningEffort(webName: token)?.label ?? token]
+        }
+    }
+
     @MainActor
     static func data(state: AppState) -> Data? {
         let engine = state.activeEngine
@@ -516,6 +599,7 @@ enum WebSnapshot {
             "switching": state.isSwitchingModel,
             "switchStage": state.switchStage,
             "startupStage": state.startupStage,
+            "startupSeconds": state.startupSeconds,
         ]
         if let failure = state.failureMessage { engineState["failure"] = failure }
 
@@ -524,12 +608,18 @@ enum WebSnapshot {
             statsDict = [
                 "decodeTokensPerSecond": stats.decodeTokensPerSecond ?? 0,
                 "prefillTokensPerSecond": stats.prefillTokensPerSecond ?? 0,
-                "ttftMilliseconds": stats.ttftMilliseconds ?? 0,
+                // 引擎没上报的指标必须如实给 null：oMLX 不报 TTFT 和接受率，
+                // 强转 0 会让概览画出「0 ms」「0%」这种凭空的读数，前端拿到
+                // null 才会回落到本地测量值或「—」。
+                "ttftMilliseconds": stats.ttftMilliseconds ?? NSNull(),
                 "thermal": stats.thermal ?? "",
                 "thermalText": stats.thermalText,
                 "requestsCompleted": stats.requestsCompleted,
                 "requestsFailed": stats.requestsFailed,
-                "draftAcceptance": stats.draftAcceptance ?? 0,
+                "draftAcceptance": stats.draftAcceptance ?? NSNull(),
+                // 应用内生成期间的本地测速（tok/s）；空闲时为 null，前端回落到
+                // 引擎自报的 decodeTokensPerSecond。
+                "liveDecodeRate": state.liveDecodeRate ?? NSNull(),
                 "dflashLabel": draftLabel(state),
                 "maximumContextTokens": stats.maximumContextTokens ?? 0,
                 "deviceName": stats.deviceName ?? "",
@@ -537,7 +627,10 @@ enum WebSnapshot {
                 "instancePid": stats.instancePid ?? 0,
                 "startedAt": stats.startedAt ?? 0,
                 "memoryBytes": stats.memoryBytes ?? 0,
+                "peakMemoryBytes": stats.peakMemoryBytes ?? 0,
                 "physicalMemoryBytes": stats.physicalMemoryBytes ?? 0,
+                "memoryPressure": stats.memoryPressure ?? "",
+                "memoryPressureText": stats.memoryPressureText,
             ]
         }
 
@@ -624,6 +717,9 @@ enum WebSnapshot {
             "thinkingModeLabel": state.settings.thinkingMode.label,
             "reasoningEffort": state.settings.reasoningEffort.webName,
             "reasoningEffortLabel": state.settings.reasoningEffort.label,
+            // 思考等级下拉框的数据源：优先取引擎自己报告的等级（oMLX 的
+            // reasoning_efforts / MTPLX 的 effort_levels），引擎没说就用内置档位。
+            "reasoningEfforts": effortOptions(state: state),
             "autoStart": state.settings.autoStart,
             "launchAtLogin": state.settings.launchAtLogin,
             "hfCache": state.settings.hfCache,
@@ -647,6 +743,7 @@ enum WebSnapshot {
 
         let payload: [String: Any] = [
             "page": state.section.webName,
+            "sidebar": state.showsSidebar,
             "appearance": state.theme.mode.webName,
             "launchPage": state.isPresentingLaunchPage,
             "launchNeedsSetup": state.needsEngineSetup,
@@ -654,12 +751,17 @@ enum WebSnapshot {
                           "error": state.installs.indexError ?? NSNull()] as [String: Any],
             "pendingInstall": pendingInstall ?? NSNull(),
             "engine": engineState,
+            "draftLabel": draftLabel(state),
             "port": state.port,
             "endpointURL": state.endpointURL,
             "gatewayURL": state.gatewayURL,
+            "gatewayClaudeURL": state.gatewayClaudeURL,
             "selectedModel": state.selectedModel,
             "stats": stats != nil ? statsDict : NSNull(),
             "throughput": state.recentThroughput(window: 0).map { sample in
+                ["t": sample.at.timeIntervalSince1970 * 1000, "v": sample.value] as [String: Any]
+            },
+            "acceptance": state.recentAcceptance(window: 0).map { sample in
                 ["t": sample.at.timeIntervalSince1970 * 1000, "v": sample.value] as [String: Any]
             },
             "threads": state.threads.map { thread in
@@ -681,7 +783,19 @@ enum WebSnapshot {
             },
             "generating": state.generating,
             "generationStatus": state.generationStatus ?? "",
-            "modelsMenu": state.catalog.machine.map { ["id": $0.id] },
+            // 模型切换菜单的数据源：按已安装引擎分组（旧原生 ModelSwitcher 的
+            // 行为）。此前只推 catalog.machine（Splash 口径），oMLX/MTPLX 用户
+            // 的菜单是空的，表现为「模型切换全部失效」。
+            "modelsMenu": EngineID.allCases
+                .filter { state.engineIsInstalled($0) }
+                .map { id -> [String: Any] in
+                    ["engine": id.rawValue,
+                     "name": id.displayName,
+                     "models": state.engineModels(for: id)
+                         .filter { !$0.hidden && !$0.helper && !ModelLibraryEntry.isDraftModel($0.id) }
+                         .filter { ModelRecommendations.isPinned($0.id, engine: id) }
+                         .map { $0.id }]
+                },
             "library": library,
             "downloads": downloads,
             "logs": state.logs.suffix(800).map { line -> [String: Any] in
@@ -750,6 +864,9 @@ enum WebSnapshot {
             parts.append("--draft \(short)")
         }
         if let memory = tuning.maxMemory, !memory.isEmpty { parts.append("--max-memory \(memory)") }
+        if let budget = tuning.effectiveThinkingBudget(for: id) {
+            parts.append("思考≤\(budget)")
+        }
         if id == .mtplx, let mtp = tuning.mtp { parts.append(mtp ? "--mtp" : "--no-mtp") }
         return parts.isEmpty ? "默认" : parts.joined(separator: " ")
     }

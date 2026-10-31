@@ -104,7 +104,14 @@ final class EngineStore {
 
     private func load() {
         guard let data = try? Data(contentsOf: fileURL),
-              let decoded = try? JSONDecoder().decode([String: EngineConfiguration].self, from: data) else {
+              let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return
+        }
+        // Old tuning documents predate newer knobs and must not read as "leave
+        // it to the engine" when the page showed the switch as on.
+        let migrated = EngineTuning.backfillPLEOffload(in: document)
+        guard let encoded = try? JSONSerialization.data(withJSONObject: migrated),
+              let decoded = try? JSONDecoder().decode([String: EngineConfiguration].self, from: encoded) else {
             return
         }
         configurations = decoded
@@ -225,75 +232,211 @@ enum EngineInstallations {
     }
 }
 
-/// Keeps `~/Library/Application Support/flashCat/models/<engine>` populated with
-/// symlinks into the model directories the user already has. Nothing is copied
-/// and nothing is downloaded: the engine only ever sees flashCat's own folder.
-enum EngineModelLinker {
-    /// Directories that hold the user's pre-existing weights. Read only.
-    static func sourceDirectories(for id: EngineID) -> [String] {
-        let home = Paths.home
-        switch id {
-        case .omlx:
-            return [home + "/.omlx/models", home + "/.omlx/gguf"]
-        case .mtplx:
-            return [home + "/.mtplx/models"]
-        case .splash:
-            return [Paths.modelsDirectory]
-        }
-    }
-
-    struct LinkedModel {
+/// flashCat's own model folder is the only place its engines read weights from.
+///
+/// Nothing is linked in from outside any more: the folder holds the weights
+/// themselves, so a model keeps working when `~/.omlx`, `~/.mtplx` or a Hub
+/// cache is cleaned out. Weights that an earlier build symlinked out of those
+/// directories are moved into the folder on launch, and any link that turns up
+/// inside the folder afterwards is resolved into real files and removed.
+enum EngineModelStore {
+    struct AdoptedModel {
         let id: String
-        let link: String
-        let target: String
+        let path: String
         let bytes: Int
     }
 
-    /// Scans the source directories for weight folders and links the missing
-    /// ones. Existing links are left untouched so the user can prune by hand.
+    /// What one adoption pass changed, so the caller can tell the user where
+    /// their models went instead of silently relocating tens of gigabytes.
+    struct AdoptionReport {
+        var adopted: [AdoptedModel] = []
+        var dropped: [String] = []
+        var failures: [String] = []
+
+        var bytes: Int { adopted.reduce(0) { $0 + $1.bytes } }
+        var isEmpty: Bool { adopted.isEmpty && dropped.isEmpty && failures.isEmpty }
+    }
+
+    /// Move every linked model in `EnginePaths.modelsDirectory(id)` in place:
+    /// the link is replaced by the weights it points at, and a link whose
+    /// target is gone is dropped. Only the model folder is written to — the
+    /// weights leave the directory they used to sit in, which is the point.
     @discardableResult
-    static func synchronize(_ id: EngineID) -> [LinkedModel] {
-        let destination = EnginePaths.modelsDirectory(id)
-        Paths.ensureDirectory(destination)
-        var result: [LinkedModel] = []
+    static func adoptExistingWeights(_ id: EngineID) -> AdoptionReport {
+        var report = AdoptionReport()
+        let root = EnginePaths.modelsDirectory(id)
+        Paths.ensureDirectory(root)
         let manager = FileManager.default
 
-        for source in sourceDirectories(for: id) {
-            // splash serves the flashCat model folder directly, so its "source"
-            // is already the destination and linking would point at itself.
-            if source == destination { continue }
-            let entries = (try? manager.contentsOfDirectory(atPath: source)) ?? []
-            for entry in entries.sorted() where !entry.hasPrefix(".") {
-                let first = source + "/" + entry
-                var isDirectory: ObjCBool = false
-                guard manager.fileExists(atPath: first, isDirectory: &isDirectory) else { continue }
-                if !isDirectory.boolValue { continue }
+        var plans: [(link: String, target: String)] = []
+        var dangling: [String] = []
+        for link in links(under: root, depth: id == .splash ? 2 : 1) {
+            if let target = realTarget(of: link) {
+                plans.append((link, target))
+            } else {
+                dangling.append(link)
+            }
+        }
+        guard !plans.isEmpty || !dangling.isEmpty else { return report }
 
-                var candidates: [String] = []
-                // oMLX nests weights one level deeper (`models/<owner>/<model>`);
-                // MTPLX keeps `<owner>--<model>` flat; `~/.omlx/gguf/<name>` is a
-                // single folder whose weights are symlinks.
-                if isWeightsDirectory(first, engine: id) {
-                    candidates = [first]
-                } else {
-                    let nested = (try? manager.contentsOfDirectory(atPath: first)) ?? []
-                    candidates = nested.sorted()
-                        .filter { !$0.hasPrefix(".") }
-                        .map { first + "/" + $0 }
-                        .filter { isWeightsDirectory($0, engine: id) }
-                }
+        // Old absolute path -> the path the weights live at now. Links *inside*
+        // a model folder are rewritten through this before they are inlined.
+        var moved: [String: String] = [:]
+        for plan in plans {
+            let bytes = size(of: plan.target)
+            do {
+                try manager.removeItem(atPath: plan.link)
+                try moveDereferencing(plan.target, to: plan.link)
+                moved[plan.target] = plan.link
+                report.adopted.append(AdoptedModel(id: (plan.link as NSString).lastPathComponent,
+                                                   path: plan.link,
+                                                   bytes: bytes))
+            } catch {
+                // Put the link back rather than leave the model unusable.
+                try? manager.createSymbolicLink(atPath: plan.link, withDestinationPath: plan.target)
+                report.failures.append((plan.link as NSString).lastPathComponent)
+            }
+        }
 
-                for candidate in candidates {
-                    let relative = candidate.replacingOccurrences(of: source + "/", with: "")
-                    let name = relative.replacingOccurrences(of: "/", with: "--")
-                    let link = destination + "/" + name
-                    if manager.fileExists(atPath: link) || isDanglingLink(link) { continue }
-                    try? manager.createSymbolicLink(atPath: link, withDestinationPath: candidate)
-                    result.append(LinkedModel(id: name, link: link, target: candidate, bytes: size(of: candidate)))
+        for link in dangling {
+            do {
+                try manager.removeItem(atPath: link)
+                report.dropped.append((link as NSString).lastPathComponent)
+            } catch {
+                report.failures.append((link as NSString).lastPathComponent)
+            }
+        }
+
+        // A prepared GGUF assembly is a folder of links into the weights next to
+        // it, so they dangle the moment those weights move. Turn them into real
+        // files: the model folder has to stand on its own.
+        if !moved.isEmpty { inlineLinks(under: root, moved: moved, report: &report) }
+        return report
+    }
+
+    /// Links that stand where a model belongs: `models/<model>` for the pack
+    /// engines, `models/<owner>/<repo>` for Splash. Anything deeper is a file
+    /// inside a model and is left to the inlining pass.
+    private static func links(under root: String, depth: Int) -> [String] {
+        let manager = FileManager.default
+        var result: [String] = []
+        for entry in (try? manager.contentsOfDirectory(atPath: root)) ?? [] where !entry.hasPrefix(".") {
+            let path = root + "/" + entry
+            if isLink(path) {
+                result.append(path)
+            } else if depth > 1, isDirectory(path) {
+                for nested in (try? manager.contentsOfDirectory(atPath: path)) ?? [] where !nested.hasPrefix(".") {
+                    let child = path + "/" + nested
+                    if isLink(child) { result.append(child) }
                 }
             }
         }
         return result
+    }
+
+    /// `lstat` semantics: a link to a directory is not a directory here.
+    static func isDirectory(_ path: String) -> Bool {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+              let type = attributes[.type] as? FileAttributeType else { return false }
+        return type == .typeDirectory
+    }
+
+    private static func isLink(_ path: String) -> Bool {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+              let type = attributes[.type] as? FileAttributeType else { return false }
+        return type == .typeSymbolicLink
+    }
+
+    /// Where a link really points, with empty links returning nil. `moved`
+    /// rewrites paths whose weights this pass already relocated.
+    private static func realTarget(of path: String, moved: [String: String] = [:]) -> String? {
+        let manager = FileManager.default
+        guard let destination = try? manager.destinationOfSymbolicLink(atPath: path) else { return nil }
+        let absolute = destination.hasPrefix("/")
+            ? destination
+            : (path as NSString).deletingLastPathComponent + "/" + destination
+        let resolved = URL(fileURLWithPath: absolute).resolvingSymlinksInPath().path
+        let relocated = moved.keys
+            .filter { resolved == $0 || resolved.hasPrefix($0 + "/") }
+            .max { $0.count < $1.count }
+            .flatMap { old in moved[old].map { $0 + String(resolved.dropFirst(old.count)) } } ?? resolved
+        var isDirectory: ObjCBool = false
+        guard manager.fileExists(atPath: relocated, isDirectory: &isDirectory) else { return nil }
+        return relocated
+    }
+
+    /// A rename when both paths are on one volume (always true here, and
+    /// instant for a 100 GB folder); a real copy otherwise. A link is moved by
+    /// moving what it points at, then dropping the link itself.
+    static func moveDereferencing(_ source: String, to destination: String) throws {
+        let manager = FileManager.default
+        let linked = isLink(source)
+        guard let real = linked ? realTarget(of: source) : source else { throw CocoaError(.fileNoSuchFile) }
+        do {
+            try manager.moveItem(atPath: real, toPath: destination)
+        } catch {
+            try copyDereferencing(real, to: destination)
+            try manager.removeItem(atPath: real)
+        }
+        if linked { try? manager.removeItem(atPath: source) }
+    }
+
+    /// Copy the weights themselves: a link inside the source folder is followed
+    /// and its target's bytes are written out, so the copy never depends on the
+    /// directory it came from.
+    static func copyDereferencing(_ source: String, to destination: String) throws {
+        let manager = FileManager.default
+        if isLink(source) {
+            guard let target = realTarget(of: source) else { throw CocoaError(.fileNoSuchFile) }
+            try copyDereferencing(target, to: destination)
+            return
+        }
+        var isDirectory: ObjCBool = false
+        guard manager.fileExists(atPath: source, isDirectory: &isDirectory) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        if !isDirectory.boolValue {
+            try manager.copyItem(atPath: source, toPath: destination)
+            return
+        }
+        try manager.createDirectory(atPath: destination, withIntermediateDirectories: true)
+        for entry in try manager.contentsOfDirectory(atPath: source) {
+            try copyDereferencing(source + "/" + entry, to: destination + "/" + entry)
+        }
+    }
+
+    /// Replace every link below `root` with the bytes it resolves to. A hard
+    /// link keeps one copy of the same file on one disk; directories cannot be
+    /// hard linked, so those are copied.
+    private static func inlineLinks(under root: String, moved: [String: String],
+                                    report: inout AdoptionReport) {
+        let manager = FileManager.default
+        guard let enumerator = manager.enumerator(atPath: root) else { return }
+        var links: [String] = []
+        for case let entry as String in enumerator {
+            let path = root + "/" + entry
+            if isLink(path) { links.append(path) }
+        }
+        for link in links {
+            let name = (link as NSString).lastPathComponent
+            guard let target = realTarget(of: link, moved: moved) else {
+                // The weights this assembly pointed at are gone; the folder is
+                // not servable and the dead link only hides that.
+                try? manager.removeItem(atPath: link)
+                report.dropped.append(name)
+                continue
+            }
+            try? manager.removeItem(atPath: link)
+            do {
+                try manager.linkItem(atPath: target, toPath: link)
+            } catch {
+                do {
+                    try copyDereferencing(target, to: link)
+                } catch {
+                    report.failures.append(name)
+                }
+            }
+        }
     }
 
     /// A folder counts as a model when it carries a weights config *and* a
@@ -319,11 +462,56 @@ enum EngineModelLinker {
         }
     }
 
-    private static func isDanglingLink(_ path: String) -> Bool {
-        let manager = FileManager.default
-        guard let attributes = try? manager.attributesOfItem(atPath: path),
-              attributes[.type] as? FileAttributeType == .typeSymbolicLink else { return false }
-        return !manager.fileExists(atPath: path)
+    /// 扫描元数据缓存。模型目录的字节数、上下文窗口、架构都要读盘：递归 stat
+    /// 每个文件 + 解析 config.json。快照每秒推一次，一次要扫多个引擎（实测
+    /// omlx 15 ms / mtplx 11 ms，每次推送 40~83 ms），主线程被反复占住——
+    /// 「实时指标不流畅」的主因就在这里。目录里有哪些模型仍然实时读，只有这几项
+    /// 重活进缓存，20 秒过期，下载完成/删除模型时立即失效。
+    struct ScanMeta {
+        var bytes: Int
+        var maximumContextTokens: Int?
+        var architecture: String?
+    }
+
+    private static let metaLock = NSLock()
+    nonisolated(unsafe) private static var metaCache: [String: (value: ScanMeta, at: Date)] = [:]
+    private static let metaTTL: TimeInterval = 20
+
+    static func meta(of path: String) -> ScanMeta {
+        metaLock.lock()
+        if let hit = metaCache[path], Date().timeIntervalSince(hit.at) < metaTTL {
+            metaLock.unlock()
+            return hit.value
+        }
+        metaLock.unlock()
+        // 同一个 config.json 只读一次、只解析一次：原先 contextWindow 与
+        // architecture 各读一遍各解析一遍，单个模型就是 2 次文件读 + 2 次 JSON。
+        let config = configFacts(path + "/config.json")
+        let value = ScanMeta(bytes: size(of: path),
+                             maximumContextTokens: config.window,
+                             architecture: config.architecture)
+        metaLock.lock()
+        metaCache[path] = (value, Date())
+        metaLock.unlock()
+        return value
+    }
+
+    /// 下载完成、删除模型之后调用，下次扫描重新读盘。
+    static func invalidateMetaCache() {
+        metaLock.lock()
+        metaCache.removeAll()
+        metaLock.unlock()
+    }
+
+    private static func configFacts(_ path: String) -> (window: Int?, architecture: String?) {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return (nil, nil)
+        }
+        // 每条本地 config.json 都把窗口放在 text_config 下，draft 模型另有一份顶层副本。
+        let window = (json["max_position_embeddings"] as? Int)
+            ?? ((json["text_config"] as? [String: Any])?["max_position_embeddings"] as? Int)
+        return (window, json["model_type"] as? String)
     }
 
     static func size(of path: String) -> Int {
@@ -332,11 +520,13 @@ enum EngineModelLinker {
         var total = 0
         for case let entry as String in enumerator {
             let full = path + "/" + entry
+            // 一个文件只 stat 一次（原先类型/大小各调一遍）——
+            // `attributesOfItem` 内部是 stat + listxattr + getxattr，不是免费的。
+            guard let attributes = try? manager.attributesOfItem(atPath: full) else { continue }
             // `attributesOfItem` reports a symlink's own size (the target-path
             // string, ~100 bytes), not the weights it points at — linked GGUF
             // folders would otherwise show up as a few KB. Resolve one hop.
-            if let attributes = try? manager.attributesOfItem(atPath: full),
-               attributes[.type] as? FileAttributeType == .typeSymbolicLink,
+            if attributes[.type] as? FileAttributeType == .typeSymbolicLink,
                let target = try? manager.destinationOfSymbolicLink(atPath: full) {
                 let resolved = target.hasPrefix("/")
                     ? target
@@ -346,7 +536,6 @@ enum EngineModelLinker {
                     continue
                 }
             }
-            guard let attributes = try? manager.attributesOfItem(atPath: full) else { continue }
             total += (attributes[.size] as? Int) ?? 0
         }
         return total

@@ -297,9 +297,9 @@ struct BrandMark: View {
     var size: CGFloat = 38
     var glow: Bool = true
 
-    /// The artwork carries the macOS icon-grid padding (~20 % of the canvas on
-    /// every side), so draw it oversized to fill the requested frame.
-    private static let artworkScale: CGFloat = 1.24
+    /// The artwork's silhouette spans ~83 % of the canvas (ears to chin), so
+    /// draw it slightly oversized to fill the requested frame.
+    private static let artworkScale: CGFloat = 1.19
 
     var body: some View {
         Group {

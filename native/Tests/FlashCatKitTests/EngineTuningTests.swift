@@ -78,9 +78,14 @@ final class EngineTuningTests: XCTestCase {
     func testDraftOverrideFallsBackToEngineTuningWhenAbsent() {
         var tuning = EngineTuning()
         tuning.mtp = true
-        XCTAssertEqual(tuning.omlxSettings(draftOverride: nil), tuning.omlxSettings)
-        XCTAssertEqual(tuning.omlxSettings(draftOverride: "  "), tuning.omlxSettings,
+        XCTAssertEqual(tuning.omlxSettings(id: .omlx, draftOverride: nil),
+                       tuning.omlxSettings(id: .omlx, draftOverride: "  "),
                        "a blank override is no override")
+        // 空覆盖回落到引擎级调优；未设预算时不限制，只下发 enabled=false。
+        let payload = tuning.omlxSettings(draftOverride: nil)
+        XCTAssertEqual(payload?["thinking_budget_enabled"], .bool(false))
+        XCTAssertNil(payload?["thinking_budget_tokens"])
+        XCTAssertEqual(payload?["mtp_fixed_depth"], .null)
     }
 
     func testDraftOverrideBindsTheCheckpointAndPicksDFlash() {
@@ -102,6 +107,45 @@ final class EngineTuningTests: XCTestCase {
         let payload = EngineTuning().omlxSettings(draftOverride: "/tmp/draft")
         XCTAssertEqual(payload?["dflash_enabled"], .bool(true))
         XCTAssertEqual(payload?["dflash_draft_model"], .string("/tmp/draft"))
+    }
+
+    // MARK: 思考截断大小
+
+    func testThinkingBudgetNilMeansUnlimited() {
+        // 关闭 = 不限制：没填或清空时不下发任何预算，三个引擎一致。
+        XCTAssertNil(EngineTuning().effectiveThinkingBudget(for: .splash))
+        XCTAssertNil(EngineTuning().effectiveThinkingBudget(for: .omlx))
+        XCTAssertNil(EngineTuning().effectiveThinkingBudget(for: .mtplx))
+        // 打开 = 手动值生效；0/负数视同没填，同样不限制。
+        var tuning = EngineTuning()
+        tuning.thinkingBudget = 8192
+        XCTAssertEqual(tuning.effectiveThinkingBudget(for: .splash), 8192)
+        tuning.thinkingBudget = 0
+        XCTAssertNil(tuning.effectiveThinkingBudget(for: .splash))
+    }
+
+    func testOMLXPushReadyPayloadCarriesTheThinkingBudget() {
+        // 不限制（nil）也要显式下发 enabled=false，清掉之前推送过的按模型预算。
+        XCTAssertEqual(EngineTuning().omlxSettings(id: .omlx, draftOverride: nil),
+                       ["thinking_budget_enabled": .bool(false)])
+
+        var tuning = EngineTuning()
+        tuning.mtp = true
+        tuning.thinkingBudget = 8192
+        let payload = tuning.omlxSettings(id: .omlx, draftOverride: nil)
+        XCTAssertEqual(payload?["thinking_budget_enabled"], .bool(true))
+        XCTAssertEqual(payload?["thinking_budget_tokens"], .int(8192))
+        XCTAssertEqual(payload?["mtp_enabled"], .bool(true))
+    }
+
+    func testSanitizedClampsTheThinkingBudget() {
+        var tuning = EngineTuning()
+        tuning.thinkingBudget = 999_999
+        XCTAssertEqual(tuning.sanitized().thinkingBudget, 131_072)
+        tuning.thinkingBudget = 10
+        XCTAssertEqual(tuning.sanitized().thinkingBudget, 256)
+        tuning.thinkingBudget = 0
+        XCTAssertNil(tuning.sanitized().thinkingBudget)
     }
 
     // MARK: PLE n-gram table offload
@@ -211,6 +255,7 @@ final class EngineTuningTests: XCTestCase {
         tuning.maxMemory = "16G"
         tuning.pleMemory = "2G"
         tuning.pleSSDOffload = true
+        tuning.thinkingBudget = 16384
 
         let data = try JSONEncoder().encode(tuning)
         let decoded = try JSONDecoder().decode(EngineTuning.self, from: data)
@@ -254,11 +299,79 @@ final class EngineTuningDefaultsTests: XCTestCase {
         XCTAssertFalse(tuning.omlxHeadsConflict)
     }
 
-    func testMTPLXKeepsItsOwnDefault() {
-        XCTAssertEqual(EngineTuning.defaults(for: .mtplx), EngineTuning())
+    func testMTPLXPreloadsItsMTPHead() {
+        let tuning = EngineTuning.defaults(for: .mtplx)
+        XCTAssertEqual(tuning.loadMtp, true)
+        // 思考截断默认不限制：出厂默认不带预算，需要时在配置里手动开。
+        XCTAssertNil(tuning.thinkingBudget)
+        // 思考截断走环境变量，不占 CLI 参数位。
+        XCTAssertEqual(tuning.arguments(for: .mtplx), ["--load-mtp"])
         for id in EngineID.allCases {
             XCTAssertEqual(EngineTuning.defaults(for: id).sanitized(), EngineTuning.defaults(for: id),
                            "defaults survive sanitizing on \(id)")
         }
+    }
+}
+
+final class EngineTuningMigrationTests: XCTestCase {
+
+    /// The pre-switch document shape: a tuning object without `pleSSDOffload`
+    /// used to decode as "leave it to the engine", whose default is *resident*.
+    private let legacyDocument: [String: Any] = [
+        "active": ["version": "omlx"],
+        "omlx": ["port": 8100,
+                 "tuning": ["dflash": false, "mtp": true]],
+        "splash": ["tuning": ["dflash": true, "mtp": false]],
+        "mtplx": ["tuning": ["loadMtp": true]],
+    ]
+
+    /// `EngineStore.load()` decodes the whole document; the tests decode the
+    /// one tuning each migration pass touches.
+    private func tuning(of engine: String, in document: [String: Any]) throws -> EngineTuning? {
+        guard let configuration = document[engine] as? [String: Any],
+              let tuning = configuration["tuning"] else { return nil }
+        let data = try JSONSerialization.data(withJSONObject: tuning)
+        return try JSONDecoder().decode(EngineTuning.self, from: data)
+    }
+
+    func testBackfillAddsTheFreshInstallDefaultToLegacyTunings() throws {
+        let migrated = EngineTuning.backfillPLEOffload(in: legacyDocument)
+
+        XCTAssertEqual(try tuning(of: "omlx", in: migrated)?.pleSSDOffload, true)
+        XCTAssertEqual(try tuning(of: "splash", in: migrated)?.pleSSDOffload, true)
+        // Everything else the old build stored stays exactly as it was.
+        XCTAssertEqual(try tuning(of: "omlx", in: migrated)?.mtp, true)
+        XCTAssertEqual(try tuning(of: "omlx", in: migrated)?.dflash, false)
+        XCTAssertEqual(try tuning(of: "splash", in: migrated)?.dflash, true)
+        // MTPLX has no PLE switch, so its tuning is untouched.
+        XCTAssertEqual(try tuning(of: "mtplx", in: migrated)?.pleSSDOffload, nil)
+        XCTAssertEqual(try tuning(of: "mtplx", in: migrated)?.loadMtp, true)
+    }
+
+    func testBackfillProducesAPayloadTheEngineAccepts() throws {
+        let migrated = EngineTuning.backfillPLEOffload(in: legacyDocument)
+        let settings = try XCTUnwrap(tuning(of: "omlx", in: migrated)?.omlxSettings)
+        XCTAssertEqual(settings["qwen4_ple_ssd_offload"], .bool(true))
+    }
+
+    func testExplicitFalseAndMissingTuningsAreLeftAlone() throws {
+        var document = legacyDocument
+        document["omlx"] = ["port": 8100,
+                            "tuning": ["dflash": false, "mtp": true, "pleSSDOffload": false]]
+        document["splash"] = ["port": 8000]
+
+        let migrated = EngineTuning.backfillPLEOffload(in: document)
+
+        // An explicit `false` is a real choice; a missing tuning object falls
+        // back to defaults in the store and needs no injection.
+        XCTAssertEqual(try tuning(of: "omlx", in: migrated)?.pleSSDOffload, false)
+        XCTAssertNil((migrated["splash"] as? [String: Any])?["tuning"])
+    }
+
+    func testBackfillIsIdempotent() throws {
+        let once = EngineTuning.backfillPLEOffload(in: legacyDocument)
+        let twice = EngineTuning.backfillPLEOffload(in: once)
+        XCTAssertEqual(try JSONSerialization.data(withJSONObject: twice),
+                       try JSONSerialization.data(withJSONObject: once))
     }
 }

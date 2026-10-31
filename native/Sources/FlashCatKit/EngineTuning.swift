@@ -56,6 +56,13 @@ public struct EngineTuning: Codable, Equatable, Sendable {
     /// `qwen4_ple_ssd_offload` setting. MTPLX has no switch — it attaches its
     /// SSD sidecar whenever the checkpoint ships `ngram-table.safetensors`.
     public var pleSSDOffload: Bool?
+    /// 思考截断大小：思考请求没有自带预算时，思考超过这么多 token 就收束，
+    /// 让出空间给正文。Splash 映射为 `--thinking-token-budget`，oMLX 是按模型
+    /// 的 `thinking_budget_tokens` 设置，MTPLX 走启动环境变量
+    /// `MTPLX_THINKING_BUDGET`（其 ThinkingGuard 默认关且只覆盖 agent 工具
+    /// 循环，聊天范围由 `MTPLX_THINKING_GUARD_SCOPE=all` 一并放开）。
+    /// `nil` 表示不限制，思考自然结束。
+    public var thinkingBudget: Int?
     /// Free-form extra CLI arguments, split like a shell would.
     public var extraArguments: String?
 
@@ -71,6 +78,7 @@ public struct EngineTuning: Codable, Equatable, Sendable {
                 idleReleaseOff: Bool? = nil,
                 pleMemory: String? = nil,
                 pleSSDOffload: Bool? = nil,
+                thinkingBudget: Int? = nil,
                 extraArguments: String? = nil) {
         self.mtp = mtp
         self.mtpDepth = mtpDepth
@@ -84,6 +92,7 @@ public struct EngineTuning: Codable, Equatable, Sendable {
         self.idleReleaseOff = idleReleaseOff
         self.pleMemory = pleMemory
         self.pleSSDOffload = pleSSDOffload
+        self.thinkingBudget = thinkingBudget
         self.extraArguments = extraArguments
     }
 
@@ -92,6 +101,8 @@ public struct EngineTuning: Codable, Equatable, Sendable {
     /// The tuning a fresh install starts from. The Flash-Next PLE n-gram table is
     /// tens of gigabytes, so both engines that can stream it start that way; oMLX
     /// starts with MTP and Splash with DFlash2, i.e. speculative decoding on.
+    /// MTPLX preloads its MTP head (`--load-mtp`) so the first request does not
+    /// pay the head-loading latency — the engine's own recommended setup.
     public static func defaults(for id: EngineID) -> EngineTuning {
         switch id {
         case .splash:
@@ -99,8 +110,17 @@ public struct EngineTuning: Codable, Equatable, Sendable {
         case .omlx:
             return EngineTuning(mtp: true, dflash: false, pleSSDOffload: true)
         case .mtplx:
-            return EngineTuning()
+            return EngineTuning(loadMtp: true)
         }
+    }
+
+    /// The thinking cap actually applied for `id`: only an explicit knob counts.
+    /// `nil` — the field was never filled, or the switch was turned off — means
+    /// 不限制，思考自然结束。所有适配引擎都有思考预算面（splash CLI、oMLX 按
+    /// 模型设置、MTPLX ThinkingGuard 环境变量），不限制即不下发任何预算。
+    public func effectiveThinkingBudget(for id: EngineID) -> Int? {
+        guard let thinkingBudget, thinkingBudget > 0 else { return nil }
+        return thinkingBudget
     }
 
     /// CLI arguments appended after the pack's launch profile. Anything the
@@ -199,10 +219,21 @@ public struct EngineTuning: Codable, Equatable, Sendable {
     /// (oMLX's `dflash_draft_model`), which necessarily turns MTP off for it —
     /// the same exclusivity the engine itself enforces. A `nil`/empty override
     /// falls back to the engine-level tuning untouched.
-    public func omlxSettings(draftOverride: String?) -> [String: EngineSettingValue]? {
-        let draft = draftOverride?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !draft.isEmpty else { return omlxSettings }
+    ///
+    /// This is the push-ready form: the resolved thinking budget rides along
+    /// here (request 参数 > 模型设置，这里落的是"请求没带预算时"的模型默认),
+    /// so `pushTuning` can send the payload as it is. 不限制（nil）时显式下发
+    /// `thinking_budget_enabled=false`，把之前推送过的按模型预算清掉。
+    public func omlxSettings(id: EngineID = .omlx, draftOverride: String?) -> [String: EngineSettingValue]? {
         var payload = omlxSettings ?? [:]
+        if let budget = effectiveThinkingBudget(for: id) {
+            payload["thinking_budget_enabled"] = .bool(true)
+            payload["thinking_budget_tokens"] = .int(budget)
+        } else {
+            payload["thinking_budget_enabled"] = .bool(false)
+        }
+        let draft = draftOverride?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !draft.isEmpty else { return payload.isEmpty ? nil : payload }
         payload["dflash_enabled"] = .bool(true)
         payload["mtp_enabled"] = .bool(false)
         // The retired head's knob has no business in a DFlash payload.
@@ -219,6 +250,10 @@ public struct EngineTuning: Codable, Equatable, Sendable {
         var value = self
         value.mtpDepth = value.mtpDepth.map { min(max($0, 1), 16) }
         value.mtpQuantBits = value.mtpQuantBits.map { min(max($0, 2), 16) }
+        // 0 以下的输入当作"没填"；其余收进 256…131072 防手滑。
+        if let raw = value.thinkingBudget {
+            value.thinkingBudget = raw > 0 ? min(max(raw, 256), 131_072) : nil
+        }
         value.draftModel = trimmed(value.draftModel)
         value.maxMemory = trimmed(value.maxMemory)
         value.maxContext = trimmed(value.maxContext)
@@ -256,6 +291,31 @@ public struct EngineTuning: Codable, Equatable, Sendable {
             }
         }
         if !current.isEmpty { result.append(current) }
+        return result
+    }
+
+    /// Tunings saved before the PLE SSD-offload switch existed carry no
+    /// `pleSSDOffload` key. Decoding reads that as "leave it to the engine" —
+    /// but the engine's own default is *resident*, while the config page has
+    /// always shown the switch as on (the fresh-install default). The result
+    /// was the multi-gigabyte Flash-Next n-gram table loading into RAM behind a
+    /// toggle that looked enabled. Backfill the fresh-install default (`true`)
+    /// into any stored splash/oMLX tuning that predates the switch, straight in
+    /// the decoded-JSON document before `EngineTuning` ever sees it. An explicit
+    /// `false` is a real choice and stays untouched, and once the key is
+    /// written the pass is a no-op — an absent key only ever comes from an old
+    /// build, since `nil` cannot be encoded.
+    public static func backfillPLEOffload(in document: [String: Any]) -> [String: Any] {
+        var result = document
+        // MTPLX has no PLE switch — it attaches its SSD sidecar unconditionally.
+        for id in ["splash", "omlx"] {
+            guard var configuration = result[id] as? [String: Any],
+                  var tuning = configuration["tuning"] as? [String: Any],
+                  tuning["pleSSDOffload"] == nil else { continue }
+            tuning["pleSSDOffload"] = true
+            configuration["tuning"] = tuning
+            result[id] = configuration
+        }
         return result
     }
 }

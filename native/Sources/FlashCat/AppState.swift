@@ -59,13 +59,25 @@ final class AppState: ObservableObject {
     @Published var threads: [ChatThread] = []
     @Published var generating = false
     @Published var generationStatus: String?
-    @Published var importProgress: ImportProgress?
     /// Persistent banner for errors that need the reader's attention.
     @Published var notice: String?
     /// Transient bottom toast.
     @Published var toastMessage: String?
-    @Published var sidebarVisibility: NavigationSplitViewVisibility
+    /// 侧边栏是否展开。折叠后网页侧留一条图标 rail，导航不消失；
+    /// 状态落盘到 UserDefaults 的 `sidebarVisible`，重启后沿用上次的样子。
+    @Published var showsSidebar: Bool
     @Published var throughput: [ThroughputSample] = []
+    /// 草稿接受率（DFlash2 / MTP）的时间序列，采样节奏与吞吐一致，
+    /// 概览页用它画第二条实时曲线。value 是 0…1 的比例。
+    @Published var acceptance: [ThroughputSample] = []
+    /// 应用内对话流式回复的本地测速（tok/s）。三个引擎对「解码速度」的口径
+    /// 并不一致：splash 报实时值，oMLX 报开机以来的累计均值（只在请求结束
+    /// 时跳一格）。生成期间概览卡与曲线统一改用这个本地口径，空闲时回落到
+    /// 引擎自报的读数。
+    @Published private(set) var liveDecodeRate: Double?
+    /// 流式测速的滑动窗口：窗口内的 token 估算数与窗口起点。
+    private var streamWindowTokens = 0
+    private var streamWindowStart: Date?
     @Published var downloadingModel: String?
     /// Which engine the running download is for: two engines can hold models
     /// with the same id, and only the one being written shows the progress bar.
@@ -150,15 +162,9 @@ final class AppState: ObservableObject {
         return EngineRuntime(root: root)
     }
 
-    struct ImportProgress {
-        let fraction: Double
-        let message: String
-    }
-
     init() {
         theme = ThemeController(settings: settings)
-        let visible = UserDefaults.standard.object(forKey: "sidebarVisible") as? Bool ?? true
-        sidebarVisibility = visible ? .all : .detailOnly
+        showsSidebar = UserDefaults.standard.object(forKey: "sidebarVisible") as? Bool ?? true
         downloadTasks = ModelDownloadStore.load()
         NotificationCenter.default.addObserver(forName: EngineStore.tuningDidChangeNotification,
                                                object: nil,
@@ -179,6 +185,9 @@ final class AppState: ObservableObject {
             ?? activeEngine.defaultPort
     }
     var startupStage: String { controller?.startupStage ?? "已停止" }
+    /// Seconds the current start has been running; 0 while idle. The console
+    /// pairs it with the stage so a slow weight load shows elapsed time.
+    var startupSeconds: Int { controller?.busySeconds ?? 0 }
     var failureMessage: String? { controller?.failureMessage }
     var downloadProgress: Double? { controller?.downloadProgress }
     /// Non-nil when nothing can run yet. Every engine — splash included — is an
@@ -205,11 +214,22 @@ final class AppState: ObservableObject {
         return throughput.filter { $0.at >= cutoff }
     }
 
+    /// Same windows for the draft-acceptance curve, so both charts scroll together.
+    func recentAcceptance(window: TimeInterval) -> [ThroughputSample] {
+        guard window > 0 else { return acceptance }
+        let cutoff = Date().addingTimeInterval(-window)
+        return acceptance.filter { $0.at >= cutoff }
+    }
+
     var endpointURL: String { "http://127.0.0.1:\(port)/v1" }
 
-    /// The gateway's address: engine-independent, so a client's Base URL never
-    /// needs to change when the engine or its port does.
+    /// The gateway's address for OpenAI-dialect clients: engine-independent, so
+    /// a client's Base URL never needs to change when the engine or its port does.
     var gatewayURL: String { "http://127.0.0.1:\(settings.gatewayPort)/v1" }
+
+    /// The same gateway for Anthropic-dialect clients. Anthropic SDKs and Claude
+    /// Code append `/v1/messages` themselves, so this one stops at the root.
+    var gatewayClaudeURL: String { "http://127.0.0.1:\(settings.gatewayPort)" }
 
     /// Start the gateway when enabled; restart it onto a new port when the
     /// setting changed, or stop it when disabled.
@@ -245,22 +265,82 @@ final class AppState: ObservableObject {
             logs = []
         }
 
-        if let rate = stats?.decodeTokensPerSecond, rate > 0 {
-            let now = Date()
+        let now = Date()
+        let cutoff = now.addingTimeInterval(-300)
+        // 引擎空闲时不会把指标清零，而是把「最后一次」原样回报：splash 请求结束后
+        // metrics.decode_tokens_per_second 会一直停在最后一格（实测 116.2899403）。
+        // 这种重复读数不是新数据。照抄进序列，曲线会凭空续出一段平线，均值也会被
+        // 空闲时间一路拖着走——所以只收「数值真的动过」的读数，序列里就只剩下生成
+        // 阶段的那几秒。
+        //
+        // 应用内生成期间这套采样让位给本地测速（recordStreamDelta）：oMLX 的
+        // avg_generation_tps 是累计均值，整个生成过程一动不动，一次回复只会在
+        // 结束时落 1 个点，曲线永远凑不满两个点（表现就是「回复都结束了图还是
+        // 空的」）。外部 API 请求不经过这里，仍走引擎自报的读数。
+        let freshRate = stats?.decodeTokensPerSecond.map { rate in
+            rate > 0 && (throughput.last.map { abs($0.value - rate) > 0.0001 } ?? true)
+        } ?? false
+
+        if !generating, freshRate, let rate = stats?.decodeTokensPerSecond {
             if throughput.last.map({ now.timeIntervalSince($0.at) >= 0.9 }) ?? true {
                 throughput.append(ThroughputSample(at: now, value: rate))
-                let cutoff = now.addingTimeInterval(-300)
                 throughput.removeAll { $0.at < cutoff }
+            }
+        }
+
+        // 接受率与吞吐同频采样。引擎给的是会话累计值：空闲时它不变，生成时才爬。
+        // 因此只在「数值真的变了」或「解码读数正在动」的时候落点——否则每秒都会多
+        // 一个样本，快照 JSON 每秒都不同，概览页会被迫整页重绘。
+        if let latest = stats?.draftAcceptance {
+            let due = acceptance.last.map { now.timeIntervalSince($0.at) >= 0.9 } ?? true
+            let changed = acceptance.last.map { abs($0.value - latest) > 0.0001 } ?? true
+            if due, changed || freshRate {
+                acceptance.append(ThroughputSample(at: now, value: latest))
+                acceptance.removeAll { $0.at < cutoff }
             }
         }
 
         if switchingModel != nil { syncSwitchStage() }
     }
 
+    /// 流式回复的本地测速：每个增量累计 token 估算数，窗口攒满 ~0.9 秒算一次
+    /// 瞬时速率，与引擎轮询采样同样的节奏落点。三个引擎共用这一个口径，
+    /// 曲线在生成期间就是真实在动的。
+    private func recordStreamDelta(_ piece: String) {
+        let tokens = Self.estimateTokens(piece)
+        guard tokens > 0 else { return }
+        let now = Date()
+        guard let start = streamWindowStart else {
+            streamWindowStart = now
+            streamWindowTokens = tokens
+            return
+        }
+        streamWindowTokens += tokens
+        let interval = now.timeIntervalSince(start)
+        guard interval >= 0.9, streamWindowTokens > 0 else { return }
+        let rate = Double(streamWindowTokens) / interval
+        streamWindowTokens = 0
+        streamWindowStart = now
+        liveDecodeRate = rate
+        let cutoff = now.addingTimeInterval(-300)
+        throughput.append(ThroughputSample(at: now, value: rate))
+        throughput.removeAll { $0.at < cutoff }
+    }
+
     func bootstrap() {
         let service = ModelCatalogService()
         service.migrateLegacyDirectory()
         Paths.ensureDirectory(Paths.modelsDirectory)
+
+        // 旧版本用软链接把 ~/.omlx、~/.mtplx 的权重挂进模型目录；现在模型必须
+        // 真正待在自己的目录里，启动时把链接换成权重本身，并清掉失效链接。
+        var adopted = 0
+        for engine in EngineID.allCases {
+            adopted += EngineModelStore.adoptExistingWeights(engine).adopted.count
+        }
+        if adopted > 0 {
+            toast("已把 \(adopted) 个模型搬进 flashCat 的模型目录，不再依赖外部目录")
+        }
 
         catalog = service.load(runtime: splashRuntime)
         if catalog.machine.isEmpty {
@@ -286,10 +366,8 @@ final class AppState: ObservableObject {
             return
         }
 
-        // Model folders are per engine; build the links once at launch so the
-        // models page opens on something usable. Splash's folder *is* the model
-        // root, so it needs no links.
-        EngineModelLinker.synchronize(activeEngine)
+        // Model folders are per engine and filled above; adopt whatever this
+        // engine already has so the models page opens on something usable.
         libraryEngine = activeEngine
         // Model ids do not carry across engines: a remembered id is only kept
         // when this engine can actually serve it, otherwise the folder's own
@@ -341,7 +419,7 @@ final class AppState: ObservableObject {
         EngineStore.shared.update(id) { $0.enabled = true }
         EngineStore.shared.rememberActive(id)
         engines?.rebuild()
-        EngineModelLinker.synchronize(id)
+        EngineModelStore.adoptExistingWeights(id)
         reloadModels()
         adoptSavedModel(for: id)
         syncController()
@@ -825,12 +903,25 @@ final class AppState: ObservableObject {
         messages.append(ChatMessage(role: "assistant", content: "", model: selectedModel, createdAt: Date(), streaming: true))
         generating = true
         generationStatus = "生成中"
+        liveDecodeRate = nil
+        streamWindowTokens = 0
+        streamWindowStart = nil
 
+        // 最大生成 tokens：思考与正文共享的总输出上限。未自定义时默认取
+        // 模型支持的最大上下文（引擎侧会自行收敛），4096 那种小默认会让
+        // 思考模型一开思考就被 finish_reason=length 硬截断。
+        let maxTokensLimit: Int = {
+            if settings.maxTokens > 0 { return settings.maxTokens }
+            return stats?.maximumContextTokens ?? 32_768
+        }()
         let options = ChatOptions(temperature: settings.temperature,
                                   topP: settings.topP,
-                                  maxTokens: settings.maxTokens,
+                                  maxTokens: maxTokensLimit,
                                   reasoningEffort: settings.effectiveReasoningEffort,
-                                  systemPrompt: settings.systemPrompt)
+                                  systemPrompt: settings.systemPrompt,
+                                  thinkingBudget: EngineStore.shared
+                                      .tuning(for: activeEngine)
+                                      .effectiveThinkingBudget(for: activeEngine))
         let model = selectedModel
         let endpointPort = port
         let started = Date()
@@ -844,6 +935,7 @@ final class AppState: ObservableObject {
                             self.messages[assistantIndex].firstTokenSeconds = Date().timeIntervalSince(started)
                         }
                         self.messages[assistantIndex].content += piece
+                        self.recordStreamDelta(piece)
                     }
                 },
                 onReasoning: { piece in
@@ -853,12 +945,35 @@ final class AppState: ObservableObject {
                         if self.messages[assistantIndex].content.isEmpty {
                             self.generationStatus = "思考中"
                         }
+                        // 思考流同样计入本地测速：思考模型的输出大头在 reasoning，
+                        // 不计的话思考阶段 liveDecodeRate 一直是 nil，对话页直播条
+                        // 只能显示「— tok/s」。
+                        self.recordStreamDelta(piece)
                     }
                 },
                 onUsage: { usage in
                     Task { @MainActor in
                         guard assistantIndex < self.messages.count else { return }
                         self.messages[assistantIndex].usage = usage
+                        // 思考截断可见性：引擎按预算收束思考时，reasoning_tokens
+                        // 正好落在预算上，用「≥ 预算」判定这次思考被截断。
+                        if let budget = options.thinkingBudget,
+                           let reasoning = usage.reasoningTokens,
+                           reasoning >= budget {
+                            self.controller?.logs.append(
+                                "==> 思考截断：本次思考 \(reasoning) tokens 触及预算 \(budget)，已被强制收束；如需更长思考请在引擎配置调大「思考截断」",
+                                level: .warning)
+                            self.refreshLogs()
+                        }
+                        // max_tokens 是思考与正文共享的总输出上限，打满即硬截断
+                        //（finish_reason=length），思考模型默认值下最容易撞上。
+                        if usage.finishReason == "length" {
+                            let reasoning = usage.reasoningTokens.map { "，其中思考 \($0) tokens" } ?? ""
+                            self.controller?.logs.append(
+                                "==> 输出截断：本次生成触及最大生成长度 \(options.maxTokens) tokens 的上限\(reasoning)，思考与正文共享该上限；如需更长思考/回答请在聊天参数调大「最大生成 tokens」",
+                                level: .warning)
+                            self.refreshLogs()
+                        }
                     }
                 },
                 onStatus: { status in
@@ -978,29 +1093,6 @@ final class AppState: ObservableObject {
 
     // MARK: models
 
-    func importModel(_ source: String, move: Bool = false, engine: EngineID? = nil) {
-        let target = engine ?? activeEngine
-        let service = ModelCatalogService()
-        importProgress = ImportProgress(fraction: 0, message: "正在复制…")
-        Task {
-            do {
-                let result = try service.importDirectory(source,
-                                                         move: move,
-                                                         into: EnginePaths.modelsDirectory(target),
-                                                         flatten: target != .splash) { fraction, message in
-                    DispatchQueue.main.async { self.importProgress = ImportProgress(fraction: fraction, message: message) }
-                }
-                importProgress = nil
-                reloadModels()
-                if target == activeEngine { selectModel(result.id) }
-                toast("已导入 \(result.id)")
-            } catch {
-                importProgress = nil
-                notice = (error as? ModelCatalogService.ImportError)?.message ?? "\(error)"
-            }
-        }
-    }
-
     func deleteModel(_ model: ModelInfo) {
         do {
             try ModelCatalogService().deleteLocal(model)
@@ -1011,13 +1103,12 @@ final class AppState: ObservableObject {
             }
             toast("已删除 \(model.id)")
         } catch {
-            notice = "删除失败：\((error as? ModelCatalogService.ImportError)?.message ?? error.localizedDescription)"
+            notice = "删除失败：\((error as? ModelCatalogService.CatalogError)?.message ?? error.localizedDescription)"
         }
     }
 
-    /// Remove a model from one engine's folder. The packs find weights through
-    /// the links flashCat created, so removing a link only unlinks the model —
-    /// the bytes in `~/.omlx` or `~/.mtplx` stay where they are.
+    /// Remove a model from one engine's folder. The weights live in flashCat's
+    /// own directory now, so this deletes them — the caller asks first.
     func removeModel(_ id: String, engine: EngineID) {
         guard engine != .splash else {
             if let model = catalog.machine.first(where: { $0.id == id }) {
@@ -1026,19 +1117,19 @@ final class AppState: ObservableObject {
             return
         }
         let path = EnginePaths.modelsDirectory(engine) + "/" + id
-        let link = (try? FileManager.default.destinationOfSymbolicLink(atPath: path)) != nil
         do {
             try FileManager.default.removeItem(atPath: path)
         } catch {
-            notice = "移除失败：\(error.localizedDescription)"
+            notice = "删除失败：\(error.localizedDescription)"
             return
         }
         if selectedModel == id, engine == activeEngine {
             selectedModel = ""
             adoptSavedModel(for: engine)
         }
+        EngineModelStore.invalidateMetaCache()
         reloadModels()
-        toast(link ? "已从 \(engine.displayName) 移除链接，权重还在原处" : "已删除 \(id)")
+        toast("已删除 \(id) 及其权重文件")
     }
 
     /// Fetch weights for the engine the model page is showing.
@@ -1228,6 +1319,8 @@ final class AppState: ObservableObject {
     private func removeTask(engine: EngineID, model: String) {
         downloadTasks.removeAll { $0.engine == engine && $0.model == model }
         ModelDownloadStore.save(downloadTasks)
+        // 下载行消失 = 这份权重在磁盘上定形了，下次扫描重新读字节数。
+        EngineModelStore.invalidateMetaCache()
     }
 
     private static func totalBytes(in line: String) -> Int? {
@@ -1382,13 +1475,18 @@ final class AppState: ObservableObject {
 
     // MARK: sidebar
 
+    /// 侧栏折叠/展开动画的截止时刻。动画每帧都在重排与合成，期间任何快照推送
+    /// （Swift 序列化占用 App 主线程 → 拖慢 CA 提交；JSON.parse 占用 WebContent
+    /// 线程 → 直接吃掉动画帧）都要推迟到收口之后。不进 objectWillChange：
+    /// 它只是调度信息，触发推送就本末倒置了。
+    var sidebarAnimUntil = Date.distantPast
+
     func toggleSidebar() {
-        // Keep the rail's collapse/expand in step with the rest of the UI:
-        // NavigationSplitView resizes the column without its own transition.
-        withAnimation(.easeInOut(duration: 0.26)) {
-            sidebarVisibility = sidebarVisibility == .all ? .detailOnly : .all
-        }
-        UserDefaults.standard.set(sidebarVisibility == .all, forKey: "sidebarVisible")
+        // UI 整体在网页里：这里只翻状态，快照推给 WebUI 由它做 218px ↔ 68px
+        // 的宽度过渡，Swift 侧不再需要驱动任何布局动画。
+        showsSidebar.toggle()
+        sidebarAnimUntil = Date().addingTimeInterval(0.35)
+        UserDefaults.standard.set(showsSidebar, forKey: "sidebarVisible")
     }
 }
 

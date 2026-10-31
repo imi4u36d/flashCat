@@ -183,6 +183,12 @@ public enum EngineStatusParser {
         if let depth = JSONValue.digNumber(json, "latest.mtp_depth") {
             result.extras["mtp_depth"] = depth
         }
+        // 思考等级列表由引擎自己报告（settings.reasoning_policy.effort_levels）；
+        // 空列表（如 qwen3 解析器不分级）视为「未提供」，交由上层兜底。
+        if let levels = JSONValue.dig(json, "settings.reasoning_policy.effort_levels") as? [String],
+           !levels.isEmpty {
+            result.reasoningEfforts = levels
+        }
         if let level = JSONValue.digNumber(json, "memory_pressure_level") {
             result.extras["memory_pressure_level"] = level
         }

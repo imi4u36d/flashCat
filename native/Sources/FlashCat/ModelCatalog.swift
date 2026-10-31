@@ -1,4 +1,5 @@
 import Foundation
+import FlashCatKit
 
 enum ModelOrigin: String {
     case local = "本地"
@@ -87,73 +88,27 @@ final class ModelCatalogService {
         let target = Paths.modelsDirectory
         if !Paths.fileExists(legacy) || legacy == target { return }
         Paths.ensureDirectory(target)
-        for owner in directories(legacy) {
+        // `<support>/models` now also holds the per-engine folders
+        // (`models/omlx`, `models/mtplx`); those are live, not legacy, and
+        // moving them into Splash's folder would empty another engine's library.
+        let engineFolders = Set(EngineID.allCases.map { $0.rawValue })
+        for owner in directories(legacy) where !engineFolders.contains(basename(owner)) {
             for repo in directories(owner) {
                 let destination = target + "/" + basename(owner) + "/" + basename(repo)
                 if Paths.fileExists(destination) { continue }
-                Paths.ensureDirectory(destination)
+                Paths.ensureDirectory((destination as NSString).deletingLastPathComponent)
                 try? FileManager.default.moveItem(atPath: repo, toPath: destination)
             }
         }
     }
 
-    struct ImportResult { let id: String; let destination: String }
-    struct ImportError: Error { let message: String }
-
-    /// Copy (or move) a model folder into an engine's model directory —
-    /// `~/.flashcat/models` for Splash, `~/.flashcat/models/<engine>` for the
-    /// rest — so importing works the same for every engine.
-    func importDirectory(_ source: String, move: Bool, into root: String = Paths.modelsDirectory,
-                         flatten: Bool = false, progress: (Double, String) -> Void) throws -> ImportResult {
-        guard Paths.fileExists(source) else { throw ImportError(message: "选择的目录不存在") }
-        let files = allFiles(source)
-        let hasWeights = files.contains {
-            let lower = $0.lowercased()
-            if lower.hasSuffix(".gguf") { return lower.contains("mmproj") == false }
-            return lower.hasSuffix(".safetensors")
-        }
-        if !hasWeights { throw ImportError(message: "目录里没有找到 .gguf 或 .safetensors 权重文件") }
-
-        let owner = sanitize(basename((source as NSString).deletingLastPathComponent))
-        let repo = sanitize(basename(source))
-        // Splash reads `<owner>/<repo>`, the packaged engines read flat
-        // `<owner>--<repo>` folders, so the destination shape follows the root.
-        let id = flatten ? "\(owner)--\(repo)" : "\(owner)/\(repo)"
-        let destination = root + "/" + id
-        if Paths.fileExists(destination) { throw ImportError(message: "\(id) 已经存在") }
-
-        Paths.ensureDirectory(destination)
-        let total = files.reduce(0) { $0 + fileSize($1) }
-        var completed = 0
-
-        if move {
-            if (try? FileManager.default.moveItem(atPath: source, toPath: destination)) != nil {
-                progress(1, "已移动 \(id)")
-                return ImportResult(id: id, destination: destination)
-            }
-        }
-
-        for file in files {
-            var relative = (file as NSString).substring(from: source.count)
-            while relative.hasPrefix("/") { relative = String(relative.dropFirst()) }
-            let output = destination + "/" + relative
-            Paths.ensureDirectory((output as NSString).deletingLastPathComponent)
-            if move {
-                try? FileManager.default.moveItem(atPath: file, toPath: output)
-            } else {
-                try? FileManager.default.copyItem(atPath: file, toPath: output)
-            }
-            completed += fileSize(output)
-            progress(total == 0 ? 1 : Double(completed) / Double(total), "正在复制 " + basename(file))
-        }
-
-        if move { try? FileManager.default.removeItem(atPath: source) }
-        return ImportResult(id: id, destination: destination)
-    }
+    /// Deleting is the only mutating action left on a model now that importing
+    /// is gone, so the error is about the folder, not a copy.
+    struct CatalogError: Error { let message: String }
 
     func deleteLocal(_ model: ModelInfo) throws {
         if model.origin != .local {
-            throw ImportError(message: "只能删除 flashCat 本地模型目录中的模型")
+            throw CatalogError(message: "只能删除 flashCat 本地模型目录中的模型")
         }
         try? FileManager.default.removeItem(atPath: model.path)
         let parent = (model.path as NSString).deletingLastPathComponent
@@ -316,9 +271,4 @@ final class ModelCatalogService {
     }
 
     private func basename(_ path: String) -> String { (path as NSString).lastPathComponent }
-
-    private func sanitize(_ value: String) -> String {
-        let cleaned = TextPattern.replace("[^A-Za-z0-9_.-]", value, with: "-")
-        return cleaned.isEmpty ? "model" : cleaned
-    }
 }

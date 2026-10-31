@@ -18,6 +18,9 @@ __pycache__/
 # OS metadata
 .DS_Store
 
+# Editor workspace settings
+.vscode/
+
 # Internal docs (visual spec, implementation notes, screenshots)
 docs/
 

@@ -48,35 +48,37 @@ struct FlashCatApp: App {
                 Button("日志") { state.section = .logs }.keyboardShortcut("5", modifiers: .command)
                 Button("设置") { state.section = .settings }.keyboardShortcut("6", modifiers: .command)
                 Divider()
-                Button("折叠/展开侧边栏") { state.toggleSidebar() }
+                Button(state.showsSidebar ? "折叠侧边栏" : "展开侧边栏") { state.toggleSidebar() }
                     .keyboardShortcut("\\", modifiers: .command)
             }
         }
 
-        // 系统菜单栏常驻入口：点击弹出当前模型与运行信息面板。
-        MenuBarExtra {
-            MenuBarPanel(state: state)
-        } label: {
-            MenuBarStatusLabel(state: state)
-        }
-        .menuBarExtraStyle(.window)
     }
 
     /// WebUI 控制台壳：启动页、下载中心、引擎配置、确认弹窗都在网页里渲染，
     /// 窗口内不再挂任何原生 sheet / alert。
     private var webConsole: some View {
         WebViewShell(state: state)
+            .overlay(MainWindow.bridge())
+            // 网页自己画标题栏那一行（红绿灯 + 侧栏折叠手柄）：不忽略安全区，
+            // WebView 会被压到 28pt 的原生 titlebar 下面，网页永远没法跟红绿灯对齐。
+            .ignoresSafeArea()
     }
 }
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// 常驻菜单栏项。必须由 AppDelegate 强引用持有，否则状态栏项会被回收。
+    private var statusBar: StatusBarController?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Apply the stored skin before anything paints: `nil` appearance means
         // "follow macOS", so the app opens in whatever the reader picked.
         let state = AppState.shared
         state.theme.apply()
         state.bootstrap()
+
+        statusBar = StatusBarController(state: state)
 
         for target in NSApp.windows {
             configure(target)
@@ -91,6 +93,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configure(_ target: NSWindow) {
+        // 只处理主窗口。状态栏项的按钮也活在一个内部窗口里（层级更高的 panel），
+        // 给它套主窗口的外观和标题栏设置，会让系统给菜单栏图标补一块浅色底板。
+        guard target.canBecomeMain, target is NSPanel == false else { return }
         target.title = "flashCat"
         target.titleVisibility = .hidden
         target.titlebarAppearsTransparent = true
@@ -117,6 +122,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 从面板上的"打开主窗口"或 Dock 图标随时回到窗口。彻底退出走
         // 面板里的"退出 flashCat"。
         return false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { MainWindow.show() }
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {

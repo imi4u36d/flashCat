@@ -32,9 +32,11 @@
 
 - **三个引擎，一个界面。** Splash、oMLX、MTPLX 各有自己的运行时、端口和日志，
   在应用里统一切换、启动、停止，不用并行开三个终端。
-- **模型直接复用你已有的权重。** 扫描 `~/.omlx/models`、`~/.omlx/gguf`,
-  `~/.mtplx/models` 和 Splash 的模型目录，用软链接到应用自己的模型目录里，
-  不复制、不搬家。也可以在应用里从 Hugging Face 下载。
+- **模型清单是固定的。** 每个引擎只有三个官方档位（Qwen 3.6 35B-A3B / 3.8 27B /
+  3.8 Flash-Next），各自用该引擎能真正加载的仓库：Splash 用 MLX（Flash-Next 走
+  GGUF）、oMLX 用自家 oQ 量化、MTPLX 用自带 MTP 头的 pack。清单写死在
+  `ModelRecommendations`，页面只提供下载，不支持导入外部权重；下载的权重实打实
+  落在每个引擎自己的模型目录里，不靠软链接外挂别人的目录。
 - **标准 OpenAI + Claude 双格式网关。** 应用自带一个固定端口的本地 API 网关
   （默认 `http://127.0.0.1:9000/v1`），同时提供 OpenAI（`/v1/chat/completions`）
   和 Claude（`/v1/messages`）两种标准格式与统一模型列表（`/v1/models`），
@@ -100,16 +102,18 @@
 ## 六个页面怎么用
 
 **概览** —— 引擎起没起、现在加载的是哪个模型、实时解码速度曲线，以及
-API 网关地址（OpenAI + Claude 双格式，一键复制）。旁边是运行详情：设备、进程、内存压力、热状态。
+API 网关地址（OpenAI 的 `/v1` 与 Claude 的根地址各一行，各自一键复制）。
+旁边是运行详情：设备、进程、内存压力、热状态。
 
 **对话** —— 应用内置的聊天窗口。顶部可以切模型、调参数（温度、top-p、最大输出）、
 设置思考模式（自动 / 关闭 / 开启）和推理等级。每条回复下方有 tok/s 和首字延迟。
 对话记录在本地，支持新建和翻看历史。
 
 **模型** —— 每个引擎一份模型库，顶部 chip 条先选看哪个引擎（跟当前跑的是谁无关，没装
-也能先看）。列扫到的本地权重与该引擎适配的推荐档位，点一下就是当前模型（oMLX 下是热
-切换），或在原地从 Hugging Face 下载；某个引擎一个模型都没有时，页面顶部直接给出它
-最适配的 Qwen 三档。引擎的模型目录可以在每张卡片的 ⋯ 里打开。
+也能先看）。网格里固定三档（Qwen 3.6 35B-A3B / 3.8 27B / 3.8 Flash-Next），装好的显示
+「使用」，没装的显示「下载」并在原地从 Hugging Face 拉取；卡上标着体积、内存下限与
+MTP / DFlash2 标识。页面不接受导入外部权重，权重只能来自这份清单。引擎的模型目录可以
+在每张卡片的 ⋯ 里打开。
 
 **引擎** —— 每个引擎一张卡片：状态、端口、启动参数、上游最新版本比对、
 一键构建并安装上游新版本、打开安装目录、查看日志、卸载任意已装版本（含正在
@@ -169,20 +173,35 @@ curl http://127.0.0.1:9000/v1/messages \
 
 ## 模型从哪来
 
-应用不改动你原有的模型目录，只做软链：
+每个引擎只读自己的目录，权重就放在里面，没有软链接：
 
-| 引擎 | 读取的目录 |
-| --- | --- |
-| oMLX | `~/.omlx/models`、`~/.omlx/gguf` |
-| MTPLX | `~/.mtplx/models` |
-| Splash | `~/Library/Application Support/Splash/models` |
+| 引擎 | 模型目录 | 目录形状 |
+| --- | --- | --- |
+| Splash | `~/.flashcat/models` | `<owner>/<repo>` |
+| oMLX | `~/Library/Application Support/flashCat/models/omlx` | `<owner>--<repo>` |
+| MTPLX | `~/Library/Application Support/flashCat/models/mtplx` | `<owner>--<repo>` |
 
-扫描到的模型会以软链的形式出现在
-`~/Library/Application Support/flashCat/models/<引擎>/` 下，引擎只看这一个目录。
-所以把模型放进上面任意一个目录，回「模型」页点重新扫描就能看到。
+权重只从 Hugging Face 下载（或沿用早先版本已装好的同一份），不接受外部目录导入。
+每个引擎固定三档，仓库按该引擎能真正加载的格式选（`ModelRecommendations.swift`
+是唯一真值来源，换模型改那一张表即可）：
 
-应用内下载的模型走 Hugging Face，缓存目录可以在设置里改
-（默认沿用 `HF_HUB_CACHE`）。oMLX 支持 GGUF 和多模型常驻，Splash / MTPLX 一次跑一个模型。
+| 档位 | Splash（MLX / GGUF） | oMLX（自家 oQ 量化） | MTPLX（自带 MTP 头） |
+| --- | --- | --- | --- |
+| Qwen 3.6 35B-A3B | `mlx-community/…-4bit` | `Jundot/…-oQ4e-mtp` | `Youssofal/…-MTPLX-Optimized-Speed` |
+| Qwen 3.8 27B | `mlx-community/…-4bit` | `mlx-works/…-oQ4e-mtp` | `Youssofal/…-MTPLX-Optimized-Speed` |
+| Qwen 3.8 Flash-Next | `ISTA-DASLab/…-GSQ-RCO-GGUF` | `Jundot/…-oQ4e-mtp` | `Youssofal/…-MTPLX-Optimized-Speed` |
+
+不在表里的权重即使是合法 MLX / GGUF 目录也不会出现在界面里——模型页没有导入入口，
+模型切换菜单也只列这三档（外加与它们配对的 DFlash2 草稿）。旧版本留下的非清单权重
+直接删目录即可，应用不会再展示它们。
+
+1.3.x 及更早的版本是用软链接把 `~/.omlx/models`、`~/.omlx/gguf`、`~/.mtplx/models`
+里的模型挂进模型目录的。升级后第一次启动会把这些链接换成权重本身：同盘移动、
+不占额外空间、很快完成，代价是原来目录里的那份不再存在；指向已删除权重的失效
+链接会被清掉。
+
+下载走 Hugging Face，缓存目录可以在设置里改（默认沿用 `HF_HUB_CACHE`）。
+oMLX 支持 GGUF 和多模型常驻，Splash / MTPLX 一次跑一个模型。
 
 ## 设置项说明
 
@@ -231,13 +250,15 @@ make uninstall
 ```
 
 会停掉正在跑的引擎、删除 `/Applications/flashCat.app` 和登录项。
-想连配置和模型软链一起清掉：
+想连配置和模型一起清掉：
 
 ```bash
-rm -rf ~/Library/Application\ Support/flashCat ~/Library/Logs/flashCat
+rm -rf ~/Library/Application\ Support/flashCat ~/.flashcat/models ~/Library/Logs/flashCat
 ```
 
-模型本身在你自己的目录里（`~/.omlx`、`~/.mtplx` 等），不会被删。
+注意模型现在就在这两个目录里（Splash 的权重在 `~/.flashcat/models`，oMLX / MTPLX
+的在 `~/Library/Application Support/flashCat/models/<引擎>`），删目录等于把下载
+的权重一起删了，执行前确认没有还要留着的模型。
 
 ## 从源码构建（可选）
 

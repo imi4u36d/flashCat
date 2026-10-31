@@ -40,8 +40,8 @@ enum ModelInstaller {
 
     // MARK: Destination
 
-    /// Weight folders are flat: `owner--repo` is the id every engine serves and
-    /// the same shape `EngineModelLinker` creates for existing weights.
+    /// Weight folders are flat: `owner--repo` is the id every engine serves, and
+    /// the same shape a download lands in.
     static func folderName(for repo: String) -> String {
         let flat = repo.replacingOccurrences(of: "/", with: "--")
         return flat.replacingOccurrences(of: ":", with: "-")

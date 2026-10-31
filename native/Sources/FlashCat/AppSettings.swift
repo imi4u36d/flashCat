@@ -167,10 +167,9 @@ final class AppSettings {
     var systemPrompt: String { defaults.string(forKey: "chat.system") ?? "" }
     func setSystemPrompt(_ value: String) { defaults.set(value, forKey: "chat.system") }
 
-    var maxTokens: Int {
-        let value = defaults.integer(forKey: "chat.maxTokens")
-        return value == 0 ? 4096 : value
-    }
+    /// 0 = 未设置：请求不带自定义上限，默认用模型支持的最大上下文
+    /// （`AppState.send` 用运行模型的 maximumContextTokens 计算）。
+    var maxTokens: Int { defaults.integer(forKey: "chat.maxTokens") }
     func setMaxTokens(_ value: Int) { defaults.set(value, forKey: "chat.maxTokens") }
 
     // MARK: API gateway

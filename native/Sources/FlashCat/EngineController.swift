@@ -113,27 +113,28 @@ final class EngineController {
 
     var startupStage: String {
         switch state {
-        case .ready: return "就绪"
+        case .ready: return EngineStartupStage.ready.rawValue
         case .failed: return "启动失败"
         case .stopped: return "已停止"
         case .stopping: return "停止中"
         case .starting: break
         }
-        if status?.state == .loading { return "加载权重" }
+        if status?.state == .loading { return EngineStartupStage.loadingWeights.rawValue }
+        // The stage comes from the engine's own lines only: the app's banner
+        // echoes the whole command line, `--max-context` included, and names no
+        // phase — scanning it reported a stage for a server that had exited.
         let recent = logs.tail(60)
-        for line in recent where line.id > stageBaseline {
-            // The app's own banner echoes the whole command line, --max-context
-            // included; scanning it reported "准备上下文" for a server that had
-            // already exited. Only the engine's own lines describe its stage.
-            guard line.level != .system else { continue }
-            let text = line.text
-            if text.contains("Ready ·") { return "就绪" }
-            if text.lowercased().contains("downloading") { return "下载模型" }
-            if text.lowercased().contains("warm") { return "预热" }
-            if text.lowercased().contains("load") { return "加载权重" }
-            if text.lowercased().contains("kv") || text.lowercased().contains("context") { return "准备上下文" }
-        }
-        return "启动中"
+            .filter { $0.id > stageBaseline && $0.level != .system }
+            .map(\.text)
+        return EngineStartupStage.derive(from: recent).rawValue
+    }
+
+    /// Seconds the current start has been running, nil while idle. The console
+    /// shows it beside the stage: a warmup that takes minutes then reads as
+    /// progress that is still moving, not as a spinner that hung.
+    var busySeconds: Int? {
+        guard let busySince else { return nil }
+        return max(0, Int(Date().timeIntervalSince(busySince)))
     }
 
     var downloadProgress: Double? {
@@ -238,14 +239,14 @@ final class EngineController {
             return nil
         }
 
-        // The manifest decides how the model is handed over; handing out the link
-        // inside flashCat's models folder keeps engines away from the user's
-        // upstream caches while reusing the same bytes.
-        let linked = modelsDirectory + "/" + selected
+        // The manifest decides how the model is handed over. An engine only ever
+        // sees a path inside flashCat's own models folder — the weights live
+        // there, not in the user's upstream caches.
+        let modelPath = modelsDirectory + "/" + selected
         let modelArgument: String
         switch manifest.modelArgumentStyle {
         case .name: modelArgument = selected
-        case .path: modelArgument = linked
+        case .path: modelArgument = modelPath
         case .id: modelArgument = localModel?.id ?? selected
         }
 
@@ -278,6 +279,10 @@ final class EngineController {
             }
         }
         arguments += tuning.arguments(for: id)
+        // 思考截断：Splash 吃 CLI 参数；oMLX 的按模型预算由 pushTuning 推送。
+        if id == .splash, let budget = tuning.effectiveThinkingBudget(for: .splash) {
+            arguments += ["--thinking-token-budget", String(budget)]
+        }
         if id == .splash, let effort = settings.effectiveReasoningEffort {
             arguments += ["--default-reasoning-effort", effort]
         }
@@ -290,6 +295,13 @@ final class EngineController {
         var environment = baseEnvironment(root: installation.root.path)
         for (key, raw) in profile.environment ?? [:] {
             environment[key] = EngineTemplate.expand(raw, context: values)
+        }
+        // MTPLX 的思考截断走 ThinkingGuard 的环境变量：引擎默认关、且默认
+        // 只覆盖 agent 工具循环，这里显式开启并把范围放宽到普通聊天，
+        // 与 splash/oMLX 的截断语义对齐。重启后生效。
+        if id == .mtplx, let budget = tuning.effectiveThinkingBudget(for: .mtplx) {
+            environment["MTPLX_THINKING_BUDGET"] = String(budget)
+            environment["MTPLX_THINKING_GUARD_SCOPE"] = "all"
         }
         // flashcat_serve.py detaches a watchdog that ends the server when the
         // app is gone; it finds this app through the pid file.
@@ -640,7 +652,14 @@ final class EngineController {
         pollInFlight = true
         defer { pollInFlight = false }
 
-        guard await probeHealth() else { return }
+        guard await probeHealth() else {
+            // 503 while the weights load and the kernels warm: there is no
+            // status document to read yet, but the console still has to tick —
+            // the stage comes from the engine's log and the elapsed count from
+            // the clock, and on a big MoE target both stay put for minutes.
+            refreshStartupTick()
+            return
+        }
 
         if state == .starting {
             state = .ready
@@ -650,10 +669,11 @@ final class EngineController {
         await ensureDesiredModelLoaded()
         guard let payload = await fetchJSON(path: statusPath) else { return }
         let health = statusPath == healthPath ? nil : await fetchJSON(path: healthPath)
-        let parsed = EngineStatusParser.parse(engine: id,
+        var parsed = EngineStatusParser.parse(engine: id,
                                               status: payload,
                                               health: health,
                                               fallbackState: .ready)
+        await adoptEngineReportedEfforts(into: &parsed)
         status = parsed
         stats = ServerStats(engineStatus: parsed, previous: stats)
         if process == nil { logs.pollFollow() }
@@ -662,6 +682,16 @@ final class EngineController {
 
     private var healthPath: String {
         manifest.health.path
+    }
+
+    /// Keep the console alive while the engine is not answering yet. Nothing is
+    /// polled from the engine here — a loading splash prints nothing for
+    /// minutes — but republishing the snapshot each second is what makes the
+    /// stage and the elapsed count move instead of freezing at one frame.
+    private func refreshStartupTick() {
+        guard state == .starting else { return }
+        if process == nil { logs.pollFollow() }
+        onChange()
     }
 
     /// First entry of the manifest's `status` array — splash reports everything
@@ -685,6 +715,20 @@ final class EngineController {
         guard (200..<300).contains(response.status) else { return nil }
         guard let object = try? JSONSerialization.jsonObject(with: response.body) else { return nil }
         return object as? [String: Any]
+    }
+
+    /// oMLX 把每个模型支持的思考等级放在 `/v1/models/status` 的
+    /// `reasoning_efforts` 里（`/api/status` 没有），所以这里补一次读取，
+    /// 交给思考等级下拉框当数据源。其他引擎的等级已随状态文档解析
+    /// （MTPLX），splash 不提供 → 保持 nil，上层用内置列表兜底。
+    private func adoptEngineReportedEfforts(into parsed: inout EngineStatus) async {
+        guard id == .omlx else { return }
+        guard let wanted = parsed.model ?? desiredModel, !wanted.isEmpty else { return }
+        guard let document = await fetchJSON(path: "/v1/models/status") else { return }
+        let entries = (document["models"] as? [[String: Any]]) ?? []
+        guard let entry = entries.first(where: { ($0["id"] as? String) == wanted }),
+              let efforts = entry["reasoning_efforts"] as? [String], !efforts.isEmpty else { return }
+        parsed.reasoningEfforts = efforts
     }
 
     // MARK: model switching
@@ -1004,8 +1048,10 @@ final class EngineController {
         for target in targets {
             // A model with an assigned draft gets `dflash_draft_model` merged
             // into its payload; everyone else takes the engine-level tuning.
+            // The payload is push-ready: the resolved thinking budget rides in.
             let override = EngineStore.shared.draftAssignment(for: id, model: target)
-            guard let settings = tuning.omlxSettings(draftOverride: override), !settings.isEmpty else { continue }
+            guard let settings = tuning.omlxSettings(id: id, draftOverride: override),
+                  !settings.isEmpty else { continue }
             let payload = settings.mapValues { $0.jsonObject }
             guard let data = try? JSONSerialization.data(withJSONObject: payload) else { continue }
             let response = await HTTP.put(port: port,

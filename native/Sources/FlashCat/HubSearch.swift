@@ -136,14 +136,17 @@ struct HubSearchState {
                                              memoryGB: floor.value, estimated: floor.estimated)
             }
         }
-        // A multi-quant repository starts on its smallest one so the row is not
-        // a 100 GB surprise; the card lets the user switch before downloading.
-        let start = options.min(by: { $0.bytes < $1.bytes }) ?? options[0]
+        // A row without a single known size is worse than no row: it would show
+        // no size and download whichever quant happens to be listed first. The
+        // per-repository sizes are the only source, so an enrich that got rate
+        // limited lands here.
+        let sized = options.filter { $0.bytes > 0 }
+        guard let start = sized.min(by: { $0.bytes < $1.bytes }) else { return nil }
         let row = ModelRecommendations.recommendation(for: repo)
         return HubSearchResult(id: start.name.map { repo + ":" + $0 } ?? repo,
                                repo: repo, engine: engine, kind: model.kind,
                                bytes: start.bytes, memoryGB: start.memoryGB,
                                estimated: start.estimated, downloads: model.downloads,
-                               options: options, summary: row?.summary, tags: row?.tags ?? [])
+                               options: sized, summary: row?.summary, tags: row?.tags ?? [])
     }
 }

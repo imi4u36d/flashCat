@@ -832,6 +832,11 @@ final class AppState: ObservableObject {
 
     func browseEngine(_ id: EngineID) {
         libraryEngine = id
+        // 搜索是「这一栏里的这次查询」：换栏就散，否则新栏会顶着一次它从没
+        // 被输入过的查询，把别的引擎的命中当成自己的结果。票号一并作废，
+        // 免得还在路上的答案落进新栏。
+        hubSearchTicket += 1
+        hubSearch = HubSearchState()
     }
 
     // MARK: Hub search

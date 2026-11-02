@@ -122,7 +122,7 @@ const PAGE_FIELDS = {
   overview: ["stats", "throughput", "sessions", "draftLabel", "endpointURL",
              "gatewayURL", "gatewayClaudeURL", "modelsMenu", "context"],
   chat: ["messages", "generating", "generationStatus", "modelsMenu", "library", "settings"],
-  models: ["library", "downloads", "modelsMenu"],
+  models: ["library", "downloads", "modelsMenu", "hubSearch"],
   engines: ["enginesInstall", "packIndex"],
   logs: ["logs"],
   settings: ["settings"],
@@ -1956,10 +1956,7 @@ function bindPageExtras() {
     cmd("searchHub", { query });
     render();
   });
-  document.querySelectorAll("[data-quant]").forEach((el) => bindOnce(el, "change", () => {
-    UI.quant[el.dataset.quant] = el.value;
-    renderModelsGridOnly();
-  }));
+  bindQuantSelects(document);
   document.querySelectorAll("[data-lf]").forEach((el) => bindOnce(el, "click", () => { UI.logFilter = el.dataset.lf; render(); }));
   document.querySelectorAll("[data-f]").forEach((el) => bindOnce(el, "click", () => { UI.modelsFilter = el.dataset.f; render(); }));
   // 输入框失焦时补做挂起的重绘（快照推送在输入期间被挂起）。
@@ -1979,6 +1976,16 @@ function renderModelsGridOnly() {
   if (!grid) { render(); return; }
   grid.innerHTML = modelsGridHTML();
   bindActs(grid);
+  bindQuantSelects(grid);
+}
+
+// 网格重建后必须重绑：change 监听挂在被换掉的旧节点上，只重绑 click 会让
+// 下拉显示 Q8、UI.quant 还停在 Q4，下载就按 Q4 走。
+function bindQuantSelects(root) {
+  root.querySelectorAll("[data-quant]").forEach((el) => bindOnce(el, "change", () => {
+    UI.quant[el.dataset.quant] = el.value;
+    renderModelsGridOnly();
+  }));
 }
 
 function logMenu() {

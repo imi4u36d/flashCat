@@ -18,6 +18,7 @@ depends-on: [flashcat-manifest-contract]
 - **状态归一。** 把三份互不相似的状态报文折成一个 `EngineStatus`。
 - **路由与调参。** `EngineRoutes` 记住每个引擎的实际端点形状，`EngineTuning` 保存每引擎的可选旋钮（`nil` = 交给引擎，不做迁移）。
 - **上游版本。** 读 GitHub release，与已装版本比对，得出「安装 / 更新 / 重装」。
+- **Splash 的家族表。** 解析 pack 里的 `install/families.py`，得出「模型家族 → 它发布的 DFlash2 draft」；再按 `model.json` 记下的 family（优先）或折叠后的模型 id 反查一个模型该配哪个 draft。
 - **装机。** 索引解析、校验和验证、安装/卸载、可删性判定，以及「上游有新版」到「实际产出 pack 的命令」的转化。
 - **启动阶段。** 从引擎自己打印的日志行判定它现在在哪一步。
 
@@ -32,6 +33,7 @@ depends-on: [flashcat-manifest-contract]
 ## 不变量与代价
 
 - **端口几何刻意避开上游默认值。** splash 8000 / omlx 8100 / mtplx 8200，每段 20 个端口（`defaultPort...defaultPort+19`）。选 8100 / 8200 而不是上游自己用的 8099 / 8000，是为了让应用管理的实例和用户手工起的上游实例不打架；段外不放宽是刻意的——一个引擎的实例不该跑到另一个引擎的号段里。
+- **家族声明 `None` 就是没有 draft。** `families.py` 里 `ModelFamily("x", None, …)` 与「表里没这个家族」是两件事：前者以家族的回答为准，不许被应用里写死的已知表覆盖成「其实没发布过的 draft」；后者才回落到已知表，再没有就按无加速处理。
 - **未知枚举值降级，不失败。** 新版本 pack 可能带来当前应用不认识的 `capability` 或 `modelArgument`。解码时降级为 `.chat` / `.name`，那个值走不到相应 UI，但引擎仍然装得上、起得来。
 - **解析器是唯一知道差异的地方。** 三份状态报文的形状知识只许存在于 `StatusParsers`；任何别处出现 `"metrics.decode_tokens_per_second"` 之类的路径都是把差异漏出去了。
 - **启动阶段只认真正命名阶段的行。** 早期版本用裸词 `kv` / `context` 匹配，而 splash 每次启动都打印的内存计划行里恰好含这两个词，于是每次启动都报出一个引擎并不存在的「准备上下文」阶段——真正的过程是预热（arena 组装、专家表流入、最大前缀与解码预热、内存审计），以及 macOS 还没还够内存时的等待。回归由 `EngineStartupStageTests` 的两条用例守着。

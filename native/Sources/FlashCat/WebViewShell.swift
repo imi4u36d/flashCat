@@ -307,7 +307,12 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
 
     /// 删除现在是真删权重（不再只是解链），所以先问一次，并把要删的大小摆出来。
     private func confirmRemoveModel(_ id: String, engine: EngineID) {
-        let path = EnginePaths.modelsDirectory(engine) + "/" + id
+        // 行的真实位置从库里取：Splash 的行是 `.resolved` 里的装配体，
+        // 按 `modelsDirectory + id` 拼出来的路径根本不存在，问出来的大小是 0 B。
+        let entry = state.libraryEntries(for: engine).first { $0.id == id }
+        let path = entry?.model.path.isEmpty == false
+            ? entry!.model.path
+            : EnginePaths.modelsDirectory(engine) + "/" + id
         let bytes = EngineModelStore.size(of: path)
         let alert = NSAlert()
         alert.alertStyle = .warning

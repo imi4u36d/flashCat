@@ -75,7 +75,9 @@ enum ModelRecommendations {
             id: "mlx-community/Qwen3.6-35B-A3B-4bit",
             bytes: 20_400_000_000, minimumMemory: 32,
             summary: "35B MoE，只激活 3B，长上下文更省内存",
-            tags: ["MLX", "MoE", "DFlash2"],
+            // 草稿头先不写进标签：下载只给 Splash 传草稿，oMLX 现在拉不到，
+            // 卡片上挂着「DFlash2」却拿不到加速比不挂更糟。
+            tags: ["MLX", "MoE"],
             draftRepository: "incoai/Qwen3.6-35B-A3B-DFlash2",
             rank: 2,
             engines: [.omlx]),
@@ -83,7 +85,7 @@ enum ModelRecommendations {
             id: "mlx-community/Qwen3.8-27B-4bit",
             bytes: 15_600_000_000, minimumMemory: 24,
             summary: "27B 稠密 4 位，通用档",
-            tags: ["MLX", "DFlash2"],
+            tags: ["MLX"],
             draftRepository: "incoai/Qwen3.8-27B-DFlash2",
             rank: 1,
             engines: [.omlx]),

@@ -1439,6 +1439,9 @@ final class AppState: ObservableObject {
     func removeModel(_ id: String, engine: EngineID) {
         guard engine != .splash else {
             if let model = catalog.machine.first(where: { $0.id == id }) {
+                // 正在服务的那份权重删掉后不能留着旧选择：先停引擎，再删，
+                // 让下一次启动重新解析模型。
+                if engine == activeEngine, selectedModel == id { stopService() }
                 deleteModel(model)
             }
             return

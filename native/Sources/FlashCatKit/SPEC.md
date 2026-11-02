@@ -21,10 +21,11 @@ depends-on: [flashcat-manifest-contract]
 - **Splash 的家族表。** 解析 pack 里的 `install/families.py`，得出「模型家族 → 它发布的 DFlash2 draft」；再按 `model.json` 记下的 family（优先）或折叠后的模型 id 反查一个模型该配哪个 draft。
 - **装机。** 索引解析、校验和验证、安装/卸载、可删性判定，以及「上游有新版」到「实际产出 pack 的命令」的转化。
 - **启动阶段。** 从引擎自己打印的日志行判定它现在在哪一步。
+- **Hub 仓库。** `HubSearchClient` 检索 Hugging Face、逐仓库补齐真实字节；`HubModelLayout` 从仓库自报的元数据判出它服务哪个引擎（GGUF / MTPLX / MLX），并把 GGUF 仓库的量化枚举成 `select_gguf` 认得的名字。它只描述「这个仓库能不能跑」和「体积多大」，下载与归属判定归应用壳；网络出口仍只有 `URLSession`，没有新依赖。
 
 ## 边界
 
-- **只允许 `Foundation` / `Network` / `CryptoKit`。** 不许 `AppKit`、`SwiftUI`、`WebKit`。这条约束换来的是：整层可以在没有窗口的测试进程里跑——`FlashCatKitTests` 12 个文件、122 个测试全打在这里。
+- **只允许 `Foundation` / `Network` / `CryptoKit`。** 不许 `AppKit`、`SwiftUI`、`WebKit`。这条约束换来的是：整层可以在没有窗口的测试进程里跑——`FlashCatKitTests` 13 个文件、143 个测试全打在这里。
 - **不拥有进程。** 不 spawn、不 kill、不轮询端口、不写 pid 文件。Kit 只输出「该怎么启动」，执行归应用壳。
 - **不拥有 UI 状态，不读用户偏好。** 配置从外部传入，Kit 不碰 `UserDefaults`。
 - **禁止反向依赖** 应用壳里的任何符号。
@@ -36,6 +37,7 @@ depends-on: [flashcat-manifest-contract]
 - **家族声明 `None` 就是没有 draft。** `families.py` 里 `ModelFamily("x", None, …)` 与「表里没这个家族」是两件事：前者以家族的回答为准，不许被应用里写死的已知表覆盖成「其实没发布过的 draft」；后者才回落到已知表，再没有就按无加速处理。
 - **未知枚举值降级，不失败。** 新版本 pack 可能带来当前应用不认识的 `capability` 或 `modelArgument`。解码时降级为 `.chat` / `.name`，那个值走不到相应 UI，但引擎仍然装得上、起得来。
 - **解析器是唯一知道差异的地方。** 三份状态报文的形状知识只许存在于 `StatusParsers`；任何别处出现 `"metrics.decode_tokens_per_second"` 之类的路径都是把差异漏出去了。
+- **GGUF 量化名以引擎的实现为准，不以猜名为准。** `HubModelLayout` 里的 variant 枚举逐条镜像 splash `install/upstream.py` 的 `select_gguf`：根级候选的共享词前缀之后是 token，`VARIANT/` 目录名是 token（且要五位数分片齐全），共享前缀吃光名字时用「唯一以 `-VARIANT` 结尾」的尾部兜底。两边任何一侧改了规则，另一个必须同步——否则界面报出的量化名引擎不收。
 - **启动阶段只认真正命名阶段的行。** 早期版本用裸词 `kv` / `context` 匹配，而 splash 每次启动都打印的内存计划行里恰好含这两个词，于是每次启动都报出一个引擎并不存在的「准备上下文」阶段——真正的过程是预热（arena 组装、专家表流入、最大前缀与解码预热、内存审计），以及 macOS 还没还够内存时的等待。回归由 `EngineStartupStageTests` 的两条用例守着。
 - **oMLX 的管理 API 挂在 `/admin` 下**（上游 `APIRouter(prefix="/admin")`）。按朴素的 `/api/...` 写法请求会 404，即使模型已经加载。
 - **已装版本的目录里，只有用户根下的可删。** 判定按路径分量标准化后比较：`~/…/engines/x` 命中 `~/…/engines`，但 `~/…/engines-copy/x` 不命中。

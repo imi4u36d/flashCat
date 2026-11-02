@@ -36,7 +36,7 @@ depends-on: [flashcat-kit]
 
 ## 边界
 
-- **只监听回环。** 对外暴露不是本模块的事（见 [flashcat-product](../../../goal-and-requirements.md) 的非目标）。
+- **只监听回环。** 对外暴露不是本模块的事(见 [flashcat-product](../../../../goal-and-requirements.md) 的非目标)。
 - **不做鉴权。** 本地服务不校验 API Key。
 - **不实现推理。** 所有对话请求都转发给当前引擎的 OpenAI 兼容面；上游不可用时回答 503，而不是自己降级。
 - **不持有引擎生命周期。** 启停归应用壳；网关只观察「当前是哪个引擎、它在什么端口」。

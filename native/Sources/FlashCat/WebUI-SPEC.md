@@ -19,9 +19,11 @@ parent: flashcat-app
 这是本模块与外界的**唯一**接口，双向、序列化、无共享内存。
 
 - **Swift → JS：全量状态快照。** 由 Combine 订阅加 1 秒心跳驱动，0.1 秒去抖合并。网页不做增量订阅，也不自己取数。
-- **JS → Swift：`webkit.messageHandlers.bridge`。** 载荷是 JSON `{type, payload}`。命令覆盖导航、窗口拖动、引擎启停/切换、模型使用与下载、对话收发与线程切换、复制、日志清理、设置保存、外观切换、引擎安装与升级、以及各处的确认/取消。
+- **JS → Swift：`webkit.messageHandlers.bridge`。** 载荷是 JSON `{type, payload}`。命令覆盖导航、窗口拖动、引擎启停/切换、模型使用与下载、Hub 模型搜索（`searchHub`，`{query}`）、对话收发与线程切换、复制、日志清理、设置保存、外观切换、引擎安装与升级、以及各处的确认/取消。
 
 确认类交互（换模型、选库、装引擎）也走这条路径，但状态由 Swift 侧持有（例如 `confirmingModelSwitch`），网页只负责显示与回传选择——网页不做前置判断。
+
+Hub 搜索在这份契约里占两格：命令 `searchHub {query}`，快照字段 `hubSearch`（`{query, state: idle|loading|failed, results: [...]}`，结果项带 `id`、`engines`、`kind`、`bytes`、`memoryGB`、`variants`）。搜到的仓库只活在 Swift 侧一个内存会话里，网页不缓存、不重试、不自己请求 Hugging Face。
 
 ## 边界
 

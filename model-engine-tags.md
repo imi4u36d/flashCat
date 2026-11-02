@@ -16,6 +16,8 @@ tags: [models, huggingface, tags]
 
 ## 决定
 
+**落地后要折回上游文档的改动（别漏）。** 这份任务书是临时的：`goal-and-requirements.md:29` 现在写着「内置固定三档 Qwen」，那是标签制之前的事实；落地后要让 Splash 页只剩 GGUF 一档、其余归 oMLX，这句必须改，[flashcat-product](goal-and-requirements.md) 与 [README](README.md) 里「每引擎一份列表」的说法同理。`native/Sources/FlashCat/SPEC.md:19` 现在写的是「当前归属仍是列表成员（`suggested`/`isPinned`/`allows`），`ModelRecommendation` 还没有 `engines` 字段」，落地后要改成 `engines`。这三处连同本文件一起，在计划最后一步收口（见任务清单的「删掉任务书与三处指针」）。
+
 **归属是一组事实，不是一张表的成员。** `ModelRecommendation` 携带 `engines: Set<EngineID>`；目录只有一份，`list(for:)` 按标签过滤。判据是产品性的而不是技术性的：**通用 MLX 权重只给 oMLX**（oMLX 是通用引擎）、Splash / MTPLX 只吃各自的专用包——即使 Splash 技术上也能起 MLX 权重；一款模型能跑多个引擎时写多个标签，标签不是互斥的。
 
 现有 9 款按格式严格归类，没有例外：

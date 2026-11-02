@@ -10,13 +10,29 @@ tags: [models, huggingface, tags]
 
 ## Purpose
 
-现状里「一款模型属于哪个引擎」是被三份硬编码列表**隐式**表达出来的：写进 `splash` 那一份就归 Splash，写进 `omlx` 那一份就归 oMLX。这带来三个具体后果：一款权重同时能跑两个引擎时只能二选一（`Jundot/*-oQ4e-mtp` 被钉死在 oMLX）；`ModelLibrary` 只渲染列表里出现过的行，磁盘上没有对应的已装权重在界面上完全不存在；用户想用的模型只要不在那 9 款里就没有任何入口。
+现状里「一款模型属于哪个引擎」是被三份硬编码列表**隐式**表达出来的：写进 `splash` 那一份就归 Splash，写进 `omlx` 那一份就归 oMLX。这带来三个具体后果：归属藏在代码里，判一个模型属于谁要翻三处列表加一张 `details` 表（`ISTA-DASLab` 的 GGUF 带 `incoai` 草稿、`Jundot` 的 MTP 头两个事实都写在行外）；`ModelLibrary` 只渲染列表里出现过的行，磁盘上没有对应的已装权重在界面上完全不存在；用户想用的模型只要不在那 9 款里就没有任何入口。
 
 这次把归属变成**显式标签**，并让标签同样适用于用户自己从 Hub 搜到的仓库。
 
 ## 决定
 
-**归属是一组事实，不是一张表的成员。** `ModelRecommendation` 携带 `engines: Set<EngineID>`；目录只有一份，`list(for:)` 按标签过滤。判据是产品性的而不是技术性的：**通用模型只给 oMLX**（oMLX 是通用引擎），Splash / MTPLX 只吃各自的专用包——即使 Splash 技术上也能起 MLX 权重。
+**归属是一组事实，不是一张表的成员。** `ModelRecommendation` 携带 `engines: Set<EngineID>`；目录只有一份，`list(for:)` 按标签过滤。判据是产品性的而不是技术性的：**通用 MLX 权重只给 oMLX**（oMLX 是通用引擎）、Splash / MTPLX 只吃各自的专用包——即使 Splash 技术上也能起 MLX 权重；一款模型能跑多个引擎时写多个标签，标签不是互斥的。
+
+现有 9 款按格式严格归类，没有例外：
+
+| 仓库 | `engines` | 依据 |
+| --- | --- | --- |
+| `mlx-community/Qwen3.6-35B-A3B-4bit` | `{omlx}` | MLX 权重，通用 |
+| `mlx-community/Qwen3.8-27B-4bit` | `{omlx}` | 同上 |
+| `Jundot/Qwen3.6-35B-A3B-oQ4e-mtp` | `{omlx}` | 带 MTP 头的 MLX 权重，仍是 MLX |
+| `mlx-works/Qwen3.8-27B-oQ4e-mtp` | `{omlx}` | 同上 |
+| `Jundot/Qwen3.8-Flash-Next-oQ4e-mtp` | `{omlx}` | 同上 |
+| `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF:Q2_0` | `{splash}` | GGUF，只有 Splash 能跑 |
+| `Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed` | `{mtplx}` | `library_name=mtplx` 专用包 |
+| `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed` | `{mtplx}` | 同上 |
+| `Youssofal/Qwen3.8-Flash-Next-MTPLX-Optimized-Speed` | `{mtplx}` | 同上 |
+
+结论是 **Splash 页只会剩 Flash-Next 的 GGUF 一档，MTPLX 页只剩三款 Youssofal 包，其余全部在 oMLX**——这是产品规则要的结果，不是遗漏。**草稿仓库不成行**：`incoai/*-DFlash2` 只作为主行的 `draftRepository` 挂在主行上，下载主行时一并拉取（oMLX 也已通过 `dflash_draft_model` 吃草稿），界面上既不单独出现、也不带标签，所以没有「草稿该归谁」这个问题。
 
 **存量权重照常可见。** `ModelLibrary` 从「只列目录里的行」改为「目录 ∪ 磁盘扫描」去重合并：目录里的按标签出现在对应引擎，盘上有但目录里没有的，作为「未收录」出现在它实际所在的引擎目录下。已装就是已装，标签只管推荐与下载归属。
 

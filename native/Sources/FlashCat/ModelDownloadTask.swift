@@ -25,6 +25,9 @@ struct ModelDownloadTask: Codable, Identifiable, Equatable {
     /// live fraction.
     var downloadedBytes: Int = 0
     var addedAt: Date = Date()
+    /// 下到公共目录的任务：`engine` 只是「谁发起、之后给谁用」的记号，权重
+    /// 落盘位置与引擎无关。nil 表示下进了某个引擎自己的目录（旧行为）。
+    var shared: [EngineID]?
 
     var id: String { engine.rawValue + "/" + model }
 

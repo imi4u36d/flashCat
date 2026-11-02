@@ -135,6 +135,11 @@ enum EnginePaths {
             ?? (supportDirectory + "/packs")
     }
     static var modelsRoot: String { supportDirectory + "/models" }
+    /// 公共模型目录：一份权重，按 `ModelSharing` 的授权表被多个引擎看见。
+    /// 刻意放在 `modelsRoot` 之外——根下任意两层目录都会被
+    /// `ModelCatalog.scanLocalModels` 当成 `owner/repo`，共享目录放进根里就会
+    /// 多出一行 owner = shared-models 的脏数据。
+    static var sharedModelsDirectory: String { supportDirectory + "/shared-models" }
     static var logsDirectory: String {
         ProcessInfo.processInfo.environment["FLASHCAT_LOGS_DIR"]
             ?? (Paths.home + "/Library/Logs/flashCat")
@@ -272,6 +277,9 @@ enum EngineModelStore {
         var dangling: [String] = []
         for link in links(under: root, depth: id == .splash ? 2 : 1) {
             if let target = realTarget(of: link) {
+                // 公共目录里的权重由 ModelSharing 管：那是多个引擎共用的同一份
+                // 文件，这里「搬进来」会把共享变成某个引擎独吞，磁盘直接翻倍。
+                if target.hasPrefix(ModelSharing.directory + "/") { continue }
                 plans.append((link, target))
             } else {
                 dangling.append(link)

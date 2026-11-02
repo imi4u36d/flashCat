@@ -173,8 +173,37 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
             if let engine, let id = body["id"] as? String { state.useModel(id, engine: engine) }
         case "downloadModel":
             if let engine, let id = body["id"] as? String { state.downloadModel(id, engine: engine) }
+        case "downloadRepo":
+            // 开放下载：仓库 id 由用户填，落到公共目录，勾选的引擎只是可见性。
+            if let repo = body["repo"] as? String {
+                let engines = (body["engines"] as? [String] ?? []).compactMap(EngineID.init(rawValue:))
+                state.downloadShared(repo, engines: engines)
+            }
+        case "setModelEngines":
+            if let repo = body["repo"] as? String {
+                let engines = (body["engines"] as? [String] ?? []).compactMap(EngineID.init(rawValue:))
+                state.setSharedEngines(engines, repo: repo)
+            }
         case "searchHub":
-            if let query = body["query"] as? String { state.searchHub(query) }
+            state.searchHub(
+                body["query"] as? String ?? "",
+                sort: body["sort"] as? String ?? "trending",
+                filter: body["filter"] as? String,
+                page: body["page"] as? Int ?? 0
+            )
+        case "hubDetail":
+            if let repo = body["repo"] as? String { state.loadHubDetail(repo) }
+        case "probeRepo":
+            // 手填仓库预检：网页只转发输入，查什么、怎么缓存由 Swift 决定。
+            if let repo = body["repo"] as? String { state.probeRepo(repo) }
+        case "clearRepoProbe":
+            state.clearRepoProbe()
+        case "closeHubDetail":
+            state.closeHubDetail()
+        case "openURL":
+            if let raw = body["url"] as? String, let url = URL(string: raw) {
+                NSWorkspace.shared.open(url)
+            }
         case "removeModel":
             if let engine, let id = body["id"] as? String { confirmRemoveModel(id, engine: engine) }
         case "revealModel":
@@ -309,12 +338,27 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
 
     /// 删除现在是真删权重（不再只是解链），所以先问一次，并把要删的大小摆出来。
     private func confirmRemoveModel(_ id: String, engine: EngineID) {
+        // 公共目录里的权重是所有引擎共用的那一份，删它等于对所有引擎都不再可见。
+        if ModelSharing.isShared(id) {
+            let repo = ModelSharing.canonical(id)
+            let bytes = EngineModelStore.size(of: ModelSharing.path(for: repo))
+            let others = EngineID.allCases.filter { ModelSharing.engines(for: repo).contains($0) }
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "删除 \(repo)？"
+            let users = others.isEmpty ? "没有引擎在用它" : "\(others.map(\.displayName).joined(separator: " / ")) 将不再看得到它"
+            alert.informativeText = "这是公共目录里的那一份权重（\(Format.size(bytes))），删掉后 \(users)，无法恢复。"
+            alert.addButton(withTitle: "删除")
+            alert.addButton(withTitle: "取消")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            state.removeModel(id, engine: engine)
+            return
+        }
         // 行的真实位置从库里取：Splash 的行是 `.resolved` 里的装配体，
         // 按 `modelsDirectory + id` 拼出来的路径根本不存在，问出来的大小是 0 B。
         let entry = state.libraryEntries(for: engine).first { $0.id == id }
-        let path = entry?.model.path.isEmpty == false
-            ? entry!.model.path
-            : EnginePaths.modelsDirectory(engine) + "/" + id
+        let path = entry.map(\.model.path).flatMap { $0.isEmpty ? nil : $0 }
+            ?? EnginePaths.modelsDirectory(engine) + "/" + id
         let bytes = EngineModelStore.size(of: path)
         let alert = NSAlert()
         alert.alertStyle = .warning
@@ -702,6 +746,13 @@ enum WebSnapshot {
                 if let labels = entry.recommendation?.engineLabels, !labels.isEmpty {
                     item["engineLabels"] = labels
                 }
+                item["source"] = entry.source.rawValue
+                if ModelSharing.isShared(entry.model.id) {
+                    item["shared"] = true
+                    item["engines"] = EngineID.allCases
+                        .filter { ModelSharing.engines(for: entry.model.id).contains($0) }
+                        .map(\.rawValue)
+                }
                 if let tags = entry.recommendation?.tags, !tags.isEmpty { item["tags"] = tags }
                 if let memory = entry.recommendation?.minimumMemory, memory > 0 { item["minMemory"] = memory }
                 // 草稿的下载目前只接在 Splash 上（oMLX 的 dflash_draft_model
@@ -937,6 +988,26 @@ enum WebSnapshot {
             "library": library,
             "hubSearch": hubSearchJSON,
             "downloads": downloads,
+            "hub": [
+                "query": state.hubQuery,
+                "sort": state.hubSort.rawValue,
+                "filter": state.hubFilter.rawValue,
+                "page": state.hubPage,
+                "hasMore": state.hubHasMore,
+                "loading": state.hubLoading,
+                "detailLoading": state.hubDetailLoading,
+                "error": state.hubError ?? "",
+                "results": state.hubResults.map(\.json),
+                "shared": state.sharedRepos,
+                "local": state.localModelRepos,
+                "probe": [
+                    "repo": state.repoProbeRepo,
+                    "loading": state.repoProbeLoading,
+                    "error": state.repoProbeError ?? "",
+                    "detail": state.repoProbe?.json ?? NSNull(),
+                ] as [String: Any],
+                "detail": state.hubDetail?.json ?? NSNull(),
+            ] as [String: Any],
             "logs": state.logs.suffix(800).map { line -> [String: Any] in
                 return [
                     "id": line.id,

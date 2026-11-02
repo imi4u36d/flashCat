@@ -56,7 +56,7 @@ struct ModelCatalog {
 final class ModelCatalogService {
     func load(runtime: EngineRuntime?) -> ModelCatalog {
         var catalog = ModelCatalog()
-        catalog.local = scanLocalModels(Paths.modelsDirectory)
+        catalog.local = scanLocalModels(Paths.modelsDirectory) + ModelSharing.scan()
         catalog.installed = scanSplash(Paths.splashModelsDirectory)
         catalog.draftRepositories = runtime?.draftRepositories ?? [:]
         return catalog
@@ -105,6 +105,9 @@ final class ModelCatalogService {
         var result: [ModelInfo] = []
         guard Paths.fileExists(root) else { return result }
         for owner in directories(root) {
+            // 共享模型单独一份（`<support>/shared-models`），归属由授权表决定，
+            // 不能在这里被当成某个 owner 的仓库扫进来。
+            if basename(owner) == (EnginePaths.sharedModelsDirectory as NSString).lastPathComponent { continue }
             for repo in directories(owner) {
                 if let parsed = parseRepository(repo) { result.append(parsed) }
             }

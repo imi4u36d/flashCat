@@ -584,8 +584,13 @@ body.side-anim .log-line { content-visibility: auto; contain-intrinsic-size: aut
 #overlays { position: fixed; inset: 0; pointer-events: none; z-index: 50; }
 .mask { position: absolute; inset: 0; background: color-mix(in srgb, var(--w-ink) 28%, transparent); display: grid; place-items: center; pointer-events: auto; }
 .modal { background: var(--w-panel); border: 1px solid var(--w-line-strong); border-radius: 14px; box-shadow: 0 24px 60px -16px rgb(0 0 0 / .45); width: 400px; max-width: calc(100vw - 80px); max-height: calc(100vh - 100px); display: flex; flex-direction: column; overflow: hidden; }
-.modal.wide { width: 620px; }
+.modal.wide { width: 780px; }
 .modal-title { font-weight: 700; font-size: 14px; padding: 16px 20px 12px; display: flex; align-items: baseline; gap: 8px; }
+/* 标题 + 右侧 ×：模型卡这类弹层得有一个一眼能找到的出口。 */
+.modal-head { display: flex; align-items: flex-start; gap: 10px; padding-right: 12px; }
+.modal-head .modal-title { flex: 1; min-width: 0; padding-right: 0; }
+.modal-x { flex: none; margin-top: 12px; width: 26px; height: 26px; border-radius: 999px; border: 1px solid transparent; background: transparent; color: var(--w-ink-3); font-size: 13px; line-height: 1; cursor: pointer; }
+.modal-x:hover { color: var(--w-ink); background: var(--w-panel-2); border-color: var(--w-line-strong); }
 .modal-title small { font-weight: 400; font-size: 10.5px; color: var(--w-ink-3); }
 .modal-text { font-size: 12.5px; color: var(--w-ink-2); padding: 0 20px 6px; line-height: 1.6; }
 .modal-body { overflow-y: auto; padding: 2px 20px 10px; }
@@ -740,3 +745,46 @@ body.launch-mode .main { flex: 1 1 100%; }
 .model-card.hub .summary { font-size: 10.5px; color: var(--w-ink-3); margin: 4px 0 0; line-height: 1.4; }
 .qsel { font-family: var(--w-mono, ui-monospace), monospace; font-size: 10px; color: var(--w-ink);
   background: var(--w-panel-2); border: 1px solid var(--w-line); border-radius: 6px; padding: 2px 4px; margin-right: 6px; }
+
+/* ---------- 模型广场（Hub 浏览） ---------- */
+.hub-row { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--w-line); cursor: pointer; }
+.hub-row:last-child { border-bottom: none; }
+.hub-row:hover .hub-name { color: var(--w-accent); }
+.hub-name { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub-sub { font-size: 10.5px; color: var(--w-ink-3); margin-top: 4px; display: flex; gap: 7px; flex-wrap: wrap; }
+/* 已在本机的行压低一档：清单里一眼能分出「不用再下的」和「可以下的」。 */
+.hub-row.local .hub-name { color: var(--w-ink-2); }
+.hub-card { font-size: 12.5px; color: var(--w-ink-2); line-height: 1.7; }
+.hub-card p { margin: 0 0 8px; }
+.hub-card pre { white-space: pre-wrap; overflow-x: auto; }
+.hub-card code { font-size: 11.5px; }
+.hub-file { display: flex; justify-content: space-between; gap: 10px; font-size: 11.5px; padding: 5px 0; border-bottom: 1px dashed var(--w-line); font-variant-numeric: tabular-nums; }
+.hub-file:last-child { border-bottom: none; }
+.hub-empty { font-size: 12px; color: var(--w-ink-3); padding: 22px 0; text-align: center; }
+.hub-body { overflow-y: auto; overflow-x: hidden; max-height: 56vh; padding: 0 20px 6px; }
+.hub-body .ctl { min-width: 0; }
+/* 分页按钮走 .btn-quiet，但它平时只在弹层底部出现，这里补上禁用态。 */
+.modal .btn-quiet[disabled] { opacity: .45; pointer-events: none; }
+.hub-row > div { min-width: 0; }
+.mdimg { max-height: 60px; max-width: 100%; vertical-align: middle; }
+.mdlink { color: var(--w-accent); text-decoration: none; cursor: pointer; }
+.mdlink:hover { text-decoration: underline; }
+/* 广场分页：靠左，和右侧的「手填仓库 id / 关闭」分开 */
+.hub-pager { display: flex; align-items: center; gap: 8px; margin-right: auto; }
+
+/* ---------- 手填仓库 id 的预检卡 ---------- */
+.probe { margin-top: 14px; border: 1px solid var(--w-line-strong); border-radius: 10px; background: var(--w-panel-2); padding: 12px 14px; }
+.probe-empty { font-size: 11.5px; color: var(--w-ink-3); line-height: 1.6; padding: 2px 0; }
+.probe-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.probe-head .probe-id { font-size: 12px; font-weight: 600; }
+.probe-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 12px; margin-top: 10px; }
+.probe-grid .cell { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.probe-grid .cell .k { font-size: 9.5px; color: var(--w-ink-3); letter-spacing: .02em; }
+.probe-grid .cell .v { font-size: 12px; color: var(--w-ink); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.probe-strip { margin-top: 10px; font-size: 11.5px; line-height: 1.55; border-radius: 8px; padding: 7px 10px; background: var(--w-panel); border: 1px solid var(--w-line); color: var(--w-ink-2); }
+.probe-strip.warn { background: var(--w-warn-soft); border-color: transparent; color: var(--w-warn); }
+.probe-strip.ok { background: var(--w-ok-soft); border-color: transparent; color: var(--w-ok); font-weight: 600; }
+/* README 摘要：纯文本，限高，别让一屏都被模型卡占满。 */
+.probe-card { font-size: 11.5px; line-height: 1.65; color: var(--w-ink-2); white-space: pre-wrap; padding-top: 10px; border-top: 1px dashed var(--w-line-strong);
+  /* 摘要固定 4 行，用 clamp 收尾：max-height 直接裁会把最后一行切成半截字。 */
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }

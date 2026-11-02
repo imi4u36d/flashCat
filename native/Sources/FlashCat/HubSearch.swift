@@ -118,7 +118,7 @@ struct HubSearchState {
 
     /// A repository as one result row, with the catalog's summary and tags when
     /// the catalog knows it.
-    static func result(for model: HubModel) -> HubSearchResult? {
+    static func result(for model: FlashCatKit.HubModel) -> HubSearchResult? {
         guard let engine = engine(for: model.kind) else { return nil }
         let repo = model.id
         let variants = model.ggufVariants

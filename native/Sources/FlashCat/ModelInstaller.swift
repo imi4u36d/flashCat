@@ -51,6 +51,12 @@ enum ModelInstaller {
         EnginePaths.modelsDirectory(engine) + "/" + folderName(for: repo)
     }
 
+    /// 公共目录的落地路径。一份权重由哪些引擎共享，记在 `ModelSharing` 的
+    /// 授权表里，下载器只管把快照放进去。
+    static func sharedDestination(repo: String) -> String {
+        ModelSharing.path(for: repo)
+    }
+
     // MARK: Plan
 
     static func plan(engine: EngineID,
@@ -95,6 +101,47 @@ enum ModelInstaller {
                     environment: environment(pythonRoot: runtime.root, cache: cache),
                     watchDirectory: nil,
                     destination: Paths.modelsDirectory)
+    }
+
+    /// 任取一个 Hub 仓库下到公共目录。下载器仍是引擎包里那个
+    /// `huggingface_hub`，跟落盘位置无关：哪个 pack 装了就用哪个，都没有才
+    /// 回落到 Splash 的运行时。
+    static func sharedPlan(repo: String, engines: [EngineID],
+                           runtime: EngineRuntime?, cache: String) throws -> Plan {
+        var candidates = engines.filter { $0 != .splash }
+        candidates += [EngineID.omlx, .mtplx, .splash]
+        var python: String?
+        var root: String?
+        for id in candidates {
+            if id == .splash {
+                guard let runtime, runtime.exists else { continue }
+                python = runtime.pythonPath
+                root = runtime.root
+            } else {
+                guard let installation = EngineInstallations.newest(id, version: nil),
+                      Paths.fileExists(installation.entrypoint.path) else { continue }
+                python = installation.entrypoint.path
+                root = installation.root.path
+            }
+            break
+        }
+        guard let python, let root else {
+            throw Failure.message("下载器来自引擎包：先安装 Splash、oMLX、MTPLX 中的任意一个")
+        }
+        let script = try scriptPath()
+        let name = repo.split(separator: ":", maxSplits: 1).first.map(String.init) ?? repo
+        let destination = sharedDestination(repo: name)
+        var arguments = [script, name, destination]
+        let trimmed = cache.trimmingCharacters(in: .whitespaces)
+        if !trimmed.isEmpty { arguments += ["--cache", trimmed] }
+        return Plan(engine: engines.first ?? .omlx,
+                    model: name,
+                    executable: python,
+                    arguments: arguments,
+                    workingDirectory: root,
+                    environment: environment(pythonRoot: root, cache: cache),
+                    watchDirectory: destination,
+                    destination: destination)
     }
 
     private static func snapshotPlan(engine: EngineID, model: String, cache: String) throws -> Plan {
@@ -150,7 +197,46 @@ enum ModelInstaller {
         // write straight into the watched `.incomplete` files, and the mirror
         // endpoints this app is used with do not speak xet anyway.
         environment["HF_HUB_DISABLE_XET"] = "1"
+        // python 的 requests 不读 macOS 的系统代理设置：用户在「网络」里配了
+        // 代理（或者挂着本地代理软件）时，URLSession 一路通畅，下载器却直接
+        // ConnectTimeout。把系统代理原样塞进环境变量，两边走同一条路。
+        if let proxy = systemProxy() {
+            for key in ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"] {
+                environment[key] = proxy
+            }
+        }
+        // 镜像端点同样是「设置里改了，下载器也得知道」的那一类。
+        let endpoint = UserDefaults.standard.string(forKey: "hfEndpoint")?.trimmingCharacters(in: .whitespaces) ?? ""
+        if !endpoint.isEmpty { environment["HF_ENDPOINT"] = endpoint }
         return environment
+    }
+
+    /// 系统代理（scutil --proxy 的结果），形如 `http://127.0.0.1:7890`。
+    /// 没开代理返回 nil —— 不要给下载器塞空字符串，requests 会当成无效代理。
+    static func systemProxy() -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/scutil")
+        process.arguments = ["--proxy"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        let output = String(decoding: data, as: UTF8.self)
+        func value(_ key: String) -> String? {
+            for line in output.split(separator: "\n") {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard trimmed.hasPrefix(key + " :") else { continue }
+                return trimmed.dropFirst(key.count + 2).trimmingCharacters(in: .whitespaces)
+            }
+            return nil
+        }
+        for (enable, host, port) in [("HTTPSEnable", "HTTPSProxy", "HTTPSPort"), ("HTTPEnable", "HTTPProxy", "HTTPPort")] {
+            guard value(enable) == "1", let host = value(host), let port = value(port), !host.isEmpty else { continue }
+            return "http://\(host):\(port)"
+        }
+        return nil
     }
 
     // MARK: Downloader script

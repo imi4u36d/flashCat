@@ -1,6 +1,14 @@
 import Foundation
 import FlashCatKit
 
+/// 这份权重是哪来的：引擎推荐清单里的官方三档，还是用户自己从 Hub 下的。
+/// 只影响卡片上的徽标与文案，不影响能不能下载、能不能用——开放下载之后，
+/// 支持与否由用户自己判断。
+enum ModelSource: String {
+    case recommended
+    case personal
+}
+
 /// One row of the model page: weights this engine has, or a suggestion it does
 /// not have yet. Both live in the same grid, so browsing an engine never
 /// depends on that engine being installed, running, or holding a model.
@@ -9,6 +17,7 @@ struct ModelLibraryEntry: Identifiable {
     let engine: EngineID
     let recommendation: ModelRecommendation?
     let draftRepository: String?
+    let source: ModelSource
 
     var id: String { model.id }
     var installed: Bool { model.origin != .recommended }
@@ -89,7 +98,8 @@ enum ModelLibrary {
                                      engine: engine,
                                      recommendation: recommendation,
                                      draftRepository: recommendation.draftRepository
-                                         ?? (found == nil ? nil : draftRepository(model.id)))
+                                         ?? (found == nil ? nil : draftRepository(model.id)),
+                                     source: .recommended)
         }
 
         // Weights on disk that the catalog does not tag for this engine. Sorted
@@ -101,12 +111,15 @@ enum ModelLibrary {
             .filter { !ModelLibraryEntry.isDraftModel($0.id) }
             .sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
             .map { model in
-                // 迁移留下的旧权重可能仍是目录行、只是标签不在这一栏：
-                // 它的 engines/repo/tags 照旧带上，卡片才标得出「oMLX 专用」。
-                ModelLibraryEntry(model: model,
-                                  engine: engine,
-                                  recommendation: ModelRecommendations.recommendation(for: model.id),
-                                  draftRepository: draftRepository(model.id))
+                // 迁移留下的旧权重可能仍是目录行、只是标签不在这一栏：它的
+                // engines/repo/tags 照旧带上，卡片才标得出「oMLX 专用」。用户
+                // 自己从 Hub 下的权重没有目录行，`source` 让卡片说得更准。
+                let row = ModelRecommendations.recommendation(for: model.id)
+                return ModelLibraryEntry(model: model,
+                                         engine: engine,
+                                         recommendation: row,
+                                         draftRepository: draftRepository(model.id),
+                                         source: row == nil ? .personal : .recommended)
             }
         rows.append(contentsOf: extras)
         return rows

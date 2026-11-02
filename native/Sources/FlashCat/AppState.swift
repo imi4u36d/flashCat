@@ -126,6 +126,40 @@ final class AppState: ObservableObject {
     /// (the Hub keeps partial files in the destination's `.cache`), so the
     /// list is persisted and "downloading" rows become "paused" on load.
     @Published private(set) var downloadTasks: [ModelDownloadTask] = []
+    /// Hugging Face 浏览器的状态：列表与单个仓库详情分开存——弹层里翻 tab 不
+    /// 该把列表挤掉，两者也都只是「看一眼」，不持久化、不碰磁盘。
+    @Published private(set) var hubResults: [HubModel] = []
+    /// 公共目录里已落盘的仓库 id（模型广场标「已在本机」用）。
+    @Published private(set) var sharedRepos: [String] = []
+    /// 本机已有的全部仓库：公共目录加三个引擎自己的模型目录。比 `sharedRepos`
+    /// 宽——引擎目录里手放的、或从引擎推荐里下的权重同样算「已经有了」，下载
+    /// 弹窗据此把下载按钮换成「已下载」。跟着 `reloadModels` 走，不进两秒一次的
+    /// 快照热路径。
+    @Published private(set) var localModelRepos: [String] = []
+    /// 手填仓库 id 的预检结果：输入停下后查一次 Hub，弹窗里显示体积/参数量/
+    /// 文件清单/README 摘要，看清了再按下「开始下载」。和模型广场的 `hubDetail`
+    /// 分开存，两边同时在屏上也不会互相挤掉。
+    @Published private(set) var repoProbe: HubModel?
+    @Published private(set) var repoProbeLoading = false
+    @Published private(set) var repoProbeError: String?
+    /// 当前这份预检结果属于哪个仓库。网页拿它对输入框：用户还在改 id 时，
+    /// 旧结果不能被当成新仓库的结果显示出来。
+    @Published private(set) var repoProbeRepo = ""
+    private var repoProbeTask: Task<Void, Never>?
+    private var repoProbeKey = ""
+    @Published private(set) var hubDetail: HubModel?
+    @Published private(set) var hubQuery = ""
+    @Published private(set) var hubSort: HubSort = .trending
+    @Published private(set) var hubFilter: HubFilter = .all
+    /// 0 起的页码。HF 的 skip 是纯偏移，所以页码就是 skip / pageSize。
+    @Published private(set) var hubPage = 0
+    /// 这一页满了就认为还有下一页（HF 不给总数，模型列表也没有 count 接口）。
+    @Published private(set) var hubHasMore = false
+    @Published private(set) var hubLoading = false
+    @Published private(set) var hubDetailLoading = false
+    @Published private(set) var hubError: String?
+    private var hubSearchTask: Task<Void, Never>?
+    private var hubDetailTask: Task<Void, Never>?
     /// Which engine's model library the model page shows. Browsing is
     /// deliberately independent of the running engine, so an engine that is
     /// stopped — or that has no weights at all — can still be inspected,
@@ -185,6 +219,10 @@ final class AppState: ObservableObject {
     /// Size of each watched folder when it joined the watch: bytes that were
     /// already cached before this download started are not new progress.
     private var downloadWatchBaselines: [String: Int] = [:]
+    /// 正在下载到公共目录的仓库与它的授权引擎：下载成功后据此写授权表、建
+    /// 链接。非公共下载时为 nil。
+    private var pendingSharedRepo: String?
+    private var pendingSharedEngines: [EngineID] = []
     /// The single task that owns a model switch. Nothing else may touch the
     /// engine while it runs — the old weights must be confirmed gone before the
     /// new ones allocate.
@@ -492,6 +530,9 @@ final class AppState: ObservableObject {
             toast("已把 \(adopted) 个模型搬进 flashCat 的模型目录，不再依赖外部目录")
         }
 
+        // 授权表是公共目录的真相：启动时按它把各引擎目录里的链接对齐。
+        ModelSharing.synchronize()
+
         catalog = service.load(runtime: splashRuntime)
         if catalog.machine.isEmpty {
             selectedModel = settings.model
@@ -530,6 +571,8 @@ final class AppState: ObservableObject {
         adoptSavedModel(for: activeEngine)
 
         applyGatewaySettings()
+        // 模型广场的「已下载」要在第一次打开前就有结论：跟着启动算一次。
+        refreshLocalRepos()
 
         if settings.autoStart && !selectedModel.isEmpty {
             startService()
@@ -612,7 +655,29 @@ final class AppState: ObservableObject {
         objectWillChange.send()
     }
 
+    /// 本机已经有这些仓库：公共目录里的 + 三个引擎模型目录里的权重。
+    /// 模型广场和手填下载都按它判「已下载」，所以启动时（`bootstrap`）也要扫
+    /// 一次——只挂在 `reloadModels` 上会等引擎安装/下载/授权变化才第一次算，
+    /// 刚开app 时广场会全是「下载」。
+    /// 三次目录扫描的 stat 走 `EngineModelStore` 的 meta 缓存，只有新增目录才真读盘。
+    func refreshLocalRepos() {
+        var local = Set(sharedRepos.map { ModelSharing.canonical($0) })
+        for id in EngineID.allCases {
+            for model in LocalEngineModels.scan(engine: id,
+                                                directory: EnginePaths.modelsDirectory(id)) {
+                local.insert(ModelSharing.canonical(model.id))
+            }
+        }
+        localModelRepos = local.sorted()
+    }
+
     func reloadModels() {
+        // 授权表是真相，磁盘上的链接跟着它走：启动、下载完成、授权变更都从这里过。
+        ModelSharing.synchronize()
+        // 公共目录里已经有哪些仓库：模型广场用它标「已在本机」。跟着
+        // reloadModels 走（不进每两秒的快照），磁盘不会被反复扫。
+        sharedRepos = ModelSharing.scan().map { $0.id }
+        refreshLocalRepos()
         catalog = ModelCatalogService().load(runtime: splashRuntime)
         controller?.updateCatalog(catalog)
         if selectedModel.isEmpty, let first = catalog.machine.first {
@@ -779,25 +844,46 @@ final class AppState: ObservableObject {
     /// Same list, for an engine that is not (yet) the active one — switching
     /// engines has to know what the destination can serve before it commits.
     func engineModels(for id: EngineID) -> [EngineModel] {
-        if id == .splash {
-            return catalog.machine.map {
-                EngineModel(id: $0.id, path: $0.path, bytes: $0.bytes,
-                            maximumContextTokens: nil, loaded: false, loading: false,
-                            kind: nil, hidden: false, helper: false, engine: .splash)
-            }
-        }
-        let scanned = LocalEngineModels.scan(engine: id, directory: EnginePaths.modelsDirectory(id))
         // A half-downloaded snapshot already carries config.json and a
         // tokenizer, which is enough for the scan to call it a servable model.
         // Every download-center row means its folder is not finished (success
         // removes the row), so hide those folders from the library until the
         // downloader is done — the card then keeps showing live progress on
         // the suggestion row instead of flipping to a "使用" button.
-        let unfinished = Set(downloadTasks.map { task -> String in
-            let repo = task.model.split(separator: ":", maxSplits: 1).first.map(String.init) ?? task.model
-            return ModelInstaller.folderName(for: repo)
-        })
-        return scanned.filter { !unfinished.contains($0.id) }
+        let unfinished = Set(downloadTasks.map { ModelSharing.canonical($0.model) })
+        let shared = sharedModels(for: id)
+            .filter { !unfinished.contains(ModelSharing.canonical($0.id)) }
+        if id == .splash {
+            // 公共目录里的权重已经在 catalog.local 里（load 会把 ModelSharing.scan()
+            // 并进来），这里只过滤没下完的，不再追加一遍。
+            return catalog.machine
+                .filter { ModelSharing.visible($0.id, engine: .splash) }
+                .filter { !unfinished.contains(ModelSharing.canonical($0.id)) }
+                .map {
+                    EngineModel(id: $0.id, path: $0.path, bytes: $0.bytes,
+                                maximumContextTokens: nil, loaded: false, loading: false,
+                                kind: nil, hidden: false, helper: false, engine: .splash)
+                }
+        }
+        let scanned = LocalEngineModels.scan(engine: id, directory: EnginePaths.modelsDirectory(id))
+        return scanned.filter { !unfinished.contains($0.id) } + shared
+    }
+
+    /// 公共目录里授权给这个引擎的权重。oMLX / MTPLX 目录里也有它们，但那是
+    /// 软链，`LocalEngineModels.scan` 会跳过——模型页的真相来自这里。
+    private func sharedModels(for engine: EngineID) -> [EngineModel] {
+        ModelSharing.scan()
+            .filter { ModelSharing.engines(for: $0.id).contains(engine) }
+            .map { model in
+                // Splash 认 `owner/repo`，两个 pack 认扁平目录名——启动时交给引擎
+                // 的就是这个 id，不能用另一种写法。
+                let id = engine == .splash ? model.id : ModelInstaller.folderName(for: model.id)
+                return EngineModel(id: id,
+                                   path: model.targetName,
+                                   bytes: model.bytes,
+                                   maximumContextTokens: nil, loaded: false, loading: false,
+                                   kind: nil, hidden: false, helper: false, engine: engine)
+            }
     }
 
     // MARK: model library
@@ -813,7 +899,7 @@ final class AppState: ObservableObject {
     func libraryEntries(for engine: EngineID) -> [ModelLibraryEntry] {
         let installed: [ModelInfo]
         if engine == .splash {
-            installed = catalog.machine
+            installed = catalog.machine.filter { ModelSharing.visible($0.id, engine: .splash) }
         } else {
             installed = engineModels(for: engine).map {
                 ModelInfo(id: $0.id,
@@ -1488,6 +1574,11 @@ final class AppState: ObservableObject {
     /// Remove a model from one engine's folder. The weights live in flashCat's
     /// own directory now, so this deletes them — the caller asks first.
     func removeModel(_ id: String, engine: EngineID) {
+        // 公共目录里的权重只有一份：删它要连带收回授权、拆掉各引擎的链接。
+        if ModelSharing.isShared(id) {
+            removeShared(id)
+            return
+        }
         guard engine != .splash else {
             if let model = catalog.machine.first(where: { $0.id == id }) {
                 // 正在服务的那份权重删掉后不能留着旧选择：先停引擎，再删，
@@ -1555,7 +1646,199 @@ final class AppState: ObservableObject {
             notice = (error as? ModelInstaller.Failure)?.message ?? "\(error)"
             return false
         }
+        return startDownload(plan, engine: engine, id: id, shared: nil)
+    }
 
+    /// 从 Hub 下任意仓库到公共目录，并记下它给哪些引擎用。
+    ///
+    /// 这是「开放下载」的入口：不设格式/家族门槛，支持与否交给用户自己
+    /// 判断。卡片只负责标明来源（引擎推荐 / 个人下载），不再把人挡在门外。
+    func downloadShared(_ repo: String, engines: [EngineID]) {
+        guard downloadingModel == nil else {
+            toast("正在下载另一个模型，先等它结束")
+            return
+        }
+        let target = ModelSharing.canonical(repo.trimmingCharacters(in: .whitespaces))
+        guard target.contains("/") else {
+            notice = "仓库 id 要写成 owner/repo"
+            return
+        }
+        guard !engines.isEmpty else {
+            notice = "至少选一个引擎，否则下完就没人能用它"
+            return
+        }
+        // 已经在本机的仓库不再下一遍：先 reload 一次，免得上一次下载刚落地、
+        // 清单还是旧的。
+        reloadModels()
+        guard !repoIsLocal(target) else {
+            notice = "「\(target)」已经在本机了，不用重复下载"
+            return
+        }
+        let plan: ModelInstaller.Plan
+        do {
+            plan = try ModelInstaller.sharedPlan(repo: target,
+                                                 engines: engines,
+                                                 runtime: splashRuntime,
+                                                 cache: settings.hfCache)
+        } catch {
+            notice = (error as? ModelInstaller.Failure)?.message ?? "\(error)"
+            return
+        }
+        startDownload(plan, engine: engines.first ?? libraryEngine, id: target, shared: engines)
+    }
+
+    /// 改一个共享模型能被哪些引擎看见：写授权表并同步链接，模型页随即重算。
+    /// 搜索/推荐列表。请求会被下一次调用取消，所以连点排序按钮不会乱序上屏。
+    /// 翻页/换筛选走同一个入口，只是把 page 与 filter 一起带下去。
+    func searchHub(_ query: String, sort: String, filter: String? = nil, page: Int = 0) {
+        let value = HubSort(rawValue: sort) ?? .trending
+        let bucket = filter.flatMap(HubFilter.init(rawValue:)) ?? hubFilter
+        hubQuery = query
+        hubSort = value
+        hubFilter = bucket
+        hubPage = max(0, page)
+        hubSearchTask?.cancel()
+        hubError = nil
+        hubLoading = true
+        let current = hubPage
+        hubSearchTask = Task { [weak self] in
+            do {
+                let models = try await HubClient.search(
+                    query: query,
+                    sort: value,
+                    filter: bucket,
+                    page: current
+                )
+                guard !Task.isCancelled else { return }
+                self?.hubResults = models
+                self?.hubHasMore = models.count >= HubClient.pageSize
+                self?.hubLoading = false
+            } catch {
+                guard !Task.isCancelled else { return }
+                self?.hubResults = []
+                self?.hubHasMore = false
+                self?.hubLoading = false
+                self?.hubError = error.localizedDescription
+            }
+        }
+    }
+
+    /// 打开某个仓库的模型卡：文件清单和 README 都在这一个请求里补齐。
+    func loadHubDetail(_ repo: String) {
+        hubDetailTask?.cancel()
+        hubDetail = nil
+        hubError = nil
+        hubDetailLoading = true
+        hubDetailTask = Task { [weak self] in
+            do {
+                let detail = try await HubClient.detail(repo)
+                guard !Task.isCancelled else { return }
+                self?.hubDetail = detail
+                self?.hubDetailLoading = false
+            } catch {
+                guard !Task.isCancelled else { return }
+                self?.hubDetailLoading = false
+                self?.hubError = error.localizedDescription
+            }
+        }
+    }
+
+    func closeHubDetail() {
+        hubDetailTask?.cancel()
+        hubDetail = nil
+        hubDetailLoading = false
+    }
+
+    /// 手填仓库 id 的预检。输入每停一次就调一次，上一次的请求直接取消——
+    /// 中间态的仓库 id（`Youssof`、`Youssofal/`）不查，省掉一堆必然 404 的请求。
+    func probeRepo(_ repo: String) {
+        let key = ModelSharing.canonical(repo.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard key != repoProbeKey else { return }
+        repoProbeKey = key
+        repoProbeRepo = key
+        repoProbeTask?.cancel()
+        repoProbeError = nil
+        guard key.split(separator: "/").count == 2 else {
+            repoProbe = nil
+            repoProbeLoading = false
+            return
+        }
+        repoProbe = nil
+        repoProbeLoading = true
+        repoProbeTask = Task { [weak self] in
+            do {
+                let detail = try await HubClient.detail(key)
+                guard !Task.isCancelled else { return }
+                self?.repoProbe = detail
+                self?.repoProbeLoading = false
+            } catch {
+                guard !Task.isCancelled else { return }
+                self?.repoProbe = nil
+                self?.repoProbeLoading = false
+                self?.repoProbeError = error.localizedDescription
+            }
+        }
+    }
+
+    /// 弹窗关掉就丢掉预检结果：下次打开是另一个仓库，留着旧卡会先闪一下。
+    func clearRepoProbe() {
+        repoProbeTask?.cancel()
+        repoProbe = nil
+        repoProbeLoading = false
+        repoProbeError = nil
+        repoProbeKey = ""
+        repoProbeRepo = ""
+    }
+
+    /// 这个仓库是不是已经在本机了（公共目录或任一引擎的模型目录）。
+    /// 判定放在这里而不是网页：置灰只是表现，真正的门在这儿。
+    func repoIsLocal(_ repo: String) -> Bool {
+        localModelRepos.contains(ModelSharing.canonical(repo))
+    }
+
+    func setSharedEngines(_ engines: [EngineID], repo: String) {
+        let repo = ModelSharing.canonical(repo)
+        ModelSharing.setEngines(Set(engines), for: repo)
+        EngineModelStore.invalidateMetaCache()
+        reloadModels()
+        toast(engines.isEmpty
+            ? "已收回 \(repo) 的引擎授权"
+            : "\(repo) 现在可用于 \(engines.map(\.displayName).joined(separator: "、"))")
+    }
+
+    /// 删除公共目录里的权重：先收回授权（各引擎的链接随之删掉），再删文件。
+    func removeShared(_ id: String) {
+        let repo = ModelSharing.canonical(id)
+        ModelSharing.forget(repo)
+        try? FileManager.default.removeItem(atPath: ModelSharing.path(for: repo))
+        if selectedModel == repo || selectedModel == ModelInstaller.folderName(for: repo) {
+            selectedModel = ""
+            adoptSavedModel(for: activeEngine)
+        }
+        EngineModelStore.invalidateMetaCache()
+        reloadModels()
+        toast("已删除 \(repo) 及其权重文件")
+    }
+
+    /// 真正拉起下载器的那一步：两条入口（引擎自己的目录 / 公共目录）只有落地
+    /// 位置不同，进度、暂停、取消、续传全部共用这一段。
+    /// 共享下载收尾：写授权表，让各引擎目录里的链接跟上，再刷新模型页。
+    private func publishShared(repo: String, engines: [EngineID]) {
+        ModelSharing.setEngines(Set(engines), for: repo)
+        EngineModelStore.invalidateMetaCache()
+        reloadModels()
+        guard !engines.isEmpty else { return }
+        toast("已下载 " + repo + "，可用于 " + engines.map(\.displayName).joined(separator: "、"))
+    }
+
+    /// - Returns: whether the process started; `false` comes with a `notice`.
+    @discardableResult
+    private func startDownload(_ plan: ModelInstaller.Plan,
+                               engine: EngineID,
+                               id: String,
+                               shared: [EngineID]?) -> Bool {
+        pendingSharedRepo = shared == nil ? nil : id
+        pendingSharedEngines = shared ?? []
         pauseRequested = false
         cancelRequested = false
         downloadSpeed = 0
@@ -1565,13 +1848,16 @@ final class AppState: ObservableObject {
         downloadWatchBaselines = [:]
         upsertTask(engine: engine, model: id) { task in
             task.status = .downloading
+            task.shared = shared
             if task.addedAt.timeIntervalSinceNow < -60 * 60 * 24 * 30 { task.addedAt = Date() }
         }
         downloadingModel = id
         downloadingEngine = engine
         downloadFraction = 0
         downloadTotalBytes = 0
-        append(log: "==> \(engine.displayName) 下载模型：\(id)", engine: engine)
+        append(log: shared == nil
+            ? "==> \(engine.displayName) 下载模型：\(id)"
+            : "==> 下载模型到公共目录：\(id)", engine: engine)
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: plan.executable)
@@ -1733,6 +2019,11 @@ final class AppState: ObservableObject {
     /// Continue a paused transfer: the same snapshot downloader runs again and
     /// the Hub resumes its partial files.
     func resumeDownload(_ task: ModelDownloadTask) {
+        // 下进公共目录的任务要回到公共目录，否则续传会另起一份到引擎目录里。
+        if let engines = task.shared, !engines.isEmpty {
+            downloadShared(task.model, engines: engines)
+            return
+        }
         downloadModel(task.model, engine: task.engine)
     }
 
@@ -1845,6 +2136,10 @@ final class AppState: ObservableObject {
     }
 
     private func finishDownload(engine: EngineID, model: String, status: Int32) {
+        let sharedRepo = pendingSharedRepo
+        let sharedEngines = pendingSharedEngines
+        pendingSharedRepo = nil
+        pendingSharedEngines = []
         downloadWatchTask?.cancel()
         downloadWatchTask = nil
         downloadProcess = nil
@@ -1895,6 +2190,12 @@ final class AppState: ObservableObject {
         }
 
         removeTask(engine: engine, model: model)
+
+        if let sharedRepo {
+            publishShared(repo: sharedRepo, engines: sharedEngines)
+            append(log: "==> 已下载 \(sharedRepo) 到公共目录", engine: engine)
+            return
+        }
 
         // Splash addresses a model by its repository id, the packs by the
         // folder name flashCat gave it.

@@ -16,8 +16,8 @@
 
 - **三个引擎，一个界面。** Splash、oMLX、MTPLX 各自有自己的端口和日志，
   在这里统一切换、启动、停止，不用开三个终端。
-- **模型在应用里下载。** 每个引擎都配好三档 Qwen 模型，点一下就能下载、加载、切换，
-  不用自己去 Hugging Face 找仓库、也不用处理格式对不对。
+- **模型在应用里下载。** 每个引擎都配好三档 Qwen 模型，点一下就能下载、加载、切换；
+  想跑别的权重就打开模型广场搜（或填仓库 id），下到公共目录后勾给哪些引擎用。
 - **自带 API 网关。** 固定地址、OpenAI 与 Claude 两种格式同时提供，
   换引擎、换端口都不用改客户端配置。
 - **看得见的性能。** 解码速度、首字延迟、预填充速度、草稿接受率、内存占用、
@@ -75,6 +75,9 @@
 
 **模型** —— 每个引擎一份模型库，顶部先选引擎（没装的引擎也能先看它支持什么）。
 装好的可以直接点「使用」，没装的点「下载」原地拉取，卡上标着体积和内存下限。
+右上角「＋ 下载模型」打开模型广场：默认按热度列出 Hugging Face 上的仓库，也可以搜关键词、
+按下载量排序，按「全部 / MLX / GGUF」筛权重格式，翻页继续往下看（HF 那边一页 30 条），点一行打开模型卡（README / 文件清单 / 标签），看完再决定要不要下。权重落到公共目录、
+只存一份，下完再勾给哪些引擎用；卡片上的来源分为「引擎推荐」和「个人下载」两种。
 
 <img src="assets/screenshots/models.png" alt="模型" width="100%" />
 
@@ -147,8 +150,19 @@ curl http://127.0.0.1:9000/v1/messages \
 | Qwen 3.8 27B | 约 16 ~ 21 GB | 新一代，质量和速度更均衡 |
 | Qwen 3.8 Flash-Next | 约 99 GB | 最重的一档，需要 128 GB 内存 |
 
-三档在每个引擎里都用该引擎能真正跑起来的格式准备好了。应用不支持导入外部权重，
-只列出这三档，避免下了却加载不了的麻烦。
+三档在每个引擎里都用该引擎能真正跑起来的格式准备好了。想跑别的模型，点模型页右上角
+「＋ 下载模型」打开模型广场，搜或浏览 Hugging Face 仓库，点开看模型卡再下：权重落到公共目录、只存一份，下完再勾给
+哪些引擎用（勾选只决定可见性，不复制文件）。能不能被某个引擎加载由引擎自己判断，
+卡片上会标出这个模型是「引擎推荐」还是「个人下载」。
+走镜像或者下 gated 仓库时，可以在命令行里给两个偏好值（不填就是 huggingface.co、匿名访问）：
+
+```bash
+defaults write com.zhuo.flashCat hfEndpoint https://hf-mirror.com   # 镜像站
+defaults write com.zhuo.flashCat hfToken hf_xxx                    # 有权限的 token
+```
+
+下载器（python）不读 macOS 的系统代理设置，所以启动下载时会把系统代理原样传给它；
+挂着代理软件也不需要额外配置。
 
 > 下一版会把归属改成引擎标签、并开放 Hugging Face 搜索（见 `model-engine-tags.md`）：
 > 那时模型页按标签分栏，Splash 只剩 Flash-Next 的 GGUF、MTPLX 只剩三款专用包，
@@ -161,6 +175,7 @@ curl http://127.0.0.1:9000/v1/messages \
 | 应用配置、对话记录 | `~/Library/Application Support/flashCat` |
 | Splash 的模型 | `~/.flashcat/models` |
 | oMLX / MTPLX 的模型 | `~/Library/Application Support/flashCat/models/<引擎>` |
+| 公共目录（自己下载的模型） | `~/Library/Application Support/flashCat/shared-models` |
 | 下载缓存 | 默认沿用 Hugging Face 的缓存目录，可在设置里改 |
 | 日志 | `~/Library/Logs/flashCat` |
 

@@ -35,6 +35,10 @@ const UI = {
   configEngine: null,       // 引擎配置弹层（engine id）
   configDraft: null,        // 配置草稿 {tuning, port}
   recommendConfirm: null,   // 推荐页上待确认的引擎（确认弹层）
+  hubOpen: false,           // 模型广场弹层（搜 HF / 看模型卡）
+  hubTab: "card",           // 模型卡弹层里的 tab：card / files / tags
+  hubDraft: null,           // 模型广场搜索框草稿 {query}（不触发重绘，保光标）
+  probeBusyRepo: null,      // 手填下载：正在等预检的仓库 id（本地「查中」标记）
   pendingRender: false,     // 交互期间（菜单打开/输入中）挂起的重绘
   streamStart: {},          // 生成中消息 id -> 本地起始时刻（livestrip 计时用）
   composing: false,         // IME 组合输入中（挂起重绘防打断）
@@ -46,6 +50,7 @@ const UI = {
 };
 let S = null; // 最近一次 Swift 快照
 let lastPushJSON = null;   // 内容未变化的推送不再整页重绘
+let lastOverlayJSON = null; // 弹层（广场/模型卡/预检/下载中心）内容指纹，输入期间只刷这一层
 let lastSideHTML = null;   // 侧栏上次渲染的 HTML：内容没变就不重建 DOM
 
 // ---------- 快照入口 ----------
@@ -96,7 +101,24 @@ window.__fc__ = {
     // 指纹只覆盖本页可见字段：折叠只改布局宽度，不该为它整页重绘（会丢对话滚动位）。
     const json = snapshotKey(state);
     // 菜单开着或正在输入设置项时不整页重绘，交互结束后补一次。
-    if (interactionHold()) { UI.pendingRender = true; lastPushJSON = json; return; }
+    if (interactionHold()) {
+      UI.pendingRender = true;
+      lastPushJSON = json;
+      // 整页重绘会连输入框一起换掉（光标就没了），所以输入期间只挂起。可弹层
+      // 是独立的一层，而且它的内容偏偏都在输入框还有焦点时才回来：手填仓库的
+      // 预检结果、广场搜索的列表、下载中心的进度。不刷这一层，界面就永远停在
+      // 「正在查 Hugging Face…」/「加载中」。renderOverlays 自己会把焦点和光标
+      // 位置放回去，只在弹层内容真的变了时才重建。
+      if (!UI.composing) {
+        const overlay = overlayKey(state);
+        if (overlay !== lastOverlayJSON) {
+          lastOverlayJSON = overlay;
+          renderOverlays();
+        }
+      }
+      return;
+    }
+    lastOverlayJSON = overlayKey(state);
     // 快照与上次完全一致（心跳空转）时只补走本地时钟，不整页重绘。
     if (prev && prev.page === state.page && lastPushJSON === json) { tickLive(); return; }
     lastPushJSON = json;
@@ -145,6 +167,12 @@ function snapshotKey(state) {
   parts.push(((state.downloads && state.downloads.tasks) || []).length);
   parts.push(((state.library && state.library.entries) || []).filter((x) => x.installed).length);
   if (UI.downloadsOpen) parts.push(state.downloads);
+  // 广场列表、模型卡、手填预检的内容全在 hub 快照里，而且都是「点了之后过一会儿
+  // 才回来」的异步结果。指纹不带 hub，这些结果回来时会被上面那条「内容没变就
+  // 不重绘」挡掉——界面永远停在「加载中 / 正在查 Hugging Face…」。
+  if (UI.hubOpen || UI.repoDlOpen || (state.hub && (state.hub.detail || state.hub.detailLoading))) {
+    parts.push(state.hub);
+  }
   return JSON.stringify(parts);
 }
 
@@ -209,6 +237,23 @@ function interactionHold() {
   const key = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.key : null;
   // chatInput 除外：生成中的心跳推送要保持消息区实时刷新。
   return !!key && key !== "chatInput";
+}
+
+// 弹层内容指纹：只取「开了弹层就一定会渲染」的那几项。输入框还占着焦点时，
+// 整页重绘要等交互结束，但这一类异步结果必须当场刷出来。
+function overlayKey(state) {
+  const hub = (state && state.hub) || {};
+  const probe = hub.probe || {};
+  const detail = hub.detail || null;
+  const tasks = ((state && state.downloads && state.downloads.tasks) || [])
+    .map((t) => `${t.id}:${t.status}:${Math.round((t.progress || 0) * 100)}`);
+  return JSON.stringify([
+    !!hub.loading, (hub.results || []).length, hub.error || "",
+    hub.detailLoading ? 1 : 0, detail ? detail.id : "",
+    probe.repo || "", !!probe.loading, probe.error || "",
+    probe.detail ? probe.detail.id : "",
+    tasks,
+  ]);
 }
 
 function flushPendingRender() {
@@ -353,7 +398,11 @@ function md(text) {
   function inline(s) {
     return esc(s)
       .replace(/`([^`]+)`/g, "<code>$1</code>")
-      .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+      .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+      // 图片先于链接：badge 常写成 [![alt](img)](url)，先吃掉图片，
+      // 剩下的一层链接还能正常出来。
+      .replace(/!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g, '<img class="mdimg" alt="$1" src="$2">')
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a class="mdlink" data-href="$2">$1</a>');
   }
 }
 
@@ -571,6 +620,15 @@ function closeMenus() {
 
 document.addEventListener("click", (e) => {
   UI.lastClickEl = e.target;
+  // markdown 里的链接触统一外开：WebView 一旦真跳转就把整个控制台换掉了。
+  const mdLink = e.target.closest && e.target.closest("a.mdlink");
+  if (mdLink) {
+    e.preventDefault();
+    e.stopPropagation();
+    const url = mdLink.dataset.href;
+    if (url) cmd("openURL", { url });
+    return;
+  }
   const menuBtn = e.target.closest && e.target.closest("[data-menu]");
   const modelMenuBtn = e.target.closest && e.target.closest("[data-act='modelMenu']");
   if (!menuBtn && !modelMenuBtn) {
@@ -703,6 +761,88 @@ function handleAction(act, arg) {
     case "cancelInstall": cmd("cancelEngineInstall"); break;
     case "chartRange": UI.chartRange = Number(arg); render(); break;
     case "copyGateway": cmd("copyGateway", { style: arg || "openai" }); break;
+    case "openHub": {
+      UI.hubOpen = true;
+      hubDraft();
+      // 首次打开先拉一屏推荐：空列表弹层看着像坏了。
+      const h = S.hub || {};
+      if (!(h.results || []).length && !h.loading) cmd("searchHub", { query: "", sort: h.sort || "trending" });
+      render();
+      restoreFocus("hubq");
+      break;
+    }
+    case "closeHub": UI.hubOpen = false; render(); break;
+    case "hubSearch": cmd("searchHub", { query: hubDraft().query, sort: (S.hub || {}).sort || "trending", filter: (S.hub || {}).filter || "all", page: 0 }); break;
+    case "hubSort": cmd("searchHub", { query: hubDraft().query, sort: arg, filter: (S.hub || {}).filter || "all", page: 0 }); break;
+    // 筛权重格式和翻页都从第 0 页/当前页重取：HF 的 skip 是纯偏移量，页码越界
+    // 只会拿到空数组，所以「上一页」必须在 0 处止住。
+    case "hubFilter": cmd("searchHub", { query: hubDraft().query, sort: (S.hub || {}).sort || "trending", filter: arg, page: 0 }); break;
+    case "hubPage": {
+      const h = S.hub || {};
+      const page = (h.page || 0) + (arg === "next" ? 1 : -1);
+      if (page < 0 || (arg === "next" && !h.hasMore)) break;
+      cmd("searchHub", { query: hubDraft().query, sort: h.sort || "trending", filter: h.filter || "all", page });
+      break;
+    }
+    case "hubOpenDetail": UI.hubTab = "card"; cmd("hubDetail", { repo: arg }); break;
+    case "hubCloseDetail": cmd("closeHubDetail"); break;
+    case "hubTab": UI.hubTab = arg; render(); break;
+    case "hubOpenLink": cmd("openURL", { url: `https://huggingface.co/${arg}` }); break;
+    case "hubManual": UI.hubOpen = false; UI.repoDlOpen = true; repoDlDraft(); render(); restoreFocus("repoDlRepo"); break;
+    case "hubDownload": {
+      // 下载前只剩「勾引擎」这一步，和手填 id 走同一条确认弹层。
+      // 模型卡要一起收掉：确认弹层盖在它上面，下完还留着半截卡很难看。
+      cmd("closeHubDetail");
+      const d = repoDlDraft();
+      d.repo = arg;
+      d.error = "";
+      UI.hubOpen = false;
+      UI.repoDlOpen = true;
+      render();
+      restoreFocus("repoDlRepo");
+      // 从广场点进来时 id 已经是完整的，直接查一次，不用等输入。
+      repoProbeSoon(arg);
+      break;
+    }
+    case "openRepoDownload": UI.repoDlOpen = true; repoDlDraft(); render(); restoreFocus("repoDlRepo"); break;
+    case "closeRepoDownload":
+      repoProbeStop();
+      cmd("clearRepoProbe");
+      UI.repoDlOpen = false;
+      UI.repoDl = null;
+      render();
+      break;
+    case "repoPick": { const d = repoDlDraft(); d.engines[arg] = !d.engines[arg]; render(); restoreFocus("repoDlRepo"); break; }
+    case "confirmRepoDownload": {
+      const d = repoDlDraft();
+      const repo = (d.repo || "").trim();
+      if (!/^[^\s/]+\/[^\s/]+$/.test(repo)) {
+        d.error = "仓库 id 要写成 owner/repo，例如 Qwen/Qwen3.5-9B";
+        render(); restoreFocus("repoDlRepo");
+        break;
+      }
+      // 已经在本机的不再下一遍：只要不是换目录，重复下只会多占一份盘。
+      if (repoLocal(repo)) {
+        d.error = "这个仓库已经在本机了，不用再下";
+        render(); restoreFocus("repoDlRepo");
+        break;
+      }
+      const engines = ["splash", "omlx", "mtplx"].filter((k) => d.engines[k]);
+      cmd("downloadRepo", { repo, engines });
+      UI.repoDlOpen = false; UI.repoDl = null; UI.downloadsOpen = true;
+      render();
+      break;
+    }
+    case "shareEngines": { const [engine, id] = arg.split("|"); openShareEngines(engine, id); break; }
+    case "sharePick": if (UI.shareEdit) { UI.shareEdit.engines[arg] = !UI.shareEdit.engines[arg]; render(); } break;
+    case "closeShareEngines": UI.shareEdit = null; render(); break;
+    case "confirmShareEngines": {
+      const s = UI.shareEdit;
+      if (s) cmd("setModelEngines", { repo: s.id, engines: ["splash", "omlx", "mtplx"].filter((k) => s.engines[k]) });
+      UI.shareEdit = null;
+      render();
+      break;
+    }
     case "openDownloadCenter": UI.downloadsOpen = true; render(); break;
     case "closeDownloads": UI.downloadsOpen = false; render(); break;
     case "closeConfig": UI.configEngine = null; UI.configDraft = null; render(); break;
@@ -1546,6 +1686,7 @@ function pageModels() {
       ${[["all", "全部"], ["local", "本机"], ["remote", "可下载"]].map(([v, n]) =>
         `<span class="filter ${UI.modelsFilter === v ? "on" : ""}" data-f="${v}">${n}</span>`).join("")}
       <span class="filter" style="margin-left:auto" data-act="rescan" data-arg="${esc(lib.engine)}">↻ 刷新状态</span>
+      <span class="filter" data-act="openHub">＋ 下载模型</span>
       <span class="filter" data-act="openDownloadCenter">下载中心${S.downloads && S.downloads.tasks.length ? " · " + S.downloads.tasks.length : ""}</span>
     </div>
     <div id="modelsGrid">${modelsGridHTML()}</div>`;
@@ -1556,11 +1697,20 @@ function modelCard(e) {
   const tags = [];
   // 硬件推荐标签排在最前：它是这一档「为什么是它」的说明，不随后面换用什么模型消失。
   if (e.recommendedTag) tags.push(`<span class="mtag rec">★ ${esc(e.recommendedTag)}</span>`);
+  // 来源只有两种：清单里的（引擎推荐）和用户自己下的（个人下载）。
+  // 不靠它把人拦住，只是让人一眼看出这行是哪来的。
+  tags.push(e.source === "personal"
+    ? `<span class="mtag">个人下载</span>`
+    : `<span class="mtag" style="color:var(--w-accent)">引擎推荐</span>`);
   if (inUse) tags.push(`<span class="mtag ok">使用中</span>`);
   // 引擎标签：一款模型能挂多个引擎，卡片上先亮归属，免得在 Splash 栏看到
   // 一款其实是 oMLX 专用的权重还以为它能直接起。
   (e.engineLabels || []).forEach((name) => tags.push(`<span class="mtag eng">${esc(name)}</span>`));
   if (e.uncatalogued) tags.push(`<span class="mtag warn">未收录</span>`);
+  if (e.shared) {
+    const names = (e.engines || []).map((k) => (ENGINE_META[k] ? ENGINE_META[k].name : k));
+    tags.push(`<span class="mtag">共享目录${names.length ? " · " + esc(names.join(" / ")) : " · 未授权"}</span>`);
+  }
   if (e.bytes) tags.push(`<span class="mtag">${fmtBytes(e.bytes)}</span>`);
   // 未安装的卡片讲「这一份会带上什么」，已安装的讲「现在跑得怎样」。
   if (e.draftTag) tags.push(`<span class="mtag">${e.installed ? 'DFlash2 加速' : '含 DFlash2'}</span>`);
@@ -1588,10 +1738,307 @@ function modelMenu(arg) {
   const entry = (S.library.entries || []).find((x) => x.engine === engine && x.id === id);
   // 未安装的模型没有菜单：下载入口只保留卡片上的那一个按钮，不在菜单里重复。
   if (!entry || !entry.installed) return;
-  popover("modelMenuBtn", [
-    { label: "在 Finder 中显示", act: "revealModel", arg },
-    { label: "删除模型…", act: "removeModel", arg },
-  ]);
+  const items = [{ label: "在 Finder 中显示", act: "revealModel", arg }];
+  // 共享目录里的权重只有一份，菜单里给的是「给哪些引擎看见」，不是复制。
+  if (entry.shared) items.push({ label: "放到哪些引擎…", act: "shareEngines", arg });
+  items.push({ label: "删除模型…", act: "removeModel", arg });
+  popover("modelMenuBtn", items);
+}
+
+// ---------- 开放下载 / 共享授权 ----------
+// 下载目标固定是公共目录，勾选只决定装完给谁用；能不能被引擎加载由引擎
+// 自己判断，flashCat 不做格式或家族预检。
+function repoDlDraft() {
+  if (!UI.repoDl) {
+    // 默认只勾当前正在看的引擎：实际能跑哪个由引擎自己说了算，
+    // 不替用户把三个都预先勾上。
+    const browsed = (S.library && S.library.engine) || "splash";
+    UI.repoDl = { repo: "", engines: { splash: false, omlx: false, mtplx: false, [browsed]: true } };
+  }
+  return UI.repoDl;
+}
+
+function enginePickChips(selected, act) {
+  return ["splash", "omlx", "mtplx"].map((id) =>
+    `<span class="filter ${selected[id] ? "on" : ""}" data-act="${act}" data-arg="${id}">${ENGINE_META[id].name}</span>`).join(" ");
+}
+
+function openShareEngines(engine, id) {
+  const entry = (S.library.entries || []).find((x) => x.engine === engine && x.id === id);
+  const engines = {};
+  ["splash", "omlx", "mtplx"].forEach((k) => { engines[k] = !!(entry && (entry.engines || []).includes(k)); });
+  UI.shareEdit = { id, engines };
+  render();
+}
+
+// ---------- 模型广场（Hugging Face 浏览）----------
+// 只做「看」：搜索、排序、模型卡（README / 文件 / 标签）。真正下载仍然走
+// 「勾引擎 → 下载器」那一条，所以这里的任何失败都不会影响已装模型。
+function hubDraft() {
+  if (!UI.hubDraft) UI.hubDraft = { query: "" };
+  return UI.hubDraft;
+}
+
+// 下载量/参数量都只用一档量级，不做千分位：表太窄，读的是一眼大小。
+function fmtCompact(n) {
+  if (!n || n <= 0) return "0";
+  if (n < 1000) return String(n);
+  if (n < 1e6) return `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0)}k`;
+  if (n < 1e9) return `${(n / 1e6).toFixed(n < 1e7 ? 1 : 0)}M`;
+  return `${(n / 1e9).toFixed(1)}B`;
+}
+function fmtParams(n) {
+  if (!n || n <= 0) return "";
+  if (n >= 1e12) return `${(n / 1e12).toFixed(1)}T`;
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(0)}M`;
+  return fmtCompact(n);
+}
+// 公共目录/引擎目录里用的扁平名，用来判「已经在本机了」。
+function hubFlatId(id) {
+  return String(id || "").replace(/\//g, "--").replace(/:/g, "-");
+}
+function hubEngineHint(m) {
+  if (m.mtplx) return "带校准 MTP 头，给 MTPLX 最合适；oMLX 也能读";
+  if (m.gguf) return "GGUF：Splash 与 oMLX 能跑，MTPLX 不行";
+  if (m.mlx) return "MLX 量化：oMLX 能跑；Splash 只认它自己那几个家族";
+  return "原版权重：三个引擎通常都跑不起来，建议找 MLX / GGUF 量化版";
+}
+// HF 的 README 里混着裸 HTML（居中 <div>、<img width=400px> 的 logo、表格）。
+// md() 只认 markdown，这些原样吐出来就是一堆源码，先清干净再渲染。
+function hubCardText(text) {
+  return String(text || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<img[^>]*>/gi, "")
+    .replace(/<[^>]{0,400}>/g, "");
+}
+// 预检卡里的 README 摘要：只留能读的文字。HF 的 README 开头常是 shields
+// 徽章和居中的 logo——`![](...)`、`[![arXiv](https://img.shields.io/...)](...)`
+// 这类原样吐出来就是一屏链接，比不显示还碍事。
+function probeCardText(text) {
+  return hubCardText(text)
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")      // 图片与 shields 徽章
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")   // 链接只留文字
+    .replace(/&middot;/g, "·").replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/^[>\s]*/gm, "")
+    .replace(/[#*`|]/g, "")
+    .split("\n").map((line) => line.trim())
+    .filter((line) => line && !/^[-=]{3,}$/.test(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+function hubLocally(m) {
+  return repoLocal(m && m.id);
+}
+// 本机是否已经有这个仓库。快照里的 hub.local 是 Swift 判完的全量清单（公共
+// 目录 + 三个引擎的模型目录），再叠一层当前引擎的库，兜住刚落地、还没重扫
+// 的那个窗口。judgement 在 Swift 侧，这里只是把结果画出来。
+function repoLocal(id) {
+  const canon = String(id || "").replace(/:.*$/, "").replace(/--/g, "/").trim();
+  if (!canon) return false;
+  const hub = S.hub || {};
+  if ((hub.local || []).includes(canon)) return true;
+  if ((hub.shared || []).includes(canon)) return true;
+  // 库里的条目要把「推荐但没下」的排掉：广场里的 mlx-community/... 卡片也是
+  // library 条目，但 installed 是 false，算进来就会把没下的模型显示成已下载。
+  return (S.library.entries || []).some((e) => e.installed
+    && (e.repo === canon || e.id === canon || e.id === hubFlatId(canon)));
+}
+
+// 手填仓库的预检：输入停下 450ms 才问 Swift 一次。边打边查会把
+// `Youssofal/`、`Youssofal/Qw` 这些中间态一并查出去，全是必然的 404。
+const PROBE_REPO = /^[^\s/]+\/[^\s/]+$/;
+let repoProbeTimer = null;
+function repoProbeSoon(repo) {
+  if (repoProbeTimer) clearTimeout(repoProbeTimer);
+  const value = String(repo || "").trim();
+  repoProbeTimer = setTimeout(() => {
+    repoProbeTimer = null;
+    // 先拿本地标记把「正在查…」显出来：Swift 那边查完才会推快照，中间这段
+    // 时间不给反馈就像点了没反应。
+    UI.probeBusyRepo = PROBE_REPO.test(value.replace(/--/g, "/")) ? value : null;
+    renderOverlays();
+    cmd("probeRepo", { repo: value });
+  }, 450);
+}
+function repoProbeStop() {
+  if (repoProbeTimer) clearTimeout(repoProbeTimer);
+  repoProbeTimer = null;
+  UI.probeBusyRepo = null;
+}
+
+// 预检面板三态：id 还没成形（不查）、查着、查到/出差。查到就把「下之前该
+// 看的」摊开——体积、文件、参数、README 摘要——别让人彽着一个 id 下十几 G。
+function repoProbePanel(d) {
+  const p = (S.hub || {}).probe || {};
+  const repo = String(d.repo || "").trim().replace(/--/g, "/");
+  if (!PROBE_REPO.test(repo)) {
+    return `<div class="probe"><div class="probe-empty">输入完整的 <span class="mono">owner/repo</span>，会自动查一次仓库信息。</div></div>`;
+  }
+  if (p.error && String(p.repo || "").toLowerCase() === repo.toLowerCase()) {
+    return `<div class="probe">
+      <div class="probe-strip warn">${esc(p.error)}</div>
+      <div class="probe-empty">仓库存在就能查到；私有/需授权的仓库得先在自己的机器上登录过 Hub。</div>
+    </div>`;
+  }
+  const m = p.detail;
+  // 用 Swift 告知的「结果属于哪个仓库」对齐，而不是靠 m.id：仓库被改名或大小写
+  // 不同时，按 id 对齐会把已经查到的卡当成别人的，卡在「查中」。
+  const probed = String(p.repo || "").toLowerCase();
+  const matched = !!m && (!probed || probed === repo.toLowerCase());
+  if (probed && probed === repo.toLowerCase()) UI.probeBusyRepo = null;
+  if (!matched) {
+    const busy = UI.probeBusyRepo && UI.probeBusyRepo.toLowerCase() === repo.toLowerCase();
+    return busy || p.loading
+      ? `<div class="probe"><div class="probe-empty">正在查 Hugging Face…</div></div>`
+      : `<div class="probe"><div class="probe-empty">输入完整的 <span class="mono">owner/repo</span> 后会自动查一次仓库信息。</div></div>`;
+  }
+  const files = m.files || [];
+  const biggest = files.reduce((a, f) => Math.max(a, f.size || 0), 0);
+  const local = repoLocal(m.id);
+  const cells = [
+    ["总体积", m.size ? fmtBytes(m.size) : "未知"],
+    ["文件", files.length ? `${files.length} 个${biggest ? ` · 最大 ${fmtBytes(biggest)}` : ""}` : "—"],
+    ["参数量", m.parameters ? fmtParams(m.parameters) : "—"],
+    ["下载量", m.downloads ? `↓ ${fmtCompact(m.downloads)}` : "—"],
+    ["点赞", m.likes ? `♥ ${fmtCompact(m.likes)}` : "—"],
+    ["更新", String(m.updated || "").slice(0, 10) || "—"],
+    ["许可", m.license || "—"],
+    ["任务", m.pipeline || "—"],
+  ];
+  const tags = [];
+  if (m.mtplx) tags.push("MTPLX");
+  if (m.mlx) tags.push("MLX");
+  if (m.gguf) tags.push("GGUF");
+  (m.tags || []).slice(0, 6).forEach((t) => { if (!tags.includes(t)) tags.push(t); });
+  const card = probeCardText(m.modelCard || "").slice(0, 420);
+  const strip = local
+    ? `<div class="probe-strip ok">已经在这台机器上了（公共目录或某个引擎的模型目录），不用再下一遍。</div>`
+    : `<div class="probe-strip warn">${esc(hubEngineHint(m))}</div>`;
+  return `<div class="probe">
+    <div class="probe-head">
+      <span class="mono probe-id">${esc(m.id)}</span>
+      ${local ? `<span class="mtag ok">已在本机</span>` : ""}
+      ${m.gated ? `<span class="mtag warn">需授权</span>` : ""}
+    </div>
+    <div class="probe-grid">${cells.map(([k, v]) => `<div class="cell"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`).join("")}</div>
+    ${tags.length ? `<div class="mtags" style="margin-top:10px">${tags.map((t) => `<span class="mtag">${esc(t)}</span>`).join("")}</div>` : ""}
+    ${strip}
+    ${card ? `<div class="probe-card" style="margin-top:10px">${esc(card)}</div>` : ""}
+  </div>`;
+}
+
+function hubRow(m) {
+  const local = repoLocal(m.id);
+  const meta = [];
+  if (m.parameters) meta.push(`${fmtParams(m.parameters)} 参数`);
+  if (m.size) meta.push(fmtBytes(m.size));
+  meta.push(`↓ ${fmtCompact(m.downloads)}`);
+  if (m.likes) meta.push(`♥ ${fmtCompact(m.likes)}`);
+  const tags = [];
+  if (m.mlx) tags.push("MLX");
+  if (m.gguf) tags.push("GGUF");
+  if (m.mtplx) tags.push("MTPLX");
+  if (m.gated) tags.push("需授权");
+  if (m.license) tags.push(m.license);
+  return `<div class="hub-row${local ? " local" : ""}" data-act="hubOpenDetail" data-arg="${esc(m.id)}">
+    <div style="flex:1;min-width:0">
+      <div class="hub-name" title="${esc(m.id)}">${esc(m.id)}</div>
+      <div class="hub-sub">${meta.map(esc).join("<span>·</span>")}</div>
+      ${tags.length ? `<div class="mtags" style="margin-top:4px">${tags.map((t) => `<span class="mtag">${esc(t)}</span>`).join("")}</div>` : ""}
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;flex:none">
+      ${local ? `<span class="mtag ok">已在本机</span>` : ""}
+      ${local ? `<button class="btn-p ghost" disabled>已下载</button>` : `<button class="btn-p dl" data-act="hubDownload" data-arg="${esc(m.id)}">下载</button>`}
+    </div>
+  </div>`;
+}
+
+function hubBody() {
+  const h = S.hub || {};
+  const d = hubDraft();
+  const items = h.results || [];
+  const sort = h.sort || "trending";
+  const filter = h.filter || "all";
+  const page = h.page || 0;
+  const head = `<div class="ctl" style="display:flex;gap:8px;align-items:center;margin:2px 0 10px">
+      <input class="field" data-key="hubq" data-hubq style="flex:1;min-width:0;text-align:left;padding:6px 10px" placeholder="搜 Hugging Face：qwen3.5、mlx、gguf…" value="${esc(d.query)}" spellcheck="false">
+      <button class="btn-p" data-act="hubSearch">搜索</button>
+    </div>
+    <div class="ctl" style="display:flex;gap:8px;align-items:center;margin-bottom:4px;flex-wrap:wrap">
+      <span class="filter ${sort === "trending" ? "on" : ""}" data-act="hubSort" data-arg="trending">推荐</span>
+      <span class="filter ${sort === "downloads" ? "on" : ""}" data-act="hubSort" data-arg="downloads">下载量</span>
+      <span style="width:1px;height:16px;background:var(--w-line);margin:0 2px"></span>
+      ${[['all', '全部'], ['mlx', 'MLX'], ['gguf', 'GGUF']].map(([k, label]) => `<span class="filter ${filter === k ? "on" : ""}" data-act="hubFilter" data-arg="${k}">${label}</span>`).join(" ")}
+      <span class="sz" style="margin-left:auto">${h.loading ? "加载中…" : `${items.length} 个仓库`}</span>
+    </div>`;
+  const pager = "";
+  let body = "";
+  if (h.error) body = `<div class="confirm-strip" style="margin:10px 0;border-color:color-mix(in srgb, var(--w-warn) 40%,transparent)">${esc(h.error)}</div>`;
+  else if (h.loading && !items.length) body = `<div class="hub-empty">正在从 Hugging Face 取列表…</div>`;
+  else if (!items.length) body = `<div class="hub-empty">${page > 0 ? "这一页没有更多仓库了。" : "没搜到仓库。换个关键词试试，或者手填仓库 id。"}</div>`;
+  else body = items.map(hubRow).join("");
+  return `${head}<div>${body}</div>${items.length ? pager : ""}`;
+}
+
+// 分页放在弹层底部而不是列表末尾：列表本身要滚动，翻页按钮跟着滚就没法用了。
+function hubPager() {
+  const h = S.hub || {};
+  const page = h.page || 0;
+  const busy = h.loading ? "disabled" : "";
+  return `<div class="hub-pager">
+      <button class="btn-quiet" data-act="hubPage" data-arg="prev" ${page > 0 && !h.loading ? "" : "disabled"}>上一页</button>
+      <span class="sz">第 ${page + 1} 页</span>
+      <button class="btn-quiet" data-act="hubPage" data-arg="next" ${h.hasMore && !h.loading ? "" : busy || "disabled"}>下一页</button>
+    </div>`;
+}
+
+function hubDetailBody() {
+  const h = S.hub || {};
+  const m = h.detail;
+  if (!m) {
+    return `<div class="hub-empty">${h.detailLoading ? "正在取模型卡…" : (h.error || "选一个仓库看看")}</div>`;
+  }
+  const tab = UI.hubTab || "card";
+  const files = m.files || [];
+  let inner = "";
+  if (tab === "files") {
+    inner = files.length
+      ? files.map((f) => `<div class="hub-file"><span class="mono" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</span><span style="flex:none">${f.size ? fmtBytes(f.size) : "—"}</span></div>`).join("")
+      : `<div class="hub-empty">没有文件清单</div>`;
+  } else if (tab === "tags") {
+    inner = (m.tags || []).length
+      ? `<div class="mtags">${m.tags.map((t) => `<span class="mtag">${esc(t)}</span>`).join("")}</div>`
+      : `<div class="hub-empty">没有标签</div>`;
+  } else {
+    inner = m.modelCard ? `<div class="hub-card">${md(hubCardText(m.modelCard))}</div>` : `<div class="hub-empty">这个仓库没有模型卡（README）</div>`;
+  }
+  const meta = [];
+  if (m.size) meta.push(fmtBytes(m.size));
+  if (m.parameters) meta.push(`${fmtParams(m.parameters)} 参数`);
+  meta.push(`↓ ${fmtCompact(m.downloads)}`);
+  if (m.likes) meta.push(`♥ ${fmtCompact(m.likes)}`);
+  return `<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:8px">
+      <span class="mono" style="font-size:12px">${esc(m.id)}</span>
+      <span class="sz">${meta.map(esc).join(" · ")}</span>
+      ${m.pipeline ? `<span class="mtag">${esc(m.pipeline)}</span>` : ""}
+    </div>
+    <div class="confirm-strip" style="margin:0 0 10px">${esc(hubEngineHint(m))}</div>
+    <div class="ctl" style="display:flex;gap:8px;margin-bottom:8px">
+      <span class="filter ${tab === "card" ? "on" : ""}" data-act="hubTab" data-arg="card">模型卡</span>
+      <span class="filter ${tab === "files" ? "on" : ""}" data-act="hubTab" data-arg="files">文件 ${files.length || ""}</span>
+      <span class="filter ${tab === "tags" ? "on" : ""}" data-act="hubTab" data-arg="tags">标签</span>
+    </div>
+    <div style="max-height:46vh;overflow-y:auto">${inner}</div>
+    <div class="modal-foot">
+      <button class="btn-quiet" data-act="hubOpenLink" data-arg="${esc(m.id)}">在 Hugging Face 打开</button>
+      ${repoLocal(m.id)
+        ? `<span class="sz" style="margin-left:auto">这台机器上已经有了</span><button class="btn-p ghost" disabled>已下载</button>`
+        : `<button class="btn-main" data-act="hubDownload" data-arg="${esc(m.id)}" style="margin-left:auto">下载</button>`}
+    </div>`;
 }
 
 // ---------- 引擎 ----------
@@ -2401,6 +2848,55 @@ function renderOverlays() {
       <div class="modal-title">${esc(name)} 配置</div>
       ${configBody()}`, "closeConfig", true));
   }
+  // 模型广场：搜 HF、看模型卡
+  if (UI.hubOpen) {
+    parts.push(modal(`
+      <div class="modal-title">下载模型 <small>搜到看清楚了再下，权重存公共目录</small></div>
+      <div class="hub-body">${hubBody()}</div>
+      <div class="modal-foot">
+        ${hubPager()}
+        <button class="btn-quiet" data-act="hubManual">手填仓库 id…</button>
+        <button class="btn-quiet" data-act="closeHub">关闭</button>
+      </div>`, "closeHub", true));
+  }
+  // 模型卡（盖在模型广场上面）
+  if (S.hub && (S.hub.detail || S.hub.detailLoading)) {
+    parts.push(modal(`
+      <div class="modal-title">模型卡 <small>README / 文件 / 标签</small></div>
+      <div class="modal-body" style="padding-top:0">${hubDetailBody()}</div>`, "hubCloseDetail", true));
+  }
+  // 从 Hub 下任意仓库到公共目录
+  if (UI.repoDlOpen) {
+    const d = repoDlDraft();
+    const local = repoLocal(d.repo);
+    parts.push(modal(`
+      <div class="modal-title">下载模型 <small>权重存公共目录，三个引擎共用一份</small></div>
+      <div class="modal-body">
+        <div class="modal-text" style="padding:0 0 10px">填 Hugging Face 仓库 id（<span class="mono">owner/repo</span>），输入停下会自动查一次仓库信息。下完再勾给哪些引擎用；能否被引擎加载由引擎自己判断。</div>
+        <input class="field" style="width:100%;min-width:0;text-align:left;padding:8px 12px" data-key="repoDlRepo" data-repo placeholder="例如 mlx-community/Qwen3.5-9B-4bit" value="${esc(d.repo)}" spellcheck="false">
+        ${d.error ? `<div class="confirm-strip" style="margin:10px 0 0;border-color:color-mix(in srgb, var(--w-warn) 40%,transparent)">${esc(d.error)}</div>` : ""}
+        ${repoProbePanel(d)}
+        ${local ? "" : `<div class="ctl" style="margin:16px 0 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="sz">装完给谁用：</span> ${enginePickChips(d.engines, "repoPick")}</div>`}
+      </div>
+      <div class="modal-foot">
+        <button class="btn-quiet" data-act="closeRepoDownload">${local ? "关闭" : "取消"}</button>
+        ${local
+          ? `<button class="btn-p ghost" style="margin-left:0" disabled>已下载</button>`
+          : `<button class="btn-main" data-act="confirmRepoDownload">开始下载</button>`}
+      </div>`, "closeRepoDownload", true));
+  }
+  // 共享模型的引擎授权
+  if (UI.shareEdit) {
+    const s = UI.shareEdit;
+    parts.push(modal(`
+      <div class="modal-title">${esc(shortModel(s.id))} 给哪些引擎用</div>
+      <div class="modal-text">公共目录里的权重只有一份。勾选的引擎会在自己的模型目录里看到它（符号链接，不占额外磁盘）；取消勾选只收回可见性，不删文件。</div>
+      <div class="ctl">${enginePickChips(s.engines, "sharePick")}</div>
+      <div class="modal-foot">
+        <button class="btn-quiet" data-act="closeShareEngines">取消</button>
+        <button class="btn-main" data-act="confirmShareEngines">保存</button>
+      </div>`, "closeShareEngines", true));
+  }
   // 下载中心
   if (UI.downloadsOpen) {
     parts.push(modal(`
@@ -2413,16 +2909,46 @@ function renderOverlays() {
   // 「模型启动时开着引擎配置，页面一直弹回顶部」就是这么来的。
   if (host.dataset.sig === html) return;
   // 真要重建（进度/阶段文本确实变了）时，按顺序保留每个弹层的滚动位。
-  const prevTops = [...host.querySelectorAll(".modal-body")].map((el) => el.scrollTop);
+  // 但换了一个弹层就不能沿用它：从广场点进模型卡时，第 0 个 .modal-body 还是
+  // 同一个位置，滚动位照搬过去，模型卡就一打开就被顶到中间（标签行下面那行
+  // 文字被切掉半截）。用开头几十个字认一认是不是同一个弹层的内容。
+  const prevBodies = [...host.querySelectorAll(".modal-body")];
+  const prevTops = prevBodies.map((el) => el.scrollTop);
+  const prevKeys = prevBodies.map((el) => (el.textContent || "").slice(0, 40));
+  // 重建会把正在输入的元素一并换掉：记住键盘焦点与光标位置，重建后放回去。
+  // 手填仓库的预检结果是打字间隙回来的，丢焦点就等于「输入到一半被吃掉」。
+  const active = document.activeElement;
+  const focusKey = active && active.dataset ? active.dataset.key : null;
+  const caret = focusKey && typeof active.selectionStart === "number"
+    ? [active.selectionStart, active.selectionEnd]
+    : null;
   host.innerHTML = html;
   host.querySelectorAll(".modal-body").forEach((el, i) => {
-    if (prevTops[i]) el.scrollTop = prevTops[i];
+    if (prevTops[i] && prevKeys[i] === (el.textContent || "").slice(0, 40)) el.scrollTop = prevTops[i];
   });
   bindOverlays(host);
+  if (focusKey) {
+    const el = host.querySelector(`[data-key="${focusKey}"]`);
+    if (el && el.focus) {
+      el.focus();
+      if (caret && el.setSelectionRange) {
+        try { el.setSelectionRange(caret[0], caret[1]); } catch (e) { /* 非文本输入框 */ }
+      }
+    }
+  }
 }
 
+// wide 弹层信息量大，标题右侧统一给一个 ×：模型卡这种只靠点遮罩关闭的弹层
+// 「找不到出口」，是这批弹层被投诉最多的点。小确认弹窗本来就有取消按钮，不重复加。
 function modal(inner, cancelAct, wide) {
-  return `<div class="mask" data-cancel="${esc(cancelAct || "")}"><div class="modal ${wide ? "wide" : ""}">${inner}</div></div>`;
+  let body = inner;
+  if (wide && cancelAct) {
+    body = inner.replace(
+      /^(\s*)<div class="modal-title">([\s\S]*?)<\/div>/,
+      `$1<div class="modal-head"><div class="modal-title">$2</div><button class="modal-x" data-act="${esc(cancelAct)}" title="关闭">✕</button></div>`,
+    );
+  }
+  return `<div class="mask" data-cancel="${esc(cancelAct || "")}"><div class="modal ${wide ? "wide" : ""}">${body}</div></div>`;
 }
 
 function bindOverlays(host) {
@@ -2464,6 +2990,19 @@ function bindOverlays(host) {
     const n = Number(v);
     cfgModel().tuning[key] = v === "" ? null
       : (cfgNumericKeys[key] && Number.isFinite(n) ? n : v);
+  }));
+  host.querySelectorAll("[data-hubq]").forEach((el) => el.addEventListener("input", () => {
+    // 搜索框打字不重绘：快照每两秒推一次，重绘会把光标和 IME 打断。
+    hubDraft().query = el.value;
+  }));
+  host.querySelectorAll("[data-hubq]").forEach((el) => el.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); handleAction("hubSearch"); }
+  }));
+  host.querySelectorAll("[data-repo]").forEach((el) => el.addEventListener("input", () => {
+    const d = repoDlDraft();
+    d.repo = el.value;
+    d.error = "";
+    repoProbeSoon(el.value);
   }));
   host.querySelectorAll("[data-cfgport]").forEach((el) => el.addEventListener("input", () => {
     el.value = el.value.replace(/[^0-9]/g, "").slice(0, 5);

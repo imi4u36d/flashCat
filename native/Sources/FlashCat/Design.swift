@@ -23,29 +23,30 @@ extension Color {
 }
 
 enum Native {
-    // Canvas —— 页面画布（暖纸白 / 暖石墨）
-    static let surface = Color.adaptive(dark: 0x16130F, light: 0xF5F2EC)
+    // Canvas —— 页面画布（纯白 / 暖石墨）。日间不带暖调：白就是白，
+    // 卡片靠 1px 描边分层，不再靠米色底和白色面板的色差。
+    static let surface = Color.adaptive(dark: 0x16130F, light: 0xFFFFFF)
     // Panel —— 卡片面板（纯色，靠描边分层而非玻璃+投影）
     static let canvas = Color.adaptive(dark: 0x1E1A15, light: 0xFFFFFF)
-    static let sidebar = Color.adaptive(dark: 0x1A1611, light: 0xECE7DE)
+    static let sidebar = Color.adaptive(dark: 0x1A1611, light: 0xF6F6F8)
     // 毛发描边：卡片 1px 分层线（hairline）与更强的分隔线（stroke）
-    static let hairline = Color.adaptive(dark: 0x322B22, light: 0xE7E1D7)
-    static let stroke = Color.adaptive(dark: 0x3E362A, light: 0xD8D0C3)
+    static let hairline = Color.adaptive(dark: 0x322B22, light: 0xE8E8EC)
+    static let stroke = Color.adaptive(dark: 0x3E362A, light: 0xD4D4D9)
     // 比画布更暗一档的凹槽面（输入框、地址栏）
-    static let recess = Color.adaptive(dark: 0x14110D, light: 0xEFEBE4)
+    static let recess = Color.adaptive(dark: 0x14110D, light: 0xF2F2F4)
     // 面板上的弱填充小件（日志页行内 chip 等）
-    static let panel = Color.adaptive(dark: 0xFFFFFF, light: 0x221E1A,
+    static let panel = Color.adaptive(dark: 0xFFFFFF, light: 0x1B1B1E,
                                       darkAlpha: 0.05, lightAlpha: 0.045)
     // 凹槽面板（日志正文区、输入框底）：比面板再沉一档
-    static let raised = Color.adaptive(dark: 0x241F19, light: 0xFBFAF7)
+    static let raised = Color.adaptive(dark: 0x241F19, light: 0xF7F7F9)
 
     /// The colour AppKit paints behind the hidden title bar.
-    static let windowBackground = NSColor.adaptive(dark: 0x16130F, light: 0xF5F2EC)
+    static let windowBackground = NSColor.adaptive(dark: 0x16130F, light: 0xFFFFFF)
 
-    // Type —— 三级暖灰阶，全部 AA 达标（tertiary 是最浅可用文字色）
-    static let label = Color.adaptive(dark: 0xEFEAE1, light: 0x221E1A)
-    static let secondary = Color.adaptive(dark: 0xA79E91, light: 0x5F594F)
-    static let tertiary = Color.adaptive(dark: 0x8A8175, light: 0x736C64)
+    // Type —— 三级中性灰阶，全部 AA 达标（tertiary 是最浅可用文字色）
+    static let label = Color.adaptive(dark: 0xEFEAE1, light: 0x1B1B1E)
+    static let secondary = Color.adaptive(dark: 0xA79E91, light: 0x5A5A60)
+    static let tertiary = Color.adaptive(dark: 0x8A8175, light: 0x86868D)
 
     // Brand + accents。accent 是唯一主强调色；accentSoft 是它的弱化底。
     // metricNum 专用于 ≥20pt 的仪表大读数，正文强调一律用 accent。
@@ -67,19 +68,19 @@ enum Native {
     static let blue = Color.adaptive(dark: 0x6FA8F5, light: 0x1F5FBF)
     static let purple = Color.adaptive(dark: 0xBF5AF2, light: 0x8944AB)
     static let teal = Color.adaptive(dark: 0x40C8E0, light: 0x0E7490)
-    static let gray = Color.adaptive(dark: 0x8A8175, light: 0x736C64)
+    static let gray = Color.adaptive(dark: 0x8A8175, light: 0x86868D)
 
     // 面板填充：日间纯白、夜间暖石墨，玻璃渐变已废弃；
     // glassTop/glassBottom 仅剩 ChatView 的两处旧调用点，取同一值即为纯色。
     static let glassTop = Color.adaptive(dark: 0x1E1A15, light: 0xFFFFFF)
     static let glassBottom = Color.adaptive(dark: 0x1E1A15, light: 0xFFFFFF)
-    static let glassEdgeTop = Color.adaptive(dark: 0x322B22, light: 0xE7E1D7)
-    static let glassEdgeBottom = Color.adaptive(dark: 0x322B22, light: 0xE7E1D7)
+    static let glassEdgeTop = Color.adaptive(dark: 0x322B22, light: 0xE8E8EC)
+    static let glassEdgeBottom = Color.adaptive(dark: 0x322B22, light: 0xE8E8EC)
     static let panelShadow = Color.adaptive(dark: 0x000000, light: 0x000000,
                                             darkAlpha: 0.38, lightAlpha: 0.07)
 
     // 浮层基底（对话参数面板等）：直接用面板色。
-    static let sheetBase = Color.adaptive(dark: 0x241F19, light: 0xFBFAF7)
+    static let sheetBase = Color.adaptive(dark: 0x241F19, light: 0xF7F7F9)
     // 浮层（对话画布）唯一允许的一层投影 —— elevation 只到窗口级。
     static let sheetShadow = Color.adaptive(dark: 0x000000, light: 0x000000,
                                             darkAlpha: 0.35, lightAlpha: 0.10)
@@ -89,7 +90,7 @@ enum Native {
 
     // Primary（唯一主动作）胶囊：墨色底两副皮肤通用。
     static let pillFill = Color.adaptive(dark: 0xEFEAE1, light: 0x221E1A)
-    static let pillText = Color.adaptive(dark: 0x16130F, light: 0xF5F2EC)
+    static let pillText = Color.adaptive(dark: 0x16130F, light: 0xFFFFFF)
 
     // Toast capsule.
     static let toastFill = Color.adaptive(dark: 0x000000, light: 0xFFFFFF,

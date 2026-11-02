@@ -173,6 +173,8 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
             if let engine, let id = body["id"] as? String { state.useModel(id, engine: engine) }
         case "downloadModel":
             if let engine, let id = body["id"] as? String { state.downloadModel(id, engine: engine) }
+        case "searchHub":
+            if let query = body["query"] as? String { state.searchHub(query) }
         case "removeModel":
             if let engine, let id = body["id"] as? String { confirmRemoveModel(id, engine: engine) }
         case "revealModel":
@@ -307,7 +309,12 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
 
     /// 删除现在是真删权重（不再只是解链），所以先问一次，并把要删的大小摆出来。
     private func confirmRemoveModel(_ id: String, engine: EngineID) {
-        let path = EnginePaths.modelsDirectory(engine) + "/" + id
+        // 行的真实位置从库里取：Splash 的行是 `.resolved` 里的装配体，
+        // 按 `modelsDirectory + id` 拼出来的路径根本不存在，问出来的大小是 0 B。
+        let entry = state.libraryEntries(for: engine).first { $0.id == id }
+        let path = entry?.model.path.isEmpty == false
+            ? entry!.model.path
+            : EnginePaths.modelsDirectory(engine) + "/" + id
         let bytes = EngineModelStore.size(of: path)
         let alert = NSAlert()
         alert.alertStyle = .warning
@@ -687,11 +694,19 @@ enum WebSnapshot {
                     "isDraft": entry.isDraft,
                     "bytes": entry.model.bytes,
                     "originText": entry.installed ? "本机" : "Hugging Face",
+                    // 目录外的本机权重照样出现，标成「未收录」，
+                    // 免得盘上有、界面里却找不到。
+                    "uncatalogued": entry.uncatalogued,
                 ]
                 if let repo = entry.recommendation?.repo { item["repo"] = repo }
+                if let labels = entry.recommendation?.engineLabels, !labels.isEmpty {
+                    item["engineLabels"] = labels
+                }
                 if let tags = entry.recommendation?.tags, !tags.isEmpty { item["tags"] = tags }
                 if let memory = entry.recommendation?.minimumMemory, memory > 0 { item["minMemory"] = memory }
-                if entry.draftRepository != nil { item["draftTag"] = true }
+                // 草稿的下载目前只接在 Splash 上（oMLX 的 dflash_draft_model
+                // 还没接），别先给 oMLX 卡片挂一个下不到的标签。
+                if entry.draftRepository != nil && entry.engine == .splash { item["draftTag"] = true }
                 // ★ 标签只看配置推荐了哪一档，不看是否已装：换了模型之后标签
                 // 仍要留在原来那一档上，否则用户会以为推荐变了。
                 if let tag = state.recommendationTag(for: entry.model.id, engine: entry.engine) {
@@ -700,6 +715,38 @@ enum WebSnapshot {
                 return item
             },
         ]
+
+        // 搜索只活在当前会话：没有 query 时整格传 null，网页据此隐藏结果区。
+        var hubSearchJSON: Any = NSNull()
+        if !state.hubSearch.isEmpty {
+            hubSearchJSON = [
+                "query": state.hubSearch.query,
+                "state": state.hubSearch.phase.rawValue,
+                "error": state.hubSearch.error ?? "",
+                "results": state.hubResults(for: state.libraryEngine).map { result -> [String: Any] in
+                    var item: [String: Any] = [
+                        "id": result.id,
+                        "repo": result.repo,
+                        "display": result.shortName,
+                        "engine": result.engine.rawValue,
+                        "kind": result.kind.rawValue,
+                        "bytes": result.bytes,
+                        "memory": result.memoryGB,
+                        "estimated": result.estimated,
+                        "downloads": result.downloads,
+                        "originText": "Hugging Face",
+                        "options": result.options.map { option -> [String: Any] in
+                            ["name": option.name ?? "", "label": option.label,
+                             "bytes": option.bytes, "memory": option.memoryGB,
+                             "estimated": option.estimated]
+                        },
+                    ]
+                    if let summary = result.summary { item["summary"] = summary }
+                    if !result.tags.isEmpty { item["tags"] = result.tags }
+                    return item
+                },
+            ]
+        }
 
         var enginesInstall: [String: Any] = [:]
         for id in EngineID.allCases {
@@ -809,12 +856,13 @@ enum WebSnapshot {
                     "engine": engine.rawValue,
                     "engineName": engine.displayName,
                     "model": pick.model,
-                    "display": model.shortName,
+                    "display": model?.shortName
+                        ?? pick.model.split(separator: "/").last.map(String.init) ?? pick.model,
                     "reason": pick.reason,
                     "fit": fitName(pick.verdict),
                 ]
-                if let sizeText = model.sizeText { row["sizeText"] = sizeText }
-                if model.minimumMemory > 0 { row["minMemory"] = model.minimumMemory }
+                if let sizeText = model?.sizeText { row["sizeText"] = sizeText }
+                if let memory = model?.minimumMemory, memory > 0 { row["minMemory"] = memory }
                 return row
             }
         }
@@ -880,12 +928,14 @@ enum WebSnapshot {
                 .map { id -> [String: Any] in
                     ["engine": id.rawValue,
                      "name": id.displayName,
+                     // 已装且能起的都进菜单：目录标签只决定推荐与搜索，
+                     // 不决定本机权重能不能用——盘上有就是能用。
                      "models": state.engineModels(for: id)
                          .filter { !$0.hidden && !$0.helper && !ModelLibraryEntry.isDraftModel($0.id) }
-                         .filter { ModelRecommendations.isPinned($0.id, engine: id) }
                          .map { $0.id }]
                 },
             "library": library,
+            "hubSearch": hubSearchJSON,
             "downloads": downloads,
             "logs": state.logs.suffix(800).map { line -> [String: Any] in
                 return [

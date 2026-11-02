@@ -131,6 +131,9 @@ final class AppState: ObservableObject {
     /// stopped — or that has no weights at all — can still be inspected,
     /// filled from the Hub and compared with the others.
     @Published var libraryEngine: EngineID = .splash
+    /// Hub search for the model page. Session-scoped: the results live in
+    /// memory only, so switching engines or relaunching drops them.
+    @Published private(set) var hubSearch = HubSearchState()
     /// Set when a model is picked for an engine that is not running: the switch
     /// is a bigger step than a model change, so it asks first.
     @Published var pendingLibraryUse: LibraryUseRequest?
@@ -799,8 +802,8 @@ final class AppState: ObservableObject {
 
     // MARK: model library
 
-    /// The three Qwen tiers this engine can serve, bounded to the build it can
-    /// load: Splash and oMLX read MLX folders, MTPLX serves its own packs.
+    /// The catalog rows tagged for this engine: Splash gets the Flash-Next
+    /// GGUF, oMLX the MLX and oQ builds, MTPLX only its own packs.
     func libraryRecommendations(for engine: EngineID) -> [ModelRecommendation] {
         ModelRecommendations.list(for: engine)
     }
@@ -829,6 +832,54 @@ final class AppState: ObservableObject {
 
     func browseEngine(_ id: EngineID) {
         libraryEngine = id
+        // 搜索是「这一栏里的这次查询」：换栏就散，否则新栏会顶着一次它从没
+        // 被输入过的查询，把别的引擎的命中当成自己的结果。票号一并作废，
+        // 免得还在路上的答案落进新栏。
+        hubSearchTicket += 1
+        hubSearch = HubSearchState()
+    }
+
+    // MARK: Hub search
+
+    private static let hubClient = HubSearchClient()
+    /// Bumped on every keystroke that starts a search so a slow answer cannot
+    /// overwrite a newer one.
+    private var hubSearchTicket = 0
+
+    /// Search the Hub for repositories the current column can serve.
+    ///
+    /// Two requests, not one: the list endpoint's `siblings[].size` is always
+    /// null, so sizes only come from the per-repository endpoint, fetched
+    /// concurrently for the handful of hits that survive the format filter.
+    func searchHub(_ query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        hubSearchTicket += 1
+        let ticket = hubSearchTicket
+        guard !trimmed.isEmpty else {
+            hubSearch = HubSearchState()
+            return
+        }
+        hubSearch = HubSearchState(query: trimmed, phase: .loading)
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let hits = try await Self.hubClient.search(trimmed)
+                let enriched = await Self.hubClient.enrich(hits)
+                let results = enriched.compactMap { HubSearchState.result(for: $0) }
+                guard ticket == self.hubSearchTicket else { return }
+                self.hubSearch = HubSearchState(query: trimmed, phase: .idle, results: results)
+            } catch {
+                guard ticket == self.hubSearchTicket else { return }
+                let message = (error as? HubError)?.errorDescription ?? "\(error)"
+                self.hubSearch = HubSearchState(query: trimmed, phase: .failed, error: message)
+            }
+        }
+    }
+
+    /// The search hits the given column may show. Ownership comes from the
+    /// repository's own format, so a row never appears in two columns.
+    func hubResults(for engine: EngineID) -> [HubSearchResult] {
+        hubSearch.results.filter { $0.engine == engine }
     }
 
     // MARK: draft assignments
@@ -1439,10 +1490,17 @@ final class AppState: ObservableObject {
     func removeModel(_ id: String, engine: EngineID) {
         guard engine != .splash else {
             if let model = catalog.machine.first(where: { $0.id == id }) {
+                // 正在服务的那份权重删掉后不能留着旧选择：先停引擎，再删，
+                // 让下一次启动重新解析模型。
+                if engine == activeEngine, selectedModel == id { stopService() }
                 deleteModel(model)
             }
             return
         }
+        // 正在服务的那份权重删掉后不能只换个选择：进程里还驻留着它，
+        // 界面和引擎会各说各话，直到有人手动重启。先停引擎再动手。
+        let serving = engine == activeEngine && selectedModel == id
+        if serving { stopService() }
         let path = EnginePaths.modelsDirectory(engine) + "/" + id
         do {
             try FileManager.default.removeItem(atPath: path)
@@ -1450,7 +1508,7 @@ final class AppState: ObservableObject {
             notice = "删除失败：\(error.localizedDescription)"
             return
         }
-        if selectedModel == id, engine == activeEngine {
+        if serving {
             selectedModel = ""
             adoptSavedModel(for: engine)
         }
@@ -1483,7 +1541,7 @@ final class AppState: ObservableObject {
         }
         let recommendation = ModelRecommendations.recommendation(for: id)
         let draft = engine == .splash
-            ? (catalog.draftRepository(id, family: family) ?? recommendation.draftRepository)
+            ? (catalog.draftRepository(id, family: family) ?? recommendation?.draftRepository)
             : nil
 
         let plan: ModelInstaller.Plan

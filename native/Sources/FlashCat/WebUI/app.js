@@ -19,6 +19,8 @@ const UI = {
   chartRange: 45,           // 45 / 300 / 0（全部）
   modelsFilter: "all",      // all / local / remote
   modelsSearch: "",
+  // 每张搜索结果卡选中的量化：key = repo，值 = 量化名（空串表示默认）
+  quant: {},
   logFilter: "all",         // all / info / warning / error
   logSearch: "",
   logPaused: false,
@@ -120,7 +122,7 @@ const PAGE_FIELDS = {
   overview: ["stats", "throughput", "sessions", "draftLabel", "endpointURL",
              "gatewayURL", "gatewayClaudeURL", "modelsMenu", "context"],
   chat: ["messages", "generating", "generationStatus", "modelsMenu", "library", "settings"],
-  models: ["library", "downloads", "modelsMenu"],
+  models: ["library", "downloads", "modelsMenu", "hubSearch"],
   engines: ["enginesInstall", "packIndex"],
   logs: ["logs"],
   settings: ["settings"],
@@ -1486,8 +1488,51 @@ function filteredModelEntries() {
 // 网格独立成块：搜索输入时只重绘这块，不碰搜索框本身（否则每敲一个字焦点就丢）。
 function modelsGridHTML() {
   const entries = filteredModelEntries();
-  return entries.length ? `<div class="model-grid">${entries.map(modelCard).join("")}</div>`
-    : `<div class="panel"><div class="empty" style="padding:36px"><div class="t">没有符合条件的模型</div><div>试试切到「全部」或清空搜索词</div></div></div>`;
+  const hub = hubResultCards();
+  if (!entries.length && !hub.length) {
+    return `<div class="panel"><div class="empty" style="padding:36px"><div class="t">没有符合条件的模型</div><div>试试切到「全部」、清空搜索词，或按 ⏎ 在 Hugging Face 上搜</div></div></div>`;
+  }
+  const local = entries.length ? `<div class="model-grid">${entries.map(modelCard).join("")}</div>` : "";
+  return local + hub;
+}
+
+// Hub 搜索的结果：会话内有效，回车才发请求（逐字请求会打满 Hub 的限流）。
+function hubResultCards() {
+  const hub = S.hubSearch;
+  if (!hub || !hub.query) return "";
+  const head = `<div class="hub-head"><span class="t">Hugging Face · ${esc(hub.query)}</span>
+    ${hub.state === "loading" ? `<span class="dim">搜索中…</span>` : ""}
+    ${hub.state === "failed" ? `<span class="dim">${esc(hub.error || "搜索失败")}</span>` : ""}
+    ${hub.state === "idle" && !hub.results.length ? `<span class="dim">这一栏没有匹配的仓库</span>` : ""}
+    ${hub.results.length && hub.state === "idle" ? `<span class="dim">${hub.results.length} 个仓库 · 结果只在本次会话有效</span>` : ""}</div>`;
+  if (UI.modelsFilter === "local") return head;
+  if (!hub.results.length) return head;
+  return head + `<div class="model-grid">${hub.results.map(hubCard).join("")}</div>`;
+}
+
+function hubCard(r) {
+  const chose = UI.quant[r.repo];
+  const options = r.options || [];
+  const option = options.find((o) => o.name === chose) || options.find((o) => o.name === "") || options[0] || {};
+  const tags = [];
+  tags.push(`<span class="mtag eng">${esc(({ splash: "Splash", omlx: "oMLX", mtplx: "MTPLX" })[r.engine] || r.engine)}</span>`);
+  tags.push(`<span class="mtag">${esc((r.kind || "").toUpperCase())}</span>`);
+  if (option.bytes) tags.push(`<span class="mtag">${option.estimated === false ? "" : "≈"}${fmtBytes(option.bytes)}</span>`);
+  if (option.memory) tags.push(`<span class="mtag">内存 ${option.estimated ? "≈" : ""}${option.memory} GB</span>`);
+  (r.tags || []).filter((t) => t !== "GGUF").forEach((t) => tags.push(`<span class="mtag">${esc(t)}</span>`));
+  const quant = options.length > 1
+    ? `<select class="qsel" data-quant="${esc(r.repo)}">${options.map((o) =>
+        `<option value="${esc(o.name)}"${o.name === (chose || option.name) ? " selected" : ""}>${esc(o.label)}${o.bytes ? " · " + fmtBytes(o.bytes) : ""}</option>`).join("")}</select>`
+    : "";
+  const id = option.name ? r.repo + ":" + option.name : r.repo;
+  return `<div class="model-card hub">
+    <div class="nm" title="${esc(r.repo)}">${esc(r.display)}</div>
+    <div class="mtags">${tags.join("")}</div>
+    <div class="summary">${esc(r.summary || "")}</div>
+    <div class="ft"><span class="sz">${esc(r.repo)}</span>
+      ${quant}
+      <button class="btn-p dl" data-act="downloadModel" data-arg="${esc(r.engine)}|${esc(id)}">下载</button></div>
+  </div>`;
 }
 
 function pageModels() {
@@ -1512,6 +1557,10 @@ function modelCard(e) {
   // 硬件推荐标签排在最前：它是这一档「为什么是它」的说明，不随后面换用什么模型消失。
   if (e.recommendedTag) tags.push(`<span class="mtag rec">★ ${esc(e.recommendedTag)}</span>`);
   if (inUse) tags.push(`<span class="mtag ok">使用中</span>`);
+  // 引擎标签：一款模型能挂多个引擎，卡片上先亮归属，免得在 Splash 栏看到
+  // 一款其实是 oMLX 专用的权重还以为它能直接起。
+  (e.engineLabels || []).forEach((name) => tags.push(`<span class="mtag eng">${esc(name)}</span>`));
+  if (e.uncatalogued) tags.push(`<span class="mtag warn">未收录</span>`);
   if (e.bytes) tags.push(`<span class="mtag">${fmtBytes(e.bytes)}</span>`);
   // 未安装的卡片讲「这一份会带上什么」，已安装的讲「现在跑得怎样」。
   if (e.draftTag) tags.push(`<span class="mtag">${e.installed ? 'DFlash2 加速' : '含 DFlash2'}</span>`);
@@ -1896,6 +1945,18 @@ function bindPageExtras() {
   bindOnce(search, "input", () => { UI.logSearch = search.value; renderLogConsoleOnly(); });
   const msearch = document.querySelector('[data-key="modelsSearch"]');
   bindOnce(msearch, "input", () => { UI.modelsSearch = msearch.value; renderModelsGridOnly(); });
+  // ⏎ 才去 Hub 搜：逐字搜索会打满限流，而且用户还在打字时结果没意义。
+  bindOnce(msearch, "keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const query = msearch.value.trim();
+    UI.modelsSearch = query;
+    if (!query) { cmd("searchHub", { query: "" }); return; }
+    UI.quant = {};
+    cmd("searchHub", { query });
+    render();
+  });
+  bindQuantSelects(document);
   document.querySelectorAll("[data-lf]").forEach((el) => bindOnce(el, "click", () => { UI.logFilter = el.dataset.lf; render(); }));
   document.querySelectorAll("[data-f]").forEach((el) => bindOnce(el, "click", () => { UI.modelsFilter = el.dataset.f; render(); }));
   // 输入框失焦时补做挂起的重绘（快照推送在输入期间被挂起）。
@@ -1915,6 +1976,16 @@ function renderModelsGridOnly() {
   if (!grid) { render(); return; }
   grid.innerHTML = modelsGridHTML();
   bindActs(grid);
+  bindQuantSelects(grid);
+}
+
+// 网格重建后必须重绑：change 监听挂在被换掉的旧节点上，只重绑 click 会让
+// 下拉显示 Q8、UI.quant 还停在 Q4，下载就按 Q4 走。
+function bindQuantSelects(root) {
+  root.querySelectorAll("[data-quant]").forEach((el) => bindOnce(el, "change", () => {
+    UI.quant[el.dataset.quant] = el.value;
+    renderModelsGridOnly();
+  }));
 }
 
 function logMenu() {

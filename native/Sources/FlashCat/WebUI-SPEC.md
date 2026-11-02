@@ -23,6 +23,12 @@ parent: flashcat-app
 
 确认类交互（换模型、选库、装引擎）也走这条路径，但状态由 Swift 侧持有（例如 `confirmingModelSwitch`），网页只负责显示与回传选择——网页不做前置判断。
 
+**Hub 搜索的两格。** 命令 `searchHub {query}`，空 `query` 即清空；快照字段 `hubSearch` 在没有搜索时是 `null`，否则 `{query, state: idle|loading|failed, error, results: [...]}`，`results` 只含**当前栏**（模型的 `libraryEngine`）的命中——归属由 Swift 侧的格式判定给出，网页不自己过滤。换栏时 Swift 侧清空搜索。
+
+结果项：`id`（`owner/repo`，或带量化的 `owner/repo:VARIANT`）、`repo`、`display`（仓库短名）、`engine`（单值 `splash|omlx|mtplx`）、`kind`（`gguf|mtplx|mlx|unmarked`）、`bytes`、`memory`（GB 整数）、`estimated`（`true` 表示 `bytes × 1.2` 的估算，界面一律加 ≈）、`downloads`、`originText`（固定 `Hugging Face`）、`options`（`[{name, label, bytes, memory, estimated}]`，GGUF 多量化各一档，其余格式是一条 `name` 为空的记录），可选 `summary`、`tags`。
+
+下载复用现有那一格：`downloadModel {engine, id}`，`id` 直接带 `:VARIANT`。结果只活在 Swift 侧的内存会话里，网页不缓存、不重试、不自己请求 Hugging Face，也没有「搜索历史」可言。
+
 ## 边界
 
 - **网页不取数、不写盘。** 没有直接网络请求，没有持久化：偏好、历史、下载任务都在 Swift 侧落盘，网页刷新后从快照重建。

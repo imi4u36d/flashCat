@@ -16,7 +16,7 @@ macOS 壳。它持有全部可变状态，驱动引擎进程，并把状态推�
 - **状态中枢。** `AppState`（`@MainActor` 单例）——当前页面、服务状态与统计、模型选择与切换阶段、会话与线程、下载队列、设置、外观、侧栏。表现层的每一帧数据都从它出来。
 - **进程编排。** `EngineController` / `EngineManager` / `EngineRuntime` —— 把 pack 清单解析成启动计划、spawn 入口、健康轮询、pid 文件、日志采集、启停与切换。这是整个应用里唯一真的碰进程的地方。
 - **装机。** `EngineInstallCenter` —— 读发布索引，串行执行安装（三次安装写同一棵目录树，不能并行）。
-- **模型。** `ModelCatalog` / `ModelLibrary` / `ModelInstaller` / `ModelRecommendations` / `ModelDownloadTask` / `LocalEngineModels` / `DeviceProfile` —— 内置固定三档目录、Hub 下载、按本机内存与磁盘给出适配建议；splash 的 DFlash2 draft 随主模型一起下，缺了就在启动前补齐。
+- **模型。** `ModelCatalog` / `ModelLibrary` / `ModelInstaller` / `ModelRecommendations` / `ModelDownloadTask` / `LocalEngineModels` / `DeviceProfile` —— 内置目录（每引擎三款，归属靠 `ModelRecommendation.engines` 标签而不是列表成员）、Hub 下载与 Hub 搜索（结果只在会话内、按仓库自报的格式分栏）、按本机内存与磁盘给出适配建议；splash 的 DFlash2 draft 随主模型一起下，缺了就在启动前补齐。库是「目录 ∪ 磁盘扫描」：盘上有、这一栏没有的权重照样成行并标「未收录」。细节见 [model-engine-tags](../../../model-engine-tags.md)。
 - **对话。** `Chat` / `ChatHistory` / `LocalAPI` —— `URLSession` 流式、usage 与 `finish_reason`、本地历史（上限 6 条）。
 - **网关控制。** `GatewayController` 持有网关对象与路由，`GatewayMeter` 打点。
 - **外壳。** 窗口与场景、菜单栏面板、状态栏图标、登录项、日志缓冲、外观主题、设计 token、以及网页宿主 `WebViewShell`。

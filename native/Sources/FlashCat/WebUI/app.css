@@ -25,15 +25,15 @@ input, textarea, [contenteditable], [data-selectable] {
 }
 
 body {
-  /* 日间皮肤（默认） */
-  --w-canvas: #F5F2EC; --w-panel: #FFFFFF; --w-panel-2: #FBF9F5;
-  --w-line: #E7E1D7; --w-line-strong: #D8D0C3;
-  --w-ink: #221E1A; --w-ink-2: #5F594F; --w-ink-3: #736C64;
+  /* 日间皮肤（默认）：纯中性白，不带暖调。卡片靠描边分层，不靠底色差。 */
+  --w-canvas: #FFFFFF; --w-panel: #FFFFFF; --w-panel-2: #F7F7F9;
+  --w-line: #E8E8EC; --w-line-strong: #D4D4D9;
+  --w-ink: #1B1B1E; --w-ink-2: #5A5A60; --w-ink-3: #86868D;
   --w-accent: #C43E12; --w-accent-soft: #FBEDE5;
   --w-ok: #1E7F3C; --w-ok-soft: #E4F3E6;
   --w-warn: #9A6200; --w-warn-soft: #FBF0DC;
   --w-err: #C03424; --w-info: #1F5FBF;
-  --w-side: #ECE7DE;
+  --w-side: #F6F6F8;
   --w-num: #B23A0F;
 
   /* 原生标题栏那一行的高度（红绿灯居中在这一行里）。WebView 现在铺满整个窗口，
@@ -45,6 +45,8 @@ body {
      然后拖着 150ms 只走剩下几像素——看上去就是猛地一顿再慢慢蹭。
      (.4,0,.2,1) 起步和收尾都减速，起手不钝、落地不撞。 */
   --side-t: .26s cubic-bezier(.4, 0, .2, 1);
+  /* 同一条曲线抽出来给需要单独设延迟的过渡用（文字先退、宽度后收）。 */
+  --side-e: cubic-bezier(.4, 0, .2, 1);
 
   font-family: -apple-system, system-ui, "SF Pro Text", sans-serif;
   font-size: 13px; line-height: 1.5;
@@ -102,21 +104,25 @@ body[data-mode="dark"] {
    这里只管尺寸与过渡，不再画渐变底和 ⚡。 */
 .brand .logo { width: 30px; height: 30px; flex: none; transition: opacity var(--side-t); }
 .brand .logo svg { width: 100%; height: 100%; display: block; }
-/* 品牌文字块：折叠时收成 0 宽并淡出，logo 留在 rail 顶部当锚点 */
-.brand .txt { min-width: 0; max-width: 200px; overflow: hidden; transition: max-width var(--side-t), opacity .13s ease; }
+/* 品牌文字块：折叠时收成 0 宽并淡出，logo 留在 rail 顶部当锚点。
+   两个方向给两套时序：收起时文字先退（.08s）宽度再收（延迟 .05s），
+   展开时反过来——宽度先长回来，文字最后 .1s 才淡入。
+   两边共用一条曲线和同一个 0.24s，文字永远不会在变窄的容器里被切边。 */
+.brand .txt { min-width: 0; max-width: 200px; overflow: hidden;
+  transition: max-width .24s var(--side-e), opacity .12s ease .1s; }
 .brand .t { font-weight: 700; font-size: 14px; white-space: nowrap; }
 .brand .s { font-size: 10.5px; color: var(--w-ink-3); margin-top: -2px; white-space: nowrap; }
 .side .group {
   font-size: 10.5px; letter-spacing: .12em; color: var(--w-ink-3);
   padding: 12px 10px 5px; overflow: hidden; max-height: 40px;
-  transition: max-height var(--side-t), padding var(--side-t), opacity .13s ease;
+  transition: max-height .2s var(--side-e), padding .2s var(--side-e), opacity .1s ease .08s;
 }
 /* 「最近对话」整段：用 grid-template-rows 1fr → 0fr 收，插值按内容高度走，
    用 max-height 的话（给一个远大于内容的值）前 200ms 几乎不动、最后一下塌完。
    对话很多时由它自己滚（flex-shrink + min-height:0），品牌、导航、引擎卡都不动。 */
 .recents { display: grid; grid-template-rows: 1fr; overflow: hidden;
   flex: 0 1 auto; min-height: 0;
-  transition: grid-template-rows var(--side-t), opacity .14s ease; }
+  transition: grid-template-rows .24s var(--side-e), opacity .12s ease .08s; }
 .recents > div { min-height: 0; overflow: hidden auto; overscroll-behavior: contain;
   scrollbar-width: none; }
 /* 列表这条滚动条一律不画，但滚动本身照旧（滚轮/触控板/键盘都能滚）。
@@ -137,7 +143,7 @@ body[data-mode="dark"] {
 }
 .nav-item:hover { color: var(--w-ink); }
 .nav-item .lbl { white-space: nowrap; max-width: 120px; overflow: hidden;
-  transition: max-width var(--side-t), opacity .13s ease; }
+  transition: max-width .24s var(--side-e), opacity .12s ease .1s; }
 /* 图标位固定 18×18：不同 SVG 轮廓的视觉重量靠 box 对齐，不靠字体基线 */
 .nav-item .ico { width: 18px; height: 18px; flex: none; display: grid; place-items: center; color: var(--w-ink-3); }
 .nav-item .ico svg { width: 17px; height: 17px; display: block; fill: currentColor; overflow: visible; }
@@ -221,8 +227,11 @@ body[data-mode="dark"] {
   width: 24px; height: 24px; padding: 0; border: 0; border-radius: 7px;
   display: grid; place-items: center;
   background: transparent; color: var(--w-ink-2); cursor: pointer;
-  transition: left var(--side-t), background-color .12s ease, color .12s ease, transform .12s ease;
+  transition: left var(--side-t), opacity .1s ease, background-color .12s ease, color .12s ease, transform .12s ease;
 }
+/* 折叠进行中把自己藏起来：它是被点的那个控件，不能一边被按着一边在指针底下横移。
+   0.1s 淡出 → 0.26s 后在新位置淡回（side-anim 由 applySidebar 挂 300ms）。 */
+body.side-anim .side-toggle { opacity: 0; pointer-events: none; }
 .side-toggle svg { width: 16px; height: 16px; display: block; }
 /* 字色分级而不是透明度分级：16px 描边图标一降 alpha 就毛边。
    常态 ink-2（5.4:1，非文本 3:1 之上）——安静但不虚；自己悬停才加深并加浅底。 */
@@ -238,17 +247,21 @@ body[data-side="rail"] .side-toggle svg { width: 17px; height: 17px; }
 /* 折叠态：按钮退到红绿灯右侧 11px 处（灯占 10…61），和展开态同一行、同一高度，
    只横滑不改纵坐标——所以整段动画只有一个方向，不会看着「往下掉」。 */
 body[data-side="rail"] .side-toggle { left: 72px; }
-/* 品牌：只留 logo 当 rail 顶部的锚点，文字块收成 0 宽 */
-body[data-side="rail"] .brand .txt { max-width: 0; opacity: 0; }
+/* 折叠方向：文字先退（.08s 淡出、无延迟），宽度后收（延迟 .05s） */
+body[data-side="rail"] .brand .txt { max-width: 0; opacity: 0;
+  transition: max-width .24s var(--side-e) .05s, opacity .08s ease; }
 /* 分组标题、最近对话、下载条：高度收 0，不换 display（换 display 等于 t=0 直接塌） */
-body[data-side="rail"] .side .group { max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; }
-body[data-side="rail"] .recents { grid-template-rows: 0fr; opacity: 0; }
+body[data-side="rail"] .side .group { max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0;
+  transition: max-height .2s var(--side-e) .04s, padding .2s var(--side-e) .04s, opacity .08s ease; }
+body[data-side="rail"] .recents { grid-template-rows: 0fr; opacity: 0;
+  transition: grid-template-rows .24s var(--side-e) .03s, opacity .08s ease; }
 /* 图标居中靠内边距而不是 justify-content：后者不能过渡，t=0 一切换图标就从
    左端跳到中间。12 让 18 的图标落在 rail 中轴（12 + 1 描边 + 12 + 9 = 34）。 */
 body[data-side="rail"] .nav-item { padding: 8px 12px; }
 /* 折叠后图标是唯一信息：放一档到 19px，别在 68px 的 rail 里显小 */
 body[data-side="rail"] .nav-item .ico svg { width: 19px; height: 19px; }
-body[data-side="rail"] .nav-item .lbl { max-width: 0; opacity: 0; }
+body[data-side="rail"] .nav-item .lbl { max-width: 0; opacity: 0;
+  transition: max-width .24s var(--side-e) .04s, opacity .08s ease; }
 /* 徽标改为绝对定位 + 淡出：留在 flex 流里会把居中的图标挤偏 */
 body[data-side="rail"] .nav-item .badge { position: absolute; right: 6px; opacity: 0; }
 body[data-side="rail"] .nav-item.active::before { left: -7px; }
@@ -282,9 +295,14 @@ body[data-side="rail"] .engine-card .foot { display: none; }
 }
 body[data-side="rail"] .main::before { left: 68px; }
 body.launch-mode .main::before { left: 0; }
-/* 切页淡入：弱化整页 innerHTML 替换的闪烁感 */
-@keyframes pageIn { from { opacity: .3; } to { opacity: 1; } }
-.main.page-in > :not(.popover) { animation: pageIn .16s ease-out; }
+/* 切页：旧页被整块换掉，新页按从属关系错峰上浮（标题先落，卡片随后）。
+   0.26s 一条曲线，级差 30ms，最多 5 级——再长就成了「等它演完」。 */
+@keyframes pageIn { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+.main.page-in > :not(.popover) { animation: pageIn .26s cubic-bezier(.25, .8, .25, 1) both; }
+.main.page-in > :nth-child(2) { animation-delay: .03s; }
+.main.page-in > :nth-child(3) { animation-delay: .06s; }
+.main.page-in > :nth-child(4) { animation-delay: .09s; }
+.main.page-in > :nth-child(n+5) { animation-delay: .12s; }
 .main h2.pg { font-size: 21px; font-weight: 800; letter-spacing: -0.01em; margin: 2px 0 16px; }
 
 /* 概览主卡：状态 + 模型信息 + 启停 + 模型/引擎切换，一卡搞定 */
@@ -346,6 +364,12 @@ body.launch-mode .main::before { left: 0; }
 .metric .lb { font-size: 11.5px; color: var(--w-ink-2); display: flex; justify-content: space-between; }
 .metric .lb .tag { font-size: 9.5px; letter-spacing: .08em; color: var(--w-ink-3); }
 .metric .val { font-variant-numeric: tabular-nums; font-size: 30px; font-weight: 700; letter-spacing: -0.02em; color: var(--w-num); line-height: 1.2; }
+/* 数字和骨架占同一个槽：交叉淡变，几何一致，不换元素。 */
+.metric .mv { position: relative; min-height: 40px; }
+.metric .mv .val, .metric .mv .skeleton { transition: opacity .22s ease; }
+.metric .mv .skeleton { position: absolute; left: 0; top: 7px; width: 96px; height: 28px; }
+.metric.is-loading .mv .val { opacity: 0; }
+.metric:not(.is-loading) .mv .skeleton { opacity: 0; visibility: hidden; }
 .metric .val small { font-size: 12px; font-weight: 500; color: var(--w-ink-3); margin-left: 4px; letter-spacing: 0; }
 .metric .hint { font-size: 10.5px; color: var(--w-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .metric.hero-m { background: var(--w-accent-soft); border-color: color-mix(in srgb, var(--w-accent) 25%, transparent); }
@@ -359,6 +383,12 @@ body.launch-mode .main::before { left: 0; }
 .chart-card .hd .range span { cursor: pointer; }
 .chart-card .hd .range .on { color: var(--w-accent); font-weight: 600; }
 .chart-card .hd .now { font-size: 11px; color: var(--w-ink-2); font-variant-numeric: tabular-nums; }
+/* 曲线和骨架也在同一个槽里交叉淡变：图出现时不是“凭空贴上”，而是骨架退、线长出来。 */
+.chart-slot { position: relative; }
+.chart-slot > *:not(.skeleton) { transition: opacity .3s ease; }
+.chart-slot.is-loading > *:not(.skeleton) { opacity: 0; }
+.chart-slot .skeleton { position: absolute; inset: 0; height: auto; transition: opacity .2s ease; }
+.chart-slot:not(.is-loading) .skeleton { opacity: 0; visibility: hidden; }
 .spark { display: block; width: 100%; height: 88px; }
 /* 吞吐 + 接受率并排，共用同一时间窗 */
 .chart-row { display: grid; grid-template-columns: 1.3fr 1fr; gap: 12px; margin-bottom: 14px; }
@@ -582,8 +612,12 @@ body.side-anim .log-line { content-visibility: auto; contain-intrinsic-size: aut
 
 /* ---------- 弹层（确认 / 下载中心 / 引擎配置 / 对话参数） ---------- */
 #overlays { position: fixed; inset: 0; pointer-events: none; z-index: 50; }
-.mask { position: absolute; inset: 0; background: color-mix(in srgb, var(--w-ink) 28%, transparent); display: grid; place-items: center; pointer-events: auto; }
-.modal { background: var(--w-panel); border: 1px solid var(--w-line-strong); border-radius: 14px; box-shadow: 0 24px 60px -16px rgb(0 0 0 / .45); width: 400px; max-width: calc(100vw - 80px); max-height: calc(100vh - 100px); display: flex; flex-direction: column; overflow: hidden; }
+.mask { position: absolute; inset: 0; background: color-mix(in srgb, var(--w-ink) 28%, transparent); display: grid; place-items: center; pointer-events: auto;
+  animation: maskIn .18s ease-out both; }
+@keyframes maskIn { from { opacity: 0; } to { opacity: 1; } }
+.modal { background: var(--w-panel); border: 1px solid var(--w-line-strong); border-radius: 14px; box-shadow: 0 24px 60px -16px rgb(0 0 0 / .45); width: 400px; max-width: calc(100vw - 80px); max-height: calc(100vh - 100px); display: flex; flex-direction: column; overflow: hidden;
+  animation: modalIn .2s cubic-bezier(.25, .8, .25, 1) both; }
+@keyframes modalIn { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
 .modal.wide { width: 780px; }
 .modal-title { font-weight: 700; font-size: 14px; padding: 16px 20px 12px; display: flex; align-items: baseline; gap: 8px; }
 /* 标题 + 右侧 ×：模型卡这类弹层得有一个一眼能找到的出口。 */
@@ -612,10 +646,15 @@ body.side-anim .log-line { content-visibility: auto; contain-intrinsic-size: aut
 .dl-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .dl-name { font-weight: 600; font-size: 12.5px; display: flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .dl-meter { height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--w-ink) 8%, transparent); overflow: hidden; }
-.dl-fill { height: 100%; border-radius: 3px; background: var(--w-accent); transition: width .3s; }
+.dl-fill { height: 100%; border-radius: 3px; background: var(--w-accent); transition: width .95s cubic-bezier(.33, .1, .25, 1); }
 .dl-fill.err { background: var(--w-err); }
 .dl-detail { font-size: 10.5px; color: var(--w-ink-3); }
 .dl-btns { display: flex; gap: 6px; flex: none; }
+/* 模型卡片里的下载进度：进度原本只活在「下载中心」弹层里，卡片上点完下载毫无反应。
+   这里用和弹层同一套 meter，宽度过渡与弹层一致（连续而不是每秒跳一格）。 */
+.model-card .mc-dl { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+.model-card .mc-dl .dl-meter { flex: 1; }
+.model-card .mc-dl .pct { font-size: 10.5px; color: var(--w-ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* ---------- 启动页 ---------- */
 /* 启动页隐藏侧栏（脚本置 display:none），main 独占整幅宽度 */

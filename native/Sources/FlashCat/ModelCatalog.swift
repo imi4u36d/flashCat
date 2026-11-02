@@ -29,7 +29,6 @@ struct ModelInfo: Identifiable {
 struct ModelCatalog {
     var local: [ModelInfo] = []
     var installed: [ModelInfo] = []
-    var recommended: [String] = []
     var draftRepositories: [String: String] = [:]
 
     var machine: [ModelInfo] {
@@ -39,10 +38,6 @@ struct ModelCatalog {
             result.append(model)
         }
         return result.sorted { $0.id.lowercased() < $1.id.lowercased() }
-    }
-
-    var missingRecommendations: [String] {
-        recommended.filter { id in !machine.contains { $0.id == id } }
     }
 
     func localModel(_ id: String) -> ModelInfo? {
@@ -63,7 +58,6 @@ final class ModelCatalogService {
         var catalog = ModelCatalog()
         catalog.local = scanLocalModels(Paths.modelsDirectory)
         catalog.installed = scanSplash(Paths.splashModelsDirectory)
-        catalog.recommended = runtime?.suggestedModels ?? []
         catalog.draftRepositories = runtime?.draftRepositories ?? [:]
         return catalog
     }

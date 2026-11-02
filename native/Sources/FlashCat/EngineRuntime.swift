@@ -28,13 +28,6 @@ struct EngineRuntime {
         return value
     }
 
-    var suggestedModels: [String] {
-        let path = root + "/install/completions/suggested-models.txt"
-        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return [] }
-        return text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-    }
-
     /// family → draft repository, parsed straight out of the runtime's families.py
     var draftRepositories: [String: String] {
         let path = root + "/install/families.py"

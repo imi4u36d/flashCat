@@ -34,7 +34,7 @@ tags: [models, huggingface, tags]
 | `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed` | `{mtplx}` | 同上 |
 | `Youssofal/Qwen3.8-Flash-Next-MTPLX-Optimized-Speed` | `{mtplx}` | 同上 |
 
-结论是 **Splash 页只会剩 Flash-Next 的 GGUF 一档，MTPLX 页只剩三款 Youssofal 包，其余全部在 oMLX**——这是产品规则要的结果，不是遗漏。**草稿仓库不成行**：`incoai/*-DFlash2` 只作为主行的 `draftRepository` 挂在主行上，下载主行时一并拉取（oMLX 也已通过 `dflash_draft_model` 吃草稿），界面上既不单独出现、也不带标签，所以没有「草稿该归谁」这个问题。
+结论是 **Splash 页只会剩 Flash-Next 的 GGUF 一档，MTPLX 页只剩三款 Youssofal 包，其余全部在 oMLX**——这是产品规则要的结果，不是遗漏。**草稿仓库不成行**：`incoai/*-DFlash2` 只作为主行的 `draftRepository` 挂在主行上，界面上既不单独出现、也不带标签，所以没有「草稿该归谁」这个问题。**但下载接线目前只在 Splash 上成立**——`AppState.downloadModel` 只对 `.splash` 传草稿，`ModelInstaller.snapshotPlan` 也没有草稿参数，所以 oMLX 的草稿配对是计划而不是现状：oMLX 卡片暂时不挂 DFlash2 标签，等把草稿下载接到 oMLX（它那边用 `dflash_draft_model` 吃草稿）再放出来。
 
 **存量权重照常可见，页过滤只管推荐与搜索。** `ModelLibrary` 从「只列目录里的行」改为「目录 ∪ 磁盘扫描」去重合并：目录里的按标签出现在对应引擎，盘上有但目录里没有的，作为「未收录」出现在**它实际所在的那个目录对应的引擎页**。已装就是已装，标签只管推荐与下载归属。
 

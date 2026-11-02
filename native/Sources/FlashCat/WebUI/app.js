@@ -32,6 +32,7 @@ const UI = {
   downloadsOpen: false,     // 下载中心弹层
   configEngine: null,       // 引擎配置弹层（engine id）
   configDraft: null,        // 配置草稿 {tuning, port}
+  recommendConfirm: null,   // 推荐页上待确认的引擎（确认弹层）
   pendingRender: false,     // 交互期间（菜单打开/输入中）挂起的重绘
   streamStart: {},          // 生成中消息 id -> 本地起始时刻（livestrip 计时用）
   composing: false,         // IME 组合输入中（挂起重绘防打断）
@@ -112,7 +113,9 @@ window.__fc__ = {
 // 于是任何页面（含设置页）都会被每秒一次的推送整页重绘——看上去就是
 // 「没碰它，那个提示条却一直在闪」。sidebar 仍不进指纹：折叠只改布局宽度。
 const SHELL_FIELDS = ["page", "appearance", "toast", "engine", "port",
-                      "selectedModel", "threads", "pending", "pendingInstall"];
+                      "selectedModel", "threads", "pending", "pendingInstall",
+                      // 推荐结果决定模型页的 ★ 标签和设置页那张卡，任何一页都要跟。
+                      "recommendation"];
 const PAGE_FIELDS = {
   overview: ["stats", "throughput", "sessions", "draftLabel", "endpointURL",
              "gatewayURL", "gatewayClaudeURL", "modelsMenu", "context"],
@@ -123,11 +126,16 @@ const PAGE_FIELDS = {
   settings: ["settings"],
 };
 const LAUNCH_FIELDS = ["launchPage", "launchNeedsSetup", "packIndex", "pending",
-                       "pendingInstall", "enginesInstall", "downloads", "engine"];
+                       "pendingInstall", "enginesInstall", "downloads", "engine",
+                       "recommendation"];
 
 function snapshotKey(state) {
   if (!state) return "";
-  const keys = state.launchPage
+  // 推荐页亮着时 launchPage 是 false（Swift 里两者互斥），但推荐页用的是同一套
+  // 独立版式、同一批字段：确认弹层的体积来自 enginesInstall，发布索引晚到也必须
+  // 重绘，否则弹层会一直停在「大小以发布索引为准」。
+  const standalone = !!(state.launchPage || (state.recommendation && state.recommendation.show));
+  const keys = standalone
     ? LAUNCH_FIELDS
     : SHELL_FIELDS.concat(PAGE_FIELDS[state.page] || []);
   const parts = keys.map((k) => (state[k] === undefined ? null : state[k]));
@@ -264,6 +272,13 @@ function stageLabel(st) {
   const stage = st && st.startupStage;
   if (!stage || stage === "就绪" || stage === "启动中") return "";
   return stage;
+}
+// 设置页的「检测于 …」：本地时间，秒级没有意义，不显示。
+function fmtWhen(ms) {
+  if (!ms) return "";
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 function relTime(ms) {
   if (!ms) return "";
@@ -461,11 +476,23 @@ function renderNow(pageChanged) {
   if (!S) return;
   closeMenus();
   const focusKey = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.key : null;
-  const launch = !!S.launchPage;
-  document.body.classList.toggle("launch-mode", launch);
-  document.getElementById("side").style.display = launch ? "none" : "";
+  // 首次运行的推荐页和启动页是同一套「独立版式」（无侧栏、占满窗口），
+  // 所以 launchPage 为假时也要先看推荐页：磁盘上还没有引擎的机器，默认
+  // 页就是这张，不能直接掉进对话页。
+  const recommending = !!(S.recommendation && S.recommendation.show);
+  const standalone = recommending || !!S.launchPage;
+  const launch = !!S.launchPage && !recommending;
+  document.body.classList.toggle("launch-mode", standalone);
+  document.getElementById("side").style.display = standalone ? "none" : "";
   const main = document.getElementById("main");
-  main.className = "main" + (launch ? " launch-main" : (S.page === "chat" ? " chat-main" : (S.page === "logs" ? " logs-main" : "")));
+  main.className = "main" + (standalone ? " launch-main" : (S.page === "chat" ? " chat-main" : (S.page === "logs" ? " logs-main" : "")));
+  if (recommending) {
+    main.innerHTML = pageRecommend();
+    bindActs(main);
+    bindRecommendOverlay(main);
+    restoreFocus(focusKey);
+    return;
+  }
   if (launch) {
     main.innerHTML = pageLaunch();
     bindActs(main);
@@ -641,6 +668,24 @@ function handleAction(act, arg) {
     case "openFinder": cmd("openFinder", { kind: arg, engine: UI.configEngine || undefined }); break;
     case "openFinderEngine": { const [kind, eng] = arg.split("|"); cmd("openFinder", { kind, engine: eng }); break; }
     case "installEngine": cmd("installEngine", { engine: arg }); break;
+    // 推荐页：先弹确认（写清装什么、多大、装完下哪个模型），确认才动安装。
+    case "recommendInstall":
+      UI.recommendConfirm = arg;
+      render();
+      break;
+    case "confirmRecommendInstall": {
+      const engine = UI.recommendConfirm;
+      UI.recommendConfirm = null;
+      // 先本地重绘把弹层关掉，再发命令：装不上时 Swift 只推一条 toast，而 toast
+      // 不在独立版式的字段集里、指纹不变就不会重绘 —— 弹层会卡在屏幕上，再点
+      // 「安装并下载」还是空操作（engine 已经为 null）。
+      render();
+      if (engine) cmd("recommendInstall", { engine });
+      break;
+    }
+    case "closeRecommendConfirm": UI.recommendConfirm = null; render(); break;
+    case "skipRecommendation": cmd("skipRecommendation"); break;
+    case "recheckHardware": cmd("recheckHardware"); break;
     case "installEngineLaunch": cmd("installEngine", { engine: arg, launch: true }); break;
     case "openLaunchPage": cmd("openLaunchPage"); break;
     case "finishLaunch": cmd("finishLaunch"); break;
@@ -1464,6 +1509,8 @@ function pageModels() {
 function modelCard(e) {
   const inUse = e.installed && e.engine === S.engine.id && e.id === S.selectedModel;
   const tags = [];
+  // 硬件推荐标签排在最前：它是这一档「为什么是它」的说明，不随后面换用什么模型消失。
+  if (e.recommendedTag) tags.push(`<span class="mtag rec">★ ${esc(e.recommendedTag)}</span>`);
   if (inUse) tags.push(`<span class="mtag ok">使用中</span>`);
   if (e.bytes) tags.push(`<span class="mtag">${fmtBytes(e.bytes)}</span>`);
   if (e.draftTag) tags.push(`<span class="mtag">DFlash2 加速</span>`);
@@ -1980,7 +2027,29 @@ function pageSettings() {
       ${row("默认模型", "引擎启动时自动加载", field("defaultModel", d.defaultModel, true))}
       ${row("下载缓存目录", "默认沿用 HF_HUB_CACHE", field("hfCache", d.hfCache, true))}
     </div>
+    ${recCardHTML()}
     ${savebarHTML(d)}`;
+}
+
+// 设置页的「硬件推荐」卡：这台机器是什么、什么时候算的、每个引擎推了哪一档。
+// 重新检测只重算并刷新这里的标签，不会把首次运行的推荐页再弹一次。
+function recCardHTML() {
+  const rec = S.recommendation || {};
+  const rows = rec.rows || [];
+  const rowsHTML = rows.map((r) => {
+    const name = (ENGINE_META[r.engine] || {}).name || r.engineName || r.engine;
+    const fits = r.fit === "good" || r.fit === "unknown";
+    return `<div class="set-row"><div class="lab"><b>${esc(name)}</b><small>${esc(r.display || r.model)}</small></div>
+      <div class="ctl"><span class="mtag${fits ? " rec" : " warn"}">${esc(r.reason)}</span></div></div>`;
+  }).join("");
+  const summary = rec.machineSummary
+    ? esc(rec.machineSummary) + (rec.computedAt ? " · 检测于 " + fmtWhen(rec.computedAt) : "")
+    : "这台机器的配置还没检测过";
+  return `<div class="set-card">
+      <div class="set-row"><div class="lab"><b>硬件推荐</b><small>${summary}</small></div>
+        <div class="ctl"><span class="filter" data-act="recheckHardware">重新检测</span></div></div>
+      ${rowsHTML}
+    </div>`;
 }
 
 function engines3() { return ["splash", "omlx", "mtplx"]; }
@@ -2048,6 +2117,95 @@ function afterSettingsRender() {
     if (e.key === "Enter") { const v = parseInt(el.value, 10); if (v >= 1024 && v <= 65535) { cmd("setGatewayPort", { port: v }); toast("网关已切换到端口 " + v); } }
   }));
   bindSavebarButtons();
+}
+
+// ---------- 首次运行的硬件推荐页 ----------
+// 每个引擎一行：这一档是什么、为什么是它、以及「用这个引擎」。文案（理由）由
+// Swift 的 HardwareAdvisor.reason 统一给，网页只排版，不再自己编一套说法。
+function pageRecommend() {
+  const rec = S.recommendation || {};
+  const rows = rec.rows || [];
+  const allFit = rows.every((r) => r.fit === "good" || r.fit === "unknown");
+
+  const cards = rows.map((r) => {
+    const meta = ENGINE_META[r.engine] || { name: r.engineName || r.engine, grad: "linear-gradient(135deg,#8E8E93,#636366)" };
+    const fits = r.fit === "good" || r.fit === "unknown";
+    const tags = [];
+    if (r.minMemory) tags.push(`<span class="mtag">内存下限 ${r.minMemory} GB</span>`);
+    if (r.sizeText) tags.push(`<span class="mtag">${esc(r.sizeText)}</span>`);
+    (ENGINE_CAPS[r.engine] || []).forEach((t) => tags.push(`<span class="mtag${ENGINE_CAP_WARN.has(t) ? " warn" : ""}">${esc(t)}</span>`));
+    // 不够也推荐（最轻一档），但必须说清是「可能不够」而不是「适配」。
+    const caveat = r.fit === "tight"
+      ? `<p class="lc-serial">这台机器连最轻的一档都低于它的内存下限（${esc(String(r.minMemory || 0))} GB）。仍可安装，但可能跑不动或频繁换页。</p>`
+      : (r.fit === "diskShort"
+        ? `<p class="lc-serial">可用磁盘小于这一档的体积，安装可能在下载中途失败。</p>` : "");
+    return `<div class="launch-card">
+      <div class="lc-head">
+        <span class="eng-ico" style="background:${meta.grad}">${esc(meta.name[0])}</span>
+        <div class="lc-name"><b>${esc(meta.name)}</b>
+          <div class="lc-model" title="${esc(r.model)}">${esc(r.display || r.model)}</div>
+          <span class="mtags">${tags.join("")}</span></div>
+        <div class="lc-side">
+          <span class="lc-ver${fits ? "" : " warn"}">推荐 · ${esc(r.reason)}</span>
+          <button class="btn-p dl" data-act="recommendInstall" data-arg="${esc(r.engine)}">用这个引擎</button>
+        </div>
+      </div>
+      ${caveat}
+    </div>`;
+  }).join("");
+
+  const cfg = `<div class="rec-cfg"><span class="dot${allFit ? "" : " warn"}"></span>
+    <span><b>${esc(rec.chip || "未知芯片")}</b> · <b>${esc(String(rec.memoryGB || 0))} GB</b> 统一内存${rec.freeDiskText ? " · 可用 <b>" + esc(rec.freeDiskText) + "</b>" : ""}</span></div>`;
+
+  return `
+    <div class="launch-wrap">
+      <div class="brand" style="padding-left:0"><div class="logo">${LOGO_SVG}</div><div><div class="t">flashCat</div><div class="s">本地推理控制台</div></div></div>
+      <h2 class="launch-title">为你挑选好了</h2>
+      <p class="launch-sub">按这台机器的内存和可用磁盘算的：每个引擎给一档最能发挥它的模型。引擎装好后会自动下载这一档。</p>
+      ${cfg}
+      ${cards || `<div class="confirm-strip">没有找到可推荐的模型，自己挑一个吧。</div>`}
+      <div class="rec-skip"><span data-act="skipRecommendation">跳过，我自己选</span></div>
+      <p class="launch-note">推荐只算这一次，之后可以在「设置 → 硬件推荐」里重新检测。</p>
+      ${UI.recommendConfirm ? recommendConfirmHTML(UI.recommendConfirm) : ""}
+    </div>`;
+}
+
+// 确认弹层：先把「装什么引擎、多大、装完下哪个模型」说清，再动下载。
+function recommendConfirmHTML(engine) {
+  const rec = S.recommendation || {};
+  const row = (rec.rows || []).find((r) => r.engine === engine) || {};
+  const meta = ENGINE_META[engine] || { name: engine };
+  const info = (S.enginesInstall && S.enginesInstall[engine]) || {};
+  const rel = info.latestRelease || null;
+  const known = !!(rel && rel.bytes);
+  const size = known ? `约 ${fmtBytes(rel.bytes)}` : "大小以发布索引为准";
+  // 「来自发布索引」只在真给了体积时才说：兜底文案自己已经讲了出处，
+  // 再拼一次会读成「大小以发布索引为准，来自发布索引」。
+  const source = known ? "，来自发布索引" : "";
+  // 模型体积（Product 要求写清装完下的是什么、多大）；目录里没写体积的档省略。
+  const model = (row.display || row.model || "") + (row.sizeText ? " " + row.sizeText : "");
+  return `<div class="mask" data-recommend="1"><div class="modal">
+    <div class="modal-title">安装 ${esc(meta.name)} 并下载推荐模型</div>
+    <div class="modal-text">先安装 <b>${esc(meta.name)}</b> 运行时（${esc(size)}${esc(source)}），装好后自动下载 <b>${esc(model)}</b>${row.reason ? `（${esc(row.reason)}）` : ""}。模型下载要等引擎装完才能开始，所以顺序不能反。<br><br>
+      两步都能停：装引擎时在启动页看进度，模型下载可以在「下载中心」里暂停或取消。</div>
+    <div class="modal-foot">
+      <button class="btn-quiet" data-act="closeRecommendConfirm">取消</button>
+      <button class="btn-main" data-act="confirmRecommendInstall">安装并下载</button>
+    </div>
+  </div></div>`;
+}
+
+// 点遮罩关掉确认弹层（bindActs 只处理带 data-act 的按钮，遮罩自己要有监听）。
+function bindRecommendOverlay(root) {
+  const mask = root.querySelector(".mask[data-recommend]");
+  if (!mask || mask.__bound) return;
+  mask.__bound = true;
+  mask.addEventListener("click", (e) => {
+    if (e.target !== mask) return;
+    e.stopPropagation();
+    UI.recommendConfirm = null;
+    render();
+  });
 }
 
 // ---------- 启动页 ----------

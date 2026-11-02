@@ -222,6 +222,16 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
             }
         case "openLaunchPage": state.showsLaunchPage = true
         case "finishLaunch": state.showsLaunchPage = false
+        // 首次启动的推荐页：确认就装那一档引擎，装完由 adoptEngine 接上下载。
+        case "recommendInstall":
+            // 只有真的开始装了才消费这张一次性的推荐页：没有可用安装版本时
+            // 页面留着（用户什么都没装成，也不该失去再选一次的机会），挂起的
+            // 下载更不会留下。
+            if let engine, installEngine(engine, adoptOnFirstInstall: true) {
+                state.dismissRecommendation(engine: engine)
+            }
+        case "skipRecommendation": state.dismissRecommendation(engine: nil)
+        case "recheckHardware": state.recheckHardware()
         case "pauseDownload": state.pauseDownload()
         case "resumeDownload": downloadTask(from: body) { state.resumeDownload($0) }
         case "cancelDownload": downloadTask(from: body) { state.cancelDownload($0) }
@@ -319,23 +329,39 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
 
     /// 网页侧的引擎安装：优先走发布索引直装，索引里没有再走上游构建，
     /// 两者都没有时只提示。启动页发起的首次安装会把新引擎设为活动引擎。
-    private func installEngine(_ engine: EngineID, adoptOnFirstInstall: Bool) {
+    @discardableResult
+    private func installEngine(_ engine: EngineID, adoptOnFirstInstall: Bool) -> Bool {
         let center = state.installs
         if adoptOnFirstInstall {
             center.onInstalled = { [weak state] id in
                 state?.adoptEngine(id)
                 state?.installs.onInstalled = nil
             }
+            // 安装失败要把推荐页挂起的下载一起撤掉，否则同一个引擎稍后再装成功
+            // 就会莫名其妙开始下几个 GB。
+            center.onInstallFailed = { [weak state] id in
+                state?.engineInstallFailed(id)
+                state?.installs.onInstallFailed = nil
+            }
         } else {
             center.onInstalled = nil
+            center.onInstallFailed = nil
         }
         let latest = center.releases[engine]?.max { EngineVersionOrder.isNewer($1.version, than: $0.version) }
         if let latest {
             center.install(latest, for: engine)
+            return true
         } else if case .update(_, let release) = center.upstream[engine] {
-            center.buildAndInstall(release, for: engine)
+            // 一次只能跑一个构建：`buildAndInstall` 在已有构建时会静默返回
+            // false，点击看起来「什么都没发生」，所以这里先说明再返回。
+            guard center.building == nil else {
+                state.toast("正在构建 \(center.building?.displayName ?? "引擎")，完成后再试")
+                return false
+            }
+            return center.buildAndInstall(release, for: engine)
         } else {
             state.toast("暂时没有 \(engine.displayName) 的可用安装版本")
+            return false
         }
     }
 
@@ -554,6 +580,16 @@ private enum WebPaths {
 /// AppState → JSON 快照。字段即 WebUI/app.js 的数据契约。
 @MainActor
 enum WebSnapshot {
+    /// 设备的适配结论给网页看的字符串（`DeviceFit` 是 Int 枚举，网页只看名字）。
+    private static func fitName(_ fit: DeviceFit) -> String {
+        switch fit {
+        case .good: return "good"
+        case .unknown: return "unknown"
+        case .tight: return "tight"
+        case .diskShort: return "diskShort"
+        }
+    }
+
     /// 心跳每秒序列化最多 800 行日志，formatter 必须复用（原先每行 new 一个）。
     private static let logTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -656,6 +692,11 @@ enum WebSnapshot {
                 if let tags = entry.recommendation?.tags, !tags.isEmpty { item["tags"] = tags }
                 if let memory = entry.recommendation?.minimumMemory, memory > 0 { item["minMemory"] = memory }
                 if entry.draftRepository != nil { item["draftTag"] = true }
+                // ★ 标签只看配置推荐了哪一档，不看是否已装：换了模型之后标签
+                // 仍要留在原来那一档上，否则用户会以为推荐变了。
+                if let tag = state.recommendationTag(for: entry.model.id, engine: entry.engine) {
+                    item["recommendedTag"] = tag
+                }
                 return item
             },
         ]
@@ -749,6 +790,35 @@ enum WebSnapshot {
         var pendingInstall: String? = nil
         if let install = state.pendingEngineInstall { pendingInstall = install.rawValue }
 
+        // 首次启动的推荐页：只给数据，版式在网页里。rows 按引擎顺序给出每个
+        // 引擎的一档 + 匹配理由，句柄由 HardwareAdvisor.reason 统一给。
+        var recommendationDict: [String: Any] = ["show": state.showsRecommendationPage]
+        if let recommendation = state.hardwareRecommendation {
+            recommendationDict["chip"] = recommendation.chipName
+            recommendationDict["memoryGB"] = recommendation.memoryGB
+            recommendationDict["freeDiskText"] = recommendation.freeDiskBytes > 0
+                ? Format.size(Int(recommendation.freeDiskBytes)) : ""
+            // 设置页的「硬件推荐」卡要写清「这台机器 · 什么时候算的」，所以摘要
+            // 和检测时间一起给，网页不再自己拼（也不会漏掉磁盘那一项）。
+            recommendationDict["machineSummary"] = recommendation.machineSummary
+            recommendationDict["computedAt"] = recommendation.computedAt.timeIntervalSince1970 * 1000
+            recommendationDict["rows"] = EngineID.allCases.compactMap { engine -> [String: Any]? in
+                guard let pick = recommendation.pick(for: engine) else { return nil }
+                let model = ModelRecommendations.recommendation(for: pick.model)
+                var row: [String: Any] = [
+                    "engine": engine.rawValue,
+                    "engineName": engine.displayName,
+                    "model": pick.model,
+                    "display": model.shortName,
+                    "reason": pick.reason,
+                    "fit": fitName(pick.verdict),
+                ]
+                if let sizeText = model.sizeText { row["sizeText"] = sizeText }
+                if model.minimumMemory > 0 { row["minMemory"] = model.minimumMemory }
+                return row
+            }
+        }
+
         let payload: [String: Any] = [
             "page": state.section.webName,
             "sidebar": state.showsSidebar,
@@ -758,6 +828,7 @@ enum WebSnapshot {
             "packIndex": ["loaded": state.installs.indexLoaded,
                           "error": state.installs.indexError ?? NSNull()] as [String: Any],
             "pendingInstall": pendingInstall ?? NSNull(),
+            "recommendation": recommendationDict,
             "engine": engineState,
             "draftLabel": draftLabel(state),
             "port": state.port,

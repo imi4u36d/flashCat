@@ -68,6 +68,32 @@ final class ModelFitTests: XCTestCase {
         XCTAssertNil(ModelFit.pick([], machine: machine(64)))
     }
 
+    /// A pin whose catalog row went missing arrives as bytes 0 / floor 0 /
+    /// rank 0. It must not be sold as "runs everywhere, and is the lightest" —
+    /// and skipping it must not renumber the list the caller reads back.
+    func testRanklessCandidateIsNeverRecommended() {
+        let candidates = [
+            FitCandidate(id: "documented", bytes: 20_400_000_000, minimumMemory: 32, rank: 1),
+            FitCandidate(id: "undocumented", bytes: 0, minimumMemory: 0, rank: 0),
+        ]
+        XCTAssertEqual(ModelFit.pick(candidates, machine: machine(128)),
+                       FitPick(index: 0, verdict: .good))
+        XCTAssertNil(ModelFit.pick([candidates[1]], machine: machine(128)))
+
+        // The rank-less row sits in the middle: the pick still points at the
+        // caller's own offset (2), not at the position inside the filtered list.
+        let holey = [
+            FitCandidate(id: "undocumented", bytes: 0, minimumMemory: 0, rank: 0),
+            FitCandidate(id: "light", bytes: 15_600_000_000, minimumMemory: 24, rank: 1),
+            FitCandidate(id: "heavy", bytes: 20_400_000_000, minimumMemory: 32, rank: 2),
+        ]
+        XCTAssertEqual(ModelFit.pick(holey, machine: machine(128)),
+                       FitPick(index: 2, verdict: .good))
+        // Nothing fits: the lightest *ranked* tier, again at its own offset.
+        XCTAssertEqual(ModelFit.pick(holey, machine: machine(16)),
+                       FitPick(index: 1, verdict: .tight))
+    }
+
     func testVerdictThresholds() {
         XCTAssertEqual(ModelFit.verdict(bytes: 0, minimumMemory: 0, machine: machine(64)), .unknown)
         XCTAssertEqual(ModelFit.verdict(bytes: 0, minimumMemory: 64, machine: machine(64)), .good)

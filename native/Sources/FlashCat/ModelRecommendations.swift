@@ -105,6 +105,9 @@ enum ModelRecommendations {
 
     static func recommendation(for id: String) -> ModelRecommendation {
         let repo = id.split(separator: ":", maxSplits: 1).first.map(String.init) ?? id
+        // A row-less id has no rank, and `ModelFit.pick` never recommends a
+        // rank-less candidate: a pin we forgot to document shows up as missing
+        // advice instead of being sold to every Mac as "the lightest tier".
         let detail = details[repo]
         return ModelRecommendation(id: id,
                                    bytes: detail?.bytes ?? 0,

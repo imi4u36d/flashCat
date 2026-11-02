@@ -79,20 +79,29 @@ public enum ModelFit {
         return .good
     }
 
+    /// A candidate whose `rank` is 0 has no place on the ladder — a catalog
+    /// entry that lost its facts (bytes 0, floor 0) would otherwise read as
+    /// `.unknown`, i.e. runnable, and as the lightest tier, i.e. recommended to
+    /// every Mac. Dropping it makes missing facts show up as missing advice.
     public static func pick(_ candidates: [FitCandidate], machine: MachineProfile) -> FitPick? {
+        // Keep the caller's offsets: `FitPick.index` indexes the array that was
+        // passed in, so filtering must not renumber what the caller reads back.
+        let ladder = candidates.enumerated().filter { $0.element.rank > 0 }
+        guard !ladder.isEmpty else { return nil }
+
         func verdict(_ candidate: FitCandidate) -> DeviceFit {
             ModelFit.verdict(bytes: candidate.bytes,
                              minimumMemory: candidate.minimumMemory,
                              machine: machine)
         }
 
-        let running = candidates.enumerated().filter { verdict($0.element).runs }
+        let running = ladder.filter { verdict($0.element).runs }
         if let strongest = running.max(by: { $0.element.rank < $1.element.rank }) {
             return FitPick(index: strongest.offset, verdict: verdict(strongest.element))
         }
         // Nothing runs: the lightest tier, ties going to the lower rank so the
         // smaller model wins a shared memory floor.
-        let lightest = candidates.enumerated().min { lhs, rhs in
+        let lightest = ladder.min { lhs, rhs in
             let (a, b) = (lhs.element, rhs.element)
             if a.minimumMemory != b.minimumMemory { return a.minimumMemory < b.minimumMemory }
             return a.rank < b.rank

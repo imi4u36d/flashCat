@@ -632,6 +632,27 @@ body.launch-mode .main { flex: 1 1 100%; }
 .launch-card .lc-serial { font-size: 11px; font-weight: 600; color: var(--w-warn); background: var(--w-warn-soft); border-radius: 8px; padding: 6px 10px; margin: 8px 0 0; line-height: 1.5; }
 .launch-progress { display: flex; align-items: center; gap: 9px; margin-top: 9px; font-size: 11px; font-weight: 600; color: var(--w-ink-2); }
 .launch-note { font-size: 10.5px; color: var(--w-ink-3); line-height: 1.6; margin-top: 14px; }
+
+/* 首次运行的硬件推荐页：沿用启动页骨架，只补「这一档是什么」和机器摘要两条。 */
+.launch-card .lc-model { font-size: 12px; color: var(--w-ink); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 推荐理由比版本行长（「64 GB 内存下最强」），得整句一行；窄窗口下宁可截断也不折成竖排。 */
+.launch-card .lc-ver { white-space: nowrap; }
+.launch-card .lc-side .btn-p { white-space: nowrap; }
+.launch-card .lc-ver.warn { color: var(--w-warn); font-weight: 600; }
+.rec-cfg { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--w-ink-2); background: var(--w-panel-2); border: 1px solid var(--w-line); border-radius: 10px; padding: 7px 11px; margin: 0 0 14px; }
+.rec-cfg b { color: var(--w-ink); font-weight: 600; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.rec-cfg .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--w-ok); flex: none; }
+.rec-cfg .dot.warn { background: var(--w-warn); }
+.rec-skip { text-align: center; margin-top: 16px; }
+.rec-skip span { font-size: 12px; color: var(--w-ink-2); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.rec-skip span:hover { color: var(--w-ink); }
+/* 推荐标签：模型页卡片和设置页共用，实心强调色，扫一眼就能找到那一档。 */
+.mtag.rec { background: var(--w-accent); color: #fff; border-color: transparent; font-weight: 600; }
+/* 确认弹层画在推荐页内部（独立版式，不走 #overlays），但 .mask 默认是 absolute，
+   会锚在可滚动的 #main 的内容原点上：窗口矮一截、或低配机每张卡多一行说明时，
+   页面能滚，遮罩跟着滚走，底下「跳过，我自己选」就露出来可点——那一下是不可逆的。
+   所以这一层必须相对视口固定，并压在 #overlays(50) 与标题栏底(30) 之上。 */
+.launch-wrap > .mask { position: fixed; inset: 0; z-index: 60; }
 .launch-start { display: flex; justify-content: center; margin-top: 18px; }
 .launch-start .btn-p { margin-left: 0; font-size: 13px; padding: 7px 30px; }
 /* overflow:hidden 必须写在基类，不能只写在 rail 那条规则里：rail 态下它靠

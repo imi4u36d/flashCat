@@ -36,7 +36,7 @@ tags: [models, huggingface, tags]
 
 **存量权重照常可见，页过滤只管推荐与搜索。** `ModelLibrary` 从「只列目录里的行」改为「目录 ∪ 磁盘扫描」去重合并：目录里的按标签出现在对应引擎，盘上有但目录里没有的，作为「未收录」出现在**它实际所在的那个目录对应的引擎页**。已装就是已装，标签只管推荐与下载归属。
 
-这条与上两段的页过滤不冲突：页过滤管的是「推荐哪几款」和「搜出哪几个仓库」，不管「盘上已经有什么」。具体的难题是升级时 Splash 目录里已有 `mlx-community/Qwen3.6-35B-A3B-4bit` 这类被改判为 oMLX 的权重——它们不会被隐藏（隐藏了用户就再也没有入口删改它们），而是在 Splash 页作为「未收录」行留着，标签显式写 `oMLX`，并提供一个「改用 oMLX」的动作：走现有的 `applyModelFromAnyEngine` 把选择切到 oMLX，**同时用 `EngineModelStore` 已有的采纳机制把这份权重接进 oMLX 自己的模型目录**（`EnginePaths.modelsDirectory` 给 oMLX 的是 `<support>/models/omlx`，和 Splash 的 `~/.flashcat/models` 不是同一棵，不搬/不链就只会撞上「oMLX 没有模型」的守卫，逼用户重下 20 GB）。oMLX 页那份对应目录行仍是「下载」状态，不把已经存在的文件当成已装。
+这条与上两段的页过滤不冲突：页过滤管的是「推荐哪几款」和「搜出哪几个仓库」，不管「盘上已经有什么」。具体的难题是升级时 Splash 目录里已有 `mlx-community/Qwen3.6-35B-A3B-4bit` 这类被改判为 oMLX 的权重——它们不会被隐藏（隐藏了用户就再也没有入口删改它们），而是在 Splash 页作为「未收录」行留着，标签显式写 `oMLX`，行上只说清楚「这一款归 oMLX」，不做任何自动迁移：现有机制都帮不上忙——`applyModelFromAnyEngine` 一旦发现目标引擎的清单里没这个 id 就会 toast「oMLX 没有模型」然后返回（`native/Sources/FlashCat/AppState.swift:798`），而 `EngineModelStore.adoptExistingWeights` 只会扫引擎自己目录里的链接、并把链接目标**移**进去（`EngineStore.swift:265`），把 Splash 那份挪走就刚好让这行失去依托。所以这一版的行为是：行在、标签在、可以删；要用 oMLX 跑就按 oMLX 页正常的下载流程来。oMLX 页那份对应目录行仍是「下载」状态，不把已经存在的文件当成已装。
 
 **搜索在 Swift 侧。** Hugging Face 的两个请求（搜索 `/api/models?search=`、单仓库 `/api/models/{repo}?blobs=true`——列表接口的 `siblings[].size` 恒为 null，真实字节只能从单仓库接口拿）属于 FlashCatKit 的新模块，结果随快照下发——[flashcat-webui](native/Sources/FlashCat/WebUI-SPEC.md) 的边界是「网页不取数、不写盘」，这条不破例。
 
@@ -58,6 +58,7 @@ tags: [models, huggingface, tags]
 
 ## 明确不做
 
+- **跨引擎搬权重。** 已装在 Splash 目录里的权重不会自动复制或链接进 oMLX（目录不同、`adoptExistingWeights` 会移走目标、复制又是 20 GB 量级），只靠标签告知归属。
 - gated / 私有仓库、`HF_TOKEN`：搜索与下载只碰公开仓库。
 - 搜索结果落盘、最近搜索记忆。
 - GGUF 的 `mmproj` 单独挑：与主权重同仓库的多模态投影不单独列出。

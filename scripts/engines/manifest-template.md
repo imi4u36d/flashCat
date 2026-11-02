@@ -1,3 +1,12 @@
+---
+id: flashcat-manifest-contract
+type: architecture-design
+status: draft
+title: "manifest.json — 引擎运行时 pack 清单契约（schemaVersion 1）"
+parent: flashcat-architecture
+tags: [contract, engine-pack]
+---
+
 # `manifest.json` — engine runtime pack manifest (schemaVersion 1)
 
 One `manifest.json` sits at the root of every installed pack

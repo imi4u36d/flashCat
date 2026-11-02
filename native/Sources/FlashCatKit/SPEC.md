@@ -25,7 +25,7 @@ depends-on: [flashcat-manifest-contract]
 
 ## 边界
 
-- **只允许 `Foundation` / `Network` / `CryptoKit`。** 不许 `AppKit`、`SwiftUI`、`WebKit`。这条约束换来的是：整层可以在没有窗口的测试进程里跑——`FlashCatKitTests` 13 个文件、145 个测试全打在这里。
+- **只允许 `Foundation` / `Network` / `CryptoKit`。** 不许 `AppKit`、`SwiftUI`、`WebKit`。这条约束换来的是：整层可以在没有窗口的测试进程里跑——`FlashCatKitTests` 13 个文件、164 个测试全打在这里。
 - **不拥有进程。** 不 spawn、不 kill、不轮询端口、不写 pid 文件。Kit 只输出「该怎么启动」，执行归应用壳。
 - **不拥有 UI 状态，不读用户偏好。** 配置从外部传入，Kit 不碰 `UserDefaults`。
 - **禁止反向依赖** 应用壳里的任何符号。

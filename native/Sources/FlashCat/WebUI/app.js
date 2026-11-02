@@ -19,6 +19,8 @@ const UI = {
   chartRange: 45,           // 45 / 300 / 0（全部）
   modelsFilter: "all",      // all / local / remote
   modelsSearch: "",
+  // 每张搜索结果卡选中的量化：key = repo，值 = 量化名（空串表示默认）
+  quant: {},
   logFilter: "all",         // all / info / warning / error
   logSearch: "",
   logPaused: false,
@@ -1486,8 +1488,51 @@ function filteredModelEntries() {
 // 网格独立成块：搜索输入时只重绘这块，不碰搜索框本身（否则每敲一个字焦点就丢）。
 function modelsGridHTML() {
   const entries = filteredModelEntries();
-  return entries.length ? `<div class="model-grid">${entries.map(modelCard).join("")}</div>`
-    : `<div class="panel"><div class="empty" style="padding:36px"><div class="t">没有符合条件的模型</div><div>试试切到「全部」或清空搜索词</div></div></div>`;
+  const hub = hubResultCards();
+  if (!entries.length && !hub.length) {
+    return `<div class="panel"><div class="empty" style="padding:36px"><div class="t">没有符合条件的模型</div><div>试试切到「全部」、清空搜索词，或按 ⏎ 在 Hugging Face 上搜</div></div></div>`;
+  }
+  const local = entries.length ? `<div class="model-grid">${entries.map(modelCard).join("")}</div>` : "";
+  return local + hub;
+}
+
+// Hub 搜索的结果：会话内有效，回车才发请求（逐字请求会打满 Hub 的限流）。
+function hubResultCards() {
+  const hub = S.hubSearch;
+  if (!hub || !hub.query) return "";
+  const head = `<div class="hub-head"><span class="t">Hugging Face · ${esc(hub.query)}</span>
+    ${hub.state === "loading" ? `<span class="dim">搜索中…</span>` : ""}
+    ${hub.state === "failed" ? `<span class="dim">${esc(hub.error || "搜索失败")}</span>` : ""}
+    ${hub.state === "idle" && !hub.results.length ? `<span class="dim">这一栏没有匹配的仓库</span>` : ""}
+    ${hub.results.length && hub.state === "idle" ? `<span class="dim">${hub.results.length} 个仓库 · 结果只在本次会话有效</span>` : ""}</div>`;
+  if (UI.modelsFilter === "local") return head;
+  if (!hub.results.length) return head;
+  return head + `<div class="model-grid">${hub.results.map(hubCard).join("")}</div>`;
+}
+
+function hubCard(r) {
+  const chose = UI.quant[r.repo];
+  const options = r.options || [];
+  const option = options.find((o) => o.name === chose) || options.find((o) => o.name === "") || options[0] || {};
+  const tags = [];
+  tags.push(`<span class="mtag eng">${esc(({ splash: "Splash", omlx: "oMLX", mtplx: "MTPLX" })[r.engine] || r.engine)}</span>`);
+  tags.push(`<span class="mtag">${esc((r.kind || "").toUpperCase())}</span>`);
+  if (option.bytes) tags.push(`<span class="mtag">${option.estimated === false ? "" : "≈"}${fmtBytes(option.bytes)}</span>`);
+  if (option.memory) tags.push(`<span class="mtag">内存 ${option.estimated ? "≈" : ""}${option.memory} GB</span>`);
+  (r.tags || []).filter((t) => t !== "GGUF").forEach((t) => tags.push(`<span class="mtag">${esc(t)}</span>`));
+  const quant = options.length > 1
+    ? `<select class="qsel" data-quant="${esc(r.repo)}">${options.map((o) =>
+        `<option value="${esc(o.name)}"${o.name === (chose || option.name) ? " selected" : ""}>${esc(o.label)}${o.bytes ? " · " + fmtBytes(o.bytes) : ""}</option>`).join("")}</select>`
+    : "";
+  const id = option.name ? r.repo + ":" + option.name : r.repo;
+  return `<div class="model-card hub">
+    <div class="nm" title="${esc(r.repo)}">${esc(r.display)}</div>
+    <div class="mtags">${tags.join("")}</div>
+    <div class="summary">${esc(r.summary || "")}</div>
+    <div class="ft"><span class="sz">${esc(r.repo)}</span>
+      ${quant}
+      <button class="btn-p dl" data-act="downloadModel" data-arg="${esc(r.engine)}|${esc(id)}">下载</button></div>
+  </div>`;
 }
 
 function pageModels() {
@@ -1900,6 +1945,21 @@ function bindPageExtras() {
   bindOnce(search, "input", () => { UI.logSearch = search.value; renderLogConsoleOnly(); });
   const msearch = document.querySelector('[data-key="modelsSearch"]');
   bindOnce(msearch, "input", () => { UI.modelsSearch = msearch.value; renderModelsGridOnly(); });
+  // ⏎ 才去 Hub 搜：逐字搜索会打满限流，而且用户还在打字时结果没意义。
+  bindOnce(msearch, "keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const query = msearch.value.trim();
+    UI.modelsSearch = query;
+    if (!query) { cmd("searchHub", { query: "" }); return; }
+    UI.quant = {};
+    cmd("searchHub", { query });
+    render();
+  });
+  document.querySelectorAll("[data-quant]").forEach((el) => bindOnce(el, "change", () => {
+    UI.quant[el.dataset.quant] = el.value;
+    renderModelsGridOnly();
+  }));
   document.querySelectorAll("[data-lf]").forEach((el) => bindOnce(el, "click", () => { UI.logFilter = el.dataset.lf; render(); }));
   document.querySelectorAll("[data-f]").forEach((el) => bindOnce(el, "click", () => { UI.modelsFilter = el.dataset.f; render(); }));
   // 输入框失焦时补做挂起的重绘（快照推送在输入期间被挂起）。

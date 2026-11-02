@@ -731,3 +731,12 @@ body.launch-mode .main { flex: 1 1 100%; }
   .hero-body { flex-direction: column; gap: 14px; }
   .hero-api { width: 100%; max-width: none; }
 }
+
+/* ---------- Hub 搜索 ---------- */
+.hub-head { display: flex; align-items: baseline; gap: 10px; margin: 18px 2px 8px; font-size: 11px; }
+.hub-head .t { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--w-ink-2); font-weight: 600; }
+.hub-head .dim { color: var(--w-ink-3); }
+.model-card.hub { border-style: dashed; }
+.model-card.hub .summary { font-size: 10.5px; color: var(--w-ink-3); margin: 4px 0 0; line-height: 1.4; }
+.qsel { font-family: var(--w-mono, ui-monospace), monospace; font-size: 10px; color: var(--w-ink);
+  background: var(--w-panel-2); border: 1px solid var(--w-line); border-radius: 6px; padding: 2px 4px; margin-right: 6px; }

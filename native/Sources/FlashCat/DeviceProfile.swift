@@ -1,16 +1,5 @@
 import Foundation
-
-/// How well one suggestion fits the machine flashCat runs on.
-enum DeviceFit: Int {
-    /// Memory floor is met and the weights fit on disk.
-    case good
-    /// Not enough facts (Hub page states neither size nor memory floor).
-    case unknown
-    /// The pack wants more unified memory than this Mac has.
-    case tight
-    /// The download is bigger than the free disk space.
-    case diskShort
-}
+import FlashCatKit
 
 /// What the model page knows about this Mac, so its suggestions carry a
 /// "fits / does not fit" verdict instead of raw numbers only.
@@ -23,6 +12,11 @@ struct DeviceProfile: Equatable {
         DeviceProfile(chipName: chipName(),
                       memoryGB: Int((Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824).rounded()),
                       freeDiskBytes: freeDiskBytes())
+    }
+
+    /// Same facts as the kit's fit rules take, so the two never drift apart.
+    var machine: MachineProfile {
+        MachineProfile(chipName: chipName, memoryGB: memoryGB, freeDiskBytes: freeDiskBytes)
     }
 
     /// `machdep.cpu.brand_string` — "Apple M4 Pro" and friends.
@@ -61,9 +55,6 @@ struct DeviceProfile: Equatable {
     }
 
     func fit(bytes: Int, minimumMemory: Int) -> DeviceFit {
-        guard bytes > 0 || minimumMemory > 0 else { return .unknown }
-        if bytes > 0, freeDiskBytes > 0, Int64(bytes) > freeDiskBytes { return .diskShort }
-        if minimumMemory > 0, minimumMemory > memoryGB { return .tight }
-        return .good
+        ModelFit.verdict(bytes: bytes, minimumMemory: minimumMemory, machine: machine)
     }
 }

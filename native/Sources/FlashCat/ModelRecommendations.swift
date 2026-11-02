@@ -30,6 +30,10 @@ struct ModelRecommendation: Identifiable, Hashable {
     let summary: String
     let tags: [String]
     let draftRepository: String?
+    /// How strong this tier is within its engine (bigger is stronger); the
+    /// hardware recommendation uses it to pick "the best this machine can run"
+    /// instead of guessing strength from the memory floor.
+    let rank: Int
 
     var repo: String {
         id.split(separator: ":", maxSplits: 1).first.map(String.init) ?? id
@@ -107,7 +111,8 @@ enum ModelRecommendations {
                                    minimumMemory: detail?.minimumMemory ?? 0,
                                    summary: detail?.summary ?? "引擎推荐",
                                    tags: detail?.tags ?? [],
-                                   draftRepository: detail?.draftRepository)
+                                   draftRepository: detail?.draftRepository,
+                                   rank: detail?.rank ?? 0)
     }
 
     // MARK: fixed list
@@ -141,6 +146,10 @@ enum ModelRecommendations {
         var summary: String
         var tags: [String] = []
         var draftRepository: String?
+        /// Strength inside the engine's three tiers: 27B = 1, 35B-A3B = 2,
+        /// Flash-Next = 3. Declared per tier because MTPLX's 35B and 27B share
+        /// the same memory floor and the list order is display order.
+        var rank: Int = 0
     }
 
     private static let details: [String: Detail] = [
@@ -148,40 +157,49 @@ enum ModelRecommendations {
             bytes: 20_400_000_000, minimumMemory: 32,
             summary: "35B MoE，只激活 3B，长上下文更省内存",
             tags: ["MLX", "MoE", "DFlash2"],
-            draftRepository: "incoai/Qwen3.6-35B-A3B-DFlash2"),
+            draftRepository: "incoai/Qwen3.6-35B-A3B-DFlash2",
+            rank: 2),
         "mlx-community/Qwen3.8-27B-4bit": Detail(
             bytes: 15_600_000_000, minimumMemory: 24,
             summary: "27B 稠密 4 位，Splash 的通用档",
             tags: ["MLX", "DFlash2"],
-            draftRepository: "incoai/Qwen3.8-27B-DFlash2"),
+            draftRepository: "incoai/Qwen3.8-27B-DFlash2",
+            rank: 1),
         "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF": Detail(
             bytes: 0, minimumMemory: 64,
             summary: "125B MoE，Flash-Next 在 Splash 上只跑 GGUF",
             tags: ["GGUF", "MoE", "视觉"],
-            draftRepository: "incoai/Qwen3.8-Flash-Next-DFlash2"),
+            draftRepository: "incoai/Qwen3.8-Flash-Next-DFlash2",
+            rank: 3),
         "Jundot/Qwen3.6-35B-A3B-oQ4e-mtp": Detail(
             bytes: 22_100_000_000, minimumMemory: 32,
             summary: "MoE 的 oQ4 混合精度，保留 MTP 草稿头",
-            tags: ["oQ4", "MoE", "MTP"]),
+            tags: ["oQ4", "MoE", "MTP"],
+            rank: 2),
         "mlx-works/Qwen3.8-27B-oQ4e-mtp": Detail(
             bytes: 17_200_000_000, minimumMemory: 24,
             summary: "27B 稠密 oQ4（imatrix 校准），oMLX 自家量化",
-            tags: ["oQ4", "MTP"]),
+            tags: ["oQ4", "MTP"],
+            rank: 1),
         "Jundot/Qwen3.8-Flash-Next-oQ4e-mtp": Detail(
             bytes: 108_000_000_000, minimumMemory: 128,
             summary: "125B MoE 的 oQ4 版，Flash-Next 里最省内存的一档",
-            tags: ["oQ4", "MoE", "视觉", "MTP"]),
+            tags: ["oQ4", "MoE", "视觉", "MTP"],
+            rank: 3),
         "Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed": Detail(
             bytes: 0, minimumMemory: 32,
             summary: "35B MoE，MTP 头单独放在 mtp.safetensors",
-            tags: ["MTP", "MoE"]),
+            tags: ["MTP", "MoE"],
+            rank: 2),
         "Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed": Detail(
             bytes: 20_400_000_000, minimumMemory: 32,
             summary: "MTPLX 默认档：4 位动态量化 27B，MTP 加速",
-            tags: ["MTP", "4-bit"]),
+            tags: ["MTP", "4-bit"],
+            rank: 1),
         "Youssofal/Qwen3.8-Flash-Next-MTPLX-Optimized-Speed": Detail(
             bytes: 115_000_000_000, minimumMemory: 128,
             summary: "125B Flash-Next，动态 4 位 + 8 位注意力",
-            tags: ["MTP", "MoE", "视觉"]),
+            tags: ["MTP", "MoE", "视觉"],
+            rank: 3),
     ]
 }

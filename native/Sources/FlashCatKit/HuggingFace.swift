@@ -84,17 +84,20 @@ public struct HubModel: Sendable, Equatable, Identifiable {
 }
 
 public enum HubModelLayout {
-    /// Classify a repository. MTPLX wins over MLX because an MTPLX pack also
-    /// carries the `mlx` tag; GGUF wins over both because a repository holding
-    /// `.gguf` files is served by Splash no matter what else it carries.
+    /// Classify a repository.
+    ///
+    /// Precedence, highest first: the author's own `library_name`, then the
+    /// evidence that Splash can serve the repository (a `.gguf` at the root or a
+    /// complete split folder), then an MTPLX runtime (`mtp.safetensors`), then
+    /// MLX. An MTPLX pack also carries the `mlx` tag, so its own tag has to win
+    /// over that one; a repository holding `.gguf` files is served by Splash no
+    /// matter what else it carries.
     public static func kind(libraryName: String?, tags: [String], paths: [String]) -> HubModelKind {
         let library = libraryName?.lowercased()
         let tags = Set(tags.map { $0.lowercased() })
         let lowered = paths.map { $0.lowercased() }
 
-        if library == "mtplx"
-            || lowered.contains("mtp.safetensors")
-            || lowered.contains("mtplx_runtime.json") {
+        if library == "mtplx" {
             return .mtplx
         }
         if library == "gguf"
@@ -102,6 +105,10 @@ public enum HubModelLayout {
             || !rootGGUFs(paths).isEmpty
             || !splitGGUFFolders(paths).isEmpty {
             return .gguf
+        }
+        if lowered.contains("mtp.safetensors")
+            || lowered.contains("mtplx_runtime.json") {
+            return .mtplx
         }
         if library == "mlx" || tags.contains("mlx") {
             return .mlx
@@ -146,6 +153,10 @@ public enum HubModelLayout {
     }
 
     /// `VARIANT/MODEL-VARIANT-00001-of-00002.gguf` → its folder, order and count.
+    ///
+    /// Splash only splits a folder when every part matches
+    /// `-\d{5}-of-\d{5}\.gguf` (`install/upstream.py:SPLIT_NAME`), so a shorter
+    /// part number is not a split at all.
     private static func splitName(_ path: String) -> (variant: String, index: Int, total: Int)? {
         let pieces = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
         guard pieces.count == 2, !isProjector(pieces[1]) else { return nil }
@@ -156,6 +167,8 @@ public enum HubModelLayout {
         // `NAME-00001-of-00002`: the part number, then `of`, then the count.
         guard words.count >= 3,
               words[words.count - 2] == "of",
+              words[words.count - 3].count == 5, words[words.count - 3].allSatisfy(\.isNumber),
+              words[words.count - 1].count == 5, words[words.count - 1].allSatisfy(\.isNumber),
               let index = Int(words[words.count - 3]),
               let total = Int(words[words.count - 1]),
               index >= 1, total >= 1, index <= total else { return nil }
@@ -170,14 +183,18 @@ public enum HubModelLayout {
     /// the root files' names minus the word prefix they all share
     /// (`X-Q4_K_M.gguf` → `Q4_K_M`), and the folder name of a split GGUF
     /// (`Q2_0/…-00001-of-00002.gguf` → `Q2_0`). A repository with exactly one
-    /// root GGUF names no variant; a file whose name adds nothing after the
-    /// shared prefix (a base or metadata GGUF) is not selectable and is left out.
+    /// root GGUF names no variant. A file whose name adds nothing after the
+    /// shared prefix stays reachable through the engine's second rule — the
+    /// shortest tail that ends `-VARIANT` for that file alone — and only a name
+    /// no tail can pick out is left out.
     public static func ggufVariants(paths: [String], sizes: [String: Int]) -> [GGUFVariant] {
         var variants: [GGUFVariant] = []
+        var used = Set<String>()
 
         let folders = splitGGUFFolders(paths)
         for folder in folders {
             let bytes = folder.files.reduce(0) { $0 + (sizes[$1] ?? 0) }
+            guard used.insert(folder.variant).inserted else { continue }
             variants.append(GGUFVariant(name: folder.variant, bytes: bytes, files: folder.files))
         }
 
@@ -187,9 +204,16 @@ public enum HubModelLayout {
         }
         let shared = commonPrefixLength(words)
         for (path, name) in zip(roots, words) {
-            let rest = Array(name.dropFirst(shared))
-            guard !rest.isEmpty else { continue }
-            variants.append(GGUFVariant(name: rest.joined(separator: "-"),
+            var rest = Array(name.dropFirst(shared))
+            if rest.isEmpty {
+                // The shared prefix ate the whole name, so only the suffix rule
+                // can reach this file.
+                guard let token = uniqueSuffix(for: path, among: roots) else { continue }
+                rest = [token]
+            }
+            let token = rest.joined(separator: "-")
+            guard used.insert(token).inserted else { continue }
+            variants.append(GGUFVariant(name: token,
                                         bytes: sizes[path] ?? 0,
                                         files: [path]))
         }
@@ -199,6 +223,22 @@ public enum HubModelLayout {
             variants = [GGUFVariant(name: nil, bytes: sizes[roots[0]] ?? 0, files: [roots[0]])]
         }
         return variants
+    }
+
+    /// The shortest tail of `path` that the engine's `-VARIANT` suffix rule
+    /// resolves to `path` and nothing else in `roots`.
+    private static func uniqueSuffix(for path: String, among roots: [String]) -> String? {
+        let name = (path as NSString).deletingPathExtension
+        let words = name.split(separator: "-").map(String.init)
+        let stems = roots.map { ($0 as NSString).deletingPathExtension.lowercased() }
+        let lowered = name.lowercased()
+        for length in 1...max(words.count, 1) {
+            let token = words.suffix(length).joined(separator: "-")
+            let matches = stems.filter { $0.hasSuffix("-" + token.lowercased()) }
+            if matches == [lowered] { return token }
+            if matches.isEmpty { return nil }
+        }
+        return nil
     }
 
     private static func commonPrefixLength(_ words: [[String]]) -> Int {

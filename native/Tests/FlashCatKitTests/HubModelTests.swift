@@ -52,6 +52,24 @@ final class HubModelTests: XCTestCase {
         XCTAssertEqual(model.kind, .mlx)
     }
 
+    func testGGUFWinsOverAnMTPTRuntimeItAlsoCarries() {
+        // Splash can serve the root GGUFs; an MTPLX runtime next to them does
+        // not make the repository MTPLX-only.
+        let model = HubModel(id: "someone/hybrid",
+                             libraryName: "mlx",
+                             tags: ["mlx"],
+                             paths: ["config.json", "mtp.safetensors", "Model-Q4_K_M.gguf"])
+        XCTAssertEqual(model.kind, .gguf)
+    }
+
+    func testTheAuthorsOwnMTPLXLabelWins() {
+        let model = HubModel(id: "Youssofal/pack",
+                             libraryName: "mtplx",
+                             tags: ["mtplx"],
+                             paths: ["config.json", "model-00001-of-00002.safetensors"])
+        XCTAssertEqual(model.kind, .mtplx)
+    }
+
     func testUnmarkedWeightsAreNotPromised() {
         let model = HubModel(id: "someone/Qwen3.8-27B-bf16",
                              libraryName: "transformers",
@@ -119,6 +137,24 @@ final class HubModelTests: XCTestCase {
         let model = HubModel(id: "someone/broken-GGUF",
                              paths: ["Q4_K_M/Model-Q4_K_M-00001-of-00003.gguf"])
         XCTAssertTrue(model.ggufVariants.isEmpty)
+    }
+
+    func testShortPartNumbersAreNotSplits() {
+        // Splash's `SPLIT_NAME` insists on five digits on both sides.
+        let model = HubModel(id: "someone/short-GGUF",
+                             paths: ["Q4_K_M/Model-Q4_K_M-1-of-2.gguf",
+                                     "Q4_K_M/Model-Q4_K_M-2-of-2.gguf"])
+        XCTAssertTrue(model.ggufVariants.isEmpty)
+    }
+
+    func testASwallowedNameStaysSelectableThroughTheSuffixRule() {
+        // `Model-Q4_K_M` is the whole shared prefix, so only the engine's
+        // `-VARIANT` suffix fallback can reach it — but reach it it can.
+        let model = HubModel(id: "someone/imatrix-GGUF",
+                             paths: ["Model-Q4_K_M.gguf", "Model-Q4_K_M-imatrix.gguf"],
+                             sizes: ["Model-Q4_K_M.gguf": 100, "Model-Q4_K_M-imatrix.gguf": 90])
+        XCTAssertEqual(model.ggufVariants.map(\.name), ["Q4_K_M", "imatrix"])
+        XCTAssertEqual(model.weightBytes(ggufVariant: "Q4_K_M"), 100)
     }
 
     func testWeightBytesFollowTheChosenVariant() {

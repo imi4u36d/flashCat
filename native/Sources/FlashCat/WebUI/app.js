@@ -1512,6 +1512,10 @@ function modelCard(e) {
   // 硬件推荐标签排在最前：它是这一档「为什么是它」的说明，不随后面换用什么模型消失。
   if (e.recommendedTag) tags.push(`<span class="mtag rec">★ ${esc(e.recommendedTag)}</span>`);
   if (inUse) tags.push(`<span class="mtag ok">使用中</span>`);
+  // 引擎标签：一款模型能挂多个引擎，卡片上先亮归属，免得在 Splash 栏看到
+  // 一款其实是 oMLX 专用的权重还以为它能直接起。
+  (e.engineLabels || []).forEach((name) => tags.push(`<span class="mtag eng">${esc(name)}</span>`));
+  if (e.uncatalogued) tags.push(`<span class="mtag warn">未收录</span>`);
   if (e.bytes) tags.push(`<span class="mtag">${fmtBytes(e.bytes)}</span>`);
   // 未安装的卡片讲「这一份会带上什么」，已安装的讲「现在跑得怎样」。
   if (e.draftTag) tags.push(`<span class="mtag">${e.installed ? 'DFlash2 加速' : '含 DFlash2'}</span>`);

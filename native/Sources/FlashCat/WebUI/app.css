@@ -487,6 +487,7 @@ body.side-anim .msg { content-visibility: auto; contain-intrinsic-size: auto 72p
 .model-card.inuse { border-color: color-mix(in srgb, var(--w-ok) 45%, transparent); }
 .model-card .nm { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mtags { display: flex; gap: 5px; flex-wrap: wrap; }
+.mtag.eng { color: var(--w-accent); border-color: color-mix(in srgb, var(--w-accent) 35%, transparent); }
 .mtag { font-size: 9.5px; color: var(--w-ink-2); border: 1px solid var(--w-line); border-radius: 6px; padding: 1px 7px; }
 .mtag.ok { background: var(--w-ok-soft); color: var(--w-ok); border-color: transparent; font-weight: 600; }
 .mtag.warn { background: var(--w-warn-soft); color: var(--w-warn); border-color: transparent; font-weight: 600; }

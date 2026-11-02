@@ -145,54 +145,16 @@ enum ModelRecommendations {
             engines: [.mtplx]),
     ]
 
-    /// The repository ids an engine's page suggests, in catalog order.
-    static func suggested(_ engine: EngineID) -> [String] {
-        list(for: engine).map(\.id)
-    }
-
-    /// The catalog rows tagged for this engine.
+    /// The catalog rows tagged for this engine, in catalog order — the page's
+    /// recommendation list, and the filter search results have to respect.
     static func list(for engine: EngineID) -> [ModelRecommendation] {
         catalog.filter { $0.engines.contains(engine) }
     }
 
     /// The catalog row this id normalizes to, or nil for weights nobody tagged.
-    /// A draft head is *not* a row: resolve those through `draft(for:)` / the
-    /// owning row's `draftRepository`.
+    /// A draft head is *not* a row: read the owning row's `draftRepository`.
     static func recommendation(for id: String) -> ModelRecommendation? {
         let repo = ModelLibraryEntry.normalized(id)
         return catalog.first { ModelLibraryEntry.normalized($0.id) == repo }
-    }
-
-    /// Whether this id is a catalog row for that engine — the rows the model
-    /// page and the model switcher treat as known.
-    static func isPinned(_ id: String, engine: EngineID) -> Bool {
-        guard let row = recommendation(for: id) else { return false }
-        return row.engines.contains(engine)
-    }
-
-    /// Whether the catalog tags this id anywhere at all.
-    static func isCataloged(_ id: String) -> Bool {
-        recommendation(for: id) != nil
-    }
-
-    /// A row's DFlash2 draft is a helper, not a model, but the draft menu still
-    /// has to be able to name it.
-    static func isPinnedDraft(_ id: String) -> Bool {
-        let key = ModelLibraryEntry.normalized(id)
-        return catalog.contains { row in
-            guard let draft = row.draftRepository else { return false }
-            return ModelLibraryEntry.normalized(draft) == key
-        }
-    }
-
-    /// Everything the UI is allowed to name: the pinned rows and the drafts
-    /// they pair with.
-    static func allows(_ id: String, engine: EngineID) -> Bool {
-        isPinned(id, engine: engine) || isPinnedDraft(id)
-    }
-
-    /// The draft an id pairs with, if the catalog says so.
-    static func draft(for id: String) -> String? {
-        recommendation(for: id)?.draftRepository
     }
 }

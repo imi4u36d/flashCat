@@ -92,8 +92,11 @@ final class ModelCatalogService {
     struct CatalogError: Error { let message: String }
 
     func deleteLocal(_ model: ModelInfo) throws {
-        if model.origin != .local {
-            throw CatalogError(message: "只能删除 flashCat 本地模型目录中的模型")
+        // Splash 的行是 `.resolved` 里的装配体（`origin == .splash`），和
+        // `.local` 一样是 flashCat 自己下进模型目录的东西，同样可删；只有
+        // 目录里的建议行没有实体，才拒绝。
+        if model.origin == .recommended {
+            throw CatalogError(message: "这款模型还没有下载，没有可删除的权重")
         }
         try? FileManager.default.removeItem(atPath: model.path)
         let parent = (model.path as NSString).deletingLastPathComponent

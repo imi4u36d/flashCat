@@ -20,7 +20,7 @@ tags: [models, huggingface, tags]
 
 **归属是一组事实，不是一张表的成员。** `ModelRecommendation` 携带 `engines: Set<EngineID>`；目录只有一份，`list(for:)` 按标签过滤。判据是产品性的而不是技术性的：**通用 MLX 权重只给 oMLX**（oMLX 是通用引擎）、Splash / MTPLX 只吃各自的专用包——即使 Splash 技术上也能起 MLX 权重；一款模型能跑多个引擎时写多个标签，标签不是互斥的。
 
-现有 9 款按格式严格归类，没有例外：
+现有 9 款按格式严格归类，没有例外。注意这张表的依据是**产品取舍**而不是引擎能力：oMLX 技术上也能起 GGUF——`native/Tests/FlashCatKitTests/Fixtures/omlx/models-status.json` 里它同时托管 `Qwen3.8-Flash-Next-GSQ-RCO-Q2_0`（`model_format: gguf`、`engine_type: vlm`、`is_helper: false`）与一份 `DFlash2-Q8_0`，`EngineStore.swift:445` 的注释也写着「all three packs serve those directly」。我们仍然不让 GGUF 进 oMLX 的推荐与搜索，理由是产品分工：GGUF/GGUF 草稿这条线归 Splash，oMLX 作为通用引擎只吃 MLX 权重。别把这张表当能力矩阵实现，也别因为「oMLX 其实能跑」就顺手放宽。
 
 | 仓库 | `engines` | 依据 |
 | --- | --- | --- |
@@ -29,7 +29,7 @@ tags: [models, huggingface, tags]
 | `Jundot/Qwen3.6-35B-A3B-oQ4e-mtp` | `{omlx}` | 带 MTP 头的 MLX 权重，仍是 MLX |
 | `mlx-works/Qwen3.8-27B-oQ4e-mtp` | `{omlx}` | 同上 |
 | `Jundot/Qwen3.8-Flash-Next-oQ4e-mtp` | `{omlx}` | 同上 |
-| `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF:Q2_0` | `{splash}` | GGUF，只有 Splash 能跑 |
+| `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF:Q2_0` | `{splash}` | GGUF 只走 Splash 这条专用通道（产品取舍，不是能力限制） |
 | `Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed` | `{mtplx}` | `library_name=mtplx` 专用包 |
 | `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed` | `{mtplx}` | 同上 |
 | `Youssofal/Qwen3.8-Flash-Next-MTPLX-Optimized-Speed` | `{mtplx}` | 同上 |
@@ -50,7 +50,7 @@ tags: [models, huggingface, tags]
 
 **搜索结果只活在当前会话。** 切引擎、刷新状态、重启即散；下载完的变成「本机」留下。不落盘，也就没有缓存失效这一整类问题。
 
-**搜索按页过滤，下载落到标签对应的引擎目录。** 搜索不是跨引擎的大杂烩：模型页当前在哪一栏，就只列能进那一栏的仓库——Splash 页只出 `.gguf`、MTPLX 页只出判为 `.mtplx` 的仓库（含只有 `mtp.safetensors` 的那类）、oMLX 页只出其余 MLX（含「未验证」）——页过滤与格式判定共用同一个输入，即上一段的判定结果，不另外再写一套 `library_name` 条件。这与「只有 oMLX 能用的模型不出现在另外两页」是同一条规则。因此下载路由不用猜：仓库的判定结果就是它该去的引擎，标签与下载目录永远指向同一个引擎，不会出现「在 Splash 页下了个 MLX 仓库、装进 Splash 目录后又被当成 Splash 的未收录行」这种自相矛盾的局面。
+**搜索按页过滤，下载落到标签对应的引擎目录。** 搜索不是跨引擎的大杂烩：模型页当前在哪一栏，就只列能进那一栏的仓库——Splash 页只出 `.gguf`、MTPLX 页只出判为 `.mtplx` 的仓库（含只有 `mtp.safetensors` 的那类）、oMLX 页只出其余 MLX（含「未验证」），GGUF 在 oMLX 页不出现（上表的产品取舍）——页过滤与格式判定共用同一个输入，即上一段的判定结果，不另外再写一套 `library_name` 条件。这与「只有 oMLX 能用的模型不出现在另外两页」是同一条规则。因此下载路由不用猜：仓库的判定结果就是它该去的引擎，标签与下载目录永远指向同一个引擎，不会出现「在 Splash 页下了个 MLX 仓库、装进 Splash 目录后又被当成 Splash 的未收录行」这种自相矛盾的局面。
 
 ## 未确认的假设
 

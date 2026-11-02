@@ -799,8 +799,8 @@ final class AppState: ObservableObject {
 
     // MARK: model library
 
-    /// The three Qwen tiers this engine can serve, bounded to the build it can
-    /// load: Splash and oMLX read MLX folders, MTPLX serves its own packs.
+    /// The catalog rows tagged for this engine: Splash gets the Flash-Next
+    /// GGUF, oMLX the MLX and oQ builds, MTPLX only its own packs.
     func libraryRecommendations(for engine: EngineID) -> [ModelRecommendation] {
         ModelRecommendations.list(for: engine)
     }

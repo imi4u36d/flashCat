@@ -697,7 +697,9 @@ enum WebSnapshot {
                 }
                 if let tags = entry.recommendation?.tags, !tags.isEmpty { item["tags"] = tags }
                 if let memory = entry.recommendation?.minimumMemory, memory > 0 { item["minMemory"] = memory }
-                if entry.draftRepository != nil { item["draftTag"] = true }
+                // 草稿的下载目前只接在 Splash 上（oMLX 的 dflash_draft_model
+                // 还没接），别先给 oMLX 卡片挂一个下不到的标签。
+                if entry.draftRepository != nil && entry.engine == .splash { item["draftTag"] = true }
                 // ★ 标签只看配置推荐了哪一档，不看是否已装：换了模型之后标签
                 // 仍要留在原来那一档上，否则用户会以为推荐变了。
                 if let tag = state.recommendationTag(for: entry.model.id, engine: entry.engine) {

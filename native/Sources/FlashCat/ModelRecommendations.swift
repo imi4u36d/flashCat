@@ -155,7 +155,9 @@ enum ModelRecommendations {
         catalog.filter { $0.engines.contains(engine) }
     }
 
-    /// Every id that hangs off this one — the row itself plus its draft.
+    /// The catalog row this id normalizes to, or nil for weights nobody tagged.
+    /// A draft head is *not* a row: resolve those through `draft(for:)` / the
+    /// owning row's `draftRepository`.
     static func recommendation(for id: String) -> ModelRecommendation? {
         let repo = ModelLibraryEntry.normalized(id)
         return catalog.first { ModelLibraryEntry.normalized($0.id) == repo }

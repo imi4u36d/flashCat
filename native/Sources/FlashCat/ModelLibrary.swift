@@ -14,9 +14,14 @@ struct ModelLibraryEntry: Identifiable {
     var installed: Bool { model.origin != .recommended }
     var downloadable: Bool { !installed }
 
-    /// Weights the catalog knows nothing about — the only rows that need the
-    /// 「未收录」 marker. A row tagged for another engine still carries its tags.
-    var uncatalogued: Bool { recommendation == nil }
+    /// A row that is not one of *this* engine's catalog rows — weights moved
+    /// here by an upgrade, or a folder nobody tagged. It still carries its
+    /// catalog tags (so the card can say 「oMLX 专用」), it just is not part of
+    /// this column's recommendation list.
+    var uncatalogued: Bool {
+        guard let recommendation else { return true }
+        return !recommendation.engines.contains(engine)
+    }
 
     /// Auxiliary DFlash2 draft weights. They only make sense attached to a main
     /// model (the launcher hands them over as `dflash_draft_model`), so the page

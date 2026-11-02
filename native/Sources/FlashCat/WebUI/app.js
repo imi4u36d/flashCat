@@ -449,8 +449,52 @@ function morphChildren(parent, source) {
   for (let i = 0; i < oldKids.length; i++) if (!used.has(oldKids[i])) oldKids[i].remove();
 }
 
+// 指标读数的过渡：旧值滚到新值，而不是换掉那个字。
+// 只动数字部分——单位、小数位、千分位沿用新值；变化小于 0.5 或任一侧不是纯数字
+// （"—"、"/"）时直接换，别让每秒一次的读数变成一直在抖的噪声。
+const valTicks = new WeakMap();
+function animateValue(node, next) {
+  const prev = node.nodeValue;
+  const numeric = (s) => /^\s*-?[\d.,]+\s*$/.test(s);
+  const a = parseFloat(prev.replace(/,/g, ""));
+  const b = parseFloat(next.replace(/,/g, ""));
+  if (!numeric(prev) || !numeric(next) || !isFinite(a) || !isFinite(b) || Math.abs(b - a) < 0.5) {
+    node.nodeValue = next;
+    return;
+  }
+  const m = next.match(/(\d[\d,]*)(\.\d+)?/);
+  const decimals = m && m[2] ? m[2].length - 1 : 0;
+  const grouped = !!(m && m[1].includes(","));
+  const fmt = (v) => {
+    const s = grouped
+      ? Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+      : Math.abs(v).toFixed(decimals);
+    return (v < 0 ? "-" : "") + s;
+  };
+  const tok = (valTicks.get(node) || 0) + 1;
+  valTicks.set(node, tok);
+  const t0 = performance.now();
+  const step = (now) => {
+    if (valTicks.get(node) !== tok) return;   // 有更新的一帧插队了，让它接手
+    const p = Math.min(1, (now - t0) / 320);
+    const e = 1 - Math.pow(1 - p, 3);
+    node.nodeValue = p >= 1 ? next : fmt(a + (b - a) * e);
+    if (p < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
 function morphNode(a, b) {
-  if (a.nodeType === 3) { if (a.nodeValue !== b.nodeValue) a.nodeValue = b.nodeValue; return; }
+  if (a.nodeType === 3) {
+    if (a.nodeValue === b.nodeValue) return;
+    // 指标读数：换的是「值」，不是「字」。让它从旧值滚到新值，别整块跳一下。
+    if (a.parentNode && a.parentNode.classList && a.parentNode.classList.contains("val")) {
+      animateValue(a, b.nodeValue);
+      return;
+    }
+    a.nodeValue = b.nodeValue;
+    return;
+  }
   morphAttrs(a, b);
   // data-managed：这块内容自己维护（日志控制台 800 行，每秒整段重拼 ≈ 24ms），
   // morph 只对齐属性、不碰子节点。
@@ -942,12 +986,15 @@ function sparkSVG(samples, opts) {
 }
 
 function metricCard(label, tag, value, unit, hint, hero, loading) {
-  const val = loading
-    ? `<div class="skeleton" style="width:96px;height:30px;margin:6px 0 4px"></div>`
-    : `<div class="val">${esc(value)}<small>${esc(unit)}</small></div>`;
-  return `<div class="metric ${hero ? "hero-m" : ""}">
+  // 骨架和数字占同一个槽，切状态时交叉淡变；loading 时 hint 清空——
+  // 骨架旁边挂着上一轮的速度读数，是另一种“一闪”。
+  return `<div class="metric ${hero ? "hero-m" : ""}${loading ? " is-loading" : ""}">
     <div class="lb"><span>${esc(label)}</span><span class="tag">${esc(tag)}</span></div>
-    ${val}<div class="hint">${esc(hint)}</div>
+    <div class="mv">
+      <div class="val">${esc(value)}<small>${esc(unit)}</small></div>
+      <div class="skeleton"></div>
+    </div>
+    <div class="hint">${esc(loading ? "" : hint)}</div>
   </div>`;
 }
 
@@ -1158,7 +1205,7 @@ function pageOverview() {
   const sessionBody = sessions.length
     ? `<div class="sess-grid">${sessions.map((s) => sessionTile(s, ctxTotal)).join("")}</div>`
     : `<div class="sess-empty">还没有请求经过网关 —— 应用内对话和外部 API 调用（${esc(String(S.gatewayURL || "").replace(/\/v1$/, ""))}）都会以实时一格出现在这里</div>`;
-  const headNum = idle ? `均值 ${avgDecode != null ? avgDecode.toFixed(1) : "—"}` : (currentDecode != null ? `当前 ${currentDecode.toFixed(1)}` : "");
+  const headNum = loading ? "" : (idle ? `均值 ${avgDecode != null ? avgDecode.toFixed(1) : "—"}` : (currentDecode != null ? `当前 ${currentDecode.toFixed(1)}` : ""));
   const rangeBtn = (value, label) => `<button type="button" class="${UI.chartRange === value ? "on" : ""}" data-act="chartRange" data-arg="${value}">${label}</button>`;
 
   return `
@@ -1180,7 +1227,7 @@ function pageOverview() {
           <span class="seg">${rangeBtn(45, "45 秒")}${rangeBtn(300, "5 分钟")}${rangeBtn(0, "全部")}</span>
         </span>
       </div>
-      ${loading ? '<div class="skeleton" style="height:96px"></div>' : sparkSVG(samples, { id: "decode" })}
+      ${`<div class="chart-slot${loading ? " is-loading" : ""}">${sparkSVG(samples, { id: "decode" })}<div class="skeleton"></div></div>`}
       <div class="chart-foot">${esc(decodeHint)}</div>
     </div>
     <div class="panel sessions">
@@ -1551,8 +1598,22 @@ function pageModels() {
     <div id="modelsGrid">${modelsGridHTML()}</div>`;
 }
 
+// 卡片自己的下载状态：active 是正在下的那一个，tasks 里是排队/暂停/失败的。
+// 以前卡片完全不看这两个字段，下载只在「下载中心」弹层里有回声。
+function downloadOf(engine, id) {
+  const d = S.downloads || {};
+  const a = d.active;
+  if (a && a.model === id && (!a.engine || a.engine === engine)) {
+    return { fraction: a.fraction || 0, speed: a.speed || 0, status: "downloading" };
+  }
+  const t = (d.tasks || []).find((x) => x.model === id && (!x.engine || x.engine === engine));
+  if (!t) return null;
+  return { fraction: t.fraction == null ? 0 : t.fraction, speed: 0, status: t.status || "queued" };
+}
+
 function modelCard(e) {
   const inUse = e.installed && e.engine === S.engine.id && e.id === S.selectedModel;
+  const dl = e.installed ? null : downloadOf(e.engine, e.id);
   const tags = [];
   // 硬件推荐标签排在最前：它是这一档「为什么是它」的说明，不随后面换用什么模型消失。
   if (e.recommendedTag) tags.push(`<span class="mtag rec">★ ${esc(e.recommendedTag)}</span>`);
@@ -1568,7 +1629,11 @@ function modelCard(e) {
   if (e.minMemory) tags.push(`<span class="mtag">内存下限 ${e.minMemory} GB</span>`);
   const actions = e.installed
     ? (e.isDraft ? "" : `<button class="btn-p" data-act="useModel" data-arg="${esc(e.engine)}|${esc(e.id)}">使用</button>`)
-    : `<button class="btn-p dl" data-act="downloadModel" data-arg="${esc(e.engine)}|${esc(e.id)}">下载</button>`;
+    : (dl
+      ? (dl.status === "paused" || dl.status === "failed"
+        ? `<button class="btn-p dl" data-act="resumeDownload" data-arg="${esc(e.engine)}|${esc(e.id)}">${dl.status === "failed" ? "重试" : "继续"}</button>`
+        : `<button class="btn-p ghost" data-act="pauseDownload" data-arg="${esc(e.engine)}|${esc(e.id)}">暂停</button>`)
+      : `<button class="btn-p dl" data-act="downloadModel" data-arg="${esc(e.engine)}|${esc(e.id)}">下载</button>`);
   // 「⋯」只在已安装时出现：未安装的卡片唯一可做的操作是下载，卡片上已有
   // 「下载」按钮，菜单里再放一个属于重复入口。未安装时不渲染空的「⋯」。
   // 样式用 btn-p ghost 胶囊，和「使用 / 下载」按钮同高同形，不再是方形小按钮。
@@ -1578,6 +1643,10 @@ function modelCard(e) {
   return `<div class="model-card ${inUse ? "inuse" : ""}">
     <div class="nm" title="${esc(e.id)}">${esc(e.display || e.id)}</div>
     <div class="mtags">${tags.join("")}</div>
+    ${dl ? `<div class="mc-dl">
+      <div class="dl-meter"><div class="dl-fill${dl.status === "failed" ? " err" : ""}" style="width:${Math.round(dl.fraction * 100)}%"></div></div>
+      <span class="pct">${dl.status === "failed" ? "失败" : (dl.status === "paused" ? "已暂停 " : "") + Math.round(dl.fraction * 100) + "%"}${dl.speed ? " · " + esc(fmtRate(dl.speed)) : ""}</span>
+    </div>` : ""}
     <div class="ft"><span class="sz">${esc(e.originText)}${e.repo ? " · " + esc(e.repo) : ""}</span>
       ${actions}${more}</div>
   </div>`;

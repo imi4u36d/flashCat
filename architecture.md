@@ -47,7 +47,7 @@ graph TD
 
 代码已经在执行的规则，不是愿望。
 
-1. **`FlashCatKit` 不许引 UI。** 它只 `import` `Foundation` / `Network` / `CryptoKit`。这决定它能在无窗口的测试进程里跑——`FlashCatKitTests` 有 13 个测试文件、143 个测试函数，全部针对这一层。
+1. **`FlashCatKit` 不许引 UI。** 它只 `import` `Foundation` / `Network` / `CryptoKit`。这决定它能在无窗口的测试进程里跑——`FlashCatKitTests` 有 13 个测试文件、145 个测试函数，全部针对这一层。
 2. **依赖单向。** `FlashCat` → `FlashCatKit`。Kit 里出现任何应用侧符号都是破坏。
 3. **端口段不重叠。** 每个引擎的默认端口是 `splash 8000` / `omlx 8100` / `mtplx 8200`，可用范围是 `defaultPort...defaultPort+19`；分配器在段内跳过被占端口，段外放弃。
 4. **切换方式是能力，不是选项。** `omlx = hot`，`splash` / `mtplx = restart`。应用不许对 `restart` 引擎做热切换。

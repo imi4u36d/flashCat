@@ -1466,7 +1466,8 @@ function modelCard(e) {
   const tags = [];
   if (inUse) tags.push(`<span class="mtag ok">使用中</span>`);
   if (e.bytes) tags.push(`<span class="mtag">${fmtBytes(e.bytes)}</span>`);
-  if (e.draftTag) tags.push(`<span class="mtag">DFlash2 加速</span>`);
+  // 未安装的卡片讲「这一份会带上什么」，已安装的讲「现在跑得怎样」。
+  if (e.draftTag) tags.push(`<span class="mtag">${e.installed ? 'DFlash2 加速' : '含 DFlash2'}</span>`);
   (e.tags || []).forEach((t) => tags.push(`<span class="mtag">${esc(t)}</span>`));
   if (e.minMemory) tags.push(`<span class="mtag">内存下限 ${e.minMemory} GB</span>`);
   const actions = e.installed

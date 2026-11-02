@@ -55,6 +55,14 @@ final class EngineManager {
 
     var onChange: () -> Void = {}
 
+    /// Handed to every controller, so a launch (start, restart, hot switch)
+    /// can be held back until the app has what the model needs on disk.
+    var prepareForStart: (@MainActor (ModelInfo?) async -> StartPreparation)? {
+        didSet {
+            for controller in controllers { controller.prepareForStart = prepareForStart }
+        }
+    }
+
     init(settings: AppSettings, catalog: ModelCatalog) {
         self.settings = settings
         self.catalog = catalog
@@ -87,6 +95,7 @@ final class EngineManager {
                                               catalog: catalog,
                                               port: port)
             controller.onChange = { [weak self] in self?.onChange() }
+            controller.prepareForStart = prepareForStart
             next.append(controller)
         }
         // Keep the previous instance when nothing changed, so a running process

@@ -1,4 +1,5 @@
 import Foundation
+import FlashCatKit
 
 /// Locates the bundled (or managed) splash inference runtime.
 ///
@@ -40,13 +41,8 @@ struct EngineRuntime {
         guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
             return Self.knownDrafts
         }
-        var result: [String: String] = [:]
-        for match in TextPattern.allMatches(#"ModelFamily\(\s*"([^"]+)"\s*,\s*(?:"([^"]+)"|None)"#, text) {
-            let family = match.count > 1 ? match[1] : ""
-            let repo = match.count > 2 ? match[2] : ""
-            if !family.isEmpty { result[family] = repo }
-        }
-        return result.isEmpty ? Self.knownDrafts : result
+        let parsed = SplashDraft.families(inFamiliesPy: text)
+        return parsed.isEmpty ? Self.knownDrafts : parsed
     }
 
     static let knownDrafts: [String: String] = [

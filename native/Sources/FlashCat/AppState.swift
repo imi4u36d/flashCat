@@ -31,6 +31,16 @@ struct ThroughputSample: Identifiable {
     let value: Double
 }
 
+/// How a download ended, for the callers that wait on one instead of
+/// watching the download center.
+enum DownloadOutcome {
+    /// Every byte arrived and the model is installed.
+    case finished
+    /// The user paused or cancelled it; nothing is wrong, it just is not there.
+    case cancelled
+    case failed(String)
+}
+
 @MainActor
 final class AppState: ObservableObject {
     static let shared = AppState()
@@ -143,6 +153,13 @@ final class AppState: ObservableObject {
     /// The running downloader child process; terminating it is how pause and
     /// cancel stop the transfer while the Hub's partial files stay on disk.
     private var downloadProcess: Process?
+    /// Set while a caller waits for a download to end (a launch that has to
+    /// fetch the model's DFlash2 draft first). Reported once, in
+    /// `finishDownload`, whichever way the process ended.
+    private var downloadCompletion: ((DownloadOutcome) -> Void)?
+    /// True while that launch-triggered download runs: it must not steal the
+    /// selection or pop a toast, the engine start right behind it says more.
+    private var supplementInFlight = false
     private var pauseRequested = false
     private var cancelRequested = false
     private var lastWatchBytes = 0
@@ -507,6 +524,12 @@ final class AppState: ObservableObject {
     private func attachEngines() {
         let manager = EngineManager(settings: settings, catalog: catalog)
         manager.onChange = { [weak self] in self?.syncController() }
+        // Splash launches run through here: a model installed without its
+        // DFlash2 draft gets it fetched before the engine starts.
+        manager.prepareForStart = { [weak self] model in
+            guard let self else { return .ready(model) }
+            return await self.ensureSplashDraft(model)
+        }
         engines = manager
         // A finished install/uninstall changes which packs exist, so rebuild the
         // controllers and refresh whatever the models page is showing.
@@ -1319,14 +1342,19 @@ final class AppState: ObservableObject {
     /// Pause and cancel terminate the child process; the Hub keeps partial
     /// files in the destination's `.cache`, so resuming later — even after a
     /// relaunch — continues from the bytes already on disk.
-    func downloadModel(_ id: String, engine: EngineID) {
+    ///
+    /// - Parameter family: the model's Splash family when the caller knows it,
+    ///   which picks the released DFlash2 draft more surely than the id does.
+    /// - Returns: whether the download started. A `false` comes with a `notice`.
+    @discardableResult
+    func downloadModel(_ id: String, engine: EngineID, family: String? = nil) -> Bool {
         guard downloadingModel == nil else {
             toast("正在下载另一个模型，先等它结束")
-            return
+            return false
         }
         let recommendation = ModelRecommendations.recommendation(for: id)
         let draft = engine == .splash
-            ? (catalog.draftRepository(id, family: nil) ?? recommendation.draftRepository)
+            ? (catalog.draftRepository(id, family: family) ?? recommendation.draftRepository)
             : nil
 
         let plan: ModelInstaller.Plan
@@ -1338,7 +1366,7 @@ final class AppState: ObservableObject {
                                            cache: settings.hfCache)
         } catch {
             notice = (error as? ModelInstaller.Failure)?.message ?? "\(error)"
-            return
+            return false
         }
 
         pauseRequested = false
@@ -1432,12 +1460,74 @@ final class AppState: ObservableObject {
         do {
             try process.run()
             downloadProcess = process
+            return true
         } catch {
             downloadingModel = nil
             downloadingEngine = nil
             downloadFraction = nil
             removeTask(engine: engine, model: id)
             notice = "无法启动下载：\(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// Run a download and wait for it to end.
+    ///
+    /// Only the launch path uses this: a start that has to fetch the model's
+    /// DFlash2 draft hands the engine a model that is complete, so the engine
+    /// never has to download inside its own startup (its launcher refuses to
+    /// touch the network).
+    private func downloadAndWait(_ id: String, engine: EngineID, family: String?) async -> DownloadOutcome {
+        guard downloadingModel == nil else {
+            let other = downloadingModel.map(shortModelName) ?? "另一个模型"
+            return .failed("正在下载 \(other)，等它结束后再启动")
+        }
+        return await withCheckedContinuation { continuation in
+            downloadCompletion = { continuation.resume(returning: $0) }
+            if !downloadModel(id, engine: engine, family: family) {
+                // Nothing started, so nothing will call back: release the
+                // caller with the notice downloadModel already wrote.
+                downloadCompletion = nil
+                continuation.resume(returning: .failed(notice ?? "无法启动下载"))
+            }
+        }
+    }
+
+    /// Splash runs every model with its DFlash2 draft, and every family it
+    /// recommends is released with one. A model installed by a build that did
+    /// not fetch the draft would keep starting without acceleration, so a start
+    /// fetches it first: the click waits, the model does not.
+    ///
+    /// Returns the model to launch — the rescanned one once the draft is on
+    /// disk, since only a rescan knows its `draftPath`.
+    func ensureSplashDraft(_ model: ModelInfo?) async -> StartPreparation {
+        guard let model, model.origin == .splash, model.draftPath == nil else {
+            return .ready(model)
+        }
+        guard let draft = catalog.draftRepository(model.id, family: model.family) else {
+            append(log: "==> \(model.id) 没有对应的 DFlash2，按无加速启动", engine: .splash)
+            return .ready(model)
+        }
+        append(log: "==> \(model.id) 缺少 DFlash2，先补齐 \(draft)", engine: .splash)
+        toast("\(shortModelName(model.id)) 缺少 DFlash2 加速模型，先下载好再启动")
+        supplementInFlight = true
+        let outcome = await downloadAndWait(model.id, engine: .splash, family: model.family)
+        supplementInFlight = false
+        switch outcome {
+        case .finished:
+            // The download rescanned the catalog on its way out.
+            if let refreshed = catalog.machineModel(model.id), refreshed.draftPath != nil {
+                append(log: "==> DFlash2 已就绪：\(draft)", engine: .splash)
+                return .ready(refreshed)
+            }
+            append(log: "==> DFlash2 未能装进装配，按无加速启动", engine: .splash)
+            return .ready(model)
+        case .cancelled:
+            // Cancelling the fetch is a decision, not a failure: start anyway.
+            append(log: "==> DFlash2 下载已取消，按无加速启动", engine: .splash)
+            return .ready(model)
+        case .failed(let message):
+            return .failed(message)
         }
     }
 
@@ -1582,11 +1672,21 @@ final class AppState: ObservableObject {
         downloadWatchBaselines = [:]
         reloadModels()
 
+        // A launch may be waiting on this download; it resumes exactly once,
+        // whichever branch below ends up running.
+        var outcome = DownloadOutcome.failed("下载失败，退出码 \(status)")
+        defer {
+            let completion = downloadCompletion
+            downloadCompletion = nil
+            completion?(outcome)
+        }
+
         if pauseRequested {
             pauseRequested = false
             upsertTask(engine: engine, model: model) { $0.status = .paused }
             append(log: "==> 已暂停 \(model)，可从下载中心继续", engine: engine)
             toast("已暂停下载，进度已保留")
+            outcome = .cancelled
             return
         }
         if cancelRequested {
@@ -1594,13 +1694,16 @@ final class AppState: ObservableObject {
             removeTask(engine: engine, model: model)
             append(log: "==> 已取消下载 \(model)", engine: engine)
             toast("已取消下载")
+            outcome = .cancelled
             return
         }
 
         guard status == 0 else {
             upsertTask(engine: engine, model: model) { $0.status = .failed }
             append(log: "==> 下载失败，退出码 \(status)", engine: engine)
-            notice = "模型下载失败，退出码 \(status)（下载中心里可重试）"
+            let message = "模型下载失败，退出码 \(status)（下载中心里可重试）"
+            notice = message
+            outcome = .failed(message)
             return
         }
 
@@ -1611,6 +1714,10 @@ final class AppState: ObservableObject {
         let repo = model.split(separator: ":", maxSplits: 1).first.map(String.init) ?? model
         let installed = engine == .splash ? model : ModelInstaller.folderName(for: repo)
         append(log: "==> 已下载 \(model)", engine: engine)
+        outcome = .finished
+        // A launch-triggered fetch is followed by the launch itself: no toast
+        // to answer, and the selection must not move under the start.
+        guard !supplementInFlight else { return }
         guard engine == activeEngine else {
             toast("已下载 \(model)，切到 \(engine.displayName) 就能用")
             return

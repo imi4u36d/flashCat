@@ -54,22 +54,7 @@ struct ModelCatalog {
     }
 
     func draftRepository(_ modelId: String, family: String?) -> String? {
-        var candidates: [String] = Array(draftRepositories.keys)
-        if let family = family, !family.isEmpty { candidates.insert(family, at: 0) }
-        candidates.sort { Self.fold($1).count < Self.fold($0).count }
-        let folded = Self.fold(modelId)
-        for candidate in candidates {
-            let needle = Self.fold(candidate)
-            if !needle.isEmpty && folded.contains(needle) {
-                let repo = draftRepositories[candidate]
-                return repo == nil || repo!.isEmpty ? nil : repo
-            }
-        }
-        return nil
-    }
-
-    private static func fold(_ value: String) -> String {
-        value.lowercased().filter { $0.isASCII && ($0.isLetter || $0.isNumber) }
+        SplashDraft.repository(for: modelId, family: family, familyDrafts: draftRepositories)
     }
 }
 

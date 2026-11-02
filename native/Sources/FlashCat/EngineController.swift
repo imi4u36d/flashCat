@@ -19,6 +19,17 @@ enum ServerState: String {
     }
 }
 
+/// What the app hands a launch after looking at the model first.
+///
+/// Splash needs the model's DFlash2 draft next to it; when the assembly was
+/// installed by a build that did not fetch one, the app fetches it before the
+/// engine starts and passes the refreshed model (the draft path only exists
+/// after a rescan).
+enum StartPreparation {
+    case ready(ModelInfo?)
+    case failed(String)
+}
+
 /// Owns one engine process: its pid file, port claim, log stream and health
 /// polling. Every engine — splash included — is driven entirely by the runtime
 /// pack manifest it was installed from, so adding an engine never means
@@ -35,6 +46,10 @@ final class EngineController {
     let logs: LogStore
 
     var onChange: () -> Void = {}
+
+    /// Runs before every launch, including restarts and hot switches. Nil means
+    /// the app has nothing to prepare and the launch goes ahead as asked.
+    var prepareForStart: (@MainActor (ModelInfo?) async -> StartPreparation)?
 
     private(set) var state: ServerState = .stopped
     /// Engine-neutral view of the engine's own status document.
@@ -160,10 +175,42 @@ final class EngineController {
 
     // MARK: start / stop
 
+    /// A start that is still preparing (fetching the model's DFlash2 draft)
+    /// owns the controller: a second click must not launch a second engine
+    /// behind it, and must not be told the launch failed either.
+    private var preparing = false
+    /// Bumped by every `stop()`, so a launch that was waiting on a preparation
+    /// can tell that the user changed their mind and must not start after all.
+    private var stopRequests = 0
+
     /// `localModel` only matters for splash, whose serve script takes an
     /// assembly/target pair. Other engines take a model identifier.
     func start(localModel: ModelInfo? = nil, requestedModel: String? = nil) async {
-        if process != nil { return }
+        if process != nil || preparing { return }
+        var localModel = localModel
+        if let prepareForStart {
+            preparing = true
+            defer { preparing = false }
+            let attempt = stopRequests
+            // The preparation can take minutes (a draft is a few GB), so the
+            // click has to look taken instead of ignored.
+            state = .starting
+            onChange()
+            switch await prepareForStart(localModel) {
+            case .ready(let refreshed):
+                // Stopped while the preparation ran: the engines page already
+                // said 已停止 and must stay that way.
+                guard attempt == stopRequests else { return }
+                localModel = refreshed ?? localModel
+            case .failed(let message):
+                // Nothing was launched, so the engines page must show why the
+                // click did not turn into a running engine.
+                logs.openFile()
+                logs.append("==> 启动取消：\(message)", level: .error)
+                fail(message)
+                return
+            }
+        }
         guard let plan = launchPlan(localModel: localModel, requestedModel: requestedModel) else { return }
 
         desiredModel = plan.model
@@ -357,6 +404,7 @@ final class EngineController {
         // Whatever was resident dies with the process, so the hot-load cool-down
         // no longer applies: the next start must load its model again.
         lastHotLoad = nil
+        stopRequests += 1
         if process == nil {
             state = .stopped
             onChange()

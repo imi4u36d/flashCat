@@ -14,6 +14,10 @@ struct ModelLibraryEntry: Identifiable {
     var installed: Bool { model.origin != .recommended }
     var downloadable: Bool { !installed }
 
+    /// Weights the catalog knows nothing about — the only rows that need the
+    /// 「未收录」 marker. A row tagged for another engine still carries its tags.
+    var uncatalogued: Bool { recommendation == nil }
+
     /// Auxiliary DFlash2 draft weights. They only make sense attached to a main
     /// model (the launcher hands them over as `dflash_draft_model`), so the page
     /// never offers a launch/download action for them.
@@ -87,11 +91,16 @@ enum ModelLibrary {
         // so the grid does not reshuffle between scans.
         let extras = installed
             .filter { !claimed.contains(ModelLibraryEntry.normalized($0.id)) }
+            // 草稿头不成行：它没有独立可用的权重，卡片上唯一能做的「删除」
+            // 会把另一个已装模型正配对的草稿删掉。
+            .filter { !ModelLibraryEntry.isDraftModel($0.id) }
             .sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
             .map { model in
+                // 迁移留下的旧权重可能仍是目录行、只是标签不在这一栏：
+                // 它的 engines/repo/tags 照旧带上，卡片才标得出「oMLX 专用」。
                 ModelLibraryEntry(model: model,
                                   engine: engine,
-                                  recommendation: nil,
+                                  recommendation: ModelRecommendations.recommendation(for: model.id),
                                   draftRepository: draftRepository(model.id))
             }
         rows.append(contentsOf: extras)

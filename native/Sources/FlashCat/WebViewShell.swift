@@ -689,11 +689,11 @@ enum WebSnapshot {
                     "originText": entry.installed ? "本机" : "Hugging Face",
                     // 目录外的本机权重照样出现，标成「未收录」，
                     // 免得盘上有、界面里却找不到。
-                    "uncatalogued": entry.recommendation == nil,
+                    "uncatalogued": entry.uncatalogued,
                 ]
                 if let repo = entry.recommendation?.repo { item["repo"] = repo }
-                if let engines = entry.recommendation?.engines {
-                    item["engines"] = EngineID.allCases.filter { engines.contains($0) }.map(\.rawValue)
+                if let labels = entry.recommendation?.engineLabels, !labels.isEmpty {
+                    item["engineLabels"] = labels
                 }
                 if let tags = entry.recommendation?.tags, !tags.isEmpty { item["tags"] = tags }
                 if let memory = entry.recommendation?.minimumMemory, memory > 0 { item["minMemory"] = memory }

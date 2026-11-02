@@ -1483,7 +1483,7 @@ final class AppState: ObservableObject {
         }
         let recommendation = ModelRecommendations.recommendation(for: id)
         let draft = engine == .splash
-            ? (catalog.draftRepository(id, family: family) ?? recommendation.draftRepository)
+            ? (catalog.draftRepository(id, family: family) ?? recommendation?.draftRepository)
             : nil
 
         let plan: ModelInstaller.Plan

@@ -28,7 +28,10 @@ struct HardwareRecommendation: Codable, Equatable {
         /// Short tier label for one-line summaries, e.g. "Qwen3.6-35B-A3B-4bit".
         /// Derived from the catalog instead of stored, so a recheck summary and
         /// the model page's own card can never name the same tier differently.
-        var shortName: String { ModelRecommendations.recommendation(for: model).shortName }
+        var shortName: String {
+            ModelRecommendations.recommendation(for: model)?.shortName
+                ?? model.split(separator: "/").last.map(String.init) ?? model
+        }
     }
 
     let chipName: String

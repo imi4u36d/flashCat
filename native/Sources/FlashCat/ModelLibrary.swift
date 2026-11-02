@@ -43,12 +43,15 @@ struct LibraryUseRequest: Identifiable {
 }
 
 enum ModelLibrary {
-    /// The fixed catalog, in the order the engine's list names it.
+    /// The catalog rows for an engine, plus whatever that engine already has on
+    /// disk.
     ///
-    /// Only pinned rows appear. Weights scanned from the model folder are used
-    /// purely as evidence that a pinned row is installed — a folder that is not
-    /// in the catalog is not offered anywhere, because the page has no import
-    /// action that could have put it there.
+    /// A row whose folder exists is the same row with real bytes on it. A
+    /// folder that is not in the catalog is still shown, marked 未收录: the
+    /// engine can serve it right now, and hiding it would make an installed
+    /// model invisible with no way to reach it. The page's engine filter only
+    /// constrains recommendations and search results — never the weights that
+    /// are already here.
     static func entries(installed: [ModelInfo],
                         engine: EngineID,
                         recommendations: [ModelRecommendation],
@@ -58,9 +61,11 @@ enum ModelLibrary {
             onDisk[ModelLibraryEntry.normalized(model.id)] = model
         }
 
-        return recommendations.map { recommendation in
+        var claimed: Set<String> = []
+        var rows: [ModelLibraryEntry] = recommendations.map { recommendation in
             let key = ModelLibraryEntry.normalized(recommendation.id)
             let found = onDisk[key]
+            claimed.insert(key)
             let scannedBytes = found?.bytes ?? 0
             let model = ModelInfo(id: found?.id ?? recommendation.id,
                                   path: found?.path ?? "",
@@ -77,5 +82,19 @@ enum ModelLibrary {
                                      draftRepository: recommendation.draftRepository
                                          ?? (found == nil ? nil : draftRepository(model.id)))
         }
+
+        // Weights on disk that the catalog does not tag for this engine. Sorted
+        // so the grid does not reshuffle between scans.
+        let extras = installed
+            .filter { !claimed.contains(ModelLibraryEntry.normalized($0.id)) }
+            .sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
+            .map { model in
+                ModelLibraryEntry(model: model,
+                                  engine: engine,
+                                  recommendation: nil,
+                                  draftRepository: draftRepository(model.id))
+            }
+        rows.append(contentsOf: extras)
+        return rows
     }
 }

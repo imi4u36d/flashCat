@@ -34,7 +34,9 @@ tags: [models, huggingface, tags]
 
 结论是 **Splash 页只会剩 Flash-Next 的 GGUF 一档，MTPLX 页只剩三款 Youssofal 包，其余全部在 oMLX**——这是产品规则要的结果，不是遗漏。**草稿仓库不成行**：`incoai/*-DFlash2` 只作为主行的 `draftRepository` 挂在主行上，下载主行时一并拉取（oMLX 也已通过 `dflash_draft_model` 吃草稿），界面上既不单独出现、也不带标签，所以没有「草稿该归谁」这个问题。
 
-**存量权重照常可见。** `ModelLibrary` 从「只列目录里的行」改为「目录 ∪ 磁盘扫描」去重合并：目录里的按标签出现在对应引擎，盘上有但目录里没有的，作为「未收录」出现在它实际所在的引擎目录下。已装就是已装，标签只管推荐与下载归属。
+**存量权重照常可见，页过滤只管推荐与搜索。** `ModelLibrary` 从「只列目录里的行」改为「目录 ∪ 磁盘扫描」去重合并：目录里的按标签出现在对应引擎，盘上有但目录里没有的，作为「未收录」出现在**它实际所在的那个目录对应的引擎页**。已装就是已装，标签只管推荐与下载归属。
+
+这条与上两段的页过滤不冲突：页过滤管的是「推荐哪几款」和「搜出哪几个仓库」，不管「盘上已经有什么」。具体的难题是升级时 Splash 目录里已有 `mlx-community/Qwen3.6-35B-A3B-4bit` 这类被改判为 oMLX 的权重——它们不会被隐藏（隐藏了用户就再也没有入口删改它们），而是在 Splash 页作为「未收录」行留着，标签显式写 `oMLX`，并提供一个「改用 oMLX」的动作：走现有的 `applyModelFromAnyEngine` 把选择切到 oMLX，文件留在原地（目录就是 `~/.flashcat/models`，oMLX 能直接读）。oMLX 页那份对应目录行仍是「下载」状态，不把已经存在的文件当成已装。
 
 **搜索在 Swift 侧。** Hugging Face 的两个请求（搜索 `/api/models?search=`、单仓库 `/api/models/{repo}?blobs=true`——列表接口的 `siblings[].size` 恒为 null，真实字节只能从单仓库接口拿）属于 FlashCatKit 的新模块，结果随快照下发——[flashcat-webui](native/Sources/FlashCat/WebUI-SPEC.md) 的边界是「网页不取数、不写盘」，这条不破例。
 

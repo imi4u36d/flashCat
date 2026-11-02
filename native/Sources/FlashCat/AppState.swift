@@ -1446,6 +1446,10 @@ final class AppState: ObservableObject {
             }
             return
         }
+        // 正在服务的那份权重删掉后不能只换个选择：进程里还驻留着它，
+        // 界面和引擎会各说各话，直到有人手动重启。先停引擎再动手。
+        let serving = engine == activeEngine && selectedModel == id
+        if serving { stopService() }
         let path = EnginePaths.modelsDirectory(engine) + "/" + id
         do {
             try FileManager.default.removeItem(atPath: path)
@@ -1453,7 +1457,7 @@ final class AppState: ObservableObject {
             notice = "删除失败：\(error.localizedDescription)"
             return
         }
-        if selectedModel == id, engine == activeEngine {
+        if serving {
             selectedModel = ""
             adoptSavedModel(for: engine)
         }

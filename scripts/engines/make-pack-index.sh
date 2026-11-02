@@ -8,8 +8,10 @@
 #   scripts/engines/make-pack-index.sh --out pack-index.json --base-url https://host/packs
 #
 # The engine id comes from the file name (`<engine>-<version>.release.json`), so
-# a release file is self-describing; `--base-url` rewrites every `url` to point
-# at that prefix, which is what you want after uploading the archives.
+# a release file is self-describing. Every `url` is reduced to the archive's own
+# file name — relative to the index, so one index serves every machine, and a
+# release file that still carries an absolute path cannot leak it into the
+# shipped index. `--base-url` prefixes them for a separate host.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -45,6 +47,9 @@ import json, os, re, sys
 
 packs_dir = os.environ["PACKS"]
 base_url = os.environ.get("BASE_URL", "").rstrip("/")
+if base_url and not re.match(r"^https?://", base_url):
+    print(f"error: --base-url must be an http(s) URL, got {base_url}", file=sys.stderr)
+    sys.exit(2)
 engines = {}
 
 def version_key(version):
@@ -66,8 +71,11 @@ for path in sys.argv[1:]:
     with open(path, "r", encoding="utf-8") as handle:
         entry = json.load(handle)
     entry.setdefault("version", version)
-    if base_url:
-        entry["url"] = f"{base_url}/{os.path.basename(entry.get('url', ''))}"
+    name = os.path.basename(entry.get("url", ""))
+    if not name:
+        print(f"error: {path} has no url", file=sys.stderr)
+        sys.exit(2)
+    entry["url"] = f"{base_url}/{name}" if base_url else name
     engines.setdefault(engine, []).append(entry)
 
 for engine, entries in engines.items():

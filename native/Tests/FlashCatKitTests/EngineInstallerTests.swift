@@ -175,6 +175,104 @@ final class EngineInstallerTests: XCTestCase {
         XCTAssertNil(index.engines["teleportation"])
     }
 
+    /// A relative `url` belongs to the index it arrived on: the same index has
+    /// to work served over https and read from a local file, so nothing in it may
+    /// name one machine's absolute path. Entries that already are absolute pass
+    /// through untouched.
+    func testLoadIndexResolvesRelativeURLsAgainstTheIndexLocation() async throws {
+        let indexURL = workDirectory.appendingPathComponent("pack-index.json")
+        let json = """
+        {
+          "schemaVersion": 1,
+          "engines": {
+            "omlx": [
+              { "version": "0.7.3", "url": "omlx-0.7.3-arm64-macos26.0.tar.gz", "sha256": "bb" },
+              { "version": "0.7.2", "url": "https://example.invalid/omlx-0.7.2.tar.gz", "sha256": "aa" }
+            ]
+          }
+        }
+        """
+        try Data(json.utf8).write(to: indexURL, options: .atomic)
+
+        var environment = makeEnvironment()
+        environment.indexURL = URL(fileURLWithPath: indexURL.path)
+        let index = try await EngineInstaller(environment: environment).loadIndex()
+
+        XCTAssertEqual(index.latest(for: .omlx)?.url,
+                       workDirectory.appendingPathComponent("omlx-0.7.3-arm64-macos26.0.tar.gz").absoluteString)
+        XCTAssertEqual(index.releases(for: .omlx).last?.url, "https://example.invalid/omlx-0.7.2.tar.gz")
+    }
+
+    /// Same rule with an index served over the network: the base is the index's
+    /// own address, never a local path.
+    func testRelativeURLResolvesAgainstAnHTTPSIndex() {
+        let release = EnginePackRelease(version: "0.7.3",
+                                       url: "omlx-0.7.3-arm64-macos26.0.tar.gz",
+                                       sha256: "bb")
+        let index = URL(string: "https://example.invalid/packs/pack-index.json")!
+
+        XCTAssertEqual(release.resolvedAgainst(index: index).url,
+                       "https://example.invalid/packs/omlx-0.7.3-arm64-macos26.0.tar.gz")
+    }
+
+    /// A relative address must fail before the network call, not inside it.
+    func testInstallRejectsARelativeAddress() async throws {
+        let release = EnginePackRelease(version: "0.7.2", url: "omlx-0.7.2.tar.gz", sha256: "aa")
+        let installer = EngineInstaller(environment: makeEnvironment())
+
+        await XCTAssertThrowsErrorAsync {
+            _ = try await installer.install(release, for: .omlx) { _ in }
+        } verify: { error in
+            guard case EngineInstallError.downloadFailed(let message) = error else {
+                return XCTFail("unexpected error: \(error)")
+            }
+            XCTAssertTrue(message.contains("不是绝对地址"), message)
+        }
+    }
+
+    /// An index behind a redirect: the archives sit beside the copy that was
+    /// actually served, so `/latest/pack-index.json` must not send entries to
+    /// `/latest/`.
+    func testRelativeURLResolvesAgainstThePostRedirectIndexAddress() async throws {
+        let body = """
+        {"schemaVersion":1,"engines":{"omlx":[
+          {"version":"0.7.3","url":"omlx-0.7.3-arm64-macos26.0.tar.gz","sha256":"bb"}
+        ]}}
+        """
+        let server = GatewayHTTPServer { request in
+            switch request.path {
+            case "/latest/pack-index.json":
+                var redirect = GatewayResponse()
+                redirect.status = 302
+                redirect.headers["Location"] = "/v1.4.1/pack-index.json"
+                return redirect
+            case "/v1.4.1/pack-index.json":
+                var response = GatewayResponse()
+                response.body = Data(body.utf8)
+                return response
+            default:
+                return .json(["error": "nope"], status: 404)
+            }
+        }
+        var port: UInt16 = 0
+        for candidate in UInt16(39200)...UInt16(39240) where await server.start(port: candidate) {
+            port = candidate
+            break
+        }
+        guard port != 0 else {
+            server.stop()
+            return XCTFail("没有可用的测试端口")
+        }
+        defer { server.stop() }
+
+        var environment = makeEnvironment()
+        environment.indexURL = URL(string: "http://127.0.0.1:\(port)/latest/pack-index.json")!
+        let index = try await EngineInstaller(environment: environment).loadIndex()
+
+        XCTAssertEqual(index.latest(for: .omlx)?.url,
+                       "http://127.0.0.1:\(port)/v1.4.1/omlx-0.7.3-arm64-macos26.0.tar.gz")
+    }
+
     func testLoadIndexWithoutAnySourceThrows() async throws {
         var environment = makeEnvironment()
         environment.indexURL = nil

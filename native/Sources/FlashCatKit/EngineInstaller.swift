@@ -8,6 +8,9 @@ import Foundation
 /// the manifest inside the archive.
 public struct EnginePackRelease: Codable, Sendable, Equatable {
     public var version: String
+    /// Absolute download address. An index names archives relative to itself
+    /// (so the same index serves every machine); `loadIndex` turns those into
+    /// absolute addresses before anyone tries to fetch them.
     public var url: String
     public var sha256: String
     public var bytes: Int?
@@ -26,6 +29,16 @@ public struct EnginePackRelease: Codable, Sendable, Equatable {
         self.bytes = bytes
         self.minMacOS = minMacOS
         self.notes = notes
+    }
+
+    /// The index a release arrived on is the base its relative address hangs
+    /// off: the same index has to work served over https and read from disk.
+    func resolvedAgainst(index indexURL: URL) -> EnginePackRelease {
+        guard let parsed = URL(string: url), parsed.scheme == nil,
+              let resolved = URL(string: url, relativeTo: indexURL) else { return self }
+        var release = self
+        release.url = resolved.absoluteURL.absoluteString
+        return release
     }
 }
 
@@ -215,12 +228,16 @@ public actor EngineInstaller {
 
     public func loadIndex() async throws -> EnginePackIndex {
         for candidate in indexCandidates() {
-            guard let data = try? await fetch(candidate) else { continue }
-            guard let decoded = try? JSONDecoder().decode(EnginePackIndex.self, from: data) else {
+            guard let fetched = try? await fetch(candidate) else { continue }
+            guard let decoded = try? JSONDecoder().decode(EnginePackIndex.self, from: fetched.data) else {
                 throw EngineInstallError.indexUnavailable
             }
             var index = decoded
-            index.engines = decoded.engines.filter { EngineID(rawValue: $0.key) != nil }
+            index.engines = decoded.engines
+                .filter { EngineID(rawValue: $0.key) != nil }
+                .mapValues { releases in
+                    releases.map { $0.resolvedAgainst(index: fetched.url) }
+                }
             return index
         }
         throw EngineInstallError.indexUnavailable
@@ -235,15 +252,18 @@ public actor EngineInstaller {
         return candidates
     }
 
-    private func fetch(_ url: URL) async throws -> Data {
+    /// Returns where the index actually came from alongside its bytes: a
+    /// redirect moves the index (`/latest/pack-index.json` → `/v1.4.1/…`), and
+    /// the archives sit beside the copy that was served, not the one we asked for.
+    private func fetch(_ url: URL) async throws -> (data: Data, url: URL) {
         if url.isFileURL {
-            return try Data(contentsOf: url)
+            return (try Data(contentsOf: url), url)
         }
         let (data, response) = try await URLSession.shared.data(from: url)
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
             throw EngineInstallError.downloadFailed("服务器返回 HTTP \(http.statusCode)")
         }
-        return data
+        return (data, response.url ?? url)
     }
 
     // MARK: Paths
@@ -305,6 +325,11 @@ public actor EngineInstaller {
         do {
             guard let url = URL(string: release.url) else {
                 throw EngineInstallError.downloadFailed("无效的下载地址：\(release.url)")
+            }
+            // A relative address would "succeed" here and fail inside URLSession
+            // with no hint of which index produced it.
+            guard url.scheme != nil else {
+                throw EngineInstallError.downloadFailed("下载地址不是绝对地址：\(release.url)")
             }
             // Checked before touching the network so a typo in the index fails
             // in milliseconds instead of after a download.

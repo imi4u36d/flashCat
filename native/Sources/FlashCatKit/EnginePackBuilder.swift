@@ -37,7 +37,6 @@ public enum EnginePackBuildPlanner {
                              version: String,
                              release: EngineUpstreamRelease?) -> [EnginePackBuildStep] {
         var steps: [EnginePackBuildStep] = []
-        let root = "$PWD"
 
         switch id {
         case .omlx:
@@ -75,9 +74,8 @@ public enum EnginePackBuildPlanner {
             command: """
             set -euo pipefail
             scripts/engines/make-pack-release.sh --engine \(id.rawValue) --version '\(version)' \
-              --out \(packsDirectory) --base-url "file://\(root)/\(packsDirectory)"
-            scripts/engines/make-pack-index.sh --packs \(packsDirectory) --out pack-index.json \
-              --base-url "file://\(root)/\(packsDirectory)"
+              --out \(packsDirectory)
+            scripts/engines/make-pack-index.sh --packs \(packsDirectory) --out pack-index.json
             """))
         return steps
     }
@@ -196,7 +194,11 @@ public enum EnginePackBuildRunner {
         guard let data = FileManager.default.contents(atPath: path) else {
             throw EnginePackBuildError.releaseFileMissing(path)
         }
-        return try JSONDecoder().decode(EnginePackRelease.self, from: data)
+        let release = try JSONDecoder().decode(EnginePackRelease.self, from: data)
+        // Scripts write the archive's own file name, which is what keeps the
+        // index portable; the installer wants an absolute address, and the
+        // release file sits beside the archive it names.
+        return release.resolvedAgainst(index: URL(fileURLWithPath: path))
     }
 }
 

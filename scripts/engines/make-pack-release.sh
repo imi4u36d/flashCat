@@ -6,6 +6,11 @@
 #   scripts/engines/make-pack-release.sh --engine mtplx --version 2.12.2 --out dist/packs
 #   scripts/engines/make-pack-release.sh --engine splash --version 1.4.0 --base-url https://host/packs
 #
+# `url` in the release JSON is the archive's own file name — relative to
+# wherever the index ends up, so the same index works on any machine. Pass
+# `--base-url` only when the archives live somewhere other than beside the
+# index (a release CDN, say).
+#
 # Output (both optional to keep, the JSON is what you paste into pack-index.json):
 #   dist/packs/<engine>-<version>-arm64-macos<min>.tar.gz
 #   dist/packs/<engine>-<version>.sha256
@@ -61,7 +66,10 @@ SHA="$(shasum -a 256 "$ARCHIVE" | cut -d' ' -f1)"
 BYTES="$(stat -f%z "$ARCHIVE")"
 printf '%s  %s\n' "$SHA" "$(basename "$ARCHIVE")" > "$OUT/$NAME.sha256"
 
-URL="${BASE_URL%/}/$(basename "$ARCHIVE")"
+URL="$(basename "$ARCHIVE")"
+if [ -n "$BASE_URL" ]; then
+  URL="${BASE_URL%/}/$URL"
+fi
 cat > "$OUT/$NAME.release.json" <<JSON
 {
   "version": "$VERSION",

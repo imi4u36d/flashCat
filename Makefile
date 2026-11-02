@@ -46,8 +46,10 @@ splash-pack:
 	./scripts/engines/build-splash-pack.sh --version $(SPLASH_VERSION)
 
 ## Rebuild pack-index.json from dist/packs/*.release.json.
+## Entries are the archives' own file names; pass BASE_URL when the archives
+## live somewhere else than beside the index (`make pack-index BASE_URL=…`).
 pack-index:
-	./scripts/engines/make-pack-index.sh
+	./scripts/engines/make-pack-index.sh $(if $(BASE_URL),--base-url $(BASE_URL),)
 
 ## Remove build output (the installed app and the installers are kept).
 clean:

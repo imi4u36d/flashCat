@@ -54,6 +54,30 @@ final class EnginePackBuildPlannerTests: XCTestCase {
         XCTAssertEqual(steps.map(\.id), ["build", "release"])
     }
 
+    func testReleaseStepWritesPortableURLs() {
+        // The release + index step used to pass `--base-url file://$PWD/…`, which
+        // shipped machine-local addresses inside pack-index.json. The scripts
+        // write the archive's bare file name instead, so no prefix belongs here.
+        let steps = EnginePackBuildPlanner.steps(for: .omlx, version: "0.7.2", release: nil)
+        let release = steps.first { $0.id == "release" }
+        XCTAssertFalse(release?.command.contains("--base-url") ?? true)
+    }
+
+    func testLoadReleaseResolvesTheArchiveBesideTheReleaseFile() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("release-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("omlx-0.7.2.release.json")
+        let json = #"{"version":"0.7.2","url":"omlx-0.7.2-arm64-macos26.0.tar.gz","sha256":"a","bytes":1}"#
+        try Data(json.utf8).write(to: path)
+
+        let release = try EnginePackBuildRunner.loadRelease(at: path.path)
+
+        XCTAssertEqual(release.url,
+                       dir.appendingPathComponent("omlx-0.7.2-arm64-macos26.0.tar.gz").absoluteString)
+    }
+
     func testReleaseFilePath() {
         XCTAssertEqual(EnginePackBuildPlanner.releaseFile(for: .omlx, version: "0.7.3.dev2"),
                        "dist/packs/omlx-0.7.3.dev2.release.json")

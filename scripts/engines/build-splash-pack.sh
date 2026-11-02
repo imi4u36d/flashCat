@@ -236,9 +236,11 @@ printf '\nDone: %s\n' "$PACK_DIR"
 cat <<EOF
 
 Next steps:
-  1) 打包分发（生成 tarball + .sha256 + release.json 索引条目）:
-       scripts/engines/make-pack-release.sh --engine splash --version $VERSION \\
-         --base-url https://<your-host>/packs
+  1) 打包分发（生成 tarball + .sha256 + release.json 条目）:
+       scripts/engines/make-pack-release.sh --engine splash --version $VERSION
+     release.json 里的 url 是归档自己的文件名，相对索引解析；把归档放进哪一层，索引就在那一层读它。
+     仅当归档不跟索引同目录（比如上 CDN）时，在汇总索引时给前缀:
+       scripts/engines/make-pack-index.sh --base-url https://<your-host>/packs
   2) 本地安装测试: 把 $OUT/$ENGINE_ID/$VERSION 拷到应用的引擎目录，
      或直接用 make-pack-release.sh 产出的归档走 in-app installer。
 EOF

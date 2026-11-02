@@ -37,6 +37,10 @@ final class EngineInstallCenter: ObservableObject {
     /// Called after a pack finished installing; the launch page uses it to make
     /// the freshly installed engine the active one.
     var onInstalled: ((EngineID) -> Void)?
+    /// Called when an install fails. Whatever was waiting on that install — the
+    /// first-run page arms a model download for the moment its pack lands — has
+    /// to be released, or a later install of the same engine would fire it.
+    var onInstallFailed: ((EngineID) -> Void)?
     /// Success/failure bubbles surface through the app-wide toast.
     var onToast: ((String) -> Void)?
 
@@ -123,6 +127,7 @@ final class EngineInstallCenter: ObservableObject {
                     progress[id] = nil
                     progressStep[id] = nil
                     onToast?("\(id.displayName) 安装失败：\(error.localizedDescription)")
+                    onInstallFailed?(id)
                 }
             }
         }
@@ -250,12 +255,16 @@ final class EngineInstallCenter: ObservableObject {
     /// (see `EnginePackBuildPlanner`); progress streams into one ring instead of
     /// a log so a slow `uv pip install` (bootstrapped by the scripts) is not a
     /// silent hang.
-    func buildAndInstall(_ release: EngineUpstreamRelease, for id: EngineID) {
-        guard building == nil, installer != nil else { return }
+    /// Returns whether a build actually started, so callers can tell "queued"
+    /// from "silently did nothing" (another build running, or no source tree).
+    @discardableResult
+    func buildAndInstall(_ release: EngineUpstreamRelease, for id: EngineID) -> Bool {
+        guard building == nil, installer != nil else { return false }
         guard let repository = EnginePackBuildRunner.locateRepository() else {
             phases[id] = .failed(message: EnginePackBuildError.repositoryNotFound.localizedDescription)
             onToast?("构建失败：\(EnginePackBuildError.repositoryNotFound.localizedDescription)")
-            return
+            onInstallFailed?(id)
+            return false
         }
         building = id
         stepStartedAt[id] = Date()
@@ -309,9 +318,11 @@ final class EngineInstallCenter: ObservableObject {
                     clearProgress(id)
                     phases[id] = .failed(message: error.localizedDescription)
                     onToast?("\(id.displayName) \(release.version) 构建失败：\(error.localizedDescription)")
+                    onInstallFailed?(id)
                 }
             }
         }
+        return true
     }
 
 }

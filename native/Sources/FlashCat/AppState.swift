@@ -138,6 +138,16 @@ final class AppState: ObservableObject {
     /// weights can be on disk (browsing works without the runtime), so without
     /// this the switch would silently do nothing while claiming success.
     @Published var pendingEngineInstall: EngineID?
+    /// What this Mac should run, per engine; `nil` until the first launch has
+    /// decided. Stored in `AppSettings`, so the model page's tags outlive a
+    /// relaunch without touching the hardware again.
+    @Published private(set) var hardwareRecommendation: HardwareRecommendation?
+    /// The first-run page is up. Only when nothing is installed yet and the
+    /// question has not been answered before.
+    @Published var showsRecommendationPage = false
+    /// Model to download as soon as the recommended engine's install finishes:
+    /// the downloader refuses to run while the pack is missing.
+    @Published var pendingRecommendedDownload: (engine: EngineID, model: String)?
 
     /// Bumped whenever any engine's tuning is saved. `speculativeMode` reads it
     /// so a view showing the mode re-renders after the config page saves.
@@ -333,7 +343,7 @@ final class AppState: ObservableObject {
     /// No engine pack installed yet: the launch page owns the window until one
     /// is chosen.
     var needsEngineSetup: Bool { engines?.installedIDs.isEmpty ?? true }
-    var isPresentingLaunchPage: Bool { needsEngineSetup || showsLaunchPage }
+    var isPresentingLaunchPage: Bool { !showsRecommendationPage && (needsEngineSetup || showsLaunchPage) }
     var installedEngineIDs: [EngineID] { engines?.installedIDs ?? [] }
     /// Version of whatever engine is active, so the sidebar names the thing that
     /// is actually running instead of always claiming splash.
@@ -497,6 +507,11 @@ final class AppState: ObservableObject {
         engines?.sweepOrphanEngines()
         syncController()
 
+        // Work out (or recall) what this Mac should run before the launch page
+        // takes over: the first-run page and the launch page both ask "which
+        // engine", and the recommendation is what answers it.
+        settleRecommendation()
+
         // Nothing installed yet: the launch page takes over and picks an engine.
         guard !needsEngineSetup else {
             selectedModel = ""
@@ -547,6 +562,9 @@ final class AppState: ObservableObject {
                 self.libraryEngine = self.activeEngine
                 self.adoptSavedModel(for: self.activeEngine)
             }
+            // 有了引擎，首次运行的推荐页就不再成立：它既不能被这张页盖住
+            // 一个已经装好的引擎，也不能在没给出答案的情况下一直挂着。
+            if !self.needsEngineSetup { self.dismissRecommendationPage() }
             self.reloadModels()
             self.syncController()
             self.objectWillChange.send()
@@ -567,6 +585,27 @@ final class AppState: ObservableObject {
         adoptSavedModel(for: id)
         syncController()
         showsLaunchPage = false
+        // Adopting means a pack is on disk: the first-run question is answered by
+        // the install itself, so the page must not stay up over a working engine
+        // (it is a one-time question either way).
+        dismissRecommendationPage()
+        // The first-run page may have asked for an engine *and* its model. The
+        // downloader needs the pack on disk, so the model download waits for
+        // this moment instead of failing with "还没有安装…引擎".
+        if let pending = pendingRecommendedDownload {
+            pendingRecommendedDownload = nil
+            if pending.engine == id {
+                let model = pending.model
+                DispatchQueue.main.async { [weak self] in
+                    self?.downloadModel(model, engine: id)
+                }
+            }
+            // Another engine arrived first: `EngineInstallCenter.onInstalled` is
+            // a single slot, so the recommended engine's install can no longer
+            // report back and the latch can never be honoured. Drop it (a stale
+            // latch would fire a multi-GB download on some later install the
+            // user never re-confirmed) rather than leave it armed.
+        }
         objectWillChange.send()
     }
 
@@ -577,6 +616,96 @@ final class AppState: ObservableObject {
             selectedModel = first.id
             settings.setModel(first.id)
         }
+    }
+
+    // MARK: hardware
+
+    /// Work out (once) what this Mac should run, and open the first-run page
+    /// while nothing is installed yet.
+    ///
+    /// The answer is stored after the first run and only recomputed on request:
+    /// a recommendation that moved between launches would drag the model page's
+    /// ★ tag off a pack the user already started downloading.
+    func settleRecommendation() {
+        if let stored = settings.hardwareRecommendation {
+            hardwareRecommendation = stored
+        } else {
+            recomputeRecommendation()
+        }
+        // Someone who already had engines before this feature existed keeps
+        // their models: they get the tags silently, not a page telling them to
+        // start over. Writing `seen` here is also what stops an upgraded user
+        // whose packs later go missing from landing on a first-run page.
+        guard needsEngineSetup else {
+            settings.setHardwareRecommendationSeen(true)
+            return
+        }
+        guard !settings.hardwareRecommendationSeen else { return }
+        showsRecommendationPage = true
+    }
+
+    /// Re-detect this Mac and keep the new answer. Called from the settings
+    /// card; deliberately does not reopen the first-run page.
+    func recheckHardware() {
+        recomputeRecommendation()
+        // Name the tiers: a recheck that only says "done" leaves the user no way
+        // to see what changed without opening the settings card.
+        guard let picks = hardwareRecommendation?.picks, !picks.isEmpty else {
+            toast("已按当前配置重新检测，但没有可推荐的模型")
+            return
+        }
+        let summary = picks.map { pick -> String in
+            let engine = pick.engineID?.displayName ?? pick.engine
+            // 档位名 + （不匹配时）为什么，例如「MTPLX Qwen3.8-Flash-Next（内存可能不够）」。
+            return pick.verdict.runs ? "\(engine) \(pick.shortName)"
+                                     : "\(engine) \(pick.shortName)（\(pick.reason)）"
+        }.joined(separator: " · ")
+        toast("已重新检测：\(summary)")
+    }
+
+    private func recomputeRecommendation() {
+        let recommendation = HardwareAdvisor.recommend(machine: DeviceProfile.current().machine)
+        hardwareRecommendation = recommendation
+        settings.setHardwareRecommendation(recommendation)
+    }
+
+    /// Puts away the first-run page without answering it — used when an engine
+    /// arrives by other means (engines page, another install finishing), so the
+    /// page can never outlive its precondition and hide the launch page.
+    private func dismissRecommendationPage() {
+        guard showsRecommendationPage else { return }
+        showsRecommendationPage = false
+        settings.setHardwareRecommendationSeen(true)
+    }
+
+    /// Answer the first-run page. The engine install itself is started by the
+    /// shell (it owns `EngineInstallCenter`); this records what the answer was,
+    /// so `adoptEngine` can download the recommended model once the pack lands.
+    func dismissRecommendation(engine: EngineID?) {
+        showsRecommendationPage = false
+        settings.setHardwareRecommendationSeen(true)
+        guard let engine, let pick = hardwareRecommendation?.pick(for: engine) else { return }
+        pendingRecommendedDownload = (engine: engine, model: pick.model)
+    }
+
+    /// The recommendation tag the model page puts on a catalog entry, if this
+    /// Mac was told to run that entry on that engine.
+    ///
+    /// Compared through `ModelLibraryEntry.normalized`, not by string equality:
+    /// an installed pack's id is the flat folder name (`owner--repo`) and the
+    /// `:VARIANT` suffix is dropped on disk, so a raw compare would lose the tag
+    /// exactly when the recommended model is the one that is installed.
+    func recommendationTag(for id: String, engine: EngineID) -> String? {
+        guard let pick = hardwareRecommendation?.pick(for: engine),
+              ModelLibraryEntry.normalized(pick.model) == ModelLibraryEntry.normalized(id) else { return nil }
+        return "推荐 · " + pick.reason
+    }
+
+    /// An install that failed voids whatever the first-run page armed for it:
+    /// a later install of the same engine must not silently start a
+    /// multi-gigabyte model download the user did not ask for again.
+    func engineInstallFailed(_ engine: EngineID) {
+        if pendingRecommendedDownload?.engine == engine { pendingRecommendedDownload = nil }
     }
 
     // MARK: engines

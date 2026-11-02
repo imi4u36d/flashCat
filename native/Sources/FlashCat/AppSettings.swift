@@ -153,6 +153,31 @@ final class AppSettings {
     var hfCache: String { defaults.string(forKey: "hfCache") ?? "" }
     func setHfCache(_ value: String) { defaults.set(value, forKey: "hfCache") }
 
+    /// The recommendation worked out from this Mac's hardware, kept so the model
+    /// page can tag its suggestions without inspecting the machine again — and
+    /// so the answer does not change under a user who is halfway through a
+    /// first-run install.
+    var hardwareRecommendation: HardwareRecommendation? {
+        guard let data = defaults.data(forKey: "hardwareRecommendation") else { return nil }
+        return try? JSONDecoder().decode(HardwareRecommendation.self, from: data)
+    }
+
+    func setHardwareRecommendation(_ value: HardwareRecommendation?) {
+        guard let value else {
+            defaults.removeObject(forKey: "hardwareRecommendation")
+            return
+        }
+        defaults.set(try? JSONEncoder().encode(value), forKey: "hardwareRecommendation")
+    }
+
+    /// Whether the first-run recommendation page has already been answered.
+    /// Stored apart from the recommendation itself: re-checking the hardware
+    /// must not make the page pop up again.
+    var hardwareRecommendationSeen: Bool { defaults.bool(forKey: "hardwareRecommendation.seen") }
+    func setHardwareRecommendationSeen(_ value: Bool) {
+        defaults.set(value, forKey: "hardwareRecommendation.seen")
+    }
+
     /// Which skin the console wears. `.system` follows the macOS appearance.
     var appearance: AppAppearance {
         get {

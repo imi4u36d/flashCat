@@ -40,7 +40,7 @@ tags: [models, huggingface, tags]
 
 **格式靠仓库自报的元数据判定，不靠猜名字。** 判定是自上而下先命中先得的具体四步：① `library_name=mtplx`；② GGUF 证据（`library_name=gguf`、`gguf` 标记、根级 `*.gguf`、完整的 `VARIANT/` 分片目录）；③ MTPLX 运行时证据（`mtp.safetensors`、`mtplx_runtime.json`）；④ `library_name=mlx` 或 `mlx` 标记。没有「`library_name` 一律优先」这回事——`library_name=mlx` 同时带根级 `.gguf` 的仓库归 Splash（②先于④）。MTPLX 包同时带 `mlx` 标记，所以①必须排在④前面。有 safetensors + `config.json` 但四步都不命中的仓库归 oMLX 并标「未验证」；其余格式不出现在结果里。
 
-**GGUF 的量化工件名直接问引擎的规则，不自己发明。** Splash 的 `install/upstream.py:select_gguf` 是唯一权威，它有两条规则：`:VARIANT` 一是「所有根级 GGUF 候选共享词前缀之后的剩余词用 `-` 连接」，二是兜底「唯一以 `-VARIANT` 结尾的文件」；`VARIANT/` 目录里的分片则以目录名作 variant，且要求 `-\d{5}-of-\d{5}` 五位数分片齐全。应用侧镜像这三条，选出的 token 必定被引擎接受——这是唯一让「任意 GGUF 仓库」可信的办法。
+**GGUF 的量化工件名直接问引擎的规则，不自己发明。** Splash 的 `install/upstream.py:select_gguf` 是唯一权威，它认三种名字：① `:VARIANT` 等于「所有根级 GGUF 候选共享词前缀之后的剩余词用 `-` 连接」；② 兜底「唯一以 `-VARIANT` 结尾的文件」；③ `VARIANT/` 目录名，但要求 `-\d{5}-of-\d{5}` 五位数分片齐全。应用侧逐条镜像这三种写法，选出的 token 必定被引擎接受——这是唯一让「任意 GGUF 仓库」可信的办法。
 
 **体积与内存下限要标出估算。** 体积取单仓库接口的真实字节（列表接口的 `siblings[].size` 恒为 null）。内存下限按仓库是否在目录里分两源：**仓库 id 命中目录行时直接复用它的 `minimumMemory`**（那是有实测依据的值，含 KV cache，`Qwen3.6-35B-A3B-4bit` 是 32 GiB，而纯权重的 `ceil(bytes×1.2)` 只有 ≈23 GiB）；只有目录外的仓库才用 `ceil(bytes * 1.2)`，此时界面上带 ≈。两者都直接和 `DeviceProfile.memoryGB` 比，所以同一款模型无论在搜索里还是目录里都得给同一个数，否则会出现「搜索里能跑、目录里内存不够」。
 

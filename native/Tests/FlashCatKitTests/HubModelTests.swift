@@ -212,4 +212,17 @@ final class HubModelTests: XCTestCase {
         let raw = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [[String: Any]])
         XCTAssertTrue(raw.compactMap(HubSearchClient.model(from:)).isEmpty)
     }
+
+    /// Split parts at the root are not quants: the engine treats each shard as
+    /// a target and would load one part of a model.
+    func testSplitPartsAtTheRootAreNotOfferedAsQuants() {
+        let sizes = ["Swift-IQ2_XS-00001-of-00002.gguf": 39_700_000_000,
+                     "Swift-IQ2_XS-00002-of-00002.gguf": 28_300_000_000,
+                     "Swift-Q2_0.gguf": 66_000_000_000]
+        let variants = HubModelLayout.ggufVariants(paths: Array(sizes.keys), sizes: sizes)
+        // One GGUF left at the root, so the engine needs no variant for it.
+        XCTAssertEqual(variants.map(\.name), [nil])
+        XCTAssertEqual(variants.first?.files, ["Swift-Q2_0.gguf"])
+        XCTAssertEqual(variants.first?.bytes, 66_000_000_000)
+    }
 }

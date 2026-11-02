@@ -198,7 +198,11 @@ public enum HubModelLayout {
             variants.append(GGUFVariant(name: folder.variant, bytes: bytes, files: folder.files))
         }
 
-        let roots = rootGGUFs(paths)
+        // A split GGUF belongs in its `VARIANT/` folder. Repositories do
+        // publish the parts at the root too, where the engine sees each part as
+        // its own target and would load a single shard — a 39 GB download that
+        // cannot run. Those parts are left out rather than offered.
+        let roots = rootGGUFs(paths).filter { splitName($0) == nil && !isSplitPart($0) }
         let words = roots.map { path -> [String] in
             (path as NSString).deletingPathExtension.split(separator: "-").map(String.init)
         }
@@ -223,6 +227,16 @@ public enum HubModelLayout {
             variants = [GGUFVariant(name: nil, bytes: sizes[roots[0]] ?? 0, files: [roots[0]])]
         }
         return variants
+    }
+
+    /// Whether a root file is one part of a split GGUF (`NAME-00001-of-00002`),
+    /// which only means something inside its `VARIANT/` folder.
+    private static func isSplitPart(_ path: String) -> Bool {
+        let stem = (path as NSString).deletingPathExtension
+        let words = stem.split(separator: "-").map(String.init)
+        guard words.count >= 3, words[words.count - 2] == "of" else { return false }
+        return words[words.count - 3].count == 5 && words[words.count - 3].allSatisfy(\.isNumber)
+            && words[words.count - 1].count == 5 && words[words.count - 1].allSatisfy(\.isNumber)
     }
 
     /// The shortest tail of `path` that the engine's `-VARIANT` suffix rule

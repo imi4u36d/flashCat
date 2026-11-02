@@ -131,6 +131,9 @@ final class AppState: ObservableObject {
     /// stopped — or that has no weights at all — can still be inspected,
     /// filled from the Hub and compared with the others.
     @Published var libraryEngine: EngineID = .splash
+    /// Hub search for the model page. Session-scoped: the results live in
+    /// memory only, so switching engines or relaunching drops them.
+    @Published private(set) var hubSearch = HubSearchState()
     /// Set when a model is picked for an engine that is not running: the switch
     /// is a bigger step than a model change, so it asks first.
     @Published var pendingLibraryUse: LibraryUseRequest?
@@ -829,6 +832,49 @@ final class AppState: ObservableObject {
 
     func browseEngine(_ id: EngineID) {
         libraryEngine = id
+    }
+
+    // MARK: Hub search
+
+    private static let hubClient = HubSearchClient()
+    /// Bumped on every keystroke that starts a search so a slow answer cannot
+    /// overwrite a newer one.
+    private var hubSearchTicket = 0
+
+    /// Search the Hub for repositories the current column can serve.
+    ///
+    /// Two requests, not one: the list endpoint's `siblings[].size` is always
+    /// null, so sizes only come from the per-repository endpoint, fetched
+    /// concurrently for the handful of hits that survive the format filter.
+    func searchHub(_ query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        hubSearchTicket += 1
+        let ticket = hubSearchTicket
+        guard !trimmed.isEmpty else {
+            hubSearch = HubSearchState()
+            return
+        }
+        hubSearch = HubSearchState(query: trimmed, phase: .loading)
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let hits = try await Self.hubClient.search(trimmed)
+                let enriched = await Self.hubClient.enrich(hits)
+                let results = enriched.compactMap { HubSearchState.result(for: $0) }
+                guard ticket == self.hubSearchTicket else { return }
+                self.hubSearch = HubSearchState(query: trimmed, phase: .idle, results: results)
+            } catch {
+                guard ticket == self.hubSearchTicket else { return }
+                let message = (error as? HubError)?.errorDescription ?? "\(error)"
+                self.hubSearch = HubSearchState(query: trimmed, phase: .failed, error: message)
+            }
+        }
+    }
+
+    /// The search hits the given column may show. Ownership comes from the
+    /// repository's own format, so a row never appears in two columns.
+    func hubResults(for engine: EngineID) -> [HubSearchResult] {
+        hubSearch.results.filter { $0.engine == engine }
     }
 
     // MARK: draft assignments

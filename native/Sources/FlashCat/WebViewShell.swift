@@ -173,6 +173,8 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
             if let engine, let id = body["id"] as? String { state.useModel(id, engine: engine) }
         case "downloadModel":
             if let engine, let id = body["id"] as? String { state.downloadModel(id, engine: engine) }
+        case "searchHub":
+            if let query = body["query"] as? String { state.searchHub(query) }
         case "removeModel":
             if let engine, let id = body["id"] as? String { confirmRemoveModel(id, engine: engine) }
         case "revealModel":
@@ -714,6 +716,38 @@ enum WebSnapshot {
             },
         ]
 
+        // 搜索只活在当前会话：没有 query 时整格传 null，网页据此隐藏结果区。
+        var hubSearchJSON: Any = NSNull()
+        if !state.hubSearch.isEmpty {
+            hubSearchJSON = [
+                "query": state.hubSearch.query,
+                "state": state.hubSearch.phase.rawValue,
+                "error": state.hubSearch.error ?? "",
+                "results": state.hubResults(for: state.libraryEngine).map { result -> [String: Any] in
+                    var item: [String: Any] = [
+                        "id": result.id,
+                        "repo": result.repo,
+                        "display": result.shortName,
+                        "engine": result.engine.rawValue,
+                        "kind": result.kind.rawValue,
+                        "bytes": result.bytes,
+                        "memory": result.memoryGB,
+                        "estimated": result.estimated,
+                        "downloads": result.downloads,
+                        "originText": "Hugging Face",
+                        "options": result.options.map { option -> [String: Any] in
+                            ["name": option.name ?? "", "label": option.label,
+                             "bytes": option.bytes, "memory": option.memoryGB,
+                             "estimated": option.estimated]
+                        },
+                    ]
+                    if let summary = result.summary { item["summary"] = summary }
+                    if !result.tags.isEmpty { item["tags"] = result.tags }
+                    return item
+                },
+            ]
+        }
+
         var enginesInstall: [String: Any] = [:]
         for id in EngineID.allCases {
             let info = state.installs
@@ -901,6 +935,7 @@ enum WebSnapshot {
                          .map { $0.id }]
                 },
             "library": library,
+            "hubSearch": hubSearchJSON,
             "downloads": downloads,
             "logs": state.logs.suffix(800).map { line -> [String: Any] in
                 return [

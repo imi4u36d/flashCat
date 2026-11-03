@@ -177,7 +177,7 @@ function snapshotKey(state) {
 }
 
 // 侧边栏折叠：状态由 Swift 持有（菜单「折叠侧边栏 ⌘\」也在改它），
-// 网页只负责把 body 切到 rail 一档，宽度过渡交给 CSS。
+// 网页只负责把 body 切到 rail 一档，宽度与手柄滑动过渡交给 CSS。
 function applySidebar() {
   const rail = !!(S && S.sidebar === false);
   const next = rail ? "rail" : "full";
@@ -453,13 +453,15 @@ function sameNode(a, b) {
   if (a.nodeType !== 1) return false;                // 注释等：整块换掉
   if (a.tagName !== b.tagName) return false;
   if (a.id !== b.id) return false;                   // id 变了说明角色变了
-  return (a.getAttribute("data-key") || "") === (b.getAttribute("data-key") || "");
+  return (a.getAttribute("data-key") || "") === (b.getAttribute("data-key") || "")
+    && (a.getAttribute("data-overlay") || "") === (b.getAttribute("data-overlay") || "");
 }
 
-// 节点的稳定身份：优先 data-key（消息按 id），其次 data-log（日志行按 id）。
+// 节点的稳定身份：优先 data-key（消息按 id），其次 data-log（日志行按 id），
+// 弹层根节点用 data-overlay（按关闭动作区分）。
 function nodeKey(el) {
   if (!el || el.nodeType !== 1 || !el.getAttribute) return null;
-  const k = el.getAttribute("data-key") || el.getAttribute("data-log");
+  const k = el.getAttribute("data-key") || el.getAttribute("data-log") || el.getAttribute("data-overlay");
   return k ? el.tagName + "|" + k : null;
 }
 
@@ -2977,24 +2979,20 @@ function renderOverlays() {
   // 别重建：.modal-body 是自己的滚动容器，重建一次 scrollTop 就被顶回 0——
   // 「模型启动时开着引擎配置，页面一直弹回顶部」就是这么来的。
   if (host.dataset.sig === html) return;
-  // 真要重建（进度/阶段文本确实变了）时，按顺序保留每个弹层的滚动位。
-  // 但换了一个弹层就不能沿用它：从广场点进模型卡时，第 0 个 .modal-body 还是
-  // 同一个位置，滚动位照搬过去，模型卡就一打开就被顶到中间（标签行下面那行
-  // 文字被切掉半截）。用开头几十个字认一认是不是同一个弹层的内容。
-  const prevBodies = [...host.querySelectorAll(".modal-body")];
-  const prevTops = prevBodies.map((el) => el.scrollTop);
-  const prevKeys = prevBodies.map((el) => (el.textContent || "").slice(0, 40));
-  // 重建会把正在输入的元素一并换掉：记住键盘焦点与光标位置，重建后放回去。
-  // 手填仓库的预检结果是打字间隙回来的，丢焦点就等于「输入到一半被吃掉」。
+  // 内容真的变化时也只合并节点，不重建整层：进度每 0.5s 更新一次，整块
+  // innerHTML 会让 mask/modal 的入场动画从 0% 重播，看起来就是弹窗持续闪烁；
+  // 同时 .modal-body 的滚动位和输入焦点也会被清掉。data-overlay 让同一个
+  // 弹层稳定复用，仅在确实换到另一个弹层时才插入带入场动画的新节点。
+  const tpl = document.createElement("template");
+  tpl.innerHTML = html;
+  // 换弹层时仍要把焦点交给新弹层的输入框（例如广场 → 手填仓库 id）。
   const active = document.activeElement;
   const focusKey = active && active.dataset ? active.dataset.key : null;
   const caret = focusKey && typeof active.selectionStart === "number"
     ? [active.selectionStart, active.selectionEnd]
     : null;
-  host.innerHTML = html;
-  host.querySelectorAll(".modal-body").forEach((el, i) => {
-    if (prevTops[i] && prevKeys[i] === (el.textContent || "").slice(0, 40)) el.scrollTop = prevTops[i];
-  });
+  morphChildren(host, tpl.content);
+  host.dataset.sig = html;
   bindOverlays(host);
   if (focusKey) {
     const el = host.querySelector(`[data-key="${focusKey}"]`);
@@ -3017,84 +3015,139 @@ function modal(inner, cancelAct, wide) {
       `$1<div class="modal-head"><div class="modal-title">$2</div><button class="modal-x" data-act="${esc(cancelAct)}" title="关闭">✕</button></div>`,
     );
   }
-  return `<div class="mask" data-cancel="${esc(cancelAct || "")}"><div class="modal ${wide ? "wide" : ""}">${body}</div></div>`;
+  return `<div class="mask" data-overlay="${esc(cancelAct || "modal")}" data-cancel="${esc(cancelAct || "")}"><div class="modal ${wide ? "wide" : ""}">${body}</div></div>`;
 }
 
+// morph 会保留旧节点，也会插入新节点。绑定表记在节点自身，避免每次局部
+// 更新都给同一个控件叠加一份监听。
+const overlayBindings = new WeakMap();
+function bindOverlayOnce(el, kind, setup) {
+  let kinds = overlayBindings.get(el);
+  if (!kinds) {
+    kinds = new Set();
+    overlayBindings.set(el, kinds);
+  }
+  if (kinds.has(kind)) return;
+  kinds.add(kind);
+  setup();
+}
 function bindOverlays(host) {
   host.querySelectorAll(".mask").forEach((mask) => {
-    mask.addEventListener("click", (e) => {
-      if (e.target === mask && mask.dataset.cancel) handleAction(mask.dataset.cancel);
+    bindOverlayOnce(mask, "cancel", () => {
+      mask.addEventListener("click", (e) => {
+        if (e.target === mask && mask.dataset.cancel) handleAction(mask.dataset.cancel);
+      });
     });
   });
   host.querySelectorAll("[data-act]").forEach((el) => {
-    el.addEventListener("click", (e) => { e.stopPropagation(); handleAction(el.dataset.act, el.dataset.arg); });
+    bindOverlayOnce(el, "action", () => {
+      el.addEventListener("click", (e) => { e.stopPropagation(); handleAction(el.dataset.act, el.dataset.arg); });
+    });
   });
   // 引擎配置草稿
-  host.querySelectorAll("[data-cfgtgl]").forEach((el) => el.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (el.classList.contains("disabled")) return;
-    const key = el.dataset.cfgtgl;
-    const t = cfgModel().tuning;
-    const value = !(t[key] != null ? t[key] : el.dataset.d === "1");
-    if (key === "thinkingBudgetCustom") {
-      // 开关只是自定义与默认 16384 之间的切换：开 = 补默认值可改，关 = 清空回落。
-      t.thinkingBudgetCustom = value;
-      if (value && t.thinkingBudget == null) t.thinkingBudget = 16384;
-      if (!value) t.thinkingBudget = null;
-    } else {
-      t[key] = value;
-    }
-    // oMLX 的 MTP 与 DFlash 互斥：开一个关另一个。
-    if (UI.configEngine === "omlx") {
-      if (key === "mtp" && value) t.dflash = false;
-      if (key === "dflash" && value) t.mtp = false;
-    }
-    renderOverlays();
-  }));
-  host.querySelectorAll("[data-cfg]").forEach((el) => el.addEventListener("input", () => {
-    const key = el.dataset.cfg;
-    const v = el.value.trim();
-    // 数值旋钮（mtpDepth/mtpQuantBits/thinkingBudget）必须以数字提交，
-    // 字符串会在 Swift 侧解码 EngineTuning 时失败。
-    const n = Number(v);
-    cfgModel().tuning[key] = v === "" ? null
-      : (cfgNumericKeys[key] && Number.isFinite(n) ? n : v);
-  }));
-  host.querySelectorAll("[data-hubq]").forEach((el) => el.addEventListener("input", () => {
-    // 搜索框打字不重绘：快照每两秒推一次，重绘会把光标和 IME 打断。
-    hubDraft().query = el.value;
-  }));
-  host.querySelectorAll("[data-hubq]").forEach((el) => el.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); handleAction("hubSearch"); }
-  }));
-  host.querySelectorAll("[data-repo]").forEach((el) => el.addEventListener("input", () => {
-    const d = repoDlDraft();
-    d.repo = el.value;
-    d.error = "";
-    repoProbeSoon(el.value);
-  }));
-  host.querySelectorAll("[data-cfgport]").forEach((el) => el.addEventListener("input", () => {
-    el.value = el.value.replace(/[^0-9]/g, "").slice(0, 5);
-    cfgModel().port = el.value;
-  }));
-  host.querySelectorAll("[data-finder]").forEach((el) => el.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const [kind, eng] = el.dataset.finder.split("|");
-    cmd("openFinder", { kind, engine: eng });
-  }));
+  host.querySelectorAll("[data-cfgtgl]").forEach((el) => {
+    bindOverlayOnce(el, "cfgtgl", () => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (el.classList.contains("disabled")) return;
+        const key = el.dataset.cfgtgl;
+        const t = cfgModel().tuning;
+        const value = !(t[key] != null ? t[key] : el.dataset.d === "1");
+        if (key === "thinkingBudgetCustom") {
+          // 开关只是自定义与默认 16384 之间的切换：开 = 补默认值可改，关 = 清空回落。
+          t.thinkingBudgetCustom = value;
+          if (value && t.thinkingBudget == null) t.thinkingBudget = 16384;
+          if (!value) t.thinkingBudget = null;
+        } else {
+          t[key] = value;
+        }
+        // oMLX 的 MTP 与 DFlash 互斥：开一个关另一个。
+        if (UI.configEngine === "omlx") {
+          if (key === "mtp" && value) t.dflash = false;
+          if (key === "dflash" && value) t.mtp = false;
+        }
+        renderOverlays();
+      });
+    });
+  });
+  host.querySelectorAll("[data-cfg]").forEach((el) => {
+    bindOverlayOnce(el, "cfg", () => {
+      el.addEventListener("input", () => {
+        const key = el.dataset.cfg;
+        const v = el.value.trim();
+        // 数值旋钮（mtpDepth/mtpQuantBits/thinkingBudget）必须以数字提交，
+        // 字符串会在 Swift 侧解码 EngineTuning 时失败。
+        const n = Number(v);
+        cfgModel().tuning[key] = v === "" ? null
+          : (cfgNumericKeys[key] && Number.isFinite(n) ? n : v);
+      });
+    });
+  });
+  host.querySelectorAll("[data-hubq]").forEach((el) => {
+    bindOverlayOnce(el, "hub-input", () => {
+      el.addEventListener("input", () => {
+        // 搜索框打字不重绘：快照每两秒推一次，重绘会把光标和 IME 打断。
+        hubDraft().query = el.value;
+      });
+    });
+    bindOverlayOnce(el, "hub-key", () => {
+      el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); handleAction("hubSearch"); }
+      });
+    });
+  });
+  host.querySelectorAll("[data-repo]").forEach((el) => {
+    bindOverlayOnce(el, "repo", () => {
+      el.addEventListener("input", () => {
+        const d = repoDlDraft();
+        d.repo = el.value;
+        d.error = "";
+        repoProbeSoon(el.value);
+      });
+    });
+  });
+  host.querySelectorAll("[data-cfgport]").forEach((el) => {
+    bindOverlayOnce(el, "cfgport", () => {
+      el.addEventListener("input", () => {
+        el.value = el.value.replace(/[^0-9]/g, "").slice(0, 5);
+        cfgModel().port = el.value;
+      });
+    });
+  });
+  host.querySelectorAll("[data-finder]").forEach((el) => {
+    bindOverlayOnce(el, "finder", () => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const [kind, eng] = el.dataset.finder.split("|");
+        cmd("openFinder", { kind, engine: eng });
+      });
+    });
+  });
   // 对话参数控件
-  host.querySelectorAll("[data-cprange]").forEach((el) => el.addEventListener("input", () => {
-    const d = chatParamsDraft();
-    d[el.dataset.cprange] = Number(el.value);
-    const out = document.getElementById("cpv-" + el.dataset.cprange);
-    if (out) out.textContent = Number(el.value).toFixed(2);
-  }));
-  host.querySelectorAll("[data-cpnum]").forEach((el) => el.addEventListener("input", () => {
-    chatParamsDraft()[el.dataset.cpnum] = el.value.replace(/[^0-9]/g, "");
-  }));
-  host.querySelectorAll("[data-cptext]").forEach((el) => el.addEventListener("input", () => {
-    chatParamsDraft()[el.dataset.cptext] = el.value;
-  }));
+  host.querySelectorAll("[data-cprange]").forEach((el) => {
+    bindOverlayOnce(el, "cprange", () => {
+      el.addEventListener("input", () => {
+        const d = chatParamsDraft();
+        d[el.dataset.cprange] = Number(el.value);
+        const out = document.getElementById("cpv-" + el.dataset.cprange);
+        if (out) out.textContent = Number(el.value).toFixed(2);
+      });
+    });
+  });
+  host.querySelectorAll("[data-cpnum]").forEach((el) => {
+    bindOverlayOnce(el, "cpnum", () => {
+      el.addEventListener("input", () => {
+        chatParamsDraft()[el.dataset.cpnum] = el.value.replace(/[^0-9]/g, "");
+      });
+    });
+  });
+  host.querySelectorAll("[data-cptext]").forEach((el) => {
+    bindOverlayOnce(el, "cptext", () => {
+      el.addEventListener("input", () => {
+        chatParamsDraft()[el.dataset.cptext] = el.value;
+      });
+    });
+  });
 }
 
 function downloadsBody() {
@@ -3161,8 +3214,8 @@ document.addEventListener("mousedown", (e) => {
 });
 
 // 折叠手柄是静态节点（在 index.html 里，不参与侧栏/页面重绘）：
-// 开机给它填图标、接上动作。它必须留在 #side 外面——折叠后它停在红绿灯右侧 x=72，
-// 而侧栏只剩 68 宽，放在里面会被 overflow:hidden / contain:paint 裁掉。
+// 开机给它填图标、接上动作。它必须留在 #side 外面——折叠后它停在 rail 右外侧，
+// 放在里面会被 overflow:hidden / contain:paint 裁掉。
 (function initSideToggle() {
   const btn = document.querySelector(".side-toggle");
   if (!btn) return;

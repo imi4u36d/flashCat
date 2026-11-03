@@ -125,7 +125,7 @@ enum Native {
     static let metricNumFont = Font.system(size: 30, weight: .bold, design: .monospaced)
 
     static let sidebarWidth: CGFloat = 244
-    static let railWidth: CGFloat = 68
+    static let railWidth: CGFloat = 84
 }
 
 extension View {

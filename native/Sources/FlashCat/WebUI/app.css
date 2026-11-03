@@ -39,6 +39,10 @@ body {
   /* 原生标题栏那一行的高度（红绿灯居中在这一行里）。WebView 现在铺满整个窗口，
      这一行也由网页来画，红绿灯浮在网页上面。 */
   --tb: 28px;
+  /* 侧栏两档宽度只在这里定义。折叠态必须比系统红绿灯组宽出一段留白，
+     否则按钮和导航迁到 rail 后，红绿灯会顶到侧栏的右边线上。 */
+  --side-full: 218px;
+  --side-rail: 84px;
   /* 侧栏折叠的时长与曲线只定义一次：列宽、文字淡出、内容收折全部引用它，
      否则几条过渡曲线各走各的，怎么调都「不齐」。
      曲线要「两头速度为 0」：强 ease-out（.32,.72,0,1 之类）前 90ms 就冲完 90%，
@@ -79,11 +83,11 @@ body[data-mode="dark"] {
 }
 
 /* ---------- 侧栏 ---------- */
-/* 展开 218px / 折叠 68px 图标 rail：导航不消失，只让出宽度。
+/* 展开 218px / 折叠 84px 图标 rail：导航不消失，只让出宽度。
    折叠时「消失」的那些东西一律用 opacity / max-width 过渡，绝不在 t=0 换 display ——
    一旦某层瞬间塌掉，列宽却还在动，看上去就是先僵一下再跳一格。 */
 .side {
-  flex: 0 0 218px; width: 218px; position: relative;
+  flex: 0 0 var(--side-full); width: var(--side-full); position: relative;
   background: var(--w-side); border-right: 1px solid var(--w-line);
   /* 顶部让出标题栏那一行，侧栏底色因此一路铺到窗口顶边（红绿灯压在它上面） */
   padding: calc(var(--tb) + 14px) 12px 12px;
@@ -214,24 +218,23 @@ body[data-mode="dark"] {
 
 /* 折叠手柄：一枚安静的「面板」图标按钮，永远待在标题栏那一行上（top 2 + 24 高 → 中心 y=14，
    和红绿灯同轴）。横向两个停靠点：
-     · 展开态 left 182 → 侧栏右缘 218 内缩 12，正好贴在侧栏标题栏那一行的右端；
-     · 折叠态 left 72  → 红绿灯（实测占 x 10…61）右侧留 11px。
-   所以它既属于侧栏、又在侧栏收没之后仍有地方站：整段位移是 110px 的横滑，
-   和列宽用同一条曲线，看着就是「侧栏缩回去，按钮退到红绿灯旁边」。
-   注意它必须挂在 #side 之外（见 index.html）：折叠态 x=72 已经在 68 宽的侧栏外面，
+     · 展开态贴在侧栏标题栏那一行的右端；
+     · 折叠态停在 rail 右侧，和红绿灯之间留出完整间隔。
+   所以它既属于侧栏、又在侧栏收没之后仍有地方站：整段位移和列宽用同一条曲线，
+   看着就是「侧栏缩回去，按钮退到红绿灯旁边」。
+   注意它必须挂在 #side 之外（见 index.html）：折叠态已经在 rail 外面，
    放在里面会被 overflow:hidden / contain:paint 裁没。
    不用边框：这一栏里带边框的都代表「块」，孤零零一个描边方块会读成异类。 */
 .side-toggle {
   -webkit-appearance: none; appearance: none;
-  position: fixed; top: 2px; left: 182px; z-index: 40;
+  position: fixed; top: 2px; left: calc(var(--side-full) - 36px); z-index: 40;
   width: 24px; height: 24px; padding: 0; border: 0; border-radius: 7px;
   display: grid; place-items: center;
   background: transparent; color: var(--w-ink-2); cursor: pointer;
   transition: left var(--side-t), opacity .1s ease, background-color .12s ease, color .12s ease, transform .12s ease;
 }
-/* 折叠进行中把自己藏起来：它是被点的那个控件，不能一边被按着一边在指针底下横移。
-   0.1s 淡出 → 0.26s 后在新位置淡回（side-anim 由 applySidebar 挂 300ms）。 */
-body.side-anim .side-toggle { opacity: 0; pointer-events: none; }
+/* 折叠过程中按钮保持可见：它是指示侧栏状态的主控件，不能点一下先消失再回来。
+   横移仍与列宽共用同一条曲线，按压缩放只作用于按钮自身。 */
 .side-toggle svg { width: 16px; height: 16px; display: block; }
 /* 字色分级而不是透明度分级：16px 描边图标一降 alpha 就毛边。
    常态 ink-2（5.4:1，非文本 3:1 之上）——安静但不虚；自己悬停才加深并加浅底。 */
@@ -242,23 +245,27 @@ body.side-anim .side-toggle { opacity: 0; pointer-events: none; }
 body.launch-mode .side-toggle { display: none; }
 
 /* ---------- 折叠态（图标 rail） ---------- */
-body[data-side="rail"] .side { flex-basis: 68px; width: 68px; }
+body[data-side="rail"] .side { flex-basis: var(--side-rail); width: var(--side-rail); }
 body[data-side="rail"] .side-toggle svg { width: 17px; height: 17px; }
-/* 折叠态：按钮退到红绿灯右侧 11px 处（灯占 10…61），和展开态同一行、同一高度，
-   只横滑不改纵坐标——所以整段动画只有一个方向，不会看着「往下掉」。 */
-body[data-side="rail"] .side-toggle { left: 72px; }
+/* 折叠态：按钮停在 rail 右外侧，和展开态同一行、同一高度，只横滑不改纵坐标。 */
+body[data-side="rail"] .side-toggle { left: calc(var(--side-rail) + 4px); }
 /* 折叠方向：文字先退（.08s 淡出、无延迟），宽度后收（延迟 .05s） */
 body[data-side="rail"] .brand .txt { max-width: 0; opacity: 0;
   transition: max-width .24s var(--side-e) .05s, opacity .08s ease; }
+/* rail 变宽后 logo 仍要落在中轴，不能沿用展开态的左侧内边距。 */
+body[data-side="rail"] .brand {
+  padding-left: calc((var(--side-rail) - 30px) / 2 - 12px);
+  padding-right: calc((var(--side-rail) - 30px) / 2 - 12px);
+}
 /* 分组标题、最近对话、下载条：高度收 0，不换 display（换 display 等于 t=0 直接塌） */
 body[data-side="rail"] .side .group { max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0;
   transition: max-height .2s var(--side-e) .04s, padding .2s var(--side-e) .04s, opacity .08s ease; }
 body[data-side="rail"] .recents { grid-template-rows: 0fr; opacity: 0;
   transition: grid-template-rows .24s var(--side-e) .03s, opacity .08s ease; }
 /* 图标居中靠内边距而不是 justify-content：后者不能过渡，t=0 一切换图标就从
-   左端跳到中间。12 让 18 的图标落在 rail 中轴（12 + 1 描边 + 12 + 9 = 34）。 */
-body[data-side="rail"] .nav-item { padding: 8px 12px; }
-/* 折叠后图标是唯一信息：放一档到 19px，别在 68px 的 rail 里显小 */
+   左端跳到中间。20 让 18 的图标落在 84px rail 的中轴（12 + 1 + 20 + 9 = 42）。 */
+body[data-side="rail"] .nav-item { padding: 8px 20px; }
+/* 折叠后图标是唯一信息：放一档到 19px，别在图标 rail 里显小 */
 body[data-side="rail"] .nav-item .ico svg { width: 19px; height: 19px; }
 body[data-side="rail"] .nav-item .lbl { max-width: 0; opacity: 0;
   transition: max-width .24s var(--side-e) .04s, opacity .08s ease; }
@@ -269,13 +276,16 @@ body[data-side="rail"] .nav-item.active::before { left: -7px; }
 body[data-side="rail"] .side-dl { max-height: 0; margin: 0; padding: 0; border-width: 0; opacity: 0; overflow: hidden; }
 /* 引擎卡在 rail 里只留状态点：内边距/底色/描边都过渡，状态文字挪出文档流后淡出。
    点本身要落在 rail 中轴上，用 transform 平移（不参与布局，也不会有 justify-content
-   那种「t=0 先跳到中间再滑回来」）——17 = 34 - 13 - 4，从卡片左内边距挪到中轴。
+   那种「t=0 先跳到中间再滑回来」）。17 是点在 rail 里的自然横坐标，再用 rail
+   中轴的一半补齐差值，换宽度时不用再手算一次。
    上下内边距取 5 而不是 9：.row1 现在恒为 22 高（见其注释），9 会把卡片撑到 42，
    5 让 22 + 5×2 + 描边 2 = 34，状态点正好落在卡片中轴（1 + 5 + 11 = 17）。 */
 body[data-side="rail"] .engine-card { padding: 5px 0; background: transparent; border-color: transparent; }
 body[data-side="rail"] .engine-card:hover,
 body[data-side="rail"] .engine-card:focus-within { border-color: transparent; box-shadow: none; }
-body[data-side="rail"] .engine-card .dot { transform: translateX(17px); }
+body[data-side="rail"] .engine-card .dot {
+  transform: translateX(calc(var(--side-rail) / 2 - 17px));
+}
 body[data-side="rail"] .engine-card .st,
 body[data-side="rail"] .engine-card .act { position: absolute; opacity: 0; pointer-events: none; }
 body[data-side="rail"] .engine-card .more,
@@ -289,11 +299,11 @@ body[data-side="rail"] .engine-card .foot { display: none; }
 /* 正文滚上去时不要从红绿灯底下穿过去：盖一条与画布同色的标题栏底。
    left 跟着侧栏边界走（和列宽同一条曲线），折叠时不会在中间留一道旧位置的白边。 */
 .main::before {
-  content: ""; position: fixed; top: 0; left: 218px; right: 0; height: var(--tb);
+  content: ""; position: fixed; top: 0; left: var(--side-full); right: 0; height: var(--tb);
   background: var(--w-canvas); z-index: 30; pointer-events: none;
   transition: left var(--side-t);
 }
-body[data-side="rail"] .main::before { left: 68px; }
+body[data-side="rail"] .main::before { left: var(--side-rail); }
 body.launch-mode .main::before { left: 0; }
 /* 切页：旧页被整块换掉，新页按从属关系错峰上浮（标题先落，卡片随后）。
    0.26s 一条曲线，级差 30ms，最多 5 级——再长就成了「等它演完」。 */

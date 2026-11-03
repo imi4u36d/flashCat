@@ -2252,7 +2252,7 @@ final class AppState: ObservableObject {
     var sidebarAnimUntil = Date.distantPast
 
     func toggleSidebar() {
-        // UI 整体在网页里：这里只翻状态，快照推给 WebUI 由它做 218px ↔ 68px
+        // UI 整体在网页里：这里只翻状态，快照推给 WebUI 由它做 218px ↔ 84px
         // 的宽度过渡，Swift 侧不再需要驱动任何布局动画。
         showsSidebar.toggle()
         sidebarAnimUntil = Date().addingTimeInterval(0.35)

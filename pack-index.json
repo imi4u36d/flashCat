@@ -1,6 +1,16 @@
 {
   "schemaVersion": 1,
   "engines": {
+    "mlx-serve": [
+      {
+        "version": "26.11.1",
+        "url": "mlx-serve-26.11.1-arm64-macos26.4.tar.gz",
+        "sha256": "845261dcf046c8d895acba3e50fbec71bdaee9252246d73cf05505f3a6a19826",
+        "bytes": 89649259,
+        "minMacOS": "26.4",
+        "notes": ""
+      }
+    ],
     "mtplx": [
       {
         "version": "2.12.2",
@@ -52,6 +62,16 @@
         "sha256": "afbbda45a4491e1d26220c12b2672901278536a5b65607b3ef51f9288a1e1e82",
         "bytes": 77257310,
         "minMacOS": "26.0",
+        "notes": ""
+      }
+    ],
+    "strata": [
+      {
+        "version": "0.2.10",
+        "url": "strata-0.2.10-arm64-macos15.0.tar.gz",
+        "sha256": "5738d83206ec47769c43d73b2c0ce3d0bc3859f6968ca02230058f7183748513",
+        "bytes": 54401352,
+        "minMacOS": "15.0",
         "notes": ""
       }
     ]

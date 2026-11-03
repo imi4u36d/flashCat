@@ -13,6 +13,7 @@ struct HubSearchResult: Identifiable {
     let id: String
     let repo: String
     let engine: EngineID
+    let engines: Set<EngineID>
     let kind: HubModelKind
     /// Bytes the download costs, for the chosen quant or the biggest one.
     let bytes: Int
@@ -23,6 +24,8 @@ struct HubSearchResult: Identifiable {
     /// value, so the page can print it with ≈.
     let estimated: Bool
     let downloads: Int
+    /// Declared task modalities, when the Hub metadata identifies one.
+    let io: String?
     /// Every quant of a GGUF repository, each with its own size and memory
     /// floor — computed here so the page can switch quants without a round trip.
     let options: [Quant]
@@ -63,13 +66,22 @@ struct HubSearchResult: Identifiable {
         estimated ? "≈\(memoryGB) GB 内存起" : "\(memoryGB) GB 内存起"
     }
 
+    func targeting(_ engine: EngineID) -> HubSearchResult {
+        HubSearchResult(id: id, repo: repo, engine: engine, engines: engines,
+                        kind: kind, bytes: bytes, memoryGB: memoryGB,
+                        estimated: estimated, downloads: downloads, io: io,
+                        options: options, summary: summary, tags: tags)
+    }
+
     /// The same row with another quant of the same repository chosen.
     func choosing(_ quant: String?) -> HubSearchResult {
         guard let option = options.first(where: { $0.name == quant }) ?? options.last else { return self }
         let id = option.name.map { repo + ":" + $0 } ?? repo
-        return HubSearchResult(id: id, repo: repo, engine: engine, kind: kind,
+        return HubSearchResult(id: id, repo: repo, engine: engine, engines: engines,
+                               kind: kind,
                                bytes: option.bytes, memoryGB: option.memoryGB,
                                estimated: option.estimated, downloads: downloads,
+                               io: io,
                                options: options, summary: summary, tags: tags)
     }
 
@@ -107,19 +119,20 @@ struct HubSearchState {
     /// GGUF is Splash's channel and MTPLX packs are MTPLX's, each by product
     /// rule rather than capability; everything else MLX-ish is the general
     /// engine's.
-    static func engine(for kind: HubModelKind) -> EngineID? {
+    static func engines(for kind: HubModelKind) -> Set<EngineID> {
         switch kind {
-        case .gguf: return .splash
-        case .mtplx: return .mtplx
-        case .mlx, .unmarked: return .omlx
-        case .unknown: return nil
+        case .gguf: return [.splash, .strata]
+        case .mtplx: return [.mtplx]
+        case .mlx, .unmarked: return [.omlx, .mlxServe]
+        case .unknown: return []
         }
     }
 
     /// A repository as one result row, with the catalog's summary and tags when
     /// the catalog knows it.
     static func result(for model: FlashCatKit.HubModel) -> HubSearchResult? {
-        guard let engine = engine(for: model.kind) else { return nil }
+        let engines = engines(for: model.kind)
+        guard let engine = EngineCatalog.allIDs.first(where: { engines.contains($0) }) else { return nil }
         let repo = model.id
         let variants = model.ggufVariants
         let options: [HubSearchResult.Quant]
@@ -144,9 +157,10 @@ struct HubSearchState {
         guard let start = sized.min(by: { $0.bytes < $1.bytes }) else { return nil }
         let row = ModelRecommendations.recommendation(for: repo)
         return HubSearchResult(id: start.name.map { repo + ":" + $0 } ?? repo,
-                               repo: repo, engine: engine, kind: model.kind,
+                               repo: repo, engine: engine, engines: engines, kind: model.kind,
                                bytes: start.bytes, memoryGB: start.memoryGB,
                                estimated: start.estimated, downloads: model.downloads,
+                               io: model.ioTypes?.label,
                                options: sized, summary: row?.summary, tags: row?.tags ?? [])
     }
 }

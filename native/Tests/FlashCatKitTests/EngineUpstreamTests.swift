@@ -21,6 +21,8 @@ final class EngineUpstreamTests: XCTestCase {
         XCTAssertEqual(EngineUpstream.repository(for: .omlx), "jundot/omlx")
         XCTAssertEqual(EngineUpstream.repository(for: .mtplx), "youssofal/mtplx")
         XCTAssertEqual(EngineUpstream.repository(for: .splash), "incoai/splash")
+        XCTAssertEqual(EngineUpstream.repository(for: .mlxServe), "ddalcu/mlx-serve")
+        XCTAssertEqual(EngineUpstream.repository(for: .strata), "Niko1221/Strata")
         XCTAssertEqual(EngineUpstream.releasesPage(for: .splash).absoluteString,
                        "https://github.com/incoai/splash/releases")
     }

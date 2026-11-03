@@ -9,7 +9,9 @@ final class EngineCoreTests: XCTestCase {
         XCTAssertEqual(EngineID.splash.defaultPort, 8000)
         XCTAssertEqual(EngineID.omlx.defaultPort, 8100)
         XCTAssertEqual(EngineID.mtplx.defaultPort, 8200)
-        for id in EngineID.allCases {
+        XCTAssertEqual(EngineID.mlxServe.defaultPort, 8300)
+        XCTAssertEqual(EngineID.strata.defaultPort, 8400)
+        for id in EngineCatalog.allIDs {
             XCTAssertEqual(id.portRange.count, 20)
             XCTAssertEqual(id.portRange.first, id.defaultPort)
         }
@@ -19,14 +21,72 @@ final class EngineCoreTests: XCTestCase {
         XCTAssertEqual(EngineID.omlx.switchMode, .hot)
         XCTAssertEqual(EngineID.mtplx.switchMode, .restart)
         XCTAssertEqual(EngineID.splash.switchMode, .restart)
+        XCTAssertEqual(EngineID.mlxServe.switchMode, .hot)
+        XCTAssertEqual(EngineID.strata.switchMode, .restart)
+        XCTAssertEqual(EngineID.splash.descriptor.modelLayout, .nested)
         XCTAssertTrue(EngineID.omlx.capabilities.contains(.hotLoad))
         XCTAssertTrue(EngineID.mtplx.capabilities.contains(.mtp))
+        XCTAssertTrue(EngineID.mlxServe.capabilities.contains(.hotLoad))
+        XCTAssertTrue(EngineID.strata.capabilities.contains(.mtp))
     }
 
-    func testUnknownCapabilityDegradesInsteadOfThrowing() throws {
+    func testFirstPartyEngineCatalogIsCompleteAndPortBandsDoNotCollide() {
+        let ids = EngineCatalog.allIDs
+        XCTAssertEqual(ids, [.splash, .omlx, .mtplx, .mlxServe, .strata])
+        var seen = Set<Int>()
+        for id in ids {
+            let descriptor = EngineCatalog.descriptor(for: id)
+            XCTAssertEqual(descriptor.id, id)
+            XCTAssertFalse(descriptor.displayName.isEmpty)
+            XCTAssertTrue(seen.insert(descriptor.defaultPort).inserted,
+                          "duplicate default port for \(id.rawValue)")
+        }
+    }
+
+    func testManifestCanDescribeModelControlWithoutEngineSpecificBranches() throws {
+        let json = """
+        {
+          "schemaVersion": 1,
+          "id": "mlx-serve",
+          "name": "MLX-Serve",
+          "version": "26.11.1",
+          "kind": "download",
+          "arch": "arm64",
+          "minMacOS": "26.4",
+          "entrypoint": "mlx-serve",
+          "launchProfiles": {"default": {"args": ["--serve", "--port", "{port}"]}},
+          "health": {"path": "/health", "readyStatus": 200},
+          "defaultPort": 8300,
+          "modelSwitch": "hot",
+          "capabilities": ["chat", "hot-load"],
+          "adapter": "mlx-serve",
+          "modelControl": {
+            "load": {
+              "method": "POST",
+              "path": "/v1/load-model",
+              "body": {"model": "{model}", "default": true}
+            },
+            "unload": {
+              "method": "POST",
+              "path": "/v1/unload-model",
+              "body": {"model": "{model}"}
+            }
+          }
+        }
+        """
+        let manifest = try JSONDecoder().decode(EngineManifest.self, from: Data(json.utf8))
+        let descriptor = EngineDescriptor.resolve(manifest: manifest)
+        XCTAssertEqual(descriptor.adapter, .mlxServe)
+        XCTAssertEqual(descriptor.modelControl?.load?.path, "/v1/load-model")
+        XCTAssertEqual(descriptor.modelControl?.load?.body?["model"], .string("{model}"))
+        XCTAssertEqual(descriptor.modelControl?.load?.body?["default"], .bool(true))
+    }
+
+    func testUnknownCapabilityIsPreservedInsteadOfThrowing() throws {
         let decoded = try JSONDecoder().decode(EngineCapability.self,
                                                from: Data("\"teleportation\"".utf8))
-        XCTAssertEqual(decoded, .chat)
+        XCTAssertEqual(decoded.rawValue, "teleportation")
+        XCTAssertEqual(decoded.displayName, "teleportation")
     }
 
     // MARK: version ordering
@@ -78,7 +138,7 @@ final class EngineCoreTests: XCTestCase {
     // MARK: ports
 
     func testPortAllocatorSkipsBusyPortsInsideTheRange() {
-        var busy: Set<Int> = [8100, 8101, 8102]
+        let busy: Set<Int> = [8100, 8101, 8102]
         let chosen = EnginePortAllocator.allocate(for: .omlx,
                                                   preferred: 8100,
                                                   taken: busy,

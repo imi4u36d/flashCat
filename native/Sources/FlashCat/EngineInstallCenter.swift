@@ -60,7 +60,7 @@ final class EngineInstallCenter: ObservableObject {
 
     func refreshInstalled() {
         var result: [EngineID: [String]] = [:]
-        for id in EngineID.allCases {
+        for id in EngineCatalog.allIDs {
             result[id] = EngineInstallations.installed(id).map(\.version)
         }
         installed = result
@@ -77,7 +77,7 @@ final class EngineInstallCenter: ObservableObject {
         do {
             let index = try await installer.loadIndex()
             var result: [EngineID: [EnginePackRelease]] = [:]
-            for id in EngineID.allCases {
+            for id in EngineCatalog.allIDs {
                 result[id] = index.releases(for: id)
             }
             releases = result
@@ -94,40 +94,39 @@ final class EngineInstallCenter: ObservableObject {
         progress[id] = Self.installProgress(.resolving, afterBuild: afterBuild)
         progressStep[id] = Self.stepLabel(.resolving)
         Task { [weak self] in
+            guard let self else { return }
+            let owner = self
             do {
                 _ = try await installer.install(release, for: id) { phase in
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        self.phases[id] = phase
-                        self.progress[id] = Self.installProgress(phase, afterBuild: afterBuild)
+                    Task { @MainActor in
+                        owner.phases[id] = phase
+                        owner.progress[id] = Self.installProgress(phase, afterBuild: afterBuild)
                         if let label = Self.stepLabel(phase) {
-                            self.progressStep[id] = label
+                            owner.progressStep[id] = label
                         }
                     }
                 }
-                await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    phases[id] = .installed(version: release.version)
-                    progress[id] = nil
-                    progressStep[id] = nil
-                    refreshInstalled()
-                    onChange?()
-                    onToast?("\(id.displayName) \(release.version) 安装成功")
+                await MainActor.run {
+                    owner.phases[id] = .installed(version: release.version)
+                    owner.progress[id] = nil
+                    owner.progressStep[id] = nil
+                    owner.refreshInstalled()
+                    owner.onChange?()
+                    owner.onToast?("\(id.displayName) \(release.version) 安装成功")
                     // Only a first install makes the engine the active one; an
                     // update must leave whatever the user was running alone.
-                    if isFirstInstall { onInstalled?(id) }
+                    if isFirstInstall { owner.onInstalled?(id) }
                     // An update replaces the engine, so the previous removable
                     // versions are pruned automatically to reclaim disk.
-                    pruneOldVersions(id, keeping: release.version)
+                    owner.pruneOldVersions(id, keeping: release.version)
                 }
             } catch {
-                await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    phases[id] = .failed(message: error.localizedDescription)
-                    progress[id] = nil
-                    progressStep[id] = nil
-                    onToast?("\(id.displayName) 安装失败：\(error.localizedDescription)")
-                    onInstallFailed?(id)
+                await MainActor.run {
+                    owner.phases[id] = .failed(message: error.localizedDescription)
+                    owner.progress[id] = nil
+                    owner.progressStep[id] = nil
+                    owner.onToast?("\(id.displayName) 安装失败：\(error.localizedDescription)")
+                    owner.onInstallFailed?(id)
                 }
             }
         }
@@ -235,7 +234,7 @@ final class EngineInstallCenter: ObservableObject {
         }
         refreshInstalled()
         var result: [EngineID: EngineUpstreamStatus] = [:]
-        for id in EngineID.allCases {
+        for id in EngineCatalog.allIDs {
             do {
                 let release = try await checker.latest(for: id)
                 upstreamReleases[id] = release
@@ -274,51 +273,49 @@ final class EngineInstallCenter: ObservableObject {
 
         Task { [weak self] in
             guard let self else { return }
+            let owner = self
             do {
                 let steps = EnginePackBuildPlanner.steps(for: id, version: release.version, release: release)
                 let total = max(steps.count, 1)
                 let order = Dictionary(uniqueKeysWithValues: steps.enumerated().map { ($1.id, $0) })
                 try await EnginePackBuildRunner.run(steps: steps, in: repository) { step in
                     let index = order[step.id] ?? 0
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        self.runningStepIndex[id] = index
-                        self.stepStartedAt[id] = Date()
-                        self.progressStep[id] = step.title
-                        self.progress[id] = Self.buildProgress(completed: index, total: total, elapsed: 0)
+                    Task { @MainActor in
+                        owner.runningStepIndex[id] = index
+                        owner.stepStartedAt[id] = Date()
+                        owner.progressStep[id] = step.title
+                        owner.progress[id] = Self.buildProgress(completed: index, total: total, elapsed: 0)
                     }
                 } onLine: { _ in
                     // Output lines no longer surface as a log; they only nudge
                     // the within-step creep forward so the percent keeps moving.
-                    Task { @MainActor [weak self] in
-                        guard let self, let started = self.stepStartedAt[id] else { return }
+                    Task { @MainActor in
+                        guard let started = owner.stepStartedAt[id] else { return }
                         let elapsed = Date().timeIntervalSince(started)
-                        let index = self.runningStepIndex[id] ?? 0
-                        self.progress[id] = Self.buildProgress(completed: index, total: total, elapsed: elapsed)
+                        let index = owner.runningStepIndex[id] ?? 0
+                        owner.progress[id] = Self.buildProgress(completed: index, total: total, elapsed: elapsed)
                     }
                 }
                 let path = repository + "/" + EnginePackBuildPlanner.releaseFile(for: id, version: release.version)
                 let pack = try EnginePackBuildRunner.loadRelease(at: path)
                 await self.loadIndexIfNeeded(force: true)
-                await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    building = nil
-                    runningStepIndex[id] = nil
+                await MainActor.run {
+                    owner.building = nil
+                    owner.runningStepIndex[id] = nil
                     // Hand the remaining span to the install phase.
-                    progress[id] = Self.installProgress(.resolving, afterBuild: true)
-                    progressStep[id] = Self.stepLabel(.resolving)
-                    stepStartedAt[id] = nil
-                    install(pack, for: id, afterBuild: true)
+                    owner.progress[id] = Self.installProgress(.resolving, afterBuild: true)
+                    owner.progressStep[id] = Self.stepLabel(.resolving)
+                    owner.stepStartedAt[id] = nil
+                    owner.install(pack, for: id, afterBuild: true)
                 }
             } catch {
-                await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    building = nil
-                    runningStepIndex[id] = nil
-                    clearProgress(id)
-                    phases[id] = .failed(message: error.localizedDescription)
-                    onToast?("\(id.displayName) \(release.version) 构建失败：\(error.localizedDescription)")
-                    onInstallFailed?(id)
+                await MainActor.run {
+                    owner.building = nil
+                    owner.runningStepIndex[id] = nil
+                    owner.clearProgress(id)
+                    owner.phases[id] = .failed(message: error.localizedDescription)
+                    owner.onToast?("\(id.displayName) \(release.version) 构建失败：\(error.localizedDescription)")
+                    owner.onInstallFailed?(id)
                 }
             }
         }

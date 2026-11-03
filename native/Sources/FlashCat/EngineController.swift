@@ -107,9 +107,10 @@ final class EngineController {
 
     var isRunning: Bool { process != nil || attachedPid != nil }
     var isReady: Bool { state == .ready }
-    var isInstalled: Bool { installation != nil }
+    var isInstalled: Bool { true }
 
     var manifest: EngineManifest { installation.manifest }
+    var descriptor: EngineDescriptor { installation.descriptor }
 
     /// Move to a new port while idle. A running engine keeps its socket, so this
     /// only takes effect on the next start.
@@ -134,7 +135,7 @@ final class EngineController {
             // 一秒才开始搬权重。这时报「就绪」，界面会在权重还在往显存里搬的
             // 时候显示运行中，用户再点一个模型就会把加载中的进程 SIGINT 掉。
             // 要的模型还没进 loaded_models，就仍然按「加载权重」报阶段。
-            if id.switchMode == .hot, let wanted = desiredModel, !wanted.isEmpty,
+            if descriptor.switchMode == .hot, let wanted = desiredModel, !wanted.isEmpty,
                let live = status, live.model != wanted,
                live.loadedModels.contains(wanted) == false {
                 return EngineStartupStage.loadingWeights.rawValue
@@ -300,7 +301,9 @@ final class EngineController {
         // The manifest decides how the model is handed over. An engine only ever
         // sees a path inside flashCat's own models folder — the weights live
         // there, not in the user's upstream caches.
-        let modelPath = modelsDirectory + "/" + selected
+        let modelPath = LocalEngineModels.scan(engine: id, directory: modelsDirectory)
+            .first(where: { $0.id == selected })?.path
+            ?? EnginePaths.modelPath(for: id, model: selected)
         let modelArgument: String
         switch manifest.modelArgumentStyle {
         case .name: modelArgument = selected
@@ -313,13 +316,15 @@ final class EngineController {
             "port": String(port),
             "models": modelsDirectory,
             "model": modelArgument,
+            "modelID": selected,
+            "modelPath": modelPath,
             "support": Paths.supportDirectory,
             "home": Paths.home,
         ]
         let tuning = EngineStore.shared.tuning(for: id)
         var arguments = EngineTemplate.expand(profile.args, context: values)
 
-        if id == .splash, let localModel {
+        if descriptor.adapter == .splash, let localModel {
             if localModel.origin == .splash {
                 // A model Splash installed is already a prepared assembly: hand
                 // it to the server as it is instead of preparing it again.
@@ -338,10 +343,10 @@ final class EngineController {
         }
         arguments += tuning.arguments(for: id)
         // 思考截断：Splash 吃 CLI 参数；oMLX 的按模型预算由 pushTuning 推送。
-        if id == .splash, let budget = tuning.effectiveThinkingBudget(for: .splash) {
+        if descriptor.adapter == .splash, let budget = tuning.effectiveThinkingBudget(for: .splash) {
             arguments += ["--thinking-token-budget", String(budget)]
         }
-        if id == .splash, let effort = settings.effectiveReasoningEffort {
+        if descriptor.adapter == .splash, let effort = settings.effectiveReasoningEffort {
             arguments += ["--default-reasoning-effort", effort]
         }
 
@@ -351,19 +356,23 @@ final class EngineController {
         }
 
         var environment = baseEnvironment(root: installation.root.path)
+        if descriptor.adapter == .mlxServe {
+            let home = Paths.supportDirectory + "/engine-homes/mlx-serve"
+            Paths.ensureDirectory(home + "/.mlx-serve")
+        }
         for (key, raw) in profile.environment ?? [:] {
             environment[key] = EngineTemplate.expand(raw, context: values)
         }
         // MTPLX 的思考截断走 ThinkingGuard 的环境变量：引擎默认关、且默认
         // 只覆盖 agent 工具循环，这里显式开启并把范围放宽到普通聊天，
         // 与 splash/oMLX 的截断语义对齐。重启后生效。
-        if id == .mtplx, let budget = tuning.effectiveThinkingBudget(for: .mtplx) {
+        if descriptor.adapter == .mtplx, let budget = tuning.effectiveThinkingBudget(for: .mtplx) {
             environment["MTPLX_THINKING_BUDGET"] = String(budget)
             environment["MTPLX_THINKING_GUARD_SCOPE"] = "all"
         }
         // flashcat_serve.py detaches a watchdog that ends the server when the
         // app is gone; it finds this app through the pid file.
-        if id == .splash {
+        if descriptor.adapter == .splash {
             environment["FLASHCAT_PID_FILE"] = EnginePaths.pidFile(.splash)
         }
 
@@ -421,9 +430,10 @@ final class EngineController {
             // The pack python is only the trunk: the inference binary and pool
             // workers below it hold the weights, so the whole tree is signalled.
             killTree(pid, SIGINT)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
+            let grace: TimeInterval = descriptor.adapter == .strata ? 75 : 20
+            DispatchQueue.main.asyncAfter(deadline: .now() + grace) {
                 if let current = self.process, processPid(current) == pid {
-                    self.logs.append("==> 服务未在 20 秒内退出，强制结束", level: .system)
+                    self.logs.append("==> 服务未在 \(Int(grace)) 秒内退出，强制结束", level: .system)
                     killTree(pid, SIGKILL)
                 }
             }
@@ -503,7 +513,7 @@ final class EngineController {
             case .failed, .stopped: return false
             case .starting, .stopping: break
             case .ready:
-                if id.switchMode != .hot { return true }
+                if descriptor.switchMode != .hot { return true }
                 if status?.model == target { return true }
                 if status?.loadedModels.contains(target) == true { return true }
             }
@@ -549,6 +559,10 @@ final class EngineController {
     /// needs no management from this side (splash additionally runs its own
     /// python-side watchdog from flashcat_serve.py; the two overlap harmlessly).
     private func spawnWatchdog(enginePid: Int32) {
+        if !installation.entrypoint.path.contains("/python/") {
+            spawnNativeWatchdog(enginePid: enginePid)
+            return
+        }
         let task = Process()
         task.launchPath = installation.entrypoint.path
         task.arguments = ["-u", "-c", Self.watchdogScript,
@@ -566,6 +580,52 @@ final class EngineController {
             note("==> 未能启动引擎守护进程（不影响正常启停）：\(error)")
         }
     }
+
+    /// Native single-binary engines do not understand the Python watchdog's
+    /// `-c` argument. This watcher uses only macOS system tools and is reused by
+    /// every non-Python pack.
+    private func spawnNativeWatchdog(enginePid: Int32) {
+        let task = Process()
+        task.launchPath = "/bin/sh"
+        task.arguments = ["-c", Self.nativeWatchdogScript,
+                          String(enginePid),
+                          String(ProcessInfo.processInfo.processIdentifier),
+                          packMarkerDirectory]
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        task.standardInput = FileHandle.nullDevice
+        do {
+            try task.run()
+        } catch {
+            note("==> 未能启动引擎守护进程（不影响正常启停）：\(error)")
+        }
+    }
+
+    private static let nativeWatchdogScript = #"""
+    engine="$1"
+    app="$2"
+    marker="$3"
+
+    while kill -0 "$app" 2>/dev/null && kill -0 "$engine" 2>/dev/null; do
+      sleep 1
+    done
+
+    signal_tree() {
+      current="$1"
+      signal="$2"
+      for child in $(/usr/bin/pgrep -P "$current" 2>/dev/null); do
+        signal_tree "$child" "$signal"
+      done
+      path=$(/bin/ps -p "$current" -o command= 2>/dev/null)
+      case "$path" in
+        "$marker"/*) /bin/kill "-$signal" "$current" 2>/dev/null || true ;;
+      esac
+    }
+
+    signal_tree "$engine" INT
+    sleep 15
+    signal_tree "$engine" KILL
+    """#
 
     /// Runs as `python -u -c <script> <engine-pid> <app-pid> <pack-marker>`.
     /// Every candidate is re-verified against the pack root through
@@ -639,6 +699,20 @@ final class EngineController {
     """#
 
     func updateCatalog(_ value: ModelCatalog) { catalog = value }
+
+    func rescanModels() async {
+        guard isRunning else { return }
+        guard let action = descriptor.modelControl?.rescan else {
+            catalog = ModelCatalogService().load()
+            return
+        }
+        let response = await modelControl(action,
+                                          target: "",
+                                          fallbackPath: action.path,
+                                          timeout: 20)
+        logs.append("==> 重新扫描模型 → HTTP \(response?.status ?? 0)",
+                    level: (response?.status ?? 0) < 300 ? .system : .warning)
+    }
 
     // MARK: process plumbing
 
@@ -744,18 +818,18 @@ final class EngineController {
             return
         }
 
-        if state == .starting {
+        if state == .starting,
+           descriptor.switchMode != .hot
+            || desiredModel == nil
+            || status?.loadedModels.contains(desiredModel ?? "") == true {
             state = .ready
             onChange()
         }
         await applyTuningIfNeeded()
         await ensureDesiredModelLoaded()
-        guard let payload = await fetchJSON(path: statusPath) else { return }
-        let health = statusPath == healthPath ? nil : await fetchJSON(path: healthPath)
-        var parsed = EngineStatusParser.parse(engine: id,
-                                              status: payload,
-                                              health: health,
-                                              fallbackState: .ready)
+        let documents = await collectTelemetry()
+        guard !documents.isEmpty else { return }
+        var parsed = EngineStatusParser.parse(documents: documents, fallbackState: .ready)
         await adoptEngineReportedEfforts(into: &parsed)
         status = parsed
         stats = ServerStats(engineStatus: parsed, previous: stats)
@@ -777,12 +851,6 @@ final class EngineController {
         onChange()
     }
 
-    /// First entry of the manifest's `status` array — splash reports everything
-    /// on one `/status` document.
-    private var statusPath: String {
-        manifest.status?.first ?? manifest.health.path
-    }
-
     private func probeHealth() async -> Bool {
         guard let response = await HTTP.get(port: port, path: healthPath, timeout: 1.5) else {
             return false
@@ -800,12 +868,33 @@ final class EngineController {
         return object as? [String: Any]
     }
 
+    /// Fetch every declared telemetry source. Descriptors decide what matters;
+    /// the controller only knows how to GET JSON and merge the result.
+    private func collectTelemetry() async -> [EngineTelemetryDocument] {
+        var sources = descriptor.telemetry
+        if !sources.contains(where: { $0.role == .health }) {
+            let format: EngineTelemetryFormat
+            switch descriptor.adapter {
+            case .strata: format = .strataHealth
+            default: format = .llamaProps
+            }
+            sources.append(EngineTelemetrySource(role: .health, path: healthPath, format: format))
+        }
+        var documents: [EngineTelemetryDocument] = []
+        for source in sources {
+            if let json = await fetchJSON(path: source.path) {
+                documents.append(EngineTelemetryDocument(source: source, json: json))
+            }
+        }
+        return documents
+    }
+
     /// oMLX 把每个模型支持的思考等级放在 `/v1/models/status` 的
     /// `reasoning_efforts` 里（`/api/status` 没有），所以这里补一次读取，
     /// 交给思考等级下拉框当数据源。其他引擎的等级已随状态文档解析
     /// （MTPLX），splash 不提供 → 保持 nil，上层用内置列表兜底。
     private func adoptEngineReportedEfforts(into parsed: inout EngineStatus) async {
-        guard id == .omlx else { return }
+        guard descriptor.adapter == .omlx else { return }
         guard let wanted = parsed.model ?? desiredModel, !wanted.isEmpty else { return }
         guard let document = await fetchJSON(path: "/v1/models/status") else { return }
         let entries = (document["models"] as? [[String: Any]]) ?? []
@@ -838,7 +927,7 @@ final class EngineController {
         switchInFlight = true
         defer { switchInFlight = false }
 
-        if id.switchMode == .hot, isRunning {
+        if descriptor.switchMode == .hot, isRunning {
             // Park the poller: nothing may nudge a load while we unload.
             desiredModel = nil
             stage("卸载旧模型")
@@ -886,16 +975,14 @@ final class EngineController {
         return .ready
     }
 
-    private var id_engineSwitchIsHot: Bool { id.switchMode == .hot }
+    private var id_engineSwitchIsHot: Bool { descriptor.switchMode == .hot }
 
     /// Models the engine itself reports as resident. `nil` means the status
     /// document could not be read at all.
     private func residentModels() async -> [String]? {
-        guard let payload = await fetchJSON(path: statusPath) else { return nil }
-        let parsed = EngineStatusParser.parse(engine: id,
-                                              status: payload,
-                                              health: nil,
-                                              fallbackState: .ready)
+        let documents = await collectTelemetry()
+        guard !documents.isEmpty else { return nil }
+        let parsed = EngineStatusParser.parse(documents: documents, fallbackState: .ready)
         return parsed.loadedModels
     }
 
@@ -912,8 +999,10 @@ final class EngineController {
 
         var pending = [String]()
         for victim in victims {
-            let path = EngineRoutes.unload(victim)
-            let response = await HTTP.post(port: port, path: path, timeout: 60)
+            let response = await modelControl(descriptor.modelControl?.unload,
+                                              target: victim,
+                                              fallbackPath: EngineRoutes.unload(victim),
+                                              timeout: 60)
             let status = response?.status ?? 0
             logs.append("==> 卸载 \(victim) → HTTP \(status)", level: status < 300 ? .system : .error)
             // 400 (not loaded) / 404 (unknown id) mean this id holds no weights,
@@ -965,10 +1054,11 @@ final class EngineController {
         // Weight loads are slow (tens of seconds for 27B); the poller keeps the
         // dashboard alive while this awaits.
         // Settings only reach a model at load time, so push them first.
-        if id == .omlx { await pushTuning(for: [target]) }
-        let response = await HTTP.post(port: port,
-                                       path: EngineRoutes.load(target),
-                                       timeout: 600)
+        if descriptor.adapter == .omlx { await pushTuning(for: [target]) }
+        let response = await modelControl(descriptor.modelControl?.load,
+                                          target: target,
+                                          fallbackPath: EngineRoutes.load(target),
+                                          timeout: 600)
         let status = response?.status ?? 0
         logs.append("==> \(id.displayName) 切换到 \(target) → HTTP \(status)",
                     level: status < 300 ? .system : .error)
@@ -980,9 +1070,36 @@ final class EngineController {
         } else {
             failureMessage = nil
             lastHotLoad = (target, Date())
+            state = .ready
         }
         onChange()
         return status < 300
+    }
+
+    private func modelControl(_ action: EngineModelAction?,
+                              target: String,
+                              fallbackPath: String,
+                              timeout: TimeInterval) async -> HTTPResponse? {
+        guard let action else {
+            return await HTTP.post(port: port, path: fallbackPath, timeout: timeout)
+        }
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        let encoded = target.addingPercentEncoding(withAllowedCharacters: allowed) ?? target
+        let path = EngineTemplate.expand(action.path, context: ["model": encoded])
+        let bodyContext = ["model": target]
+        let json: Data?
+        if let body = action.body {
+            let object = body.mapValues { $0.jsonObject(context: bodyContext) }
+            json = try? JSONSerialization.data(withJSONObject: object)
+        } else {
+            json = nil
+        }
+        return await HTTP.request(method: action.method,
+                                  port: port,
+                                  path: path,
+                                  json: json,
+                                  timeout: timeout)
     }
 
     /// oMLX starts with its own default model, so the requested one may still
@@ -990,7 +1107,7 @@ final class EngineController {
     /// switch owns the engine.
     private func ensureDesiredModelLoaded() async {
         guard !switchInFlight else { return }
-        guard id.switchMode == .hot, let target = desiredModel, !target.isEmpty else { return }
+        guard descriptor.switchMode == .hot, let target = desiredModel, !target.isEmpty else { return }
         if let last = lastHotLoad, last.target == target,
            Date().timeIntervalSince(last.at) < 20 { return }
         if let loaded = status?.loadedModels, loaded.contains(target) { return }
@@ -1001,7 +1118,7 @@ final class EngineController {
     // MARK: port claim
 
     private var preferredPort: Int {
-        EngineStore.shared.configuration(for: id).port ?? id.defaultPort
+        EngineStore.shared.configuration(for: id).port ?? descriptor.defaultPort
     }
 
     /// Port the engine may bind, or nil when every candidate in its range is
@@ -1029,7 +1146,7 @@ final class EngineController {
 
         // Occupied with nothing on the pid file. This app has no evidence the
         // listener is its own leftover, so it never kills blind — it moves on.
-        for candidate in id.portRange.dropFirst() where candidate <= 65535 {
+        for candidate in descriptor.portRange.dropFirst() where candidate <= 65535 {
             if !portOpen(candidate) {
                 note("==> 端口 \(wanted) 被占用，自动改用 \(candidate)")
                 EngineStore.shared.update(id) { $0.port = candidate }
@@ -1050,6 +1167,15 @@ final class EngineController {
         (installation.root.deletingLastPathComponent().path as NSString).resolvingSymlinksInPath
     }
 
+    private var orphanCleanupDirectories: [String] {
+        var roots = [packMarkerDirectory]
+        if descriptor.adapter == .strata {
+            roots.append((Paths.supportDirectory + "/strata-runtime" as NSString).resolvingSymlinksInPath)
+            roots.append((Paths.supportDirectory + "/strata-components" as NSString).resolvingSymlinksInPath)
+        }
+        return Array(Set(roots))
+    }
+
     /// Launch-time sweep for processes a crashed or force-quit session left
     /// behind. Nothing of this session runs yet, so any live executable inside
     /// this engine's pack directories is residue: the pack python and the
@@ -1057,9 +1183,10 @@ final class EngineController {
     /// a leftover stuck inside a weight load cannot act on SIGINT, and its pid
     /// bookkeeping was already removed by the clean-quit path.
     func sweepOrphans() {
-        let marker = packMarkerDirectory + "/"
+        let markers = orphanCleanupDirectories.map { $0 + "/" }
         for entry in allProcesses() where entry.pid != ProcessInfo.processInfo.processIdentifier {
-            guard let path = processExecutablePath(entry.pid), path.hasPrefix(marker) else { continue }
+            guard let path = processExecutablePath(entry.pid),
+                  markers.contains(where: { path.hasPrefix($0) }) else { continue }
             note("==> 清扫上次会话遗留的引擎进程（pid \(entry.pid)）")
             killTree(entry.pid, SIGKILL)
         }
@@ -1119,7 +1246,7 @@ final class EngineController {
     /// of pretending an in-place change happened.
     func reapplyTuning() async {
         guard isRunning else { return }
-        guard id == .omlx else {
+        guard descriptor.adapter == .omlx else {
             note("==> \(id.displayName) 的配置已保存，重启后生效")
             return
         }
@@ -1135,7 +1262,7 @@ final class EngineController {
     }
 
     private func pushTuning(for targets: [String]) async {
-        guard id == .omlx, !targets.isEmpty else { return }
+        guard descriptor.adapter == .omlx, !targets.isEmpty else { return }
         let tuning = EngineStore.shared.tuning(for: .omlx)
         var failures = 0
         for target in targets {
@@ -1196,6 +1323,14 @@ enum HTTP {
     /// POST with an empty body — enough for oMLX's load/unload switches.
     static func post(port: Int, path: String, timeout: TimeInterval) async -> HTTPResponse? {
         await send(method: "POST", port: port, path: path, body: nil, timeout: timeout)
+    }
+
+    static func request(method: EngineHTTPMethod,
+                        port: Int,
+                        path: String,
+                        json: Data?,
+                        timeout: TimeInterval) async -> HTTPResponse? {
+        await send(method: method.rawValue, port: port, path: path, body: json, timeout: timeout)
     }
 
     /// PUT a JSON object, used for oMLX's per-model settings document.

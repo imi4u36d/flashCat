@@ -46,6 +46,9 @@ const UI = {
   pointerDown: false,       // 指针按住期间不重建侧栏（重建会吞掉 click）
   sideDirty: false,         // 按住期间攒下的侧栏改动，抬手后补渲染
   chatScroll: null,         // 重绘前捕获的对话滚动位 {top, nearBottom}
+  chatFollowFrame: 0,       // 流式跟随的 rAF；新内容到达时重定向而不是硬跳
+  chatAutoScroll: false,    // 区分程序滚动与用户滚动
+  chatFollowPending: false, // 侧栏动画期间布局不完整，收口后补一次底部对齐
   logScroll: null,          // 重绘前捕获的日志控制台滚动位 {top, h, nearTop}
 };
 let S = null; // 最近一次 Swift 快照
@@ -144,12 +147,12 @@ const PAGE_FIELDS = {
   overview: ["stats", "throughput", "sessions", "draftLabel", "endpointURL",
              "gatewayURL", "gatewayClaudeURL", "modelsMenu", "context"],
   chat: ["messages", "generating", "generationStatus", "modelsMenu", "library", "settings"],
-  models: ["library", "downloads", "modelsMenu", "hubSearch"],
-  engines: ["enginesInstall", "packIndex"],
+  models: ["engineCatalog", "library", "downloads", "modelsMenu", "hubSearch"],
+  engines: ["engineCatalog", "enginesInstall", "packIndex"],
   logs: ["logs"],
   settings: ["settings"],
 };
-const LAUNCH_FIELDS = ["launchPage", "launchNeedsSetup", "packIndex", "pending",
+const LAUNCH_FIELDS = ["launchPage", "launchNeedsSetup", "engineCatalog", "packIndex", "pending",
                        "pendingInstall", "enginesInstall", "downloads", "engine",
                        "recommendation"];
 
@@ -188,7 +191,19 @@ function applySidebar() {
     sideAnimUntil = Date.now() + 300;
     document.body.classList.add("side-anim");
     clearTimeout(sideAnimClassTimer);
-    sideAnimClassTimer = setTimeout(() => document.body.classList.remove("side-anim"), 320);
+    sideAnimClassTimer = setTimeout(() => {
+      const msgs = document.getElementById("msgs");
+      const follow = UI.chatFollowPending ||
+        (!!msgs && msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 48);
+      UI.chatFollowPending = false;
+      document.body.classList.remove("side-anim");
+      // CV 收起后消息才恢复真实高度。若收起前就在底部，补一次对齐，
+      // 避免首屏长对话在动画结束时多出一两行的底部空隙。
+      if (follow) requestAnimationFrame(() => {
+        const liveMsgs = document.getElementById("msgs");
+        if (liveMsgs && S && S.page === "chat") liveMsgs.scrollTop = liveMsgs.scrollHeight;
+      });
+    }, 320);
   }
   document.body.dataset.side = next;
   // 手柄的文案跟着翻：本地先翻状态时快照还没回来，aria/title 不能停在旧值上。
@@ -878,7 +893,7 @@ function handleAction(act, arg) {
         render(); restoreFocus("repoDlRepo");
         break;
       }
-      const engines = ["splash", "omlx", "mtplx"].filter((k) => d.engines[k]);
+      const engines = engineIDs().filter((k) => d.engines[k]);
       cmd("downloadRepo", { repo, engines });
       UI.repoDlOpen = false; UI.repoDl = null; UI.downloadsOpen = true;
       render();
@@ -889,7 +904,7 @@ function handleAction(act, arg) {
     case "closeShareEngines": UI.shareEdit = null; render(); break;
     case "confirmShareEngines": {
       const s = UI.shareEdit;
-      if (s) cmd("setModelEngines", { repo: s.id, engines: ["splash", "omlx", "mtplx"].filter((k) => s.engines[k]) });
+      if (s) cmd("setModelEngines", { repo: s.id, engines: engineIDs().filter((k) => s.engines[k]) });
       UI.shareEdit = null;
       render();
       break;
@@ -992,8 +1007,7 @@ function renderSide() {
   // 每次点手柄都会在动画途中把整棵子树换成新节点 —— 过渡被打断，看起来就是
   // 「先僵一下，再跳一格」。aria/title 由 applySidebar() 事后补到按钮上。
   const html = `
-    <div class="brand"><div class="logo">${LOGO_SVG}</div><div class="txt"><div class="t">flashCat</div><div class="s">本地推理控制台</div></div></div>
-    <div class="group">工作区</div>
+    <div class="brand"><div class="logo">${LOGO_SVG}</div></div>
     ${["overview", "chat", "models", "engines", "logs", "settings"].map((p) => `
       <div class="nav-item" data-act="nav" data-arg="${p}" title="${NAV_NAMES[p]}">
         <span class="ico">${NAV_ICONS[p]}</span><span class="lbl">${NAV_NAMES[p]}</span>
@@ -1005,8 +1019,8 @@ function renderSide() {
       <div class="row1"><span class="dot ${dotCls}"></span><span class="st">${statusText}</span>${act}</div>
       <div class="more">
         <div class="model switch" id="sideModelSwitcher" data-menu="sidebarModelSwitcher" title="${esc(S.selectedModel || "")} · 点击切换模型"><span class="nm">${esc(shortModel(S.selectedModel) || "未选择模型")}</span>${icon("chevronDown", "caret", 13)}</div>
-        <div class="chips">${["splash", "omlx", "mtplx"].map((e) =>
-          `<span class="echip ${S.engine.id === e ? "on" : ""}" data-engine="${e}">${e === "splash" ? "Splash" : e === "omlx" ? "oMLX" : "MTPLX"}</span>`).join("")}</div>
+        <div class="chips">${engineIDs().map((e) =>
+          `<span class="echip ${S.engine.id === e ? "on" : ""}" data-engine="${e}">${esc(engineMeta(e).name)}</span>`).join("")}</div>
         <div class="foot"><span>${esc((st.id || "").toUpperCase())} ${esc(st.version || "")}</span><span>:${S.port}</span></div>
       </div>
     </div>
@@ -1219,8 +1233,7 @@ function sessionTile(s, total) {
 // 概览主卡：引擎状态 + 当前模型 + 启停控制。模型名本身是下拉触发器，点开复用分组模型菜单切换。
 // 把原来那条细状态条展开成控制台：模型信息一眼可读，切换和启停不用离页。
 function engineHero(st, stats, statusText, dotCls, stage, busy) {
-  const meta = ENGINE_META[st.id]
-    || { name: (st.id || "ENGINE").toUpperCase(), color: "#767676", grad: "linear-gradient(135deg,#8E8E93,#636366)" };
+  const meta = engineMeta(st.id);
   const isRun = running();
   // 切换中留一个「取消等待」：真正干活的引擎不该被打断（权重搬到一半的进程
   // 吃 SIGINT 要等 20 秒强杀），但界面不能只能死等。取消之后状态交回引擎自己
@@ -1409,7 +1422,7 @@ function pageChat() {
           <span class="cap click" data-say="64GB 内存的 Mac 跑 35B 模型该选什么量化？">64GB 跑 35B 选什么量化？</span>
         </div>
       </div>`;
-  const live = S.generating ? `<div class="livestrip"><span class="spinner"></span><span id="liveStatus">${esc(S.generationStatus || "生成中")}</span>
+  const live = S.generating ? `<div class="livestrip"><span class="live-dot"></span><span id="liveStatus">${esc(S.generationStatus || "生成中")}</span>
     <span class="chips"><span class="mchip" id="liveRate">— tok/s</span><span class="mchip" id="liveElapsed">0.0s</span></span></div>` : "";
   return `
     <div class="chat-head">
@@ -1420,7 +1433,7 @@ function pageChat() {
         <button class="cap on click" data-act="newChat">${icon("messagePlus")}<span>新对话</span></button>
       </div>
     </div>
-    <div class="msgs" id="msgs">${body}</div>
+    <div class="msgs" id="msgs"><div class="msgs-inner">${body}</div></div>
     ${live}
     <div class="inputbar"><div class="inputbox">
       <textarea id="chatInput" rows="1" data-key="chatInput" placeholder="输入消息…（⏎ 发送 · ⇧⏎ 换行）${running() ? "" : " · 启动本地服务后可发送"}"></textarea>
@@ -1440,27 +1453,82 @@ function shortModel(id) {
 
 function msgRow(m, index) {
   const isUser = m.role === "user";
-  const av = isUser ? `<div class="av">你</div>` : `<div class="av"></div>`;
+  const av = isUser ? "" : `<div class="av">${icon("message", "", 13)}</div>`;
   const open = UI.thinkOpen[m.id];
+  const thinking = m.streaming && !m.content;
   const think = !isUser && m.reasoning ? `
-    <div class="think ${open ? "open" : ""}" data-think="${esc(m.id)}">
-      <div class="th"><span>思考过程${m.thinkSeconds ? " · " + m.thinkSeconds.toFixed(1) + "s" : ""}</span>${icon("chevronDown", "think-caret", 12)}</div>
-      <div class="tb">${esc(m.reasoning)}</div>
-    </div>` : "";
+    <button type="button" class="think ${open ? "open" : ""} ${thinking ? "running" : ""}"
+            data-think="${esc(m.id)}" aria-expanded="${open ? "true" : "false"}">
+      <span class="th">
+        <span class="think-label">${icon("brain", "", 13)}<span>${thinking ? "正在思考" : "思考过程"}</span></span>
+        <span class="think-action">${thinking ? `<span class="think-wave"><i></i><i></i><i></i></span>` : ""}${icon("chevronDown", "think-caret", 12)}</span>
+      </span>
+      ${open ? `<span class="tb">${esc(m.reasoning)}</span>` : ""}
+    </button>` : "";
   const failed = m.content && m.content.startsWith("出错：");
+  const waiting = !m.content ? `<p class="stream-wait">${esc(S.generationStatus === "思考中" ? "正在思考" : "正在生成")}</p>` : "";
   const bubble = failed
-    ? `<div class="bubble" style="background:color-mix(in srgb, var(--w-err) 9%,transparent);border-color:color-mix(in srgb, var(--w-err) 30%,transparent);color:var(--w-err)">${esc(m.content)}</div>`
-    : (m.streaming && !m.content ? `<div class="bubble" style="display:flex;gap:8px;align-items:center"><span class="spinner"></span>${esc(S.generationStatus || "正在生成…")}</div>`
-    : `<div class="bubble">${m.streaming ? mdStream(m.content) : md(m.content)}</div>`);
+    ? `<div class="bubble failed">${esc(m.content)}</div>`
+    : `<div class="bubble${m.streaming ? " is-streaming" : ""}">${m.content ? (m.streaming ? mdStream(m.content) : md(m.content)) : waiting}</div>`;
   const meta = !isUser && !m.streaming && !failed && (m.rate || m.tokens) ? `
     <div class="msg-meta">${m.rate ? `<span>${m.rate.toFixed ? m.rate.toFixed(1) : m.rate} tok/s</span>` : ""}${m.ttft ? `<span>首字 ${Math.round(m.ttft * 1000)}ms</span>` : ""}${m.tokens ? `<span>${m.tokens} tokens</span>` : ""}<span class="lnk" data-copy="${esc(m.id)}">复制</span></div>` : "";
   // data-key：消息按 id 认领节点。没有它的时候局部更新只能按下标对齐，
   // 新消息插入后整列都要改一遍（实测 300 条的对话一次推送多改 600 多个节点）。
-  return `<div class="msg ${isUser ? "user" : "ai"}" data-key="msg-${esc(m.id)}">${av}<div>${think}${bubble}${meta}</div></div>`;
+  return `<div class="msg ${isUser ? "user" : "ai"}" data-key="msg-${esc(m.id)}">${av}<div class="msg-body">${think}${bubble}${meta}</div></div>`;
 }
 
-// 流式期间同一渲染管线（md 每帧全量重算对小消息足够快）
-const mdStream = md;
+// 光标要跟在最后一段文字后面，而不是被块级段落挤到下一行。
+function mdStream(text) {
+  const html = md(text);
+  const caret = `<span class="stream-caret" aria-hidden="true"></span>`;
+  let at = -1;
+  for (const end of ["</p>", "</li>"]) {
+    const index = html.lastIndexOf(end);
+    if (index > at) at = index;
+  }
+  return at < 0 ? html + caret : html.slice(0, at) + caret + html.slice(at);
+}
+
+function stopChatFollow() {
+  if (UI.chatFollowFrame) cancelAnimationFrame(UI.chatFollowFrame);
+  UI.chatFollowFrame = 0;
+  UI.chatAutoScroll = false;
+  UI.chatFollowPending = false;
+}
+
+// 快照最多 10Hz 到达，直接赋 scrollTop 会变成每秒十次硬跳。把每次新增高度
+// 摊到一小段帧里追过去；下一批内容到达时从当前位置继续重定向。
+function followChatBottom(msgs, force) {
+  if (!msgs) return;
+  stopChatFollow();
+  const target = Math.max(0, msgs.scrollHeight - msgs.clientHeight);
+  if (force) {
+    if (document.body.classList.contains("side-anim")) UI.chatFollowPending = true;
+    msgs.scrollTop = target;
+    return;
+  }
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const start = msgs.scrollTop;
+  const delta = target - start;
+  if (reduceMotion || Math.abs(delta) < 1) {
+    msgs.scrollTop = target;
+    return;
+  }
+  const t0 = performance.now();
+  UI.chatAutoScroll = true;
+  const step = (now) => {
+    const p = Math.min(1, (now - t0) / 120);
+    const e = 1 - Math.pow(1 - p, 3);
+    msgs.scrollTop = start + delta * e;
+    if (p < 1) {
+      UI.chatFollowFrame = requestAnimationFrame(step);
+    } else {
+      UI.chatFollowFrame = 0;
+      UI.chatAutoScroll = false;
+    }
+  };
+  UI.chatFollowFrame = requestAnimationFrame(step);
+}
 
 function afterChatRender(pageChanged) {
   const input = document.getElementById("chatInput");
@@ -1484,9 +1552,7 @@ function afterChatRender(pageChanged) {
     bindOnce(el, "click", () => {
       const id = el.dataset.think;
       UI.thinkOpen[id] = !UI.thinkOpen[id];
-      el.classList.toggle("open", UI.thinkOpen[id]);
-      const tb = el.querySelector(".tb");
-      tb.style.webkitLineClamp = UI.thinkOpen[id] ? "none" : "";
+      render();
     });
   });
   document.querySelectorAll("[data-copy]").forEach((el) => {
@@ -1521,12 +1587,21 @@ function afterChatRender(pageChanged) {
   // 注意：.msg 的 content-visibility 只在折叠动画窗口开（body.side-anim），
   // 这里赋 scrollTop 时布局必须已完整，否则会被钳位回 0（详见 app.css）。
   if (msgs) {
+    bindOnce(msgs, "wheel", stopChatFollow);
+    bindOnce(msgs, "touchstart", stopChatFollow);
+    bindOnce(msgs, "scroll", () => {
+      if (!UI.chatAutoScroll && UI.chatFollowFrame) stopChatFollow();
+    });
     const saved = UI.chatScroll;
     if (!pageChanged && saved) {
-      msgs.scrollTop = saved.nearBottom ? msgs.scrollHeight : saved.top;
+      if (saved.nearBottom) followChatBottom(msgs);
+      else {
+        stopChatFollow();
+        msgs.scrollTop = saved.top;
+      }
       UI.chatScroll = null;
     } else {
-      msgs.scrollTop = msgs.scrollHeight;
+      followChatBottom(msgs, true);
     }
   }
   if (input && UI.chatDraft) { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 160) + "px"; }
@@ -1679,23 +1754,85 @@ function saveChatParams() {
 function filteredModelEntries() {
   const lib = S.library || { engine: "splash", entries: [] };
   const q = UI.modelsSearch.trim().toLowerCase();
-  // 已下载（可使用）的模型排前面，未下载的靠后；组内保持原有顺序（sort 稳定）。
   return lib.entries.filter((e) => {
     const passF = UI.modelsFilter === "all" || (UI.modelsFilter === "local" ? e.installed : !e.installed);
     const passQ = !q || e.id.toLowerCase().includes(q) || (e.display || "").toLowerCase().includes(q);
     return passF && passQ;
-  }).sort((a, b) => (b.installed ? 1 : 0) - (a.installed ? 1 : 0));
+  });
+}
+
+// 推荐区只放当前 Mac 内存能承载的档位；已装模型另有「本机模型」区，不重复。
+// Swift 给了 fit 就用它（还包含磁盘判断），旧快照没有 fit 时退回内存门槛。
+function modelFitsThisMac(e) {
+  if (e.fit) return e.fit === "good" || e.fit === "unknown";
+  const memory = Number((S.recommendation && S.recommendation.memoryGB) || 0);
+  return !e.minMemory || !memory || e.minMemory <= memory;
+}
+
+function modelSectionHTML(kind, title, subtitle, entries, emptyHTML) {
+  const id = `model-section-${kind}`;
+  return `<section class="model-section ${kind}" aria-labelledby="${id}">
+    <div class="model-section-head">
+      <span class="model-section-icon">${icon(kind === "recommended" ? "brain" : "hardDrive", "", 15)}</span>
+      <h3 id="${id}">${esc(title)}<span class="model-section-count">${entries.length}</span></h3>
+      <span class="model-section-sub">${esc(subtitle)}</span>
+    </div>
+    ${entries.length
+      ? `<div class="model-grid">${entries.map(modelCard).join("")}</div>`
+      : emptyHTML}
+  </section>`;
 }
 
 // 网格独立成块：搜索输入时只重绘这块，不碰搜索框本身（否则每敲一个字焦点就丢）。
 function modelsGridHTML() {
   const entries = filteredModelEntries();
+  const q = UI.modelsSearch.trim();
+  const installed = entries
+    .filter((e) => e.installed)
+    .sort((a, b) => {
+      const aUse = a.engine === S.engine.id && a.id === S.selectedModel ? 1 : 0;
+      const bUse = b.engine === S.engine.id && b.id === S.selectedModel ? 1 : 0;
+      return bUse - aUse;
+    });
+  const candidates = entries.filter((e) => !e.installed);
+  const fitting = candidates.filter(modelFitsThisMac);
+  // 有正式三档时只给这三档；低内存档位（rank=0）只在没有正式档可跑时兜底，
+  // 免得 128 GB 机器同时看到 4B、9B 和 Flash-Next，推荐区反而失去重点。
+  const ranked = fitting.filter((e) => Number(e.rank) > 0);
+  const recommended = (ranked.length ? ranked : fitting)
+    .sort((a, b) => {
+      const aPick = a.recommendedTag ? 1 : 0;
+      const bPick = b.recommendedTag ? 1 : 0;
+      return bPick - aPick || (b.minMemory || 0) - (a.minMemory || 0);
+    });
+  const hiddenForFit = candidates.filter((e) => !modelFitsThisMac(e)).length;
+  const memory = Number((S.recommendation && S.recommendation.memoryGB) || 0);
   const hub = hubResultCards();
-  if (!entries.length && !hub.length) {
-    return `<div class="panel"><div class="empty" style="padding:36px"><div class="t">没有符合条件的模型</div><div>试试切到「全部」、清空搜索词，或按 ⏎ 在 Hugging Face 上搜</div></div></div>`;
+
+  const queryNote = q ? `没有匹配「${esc(q)}」的` : "";
+  const localEmpty = `<div class="model-section-empty"><span>${queryNote || "还没有"}已下载模型</span>
+    <button class="section-link" data-act="openHub">${icon("search")}<span>去 Hugging Face 找</span></button></div>`;
+  const installedPicks = (S.library.entries || []).filter((e) => e.installed && e.source === "recommended").length;
+  const recEmptyText = q
+    ? `没有匹配「${esc(q)}」的推荐`
+    : (hiddenForFit > 0
+      ? "当前配置下没有可下载的精选档位"
+      : (installedPicks > 0 ? "这一栏的精选模型已经在本机" : "当前引擎暂时没有精选推荐"));
+  const recEmpty = `<div class="model-section-empty"><span>${recEmptyText}</span>
+    ${hiddenForFit > 0 ? `<small>${hiddenForFit} 个档位超出当前内存或可用磁盘</small>` : ""}
+    <button class="section-link" data-act="openHub">${icon("arrowRight")}<span>浏览全部模型</span></button></div>`;
+
+  const blocks = [];
+  if (UI.modelsFilter !== "remote") {
+    blocks.push(modelSectionHTML("local", "本机模型", "已下载，可直接加载", installed, localEmpty));
   }
-  const local = entries.length ? `<div class="model-grid">${entries.map(modelCard).join("")}</div>` : "";
-  return local + hub;
+  if (UI.modelsFilter !== "local") {
+    const subtitle = memory
+      ? `${memory} GB Mac 可承载 · 下载后归入本机`
+      : "按当前 Mac 可承载的档位筛选 · 下载后归入本机";
+    blocks.push(modelSectionHTML("recommended", "FlashCat 推荐", subtitle, recommended, recEmpty));
+  }
+  return `<div class="model-sections">${blocks.join("")}</div>${hub}`;
 }
 
 // Hub 搜索的结果：会话内有效，回车才发请求（逐字请求会打满 Hub 的限流）。
@@ -1717,10 +1854,12 @@ function hubCard(r) {
   const options = r.options || [];
   const option = options.find((o) => o.name === chose) || options.find((o) => o.name === "") || options[0] || {};
   const tags = [];
-  tags.push(`<span class="mtag eng">${esc(({ splash: "Splash", omlx: "oMLX", mtplx: "MTPLX" })[r.engine] || r.engine)}</span>`);
-  tags.push(`<span class="mtag">${esc((r.kind || "").toUpperCase())}</span>`);
+  tags.push(`<span class="mtag eng">${esc(engineMeta(r.engine).name)}</span>`);
+  if (r.io) tags.push(`<span class="mtag fact io">${esc(r.io)}</span>`);
+  const quantLabel = option.name || ({ gguf: "GGUF", mtplx: "MTP", mlx: "MLX", unmarked: "原版" })[r.kind] || "";
+  if (quantLabel) tags.push(`<span class="mtag fact quant">量化 ${esc(quantLabel)}</span>`);
   if (option.bytes) tags.push(`<span class="mtag">${option.estimated === false ? "" : "≈"}${fmtBytes(option.bytes)}</span>`);
-  if (option.memory) tags.push(`<span class="mtag">内存 ${option.estimated ? "≈" : ""}${option.memory} GB</span>`);
+  if (option.memory) tags.push(`<span class="mtag fact mem">内存 ${option.estimated ? "≈" : ""}${option.memory} GB</span>`);
   (r.tags || []).filter((t) => t !== "GGUF").forEach((t) => tags.push(`<span class="mtag">${esc(t)}</span>`));
   const quant = options.length > 1
     ? `<select class="qsel" data-quant="${esc(r.repo)}">${options.map((o) =>
@@ -1739,11 +1878,11 @@ function hubCard(r) {
 
 function pageModels() {
   const lib = S.library || { engine: "splash", entries: [] };
-  const chips = [["splash", "Splash"], ["omlx", "oMLX"], ["mtplx", "MTPLX"]];
   return `
     <h2 class="pg">模型</h2>
     <div class="chipbar">
-      ${chips.map(([id, name]) => `<span class="echip ${lib.engine === id ? "on" : ""}" data-act="browseEngine" data-arg="${id}">${name}</span>`).join(" ")}
+      ${engineIDs().map((id) =>
+        `<span class="echip ${lib.engine === id ? "on" : ""}" data-act="browseEngine" data-arg="${esc(id)}">${esc(engineMeta(id).name)}</span>`).join(" ")}
       <label class="search">${icon("search", "search-icon", 14)}<input data-key="modelsSearch" placeholder="搜索模型…" value="${esc(UI.modelsSearch)}" aria-label="搜索模型"></label>
       ${[["all", "全部"], ["local", "本机"], ["remote", "可下载"]].map(([v, n]) =>
         `<span class="filter ${UI.modelsFilter === v ? "on" : ""}" data-f="${v}">${n}</span>`).join("")}
@@ -1773,18 +1912,21 @@ function modelCard(e) {
   const tags = [];
   // 硬件推荐标签排在最前：它是这一档「为什么是它」的说明，不随后面换用什么模型消失。
   if (e.recommendedTag) tags.push(`<span class="mtag rec">${icon("check", "tag-icon", 11)}${esc(e.recommendedTag)}</span>`);
-  // 来源只有两种：清单里的（引擎推荐）和用户自己下的（个人下载）。
-  // 不靠它把人拦住，只是让人一眼看出这行是哪来的。
-  tags.push(e.source === "personal"
-    ? `<span class="mtag">个人下载</span>`
-    : `<span class="mtag" style="color:var(--w-accent)">引擎推荐</span>`);
+  // 本机卡说明来源；推荐卡已经处在独立区块里，只补「为什么适合这台 Mac」。
+  if (e.installed) {
+    tags.push(e.source === "personal"
+      ? `<span class="mtag">个人下载</span>`
+      : `<span class="mtag">目录收录</span>`);
+  } else if (!e.recommendedTag && (e.fit === "good" || e.fit === "unknown")) {
+    tags.push(`<span class="mtag ok">${icon("check", "tag-icon", 11)}适配本机</span>`);
+  }
   if (inUse) tags.push(`<span class="mtag ok">使用中</span>`);
   // 引擎标签：一款模型能挂多个引擎，卡片上先亮归属，免得在 Splash 栏看到
   // 一款其实是 oMLX 专用的权重还以为它能直接起。
   (e.engineLabels || []).forEach((name) => tags.push(`<span class="mtag eng">${esc(name)}</span>`));
   if (e.uncatalogued) tags.push(`<span class="mtag warn">未收录</span>`);
   if (e.shared) {
-    const names = (e.engines || []).map((k) => (ENGINE_META[k] ? ENGINE_META[k].name : k));
+    const names = (e.engines || []).map((k) => engineMeta(k).name);
     tags.push(`<span class="mtag">共享目录${names.length ? " · " + esc(names.join(" / ")) : " · 未授权"}</span>`);
   }
   if (e.bytes) tags.push(`<span class="mtag">${fmtBytes(e.bytes)}</span>`);
@@ -1805,9 +1947,11 @@ function modelCard(e) {
   const more = e.installed
     ? `<button class="btn-p ghost more" data-act="modelMenu" data-arg="${esc(e.engine)}|${esc(e.id)}" title="更多操作" aria-label="更多操作">${icon("ellipsis")}</button>`
     : "";
-  return `<div class="model-card ${inUse ? "inuse" : ""}">
+  const cardClass = ["model-card", inUse ? "inuse" : "", !e.installed ? "recommended" : ""].filter(Boolean).join(" ");
+  return `<div class="${cardClass}">
     <div class="nm" title="${esc(e.id)}">${esc(e.display || e.id)}</div>
     <div class="mtags">${tags.join("")}</div>
+    ${!e.installed && e.summary ? `<div class="model-summary">${esc(e.summary)}</div>` : ""}
     ${dl ? `<div class="mc-dl">
       <div class="dl-meter"><div class="dl-fill${dl.status === "failed" ? " err" : ""}" style="width:${Math.round(dl.fraction * 100)}%"></div></div>
       <span class="pct">${dl.status === "failed" ? "失败" : (dl.status === "paused" ? "已暂停 " : "") + Math.round(dl.fraction * 100) + "%"}${dl.speed ? " · " + esc(fmtRate(dl.speed)) : ""}</span>
@@ -1837,20 +1981,21 @@ function repoDlDraft() {
     // 默认只勾当前正在看的引擎：实际能跑哪个由引擎自己说了算，
     // 不替用户把三个都预先勾上。
     const browsed = (S.library && S.library.engine) || "splash";
-    UI.repoDl = { repo: "", engines: { splash: false, omlx: false, mtplx: false, [browsed]: true } };
+    const engines = Object.fromEntries(engineIDs().map((id) => [id, id === browsed]));
+    UI.repoDl = { repo: "", engines };
   }
   return UI.repoDl;
 }
 
 function enginePickChips(selected, act) {
-  return ["splash", "omlx", "mtplx"].map((id) =>
-    `<span class="filter ${selected[id] ? "on" : ""}" data-act="${act}" data-arg="${id}">${ENGINE_META[id].name}</span>`).join(" ");
+  return engineIDs().map((id) =>
+    `<span class="filter ${selected[id] ? "on" : ""}" data-act="${act}" data-arg="${id}">${esc(engineMeta(id).name)}</span>`).join(" ");
 }
 
 function openShareEngines(engine, id) {
   const entry = (S.library.entries || []).find((x) => x.engine === engine && x.id === id);
   const engines = {};
-  ["splash", "omlx", "mtplx"].forEach((k) => { engines[k] = !!(entry && (entry.engines || []).includes(k)); });
+  engineIDs().forEach((k) => { engines[k] = !!(entry && (entry.engines || []).includes(k)); });
   UI.shareEdit = { id, engines };
   render();
 }
@@ -1878,6 +2023,12 @@ function fmtParams(n) {
   if (n >= 1e6) return `${(n / 1e6).toFixed(0)}M`;
   return fmtCompact(n);
 }
+// 图标本身是可信的 SVG 模板，只转义旁边来自 Hub 的文本，否则整段 SVG
+// 会被当成普通字符串显示出来。
+function metricHTML(iconName, text, fallback) {
+  if (text == null || text === "") return esc(fallback == null ? "—" : fallback);
+  return `${icon(iconName, "meta-icon", 12)} ${esc(text)}`;
+}
 // 公共目录/引擎目录里用的扁平名，用来判「已经在本机了」。
 function hubFlatId(id) {
   return String(id || "").replace(/\//g, "--").replace(/:/g, "-");
@@ -1886,7 +2037,7 @@ function hubEngineHint(m) {
   if (m.mtplx) return "带校准 MTP 头，给 MTPLX 最合适；oMLX 也能读";
   if (m.gguf) return "GGUF：Splash 与 oMLX 能跑，MTPLX 不行";
   if (m.mlx) return "MLX 量化：oMLX 能跑；Splash 只认它自己那几个家族";
-  return "原版权重：三个引擎通常都跑不起来，建议找 MLX / GGUF 量化版";
+  return "原版权重：多数本地引擎跑不起来，建议找 MLX / GGUF 量化版";
 }
 // HF 的 README 里混着裸 HTML（居中 <div>、<img width=400px> 的 logo、表格）。
 // md() 只认 markdown，这些原样吐出来就是一堆源码，先清干净再渲染。
@@ -1918,7 +2069,7 @@ function hubLocally(m) {
   return repoLocal(m && m.id);
 }
 // 本机是否已经有这个仓库。快照里的 hub.local 是 Swift 判完的全量清单（公共
-// 目录 + 三个引擎的模型目录），再叠一层当前引擎的库，兜住刚落地、还没重扫
+// 目录 + 各引擎的模型目录），再叠一层当前引擎的库，兜住刚落地、还没重扫
 // 的那个窗口。judgement 在 Swift 侧，这里只是把结果画出来。
 function repoLocal(id) {
   const canon = String(id || "").replace(/:.*$/, "").replace(/--/g, "/").trim();
@@ -1984,14 +2135,14 @@ function repoProbePanel(d) {
   const biggest = files.reduce((a, f) => Math.max(a, f.size || 0), 0);
   const local = repoLocal(m.id);
   const cells = [
-    ["总体积", m.size ? fmtBytes(m.size) : "未知"],
-    ["文件", files.length ? `${files.length} 个${biggest ? ` · 最大 ${fmtBytes(biggest)}` : ""}` : "—"],
-    ["参数量", m.parameters ? fmtParams(m.parameters) : "—"],
-    ["下载量", m.downloads ? `${icon("download", "meta-icon", 12)} ${fmtCompact(m.downloads)}` : "—"],
-    ["点赞", m.likes ? `${icon("heart", "meta-icon", 12)} ${fmtCompact(m.likes)}` : "—"],
-    ["更新", String(m.updated || "").slice(0, 10) || "—"],
-    ["许可", m.license || "—"],
-    ["任务", m.pipeline || "—"],
+    ["总体积", esc(m.size ? fmtBytes(m.size) : "未知")],
+    ["文件", esc(files.length ? `${files.length} 个${biggest ? ` · 最大 ${fmtBytes(biggest)}` : ""}` : "—")],
+    ["参数量", esc(m.parameters ? fmtParams(m.parameters) : "—")],
+    ["下载量", metricHTML("download", m.downloads ? fmtCompact(m.downloads) : "")],
+    ["点赞", metricHTML("heart", m.likes ? fmtCompact(m.likes) : "")],
+    ["更新", esc(String(m.updated || "").slice(0, 10) || "—")],
+    ["许可", esc(m.license || "—")],
+    ["任务", esc(m.pipeline || "—")],
   ];
   const tags = [];
   if (m.mtplx) tags.push("MTPLX");
@@ -2008,30 +2159,49 @@ function repoProbePanel(d) {
       ${local ? `<span class="mtag ok">已在本机</span>` : ""}
       ${m.gated ? `<span class="mtag warn">需授权</span>` : ""}
     </div>
-    <div class="probe-grid">${cells.map(([k, v]) => `<div class="cell"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`).join("")}</div>
+    <div class="probe-grid">${cells.map(([k, v]) => `<div class="cell"><span class="k">${esc(k)}</span><span class="v">${v}</span></div>`).join("")}</div>
     ${tags.length ? `<div class="mtags" style="margin-top:10px">${tags.map((t) => `<span class="mtag">${esc(t)}</span>`).join("")}</div>` : ""}
     ${strip}
     ${card ? `<div class="probe-card" style="margin-top:10px">${esc(card)}</div>` : ""}
   </div>`;
 }
 
+function hubFactTags(m) {
+  const facts = [];
+  if (m.io) facts.push(`<span class="mtag fact io">${esc(m.io)}</span>`);
+  if (m.quantization) facts.push(`<span class="mtag fact quant">量化 ${esc(m.quantization)}</span>`);
+  if (m.memoryMin) {
+    const memory = m.memoryMax && m.memoryMax !== m.memoryMin
+      ? `${m.memoryMin}–${m.memoryMax}`
+      : `${m.memoryMin}`;
+    facts.push(`<span class="mtag fact mem">≈${memory} GB 内存</span>`);
+  }
+  if (m.engine) {
+    const none = m.engineID === "none";
+    facts.push(`<span class="mtag fact engine ${esc(m.engineID || "none")}">${none ? "无引擎推荐" : "推荐 " + esc(m.engine)}</span>`);
+  }
+  return facts;
+}
+
 function hubRow(m) {
   const local = repoLocal(m.id);
   const meta = [];
-  if (m.parameters) meta.push(`${fmtParams(m.parameters)} 参数`);
-  if (m.size) meta.push(fmtBytes(m.size));
-  meta.push(`${icon("download", "meta-icon", 12)} ${fmtCompact(m.downloads)}`);
-  if (m.likes) meta.push(`${icon("heart", "meta-icon", 12)} ${fmtCompact(m.likes)}`);
+  if (m.parameters) meta.push(esc(`${fmtParams(m.parameters)} 参数`));
+  if (m.size) meta.push(esc(fmtBytes(m.size)));
+  meta.push(metricHTML("download", fmtCompact(m.downloads)));
+  if (m.likes) meta.push(metricHTML("heart", fmtCompact(m.likes)));
   const tags = [];
   if (m.mlx) tags.push("MLX");
   if (m.gguf) tags.push("GGUF");
   if (m.mtplx) tags.push("MTPLX");
   if (m.gated) tags.push("需授权");
   if (m.license) tags.push(m.license);
+  const facts = hubFactTags(m);
   return `<div class="hub-row${local ? " local" : ""}" data-act="hubOpenDetail" data-arg="${esc(m.id)}">
     <div style="flex:1;min-width:0">
       <div class="hub-name" title="${esc(m.id)}">${esc(m.id)}</div>
-      <div class="hub-sub">${meta.map(esc).join("<span>·</span>")}</div>
+      <div class="hub-sub">${meta.join("<span>·</span>")}</div>
+      ${facts.length ? `<div class="hub-facts">${facts.join("")}</div>` : ""}
       ${tags.length ? `<div class="mtags" style="margin-top:4px">${tags.map((t) => `<span class="mtag">${esc(t)}</span>`).join("")}</div>` : ""}
     </div>
     <div style="display:flex;align-items:center;gap:8px;flex:none">
@@ -2101,15 +2271,17 @@ function hubDetailBody() {
     inner = m.modelCard ? `<div class="hub-card">${md(hubCardText(m.modelCard))}</div>` : `<div class="hub-empty">这个仓库没有模型卡（README）</div>`;
   }
   const meta = [];
-  if (m.size) meta.push(fmtBytes(m.size));
-  if (m.parameters) meta.push(`${fmtParams(m.parameters)} 参数`);
-  meta.push(`${icon("download", "meta-icon", 12)} ${fmtCompact(m.downloads)}`);
-  if (m.likes) meta.push(`${icon("heart", "meta-icon", 12)} ${fmtCompact(m.likes)}`);
+  if (m.size) meta.push(esc(fmtBytes(m.size)));
+  if (m.parameters) meta.push(esc(`${fmtParams(m.parameters)} 参数`));
+  meta.push(metricHTML("download", fmtCompact(m.downloads)));
+  if (m.likes) meta.push(metricHTML("heart", fmtCompact(m.likes)));
+  const facts = hubFactTags(m);
   return `<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:8px">
       <span class="mono" style="font-size:12px">${esc(m.id)}</span>
-      <span class="sz">${meta.map(esc).join(" · ")}</span>
+      <span class="sz">${meta.join(" · ")}</span>
       ${m.pipeline ? `<span class="mtag">${esc(m.pipeline)}</span>` : ""}
     </div>
+    ${facts.length ? `<div class="hub-facts" style="margin-bottom:8px">${facts.join("")}</div>` : ""}
     <div class="confirm-strip" style="margin:0 0 10px">${esc(hubEngineHint(m))}</div>
     <div class="ctl" style="display:flex;gap:8px;margin-bottom:8px">
       <span class="filter ${tab === "card" ? "on" : ""}" data-act="hubTab" data-arg="card">模型卡</span>
@@ -2130,22 +2302,55 @@ const ENGINE_META = {
   splash: { name: "Splash", color: "#D26A20", grad: "linear-gradient(135deg,#FF9F0A,#FF375F)" },
   omlx: { name: "oMLX", color: "#177F86", grad: "linear-gradient(135deg,#2AA8A0,#1F5FBF)" },
   mtplx: { name: "MTPLX", color: "#5B57C9", grad: "linear-gradient(135deg,#5E5CE6,#7B2CBF)" },
+  "mlx-serve": { name: "MLX-Serve", color: "#0A84FF", grad: "linear-gradient(135deg,#0A84FF,#5E5CE6)" },
+  strata: { name: "Strata", color: "#0AB887", grad: "linear-gradient(135deg,#0AB887,#177F86)" },
 };
 const ENGINE_CAPS = {
   splash: ["DFlash2 投机解码", "视觉多模态"],
   omlx: ["多模型热切换", "热加载"],
   mtplx: ["MTP 投机解码", "长上下文", "仅支持串行"],
+  "mlx-serve": ["多模型热切换", "原生 MLX / GGUF", "工具调用"],
+  strata: ["SSD 专家流式", "MTP 投机解码", "多硬件后端"],
 };
 const ENGINE_CAP_WARN = new Set(["仅支持串行"]);
 const ENGINE_BLURB = {
   splash: "Apple Silicon 上的自管运行时，专注单模型：DFlash2 投机解码、KV 缓存与视觉多模态都在同一个包里。",
   omlx: "多模型热切换：常驻多个模型，按请求路由，MTP / DFlash2 按模型开关。",
   mtplx: "以 MTP 投机解码为主的引擎，量化与草稿参数通过命令行开关控制。注意它是串行调度的：同一时刻只处理一个请求，并发调用会排队等待，不会像前两个引擎那样合批并行。",
+  "mlx-serve": "原生 Apple Silicon MLX / GGUF 运行时，多模型热加载，自带 OpenAI、Anthropic 与 Ollama 兼容接口。",
+  strata: "面向超大 MoE 的流式推理运行时，按需从 SSD 读取专家权重，覆盖 Metal、CUDA、HIP 与 SYCL 后端。",
 };
 
+function engineIDs() {
+  const catalog = (S && Array.isArray(S.engineCatalog)) ? S.engineCatalog : [];
+  return catalog.length ? catalog.map((item) => item.id) : ["splash", "omlx", "mtplx"];
+}
+
+function engineMeta(id) {
+  const row = ((S && Array.isArray(S.engineCatalog)) ? S.engineCatalog : []).find((item) => item.id === id);
+  const fallback = ENGINE_META[id] || { name: String(id || "ENGINE").toUpperCase(), color: "#767676", grad: "linear-gradient(135deg,#8E8E93,#636366)" };
+  return {
+    ...fallback,
+    name: (row && row.name) || fallback.name,
+    color: (row && row.accent) || fallback.color,
+    grad: fallback.grad || `linear-gradient(135deg,${(row && row.accent) || fallback.color},#636366)`,
+  };
+}
+
+function engineCaps(id) {
+  const row = ((S && Array.isArray(S.engineCatalog)) ? S.engineCatalog : []).find((item) => item.id === id);
+  const labels = row && Array.isArray(row.capabilities) ? row.capabilities.map((cap) => cap.label).filter(Boolean) : [];
+  return labels.length ? labels : (ENGINE_CAPS[id] || []);
+}
+
+function engineBlurb(id) {
+  const row = ((S && Array.isArray(S.engineCatalog)) ? S.engineCatalog : []).find((item) => item.id === id);
+  return (row && row.summary) || ENGINE_BLURB[id] || "";
+}
+
 function pageEngines() {
-  const cards = ["splash", "omlx", "mtplx"].map((id) => {
-    const meta = ENGINE_META[id];
+  const cards = engineIDs().map((id) => {
+    const meta = engineMeta(id);
     const info = (S.enginesInstall && S.enginesInstall[id]) || {};
     const versions = info.versions || [];
     const installed = versions.length > 0;
@@ -2240,11 +2445,12 @@ function configBody() {
   const isActive = S.engine.id === id;
   const portDisabled = isActive && running();
   const T = () => cfgModel().tuning;
+  const adapter = (((S.engineCatalog || []).find((item) => item.id === id) || {}).adapter) || id;
   // 自定义思考截断的开关状态：显式存过以存值为准，否则由「是否填了数值」派生。
   const thinkCustom = () => T().thinkingBudgetCustom ?? (T().thinkingBudget != null);
   let engineCards = "";
 
-  if (id === "splash") {
+  if (adapter === "splash") {
     engineCards = `
       <div class="set-card">
         <div class="card-hd">DFlash2 <small>投机解码 draft 模型与资源上限</small></div>
@@ -2259,7 +2465,7 @@ function configBody() {
         ${cfgToggle("自定义思考截断", "开启后手动设定思考 token 上限；关闭不限制", "thinkingBudgetCustom", thinkCustom())}
         ${cfgField("思考截断大小", "--thinking-token-budget，思考超过 N 个 token 强制结束思考并开始回答", "thinkingBudget", "不限制", "96px", !thinkCustom())}
       </div>`;
-  } else if (id === "mtplx") {
+  } else if (adapter === "mtplx") {
     engineCards = `
       <div class="set-card">
         <div class="card-hd">MTP <small>多 token 预测</small></div>
@@ -2269,7 +2475,7 @@ function configBody() {
         ${cfgToggle("自定义思考截断", "开启后手动设定思考 token 上限；关闭不限制", "thinkingBudgetCustom", thinkCustom())}
         ${cfgField("思考截断大小", "MTPLX_THINKING_BUDGET，思考超过 N 个 token 强制结束思考并开始回答", "thinkingBudget", "不限制", "96px", !thinkCustom())}
       </div>`;
-  } else if (id === "omlx") {
+  } else if (adapter === "omlx") {
     engineCards = `
       <div class="set-card">
         <div class="card-hd">MTP / DFlash2 <small>按模型生效，两者互斥</small></div>
@@ -2280,6 +2486,18 @@ function configBody() {
         ${cfgToggle("自定义思考截断", "开启后手动设定思考 token 上限；关闭不限制", "thinkingBudgetCustom", thinkCustom())}
         ${cfgField("思考截断大小", "thinking_budget_tokens，按模型生效；思考超过 N 个 token 强制结束思考并开始回答", "thinkingBudget", "不限制", "96px", !thinkCustom())}
         <div class="set-note">这些开关由 oMLX 的设置接口保存，对每个模型独立生效；保存后会重新加载当前模型，未加载的模型在下一次加载时应用。</div>
+      </div>`;
+  } else if (adapter === "mlx-serve") {
+    engineCards = `
+      <div class="set-card">
+        <div class="card-hd">热加载 <small>由 MLX-Serve 运行时管理</small></div>
+        <div class="set-note">模型加载、卸载和内存淘汰由引擎自身处理；flashCat 只通过公开控制接口切换模型。额外启动参数可在下面追加。</div>
+      </div>`;
+  } else if (adapter === "strata") {
+    engineCards = `
+      <div class="set-card">
+        <div class="card-hd">Strata 运行参数 <small>受管运行时</small></div>
+        <div class="set-note">Strata 会按本机硬件准备模型运行时。上下文、视觉和草稿策略由受管配置管理，额外启动参数可在下面追加。</div>
       </div>`;
   }
 
@@ -2298,7 +2516,7 @@ function configBody() {
       <div class="set-card">
         <div class="card-hd">高级 <small>原样追加的启动参数</small></div>
         ${cfgField("额外参数", "仅对该引擎生效，按空格切分并支持引号分组", "extraArguments", "例如 --no-webui --queue-size 8", "100%")}
-        ${id === "omlx" ? "" : `<div class="set-note">启动参数在下次启动时生效；保存后如需立即应用，请在引擎页重启。</div>`}
+        ${adapter === "omlx" ? "" : `<div class="set-note">启动参数在下次启动时生效；保存后如需立即应用，请在引擎页重启。</div>`}
       </div>
     </div>
     <div class="modal-foot">
@@ -2574,7 +2792,7 @@ function comparableSettings(value) {
 }
 
 function savebarState(d) {
-  const engines = ["splash", "omlx", "mtplx"];
+  const engines = engineIDs();
   const dirty = comparableSettings(d) !== comparableSettings(settingsStored());
   // 草稿的端口是字符串、快照里是数字，两边都要 String 归一化，
   // 否则恒不等，提示会被错误升级成「改动将重启引擎以生效」。
@@ -2588,7 +2806,7 @@ function savebarState(d) {
   const restartHint = dirty && (activePortChanged || otherChanged) && running();
   const portInvalid = engines.some((e) => { const v = parseInt(d.ports[e], 10); return !v || v < 1024 || v > 65535; });
   const headline = !dirty ? "所有改动已保存"
-    : restartHint ? `改动将重启 ${ENGINE_META[S.engine.id].name} 以生效`
+    : restartHint ? `改动将重启 ${engineMeta(S.engine.id).name} 以生效`
     : "有未保存的更改";
   return { dirty, restartHint, portInvalid, headline };
 }
@@ -2619,7 +2837,7 @@ function pageSettings() {
     <div class="set-card">
       ${row("API 网关", "OpenAI + Claude 双格式 · 统一入口 · 端口改完按回车生效",
         tgl(S.settings.gatewayEnabled, "gateway") + field("gatewayPort", S.settings.gatewayPort, false))}
-      ${row("Splash / oMLX / MTPLX 端口", "各引擎固定段起始端口，互相不抢",
+      ${row("引擎端口", "各引擎固定段起始端口，互相不抢",
         engines3().map((e) => field("port_" + e, d.ports[e], false, (() => { const v = parseInt(d.ports[e], 10); return v && !(v >= 1024 && v <= 65535); })())).join(""))}
     </div>
     <div class="set-card">
@@ -2633,7 +2851,7 @@ function pageSettings() {
     ${savebarHTML(d)}`;
 }
 
-function engines3() { return ["splash", "omlx", "mtplx"]; }
+function engines3() { return engineIDs(); }
 
 function refreshSettingsChrome() {
   const d = UI.settingsDraft;
@@ -2709,12 +2927,12 @@ function pageRecommend() {
   const allFit = rows.every((r) => r.fit === "good" || r.fit === "unknown");
 
   const cards = rows.map((r) => {
-    const meta = ENGINE_META[r.engine] || { name: r.engineName || r.engine, color: "#767676", grad: "linear-gradient(135deg,#8E8E93,#636366)" };
+    const meta = engineMeta(r.engine);
     const fits = r.fit === "good" || r.fit === "unknown";
     const tags = [];
     if (r.minMemory) tags.push(`<span class="mtag">内存下限 ${r.minMemory} GB</span>`);
     if (r.sizeText) tags.push(`<span class="mtag">${esc(r.sizeText)}</span>`);
-    (ENGINE_CAPS[r.engine] || []).forEach((t) => tags.push(`<span class="mtag${ENGINE_CAP_WARN.has(t) ? " warn" : ""}">${esc(t)}</span>`));
+    engineCaps(r.engine).forEach((t) => tags.push(`<span class="mtag${ENGINE_CAP_WARN.has(t) ? " warn" : ""}">${esc(t)}</span>`));
     // 不够也推荐（最轻一档），但必须说清是「可能不够」而不是「适配」。
     const caveat = r.fit === "tight"
       ? `<p class="lc-serial">这台机器连最轻的一档都低于它的内存下限（${esc(String(r.minMemory || 0))} GB）。仍可安装，但可能跑不动或频繁换页。</p>`
@@ -2755,7 +2973,7 @@ function pageRecommend() {
 function recommendConfirmHTML(engine) {
   const rec = S.recommendation || {};
   const row = (rec.rows || []).find((r) => r.engine === engine) || {};
-  const meta = ENGINE_META[engine] || { name: engine };
+  const meta = engineMeta(engine);
   const info = (S.enginesInstall && S.enginesInstall[engine]) || {};
   const rel = info.latestRelease || null;
   const known = !!(rel && rel.bytes);
@@ -2792,8 +3010,8 @@ function bindRecommendOverlay(root) {
 // ---------- 启动页 ----------
 function pageLaunch() {
   const idx = S.packIndex || {};
-  const rows = ["splash", "omlx", "mtplx"].map((id) => {
-    const meta = ENGINE_META[id];
+  const rows = engineIDs().map((id) => {
+    const meta = engineMeta(id);
     const info = (S.enginesInstall && S.enginesInstall[id]) || {};
     const versions = info.versions || [];
     const newestInstalled = versions.length ? versions[versions.length - 1] : null;
@@ -2822,24 +3040,24 @@ function pageLaunch() {
       <div class="lc-head">
         <span class="eng-ico" style="--engine-accent:${meta.color}">${icon("cpu", "", 19)}</span>
         <div class="lc-name"><b>${meta.name}</b>
-          <span class="mtags">${(ENGINE_CAPS[id] || []).map((t) => `<span class="mtag${ENGINE_CAP_WARN.has(t) ? " warn" : ""}">${esc(t)}</span>`).join("")}
+          <span class="mtags">${engineCaps(id).map((t) => `<span class="mtag${ENGINE_CAP_WARN.has(t) ? " warn" : ""}">${esc(t)}</span>`).join("")}
           ${newestInstalled ? (S.engine.id === id ? `<span class="mtag ok">当前引擎</span>` : `<span class="mtag">已安装 v${esc(newestInstalled)}</span>`) : ""}</span></div>
         <div class="lc-side">
           ${latestVersion ? `<span class="lc-ver ${latestInstalled ? "dim" : ""}">最新 v${esc(latestVersion)}${rel && rel.bytes ? " · " + fmtBytes(rel.bytes) : ""}</span>` : ""}
           ${action}
         </div>
       </div>
-      <div class="lc-blurb">${esc(ENGINE_BLURB[id] || "")}</div>
-      ${(ENGINE_CAPS[id] || []).includes("仅支持串行")
+      <div class="lc-blurb">${esc(engineBlurb(id))}</div>
+      ${engineCaps(id).includes("仅支持串行")
         ? `<p class="lc-serial">串行引擎：并发请求只会排队，概览里的解码速度始终是单请求的速度。</p>` : ""}
       ${progressLine}
     </div>`;
   }).join("");
 
-  const installedSummary = ["splash", "omlx", "mtplx"]
+  const installedSummary = engineIDs()
     .map((id) => ({ id, versions: (S.enginesInstall && S.enginesInstall[id] && S.enginesInstall[id].versions) || [] }))
     .filter((x) => x.versions.length)
-    .map((x) => `${ENGINE_META[x.id].name} v${x.versions[x.versions.length - 1]}`)
+    .map((x) => `${engineMeta(x.id).name} v${x.versions[x.versions.length - 1]}`)
     .join(" · ");
 
   return `
@@ -2888,7 +3106,7 @@ function renderOverlays() {
   }
   // 引擎未安装确认（模型由未安装引擎驱动）
   if (S.pendingInstall) {
-    const name = ENGINE_META[S.pendingInstall] ? ENGINE_META[S.pendingInstall].name : S.pendingInstall;
+    const name = engineMeta(S.pendingInstall).name;
     parts.push(modal(`
       <div class="modal-title">${esc(name)} 还没安装</div>
       <div class="modal-text">这个模型由 ${esc(name)} 引擎驱动，先安装 ${esc(name)} 才能切换到它。</div>
@@ -2905,7 +3123,7 @@ function renderOverlays() {
   }
   // 引擎配置
   if (UI.configEngine) {
-    const name = ENGINE_META[UI.configEngine] ? ENGINE_META[UI.configEngine].name : UI.configEngine;
+    const name = engineMeta(UI.configEngine).name;
     parts.push(modal(`
       <div class="modal-title">${esc(name)} 配置</div>
       ${configBody()}`, "closeConfig", true));
@@ -2932,7 +3150,7 @@ function renderOverlays() {
     const d = repoDlDraft();
     const local = repoLocal(d.repo);
     parts.push(modal(`
-      <div class="modal-title">下载模型 <small>权重存公共目录，三个引擎共用一份</small></div>
+      <div class="modal-title">下载模型 <small>权重存公共目录，多个引擎共用一份</small></div>
       <div class="modal-body">
         <div class="modal-text" style="padding:0 0 10px">填 Hugging Face 仓库 id（<span class="mono">owner/repo</span>），输入停下会自动查一次仓库信息。下完再勾给哪些引擎用；能否被引擎加载由引擎自己判断。</div>
         <input class="field" style="width:100%;min-width:0;text-align:left;padding:8px 12px" data-key="repoDlRepo" data-repo placeholder="例如 mlx-community/Qwen3.5-9B-4bit" value="${esc(d.repo)}" spellcheck="false">

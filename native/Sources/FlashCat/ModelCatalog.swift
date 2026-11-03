@@ -54,31 +54,23 @@ struct ModelCatalog {
 }
 
 final class ModelCatalogService {
-    func load(runtime: EngineRuntime?) -> ModelCatalog {
+    func load() -> ModelCatalog {
         var catalog = ModelCatalog()
-        catalog.local = scanLocalModels(Paths.modelsDirectory) + ModelSharing.scan()
-        catalog.installed = scanSplash(Paths.splashModelsDirectory)
-        catalog.draftRepositories = runtime?.draftRepositories ?? [:]
+        let splashModels = EnginePaths.modelsDirectory(.splash)
+        catalog.local = scanLocalModels(splashModels) + ModelSharing.scan()
+        catalog.installed = scanSplash(splashModels)
+        catalog.draftRepositories = splashPackRuntime?.draftRepositories ?? [:]
         return catalog
     }
 
-    func migrateLegacyDirectory() {
-        let legacy = Paths.legacyModelsDirectory
-        let target = Paths.modelsDirectory
-        if !Paths.fileExists(legacy) || legacy == target { return }
-        Paths.ensureDirectory(target)
-        // `<support>/models` now also holds the per-engine folders
-        // (`models/omlx`, `models/mtplx`); those are live, not legacy, and
-        // moving them into Splash's folder would empty another engine's library.
-        let engineFolders = Set(EngineID.allCases.map { $0.rawValue })
-        for owner in directories(legacy) where !engineFolders.contains(basename(owner)) {
-            for repo in directories(owner) {
-                let destination = target + "/" + basename(owner) + "/" + basename(repo)
-                if Paths.fileExists(destination) { continue }
-                Paths.ensureDirectory((destination as NSString).deletingLastPathComponent)
-                try? FileManager.default.moveItem(atPath: repo, toPath: destination)
-            }
-        }
+    private var splashPackRuntime: EngineRuntime? {
+        guard let root = EngineInstallations.newest(.splash, version: nil)?.root.path else { return nil }
+        return EngineRuntime(root: root)
+    }
+
+    @discardableResult
+    func migrateLegacyDirectories() -> ModelStorageMigration.Report {
+        ModelStorageMigration.migrate()
     }
 
     /// Deleting is the only mutating action left on a model now that importing

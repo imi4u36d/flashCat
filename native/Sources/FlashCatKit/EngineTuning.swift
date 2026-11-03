@@ -104,13 +104,17 @@ public struct EngineTuning: Codable, Equatable, Sendable {
     /// MTPLX preloads its MTP head (`--load-mtp`) so the first request does not
     /// pay the head-loading latency — the engine's own recommended setup.
     public static func defaults(for id: EngineID) -> EngineTuning {
-        switch id {
+        switch id.adapter {
         case .splash:
             return EngineTuning(dflash: true, pleSSDOffload: true)
         case .omlx:
             return EngineTuning(mtp: true, dflash: false, pleSSDOffload: true)
         case .mtplx:
             return EngineTuning(loadMtp: true)
+        case .mlxServe, .strata:
+            return EngineTuning(mtp: true)
+        default:
+            return EngineTuning()
         }
     }
 
@@ -128,7 +132,7 @@ public struct EngineTuning: Codable, Equatable, Sendable {
     /// deliberately absent here.
     public func arguments(for id: EngineID) -> [String] {
         var result: [String] = []
-        switch id {
+        switch id.adapter {
         case .splash:
             if let value = trimmed(maxMemory) { result += ["--max-memory", value] }
             if let value = trimmed(maxContext) { result += ["--max-context", value] }
@@ -145,6 +149,8 @@ public struct EngineTuning: Codable, Equatable, Sendable {
             if let loadMtp { result.append(loadMtp ? "--load-mtp" : "--no-load-mtp") }
             if let bits = mtpQuantBits, bits > 0 { result += ["--mtp-quant-bits", String(bits)] }
         case .omlx:
+            break
+        default:
             break
         }
         result += EngineTuning.splitArguments(extraArguments)
@@ -171,14 +177,16 @@ public struct EngineTuning: Codable, Equatable, Sendable {
         let fallback = EngineTuning.defaults(for: id)
         let dflashOn = dflash ?? fallback.dflash ?? false
         let mtpOn: Bool
-        switch id {
+        switch id.adapter {
         case .splash, .omlx:
             mtpOn = mtp ?? fallback.mtp ?? false
         case .mtplx:
             // The pack's own switch defaults to on; `nil` leaves it that way.
             mtpOn = mtp ?? true
+        default:
+            mtpOn = mtp ?? fallback.mtp ?? false
         }
-        switch id {
+        switch id.adapter {
         case .splash:
             // Splash only runs the DFlash2 draft; its mtp knob is ignored.
             return dflashOn ? .dflash : .off
@@ -187,6 +195,8 @@ public struct EngineTuning: Codable, Equatable, Sendable {
             return mtpOn ? .mtp : .off
         case .mtplx:
             return mtpOn ? .mtp : .off
+        default:
+            return dflashOn ? .dflash : (mtpOn ? .mtp : .off)
         }
     }
 

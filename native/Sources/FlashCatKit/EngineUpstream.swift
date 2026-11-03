@@ -59,11 +59,7 @@ public struct EngineUpstreamRelease: Sendable, Equatable {
 /// so the check keeps working when a pack is missing or half-installed.
 public enum EngineUpstream {
     public static func repository(for id: EngineID) -> String {
-        switch id {
-        case .omlx: return "jundot/omlx"
-        case .mtplx: return "youssofal/mtplx"
-        case .splash: return "incoai/splash"
-        }
+        id.descriptor.upstreamRepository ?? id.rawValue
     }
 
     public static func releasesPage(for id: EngineID) -> URL {

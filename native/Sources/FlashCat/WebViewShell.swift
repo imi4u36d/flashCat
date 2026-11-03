@@ -132,8 +132,8 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
 
     // MARK: JS → Swift
 
-    nonisolated func userContentController(_ userContentController: WKUserContentController,
-                                           didReceive message: WKScriptMessage) {
+    func userContentController(_ userContentController: WKUserContentController,
+                               didReceive message: WKScriptMessage) {
         guard message.name == "bridge",
               let body = message.body as? [String: Any],
               let type = body["type"] as? String else { return }
@@ -244,9 +244,14 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
         case "clearLogs": state.clearLogs()
         case "openFinder": openFinder(body)
         case "rescan":
-            EngineModelStore.adoptExistingWeights(engine ?? state.activeEngine)
+            let target = engine ?? state.activeEngine
+            EngineModelStore.adoptExistingWeights(target)
             state.reloadModels()
-            state.toast("已重新扫描 \((engine ?? state.activeEngine).displayName) 的模型目录")
+            Task { @MainActor in
+                await state.engines?.controller(target)?.rescanModels()
+                state.reloadModels()
+            }
+            state.toast("已重新扫描 \(target.displayName) 的模型目录")
         case "installEngine":
             if let engine {
                 installEngine(engine, adoptOnFirstInstall: (body["launch"] as? Bool) ?? state.needsEngineSetup)
@@ -341,7 +346,7 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
         if ModelSharing.isShared(id) {
             let repo = ModelSharing.canonical(id)
             let bytes = EngineModelStore.size(of: ModelSharing.path(for: repo))
-            let others = EngineID.allCases.filter { ModelSharing.engines(for: repo).contains($0) }
+            let others = EngineCatalog.allIDs.filter { ModelSharing.engines(for: repo).contains($0) }
             let alert = NSAlert()
             alert.alertStyle = .warning
             alert.messageText = "删除 \(repo)？"
@@ -443,7 +448,7 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
         var activePortChanged = false
 
         if let ports = body["ports"] as? [String: Any] {
-            for id in EngineID.allCases {
+            for id in EngineCatalog.allIDs {
                 guard let text = ports[id.rawValue] as? String,
                       let value = Int(text.trimmingCharacters(in: .whitespaces)),
                       (1024...65535).contains(value) else { continue }
@@ -675,6 +680,7 @@ enum WebSnapshot {
     static func data(state: AppState) -> Data? {
         let engine = state.activeEngine
         let stats = state.stats
+        let device = DeviceProfile.current()
 
         var engineState: [String: Any] = [
             "id": engine.rawValue,
@@ -748,15 +754,22 @@ enum WebSnapshot {
                 item["source"] = entry.source.rawValue
                 if ModelSharing.isShared(entry.model.id) {
                     item["shared"] = true
-                    item["engines"] = EngineID.allCases
+                    item["engines"] = EngineCatalog.allIDs
                         .filter { ModelSharing.engines(for: entry.model.id).contains($0) }
                         .map(\.rawValue)
                 }
                 if let tags = entry.recommendation?.tags, !tags.isEmpty { item["tags"] = tags }
-                if let memory = entry.recommendation?.minimumMemory, memory > 0 { item["minMemory"] = memory }
+                if let recommendation = entry.recommendation {
+                    item["summary"] = recommendation.summary
+                    item["fit"] = fitName(device.fit(recommendation))
+                    item["rank"] = recommendation.rank
+                    if recommendation.minimumMemory > 0 {
+                        item["minMemory"] = recommendation.minimumMemory
+                    }
+                }
                 // 草稿的下载目前只接在 Splash 上（oMLX 的 dflash_draft_model
                 // 还没接），别先给 oMLX 卡片挂一个下不到的标签。
-                if entry.draftRepository != nil && entry.engine == .splash { item["draftTag"] = true }
+                if entry.draftRepository != nil && entry.engine.adapter == .splash { item["draftTag"] = true }
                 // ★ 标签只看配置推荐了哪一档，不看是否已装：换了模型之后标签
                 // 仍要留在原来那一档上，否则用户会以为推荐变了。
                 if let tag = state.recommendationTag(for: entry.model.id, engine: entry.engine) {
@@ -792,6 +805,7 @@ enum WebSnapshot {
                         },
                     ]
                     if let summary = result.summary { item["summary"] = summary }
+                    if let io = result.io { item["io"] = io }
                     if !result.tags.isEmpty { item["tags"] = result.tags }
                     return item
                 },
@@ -799,7 +813,7 @@ enum WebSnapshot {
         }
 
         var enginesInstall: [String: Any] = [:]
-        for id in EngineID.allCases {
+        for id in EngineCatalog.allIDs {
             let info = state.installs
             var item: [String: Any] = [
                 "port": EngineStore.shared.configuration(for: id).port ?? id.defaultPort,
@@ -872,7 +886,7 @@ enum WebSnapshot {
             "defaultModel": state.settings.model,
             "gatewayEnabled": state.settings.gatewayEnabled,
             "gatewayPort": state.settings.gatewayPort,
-            "ports": Dictionary(uniqueKeysWithValues: EngineID.allCases.map { id in
+            "ports": Dictionary(uniqueKeysWithValues: EngineCatalog.allIDs.map { id in
                 (id.rawValue, EngineStore.shared.configuration(for: id).port ?? id.defaultPort)
             }),
         ]
@@ -895,7 +909,7 @@ enum WebSnapshot {
             recommendationDict["memoryGB"] = recommendation.memoryGB
             recommendationDict["freeDiskText"] = recommendation.freeDiskBytes > 0
                 ? Format.size(Int(recommendation.freeDiskBytes)) : ""
-            recommendationDict["rows"] = EngineID.allCases.compactMap { engine -> [String: Any]? in
+            recommendationDict["rows"] = EngineCatalog.allIDs.compactMap { engine -> [String: Any]? in
                 guard let pick = recommendation.pick(for: engine) else { return nil }
                 let model = ModelRecommendations.recommendation(for: pick.model)
                 var row: [String: Any] = [
@@ -923,6 +937,22 @@ enum WebSnapshot {
                           "error": state.installs.indexError ?? NSNull()] as [String: Any],
             "pendingInstall": pendingInstall ?? NSNull(),
             "recommendation": recommendationDict,
+            "engineCatalog": EngineCatalog.allIDs.map { id -> [String: Any] in
+                let descriptor = id.descriptor
+                return [
+                    "id": id.rawValue,
+                    "name": descriptor.displayName,
+                    "summary": descriptor.summary,
+                    "accent": descriptor.accentColor,
+                    "adapter": descriptor.adapter.rawValue,
+                    "defaultPort": descriptor.defaultPort,
+                    "switchMode": descriptor.switchMode.rawValue,
+                    "installed": state.engineIsInstalled(id),
+                    "capabilities": descriptor.capabilities.map {
+                        ["id": $0.rawValue, "label": $0.displayName]
+                    },
+                ]
+            },
             "engine": engineState,
             "draftLabel": draftLabel(state),
             "port": state.port,
@@ -969,7 +999,7 @@ enum WebSnapshot {
             // 模型切换菜单的数据源：按已安装引擎分组（旧原生 ModelSwitcher 的
             // 行为）。此前只推 catalog.machine（Splash 口径），oMLX/MTPLX 用户
             // 的菜单是空的，表现为「模型切换全部失效」。
-            "modelsMenu": EngineID.allCases
+            "modelsMenu": EngineCatalog.allIDs
                 .filter { state.engineIsInstalled($0) }
                 .map { id -> [String: Any] in
                     ["engine": id.rawValue,
@@ -1072,7 +1102,7 @@ enum WebSnapshot {
         if let budget = tuning.effectiveThinkingBudget(for: id) {
             parts.append("思考≤\(budget)")
         }
-        if id == .mtplx, let mtp = tuning.mtp { parts.append(mtp ? "--mtp" : "--no-mtp") }
+        if id.adapter == .mtplx, let mtp = tuning.mtp { parts.append(mtp ? "--mtp" : "--no-mtp") }
         return parts.isEmpty ? "默认" : parts.joined(separator: " ")
     }
 }

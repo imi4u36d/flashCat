@@ -1,11 +1,9 @@
 import Foundation
 import FlashCatKit
 
-/// Locates the bundled (or managed) splash inference runtime.
-///
-/// Search order, same as the previous client:
-///   FLASHCAT_RUNTIME → ~/Library/Application Support/flashCat/runtimes/<active>
-///   → <app>/Contents/Resources/runtime → ./.runtime
+/// A view over the files inside one installed Splash pack. Splash has the same
+/// lifecycle as every other pack: installation, versioning and entrypoint all
+/// come from `EngineInstallations`.
 struct EngineRuntime {
     let root: String
 
@@ -43,55 +41,6 @@ struct EngineRuntime {
         "Qwen3.6-35B-A3B": "incoai/Qwen3.6-35B-A3B-DFlash2",
         "Qwen3.8-Flash-Next": "incoai/Qwen3.8-Flash-Next-DFlash2",
     ]
-
-    static var managedVersion: String? {
-        guard let value = try? String(contentsOfFile: Paths.activeRuntimeFile, encoding: .utf8)
-            .trimmingCharacters(in: .whitespaces),
-            !value.isEmpty,
-            TextPattern.test("^[A-Za-z0-9._-]+$", value) else { return nil }
-        return value
-    }
-
-    static var bundledResourcesDirectory: String? {
-        // Inside a .app bundle: …/flashCat.app/Contents/Resources
-        let bundle = Bundle.main
-        if bundle.bundleURL.path.hasSuffix(".app"), let resources = bundle.resourceURL,
-           FileManager.default.fileExists(atPath: resources.path) {
-            return resources.path
-        }
-        // Development build: native/.runtime or the project's .runtime
-        return nil
-    }
-
-    static func locate() -> EngineRuntime? {
-        var candidates: [String] = []
-        let override = ProcessInfo.processInfo.environment["FLASHCAT_RUNTIME"] ?? ""
-        if !override.isEmpty { candidates.append(override) }
-
-        if let active = managedVersion {
-            candidates.append(Paths.runtimesDirectory + "/" + active)
-        }
-        if let resources = bundledResourcesDirectory {
-            candidates.append(resources + "/runtime")
-        }
-        candidates.append(FileManager.default.currentDirectoryPath + "/.runtime")
-        candidates.append(FileManager.default.currentDirectoryPath + "/../.runtime")
-
-        for candidate in candidates {
-            let runtime = EngineRuntime(root: candidate)
-            if runtime.exists { return runtime }
-        }
-        return nil
-    }
-
-    static func selectRuntime(_ version: String?) {
-        Paths.ensureDirectory(Paths.supportDirectory)
-        if version == nil {
-            try? FileManager.default.removeItem(atPath: Paths.activeRuntimeFile)
-        } else if let value = version {
-            try? value.write(toFile: Paths.activeRuntimeFile, atomically: true, encoding: .utf8)
-        }
-    }
 
     static func readJSON(_ path: String) -> Any? {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return nil }

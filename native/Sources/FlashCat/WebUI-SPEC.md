@@ -25,9 +25,13 @@ parent: flashcat-app
 
 **Hub 搜索的两格。** 命令 `searchHub {query}`，空 `query` 即清空；快照字段 `hubSearch` 在没有搜索时是 `null`，否则 `{query, state: idle|loading|failed, error, results: [...]}`，`results` 只含**当前栏**（模型的 `libraryEngine`）的命中——归属由 Swift 侧的格式判定给出，网页不自己过滤。换栏时 Swift 侧清空搜索。
 
-结果项：`id`（`owner/repo`，或带量化的 `owner/repo:VARIANT`）、`repo`、`display`（仓库短名）、`engine`（单值 `splash|omlx|mtplx`）、`kind`（`gguf|mtplx|mlx|unmarked`）、`bytes`、`memory`（GB 整数）、`estimated`（`true` 表示 `bytes × 1.2` 的估算，界面一律加 ≈）、`downloads`、`originText`（固定 `Hugging Face`）、`options`（`[{name, label, bytes, memory, estimated}]`，GGUF 多量化各一档，其余格式是一条 `name` 为空的记录），可选 `summary`、`tags`。
+结果项：`id`（`owner/repo`，或带量化的 `owner/repo:VARIANT`）、`repo`、`display`（仓库短名）、`engine`（当前栏目的 engine id）、`kind`（`gguf|mtplx|mlx|unmarked`）、`bytes`、`memory`（GB 整数）、`estimated`（`true` 表示 `bytes × 1.2` 的估算，界面一律加 ≈）、`downloads`、`originText`（固定 `Hugging Face`）、`options`（`[{name, label, bytes, memory, estimated}]`，GGUF 多量化各一档，其余格式是一条 `name` 为空的记录），可选 `summary`、`tags`。
+
+快照同时下发 `engineCatalog`：每个引擎的 `id/name/summary/accent/adapter/defaultPort/switchMode/installed/capabilities`。网页的引擎页、启动页、侧栏 chip、模型筛选和端口设置都从这里生成，不再维护 `splash|omlx|mtplx` 固定数组。
 
 下载复用现有那一格：`downloadModel {engine, id}`，`id` 直接带 `:VARIANT`。结果只活在 Swift 侧的内存会话里，网页不缓存、不重试、不自己请求 Hugging Face，也没有「搜索历史」可言。
+
+**模型库的两段。** 快照里的 `library.entries` 同时包含已装权重与目录建议。每项除 `installed`、`source`、`originText` 外，目录项还带 `summary`、`minMemory`、`fit`（`good|unknown|tight|diskShort`）和 `rank`。网页把 `installed` 放进「本机模型」，把 `fit` 可运行且尚未安装的项放进「FlashCat 推荐」；正式三档存在时只展示 `rank > 0` 的档位，低内存机器没有正式档可跑时才用 `rank: 0` 的兜底项。已装权重不会在推荐区重复出现。
 
 ## 边界
 

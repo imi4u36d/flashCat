@@ -14,9 +14,9 @@
 
 ## 它能做什么
 
-- **三个引擎，一个界面。** Splash、oMLX、MTPLX 各自有自己的端口和日志，
-  在这里统一切换、启动、停止，不用开三个终端。
-- **模型在应用里下载。** 每个引擎都配好三档 Qwen 模型，点一下就能下载、加载、切换；
+- **多引擎，一个界面。** Splash、oMLX、MTPLX、MLX-Serve 和 Strata 都是平级引擎，
+  各自拥有端口、日志、模型生命周期和状态契约，在这里统一切换、启动和停止。
+- **模型在应用里下载。** 每个引擎按自己的格式与适合的内存档配好精选模型，点一下就能下载、加载、切换；
   想跑别的权重就打开模型广场搜（或填仓库 id），下到公共目录后勾给哪些引擎用。
 - **自带 API 网关。** 固定地址、OpenAI 与 Claude 两种格式同时提供，
   换引擎、换端口都不用改客户端配置。
@@ -31,7 +31,7 @@
 | --- | --- |
 | 芯片 | Apple Silicon（M 系列） |
 | 系统 | macOS **26.4** 或更高 |
-| 磁盘 | 应用约 10 MB；每个引擎 80 MB ~ 600 MB；模型另算（每档 16 ~ 99 GB） |
+| 磁盘 | 应用约 10 MB；每个引擎约 50 MB ~ 600 MB；模型另算（每档 2 ~ 250 GB） |
 
 ## 安装
 
@@ -45,20 +45,22 @@
 
 ## 第一次打开
 
-1. 启动页会列出三个引擎，选一个点下载，等它装好。
+1. 启动页会列出所有受支持引擎，选一个点下载，等它装好。
 2. 装好后它就是默认引擎，窗口自动进入控制台。
-3. 之后可以随时在「引擎」页装另外两个、切换默认引擎，或在「模型」页下载模型。
+3. 之后可以随时在「引擎」页安装其他引擎、切换默认引擎，或在「模型」页下载模型。
 
-三个引擎的区别：
+引擎都是平级 peer：
 
 | 引擎 | 默认端口 | 适合 | 换模型 |
 | --- | --- | --- | --- |
 | **Splash** | 8000 | 单模型、最省事，带草稿加速 | 重启引擎 |
 | **oMLX** | 8100 | 想同时常驻多个模型，换模型不停进程 | 热切换 |
 | **MTPLX** | 8200 | 长上下文、多 token 预测 | 重启引擎 |
+| **MLX-Serve** | 8300 | 通用 MLX / GGUF、多模型热加载、工具调用 | 热切换 |
+| **Strata** | 8400 | SSD 专家流式、大 MoE、多硬件后端 | 重启引擎 |
 
-三个引擎都支持对话、流式输出、视觉模型和思考（reasoning）模型。
-端口可以改，三个引擎各占一段，互不冲突。
+所有引擎都支持对话与流式输出；视觉、思考、工具调用和多模型能力由引擎 descriptor
+逐项声明，界面不会假设某个引擎必然具备。端口各占一段，互不冲突。
 
 ## 界面速览
 
@@ -142,7 +144,8 @@ curl http://127.0.0.1:9000/v1/messages \
 
 ## 模型
 
-模型都在应用里下载，来源是 Hugging Face，每个引擎三档：
+模型都在应用里下载，来源是 Hugging Face。模型页把可直接加载的权重放在「本机模型」，
+把当前 Mac 内存能承载、尚未下载的档位放在「FlashCat 推荐」：
 
 | 档位 | 体积参考 | 说明 |
 | --- | --- | --- |
@@ -150,11 +153,11 @@ curl http://127.0.0.1:9000/v1/messages \
 | Qwen 3.8 27B | 约 16 ~ 21 GB | 新一代，质量和速度更均衡 |
 | Qwen 3.8 Flash-Next | 约 99 GB | 最重的一档，需要 128 GB 内存 |
 
-三档主推在每个引擎里都用该引擎能真正跑起来的格式准备好了；oMLX 使用 Jundot 的 `oQ4e` 量化，
-MTPLX 另收录 MiMo 9B 与 Qwen3.5 4B 两个 Youssofal 优化包。想跑别的模型，点模型页右上角
+Splash 用 27B IQ3_S 与 Flash-Next Q2_0 的 GGUF；oMLX 使用 Jundot 的 `oQ4e` 量化；
+MTPLX 另在低内存机器上把 MiMo 9B 与 Qwen3.5 4B 两个 Youssofal 优化包作为兜底。想跑别的模型，点模型页右上角
 「＋ 下载模型」打开模型广场，搜或浏览 Hugging Face 仓库，点开看模型卡再下：权重落到公共目录、只存一份，下完再勾给
 哪些引擎用（勾选只决定可见性，不复制文件）。能不能被某个引擎加载由引擎自己判断，
-卡片上会标出这个模型是「引擎推荐」还是「个人下载」。
+模型页会把已下载权重与尚未下载的「FlashCat 推荐」分开，本机权重再标出来源是「目录收录」还是「个人下载」。
 走镜像或者下 gated 仓库时，可以在命令行里给两个偏好值（不填就是 huggingface.co、匿名访问）：
 
 ```bash
@@ -165,17 +168,16 @@ defaults write com.zhuo.flashCat hfToken hf_xxx                    # 有权限�
 下载器（python）不读 macOS 的系统代理设置，所以启动下载时会把系统代理原样传给它；
 挂着代理软件也不需要额外配置。
 
-> 下一版会把归属改成引擎标签、并开放 Hugging Face 搜索（见 `model-engine-tags.md`）：
-> 那时模型页按标签分栏，Splash 只剩 Flash-Next 的 GGUF、oMLX 主推三款 Jundot `oQ4e` 包，
-> MTPLX 主推三款 Qwen 并另收录 MiMo 9B、Qwen3.5 4B。
+模型归属使用引擎标签（见 `model-engine-tags.md`）：Splash 只出 GGUF，oMLX 主推 Jundot
+`oQ4e` 包，MTPLX 主推 Qwen 并在低内存机器上兜底 MiMo 9B、Qwen3.5 4B。
 
 磁盘上的位置（清理时用得上）：
 
 | 内容 | 位置 |
 | --- | --- |
 | 应用配置、对话记录 | `~/Library/Application Support/flashCat` |
-| Splash 的模型 | `~/.flashcat/models` |
-| oMLX / MTPLX 的模型 | `~/Library/Application Support/flashCat/models/<引擎>` |
+| 所有引擎的运行时 pack | `~/Library/Application Support/flashCat/engines/<引擎>/<版本>` |
+| 所有引擎的模型 | `~/Library/Application Support/flashCat/models/<引擎>` |
 | 公共目录（自己下载的模型） | `~/Library/Application Support/flashCat/shared-models` |
 | 下载缓存 | 默认沿用 Hugging Face 的缓存目录，可在设置里改 |
 | 日志 | `~/Library/Logs/flashCat` |
@@ -217,7 +219,7 @@ oMLX 可以在模型之间热切；Splash / MTPLX 换模型会重启进程，
 右键 → 打开；或者到「系统设置 → 隐私与安全性」里点「仍要打开」。
 
 **模型页看不到某个引擎的模型？**
-顶部可以切换引擎，没安装的引擎也能先浏览它支持哪三档。
+顶部可以切换引擎，没安装的引擎也能先浏览它支持的精选档位。
 
 ## 卸载
 
@@ -226,7 +228,7 @@ oMLX 可以在模型之间热切；Splash / MTPLX 换模型会重启进程，
 3. 想连配置和模型一起清掉，再删除：
 
 ```bash
-rm -rf ~/Library/Application\ Support/flashCat ~/.flashcat/models ~/Library/Logs/flashCat
+rm -rf ~/Library/Application\ Support/flashCat ~/Library/Logs/flashCat
 ```
 
 注意模型就存在这些目录里，删除等于把下载的权重一起删掉，执行前确认没有还想留着的模型。
@@ -235,8 +237,10 @@ rm -rf ~/Library/Application\ Support/flashCat ~/.flashcat/models ~/Library/Logs
 
 [MIT](LICENSE) © 2026 wangzhuo
 
-三个推理引擎是各自上游项目的成果，本项目负责运行时的下载、安装与调度：
+各推理引擎是各自上游项目的成果，本项目负责运行时的下载、安装与调度：
 [Splash](https://github.com/incoai/splash)、
 [oMLX](https://github.com/jundot/omlx)、
-[MTPLX](https://github.com/youssofal/mtplx)。
+[MTPLX](https://github.com/youssofal/mtplx)、
+[MLX-Serve](https://github.com/ddalcu/mlx-serve)、
+[Strata](https://github.com/Niko1221/Strata)。
 模型版权归各自的发布者所有。

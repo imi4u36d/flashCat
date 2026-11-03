@@ -1,5 +1,15 @@
 import Foundation
 
+public struct EngineTelemetryDocument {
+    public let source: EngineTelemetrySource
+    public let json: [String: Any]
+
+    public init(source: EngineTelemetrySource, json: [String: Any]) {
+        self.source = source
+        self.json = json
+    }
+}
+
 /// Folds each engine's own status payload into `EngineStatus`.
 ///
 /// The three engines agree on almost nothing: splash nests everything under
@@ -9,14 +19,87 @@ import Foundation
 /// place that knowledge lives.
 public enum EngineStatusParser {
 
+    /// Parse every telemetry source a descriptor asks for and merge it into one
+    /// engine-neutral snapshot. Adding a new reporting format no longer means
+    /// adding another engine-id branch in the controller.
+    public static func parse(documents: [EngineTelemetryDocument],
+                             fallbackState: EngineRunState = .ready) -> EngineStatus {
+        var result = EngineStatus(state: fallbackState)
+        let ordered = documents.sorted {
+            rank($0.source.role) < rank($1.source.role)
+        }
+        for document in ordered {
+            let next: EngineStatus
+            switch document.source.format {
+            case .splashStatus:
+                next = splash(status: document.json, fallbackState: fallbackState)
+            case .omlxStatus:
+                next = omlx(status: document.json, health: nil, fallbackState: fallbackState)
+            case .omlxModels:
+                next = omlxModelStatus(document.json, fallbackState: fallbackState)
+            case .mtplxSnapshot:
+                let health = documents.first { $0.source.role == .health }?.json
+                next = mtplx(snapshot: document.json, health: health, fallbackState: fallbackState)
+            case .openAIModels:
+                next = openAIModelStatus(document.json, fallbackState: fallbackState)
+            case .prometheusJSON:
+                next = prometheusJSON(document.json, fallbackState: fallbackState)
+            case .llamaProps:
+                next = llamaProps(document.json, fallbackState: fallbackState)
+            case .strataHealth:
+                next = strataHealth(document.json, fallbackState: fallbackState)
+            case .strataStatus:
+                next = strataStatus(document.json, fallbackState: fallbackState)
+            case .strataMetrics:
+                next = strataMetrics(document.json, fallbackState: fallbackState)
+            }
+            merge(next, into: &result)
+        }
+        return result
+    }
+
+    private static func rank(_ role: EngineTelemetryRole) -> Int {
+        switch role {
+        case .health: return 0
+        case .status: return 1
+        case .metrics: return 2
+        case .props: return 3
+        case .inventory: return 4
+        }
+    }
+
+    private static func merge(_ next: EngineStatus, into result: inout EngineStatus) {
+        if next.state != .ready || result.state == .stopped { result.state = next.state }
+        if let value = next.model, !value.isEmpty { result.model = value }
+        if !next.loadedModels.isEmpty { result.loadedModels = next.loadedModels }
+        if let value = next.decodeTokensPerSecond, value > 0 { result.decodeTokensPerSecond = value }
+        if let value = next.prefillTokensPerSecond, value > 0 { result.prefillTokensPerSecond = value }
+        if let value = next.draftAcceptance { result.draftAcceptance = value }
+        if let value = next.ttftMilliseconds { result.ttftMilliseconds = value }
+        if next.activeRequests > 0 || result.activeRequests == 0 { result.activeRequests = next.activeRequests }
+        if next.queuedRequests > 0 { result.queuedRequests = next.queuedRequests }
+        if next.requestsCompleted > 0 { result.requestsCompleted = next.requestsCompleted }
+        if next.requestsFailed > 0 { result.requestsFailed = next.requestsFailed }
+        if let value = next.memoryBytes { result.memoryBytes = value }
+        if let value = next.peakMemoryBytes { result.peakMemoryBytes = value }
+        if let value = next.maximumContextTokens { result.maximumContextTokens = value }
+        if let value = next.startedAt { result.startedAt = value }
+        if let value = next.uptimeSeconds { result.uptimeSeconds = value }
+        if let value = next.processIdentifier { result.processIdentifier = value }
+        if let value = next.detail { result.detail = value }
+        if let value = next.reasoningEfforts, !value.isEmpty { result.reasoningEfforts = value }
+        result.extras.merge(next.extras) { _, new in new }
+    }
+
     public static func parse(engine: EngineID,
                              status: [String: Any]?,
                              health: [String: Any]?,
                              fallbackState: EngineRunState = .ready) -> EngineStatus {
-        switch engine {
+        switch engine.adapter {
         case .splash: return splash(status: status ?? [:], fallbackState: fallbackState)
         case .omlx: return omlx(status: status ?? [:], health: health, fallbackState: fallbackState)
         case .mtplx: return mtplx(snapshot: status ?? [:], health: health, fallbackState: fallbackState)
+        default: return EngineStatus(state: fallbackState)
         }
     }
 
@@ -123,6 +206,24 @@ public enum EngineStatusParser {
                 JSONValue.int(json["current_model_memory"]))
     }
 
+    private static func omlxModelStatus(_ json: [String: Any],
+                                        fallbackState: EngineRunState) -> EngineStatus {
+        var result = EngineStatus(state: fallbackState)
+        let parsed = omlxModels(json)
+        let chatModels = parsed.models.filter { !$0.helper && !$0.hidden }
+        result.loadedModels = chatModels.filter(\.loaded).map(\.id)
+        result.model = result.loadedModels.first
+        if parsed.loadedCount > 0, result.loadedModels.isEmpty,
+           chatModels.contains(where: \.loading) {
+            result.state = .loading
+        }
+        if let current = chatModels.first(where: \.loaded) {
+            result.maximumContextTokens = current.maximumContextTokens
+            result.detail = current.kind
+        }
+        return result
+    }
+
     // MARK: MTPLX
 
     /// `/health` carries identity (`model`, `model_path`, `startup.pid`);
@@ -205,25 +306,161 @@ public enum EngineStatusParser {
         return result
     }
 
-    /// `/v1/models` is OpenAI-shaped on every engine; MTPLX adds context fields.
+    /// `/v1/models` is OpenAI-shaped on every engine; packs add context fields
+    /// and may list both loaded and unloaded models.
     public static func openAIModels(_ json: [String: Any], engine: EngineID) -> [EngineModel] {
         let entries = (json["data"] as? [[String: Any]]) ?? []
         var models: [EngineModel] = []
         for entry in entries {
             guard let id = JSONValue.string(entry["id"]), !id.isEmpty else { continue }
+            let state = JSONValue.digString(entry, "status.value", "state")
+            let loaded = JSONValue.bool(entry["loaded"])
+                ?? (state.map { $0.lowercased() == "loaded" || $0.lowercased() == "ready" })
+                ?? (state?.lowercased() == "unloaded" ? false : true)
+            let loading = state?.lowercased() == "loading"
+            let capabilities = entry["capabilities"] as? [String]
             models.append(EngineModel(
                 id: id,
                 path: nil,
-                bytes: nil,
+                bytes: JSONValue.int(entry["bytes_on_disk"]),
                 maximumContextTokens: JSONValue.int(entry["max_context_length"])
-                    ?? JSONValue.int(entry["context_length"]),
-                loaded: true,
-                loading: false,
-                kind: JSONValue.string(entry["capability"]),
-                hidden: false,
+                    ?? JSONValue.int(entry["context_length"])
+                    ?? JSONValue.digInt(entry, "meta.n_ctx", "meta.context_length"),
+                loaded: loaded,
+                loading: loading,
+                kind: capabilities?.first ?? JSONValue.string(entry["capability"])
+                    ?? JSONValue.digString(entry, "meta.engine", "meta.architecture"),
+                hidden: capabilities.map { !$0.contains("chat") } ?? false,
                 helper: false,
                 engine: engine))
         }
         return models
+    }
+
+    private static func openAIModelStatus(_ json: [String: Any],
+                                          fallbackState: EngineRunState) -> EngineStatus {
+        var result = EngineStatus(state: fallbackState)
+        let entries = (json["data"] as? [[String: Any]]) ?? []
+        for entry in entries {
+            guard let id = JSONValue.string(entry["id"]), !id.isEmpty else { continue }
+            let capabilities = entry["capabilities"] as? [String] ?? []
+            if !capabilities.isEmpty, !capabilities.contains("chat") { continue }
+            let state = JSONValue.digString(entry, "status.value", "state")?.lowercased()
+            let loaded = JSONValue.bool(entry["loaded"])
+                ?? (state.map { $0 == "loaded" || $0 == "ready" })
+                ?? (state == "unloaded" ? false : true)
+            if loaded { result.loadedModels.append(id) }
+            if state == "loading" { result.state = .loading }
+            if loaded, result.model == nil {
+                result.model = id
+                result.maximumContextTokens = JSONValue.int(entry["max_model_len"])
+                    ?? JSONValue.int(entry["context_length"])
+                    ?? JSONValue.digInt(entry, "meta.n_ctx", "meta.context_length")
+            }
+        }
+        if result.loadedModels.isEmpty, !entries.isEmpty { result.model = nil }
+        return result
+    }
+
+    // MARK: mlx-serve / Prometheus JSON
+
+    public static func prometheusJSON(_ json: [String: Any],
+                                      fallbackState: EngineRunState = .ready) -> EngineStatus {
+        var result = EngineStatus(state: fallbackState)
+        result.activeRequests = JSONValue.digInt(json, "gauges.requests_running") ?? 0
+        result.queuedRequests = JSONValue.digInt(json, "gauges.requests_waiting") ?? 0
+        result.requestsCompleted = JSONValue.digInt(json, "counters.requests_success_total") ?? 0
+        let failed = JSONValue.digInt(json, "counters.requests_failed_total") ?? 0
+        let cancelled = JSONValue.digInt(json, "counters.requests_cancelled_total") ?? 0
+        let rejected = JSONValue.digInt(json, "counters.requests_rejected_total") ?? 0
+        result.requestsFailed = failed + cancelled + rejected
+        if let bytes = JSONValue.digInt(json, "gauges.mlx_active_bytes"), bytes > 16 {
+            result.memoryBytes = bytes
+        } else if let mb = JSONValue.digInt(json, "gauges.memory_mb") {
+            result.memoryBytes = mb * 1_048_576
+        }
+        result.startedAt = JSONValue.digNumber(json, "gauges.process_start_time_seconds")
+        if let startedAt = result.startedAt {
+            result.uptimeSeconds = max(0, Date().timeIntervalSince1970 - startedAt)
+        }
+        if let count = JSONValue.digInt(json, "histograms.time_to_first_token_seconds.count"),
+           count > 0,
+           let sum = JSONValue.digNumber(json, "histograms.time_to_first_token_seconds.sum") {
+            result.ttftMilliseconds = sum / Double(count) * 1000
+        }
+        return result
+    }
+
+    /// llama-server-compatible `/props` carries memory and the effective
+    /// context without requiring a loaded request.
+    public static func llamaProps(_ json: [String: Any],
+                                  fallbackState: EngineRunState = .ready) -> EngineStatus {
+        var result = EngineStatus(state: fallbackState)
+        result.memoryBytes = JSONValue.digInt(json, "memory.active_bytes", "memory.peak_bytes")
+        result.peakMemoryBytes = JSONValue.digInt(json, "memory.peak_bytes")
+        result.maximumContextTokens = JSONValue.digInt(json, "memory.max_safe_context",
+                                                       "default_generation_settings.n_ctx")
+        result.model = JSONValue.digString(json, "default_generation_settings.model")
+        result.detail = JSONValue.digString(json, "settings.engine", "model_info.model_type")
+        return result
+    }
+
+    // MARK: Strata
+
+    public static func strataHealth(_ json: [String: Any],
+                                    fallbackState: EngineRunState = .ready) -> EngineStatus {
+        var result = EngineStatus(state: fallbackState)
+        result.model = JSONValue.string(json["model"])
+        result.maximumContextTokens = JSONValue.int(json["max_context"])
+        if JSONValue.bool(json["loaded"]) == false { result.state = .loading }
+        if let pid = JSONValue.int(json["pid"]) { result.processIdentifier = Int32(pid) }
+        return result
+    }
+
+    public static func strataStatus(_ json: [String: Any],
+                                    fallbackState: EngineRunState = .ready) -> EngineStatus {
+        var result = EngineStatus(state: fallbackState)
+        result.model = JSONValue.digString(json, "model.id", "model", "engine.model")
+        result.maximumContextTokens = JSONValue.digInt(json, "max_context", "engine.max_context")
+        result.activeRequests = JSONValue.digInt(json, "running", "live.running", "active_requests") ?? 0
+        result.queuedRequests = JSONValue.digInt(json, "queued", "live.queued", "waiting") ?? 0
+        if JSONValue.digBool(json, "busy") == true { result.detail = "生成中" }
+        if let last = JSONValue.dig(json, "timings") as? [String: Any] {
+            result.decodeTokensPerSecond = JSONValue.number(last["predicted_per_second"])
+            result.prefillTokensPerSecond = JSONValue.number(last["prompt_per_second"])
+        }
+        return result
+    }
+
+    public static func strataMetrics(_ json: [String: Any],
+                                     fallbackState: EngineRunState = .ready) -> EngineStatus {
+        var result = EngineStatus(state: fallbackState)
+        result.model = JSONValue.digString(json, "engine.model")
+        result.maximumContextTokens = JSONValue.digInt(json, "engine.max_context")
+        result.decodeTokensPerSecond = JSONValue.digNumber(json, "live.tok_s")
+        result.prefillTokensPerSecond = JSONValue.digNumber(json, "live.prefill_tok_s_mean")
+        result.activeRequests = JSONValue.digInt(json, "live.running") ?? 0
+        result.queuedRequests = (JSONValue.digInt(json, "live.queued") ?? 0)
+            + (JSONValue.digInt(json, "live.waiting") ?? 0)
+        result.requestsCompleted = JSONValue.digInt(json, "totals.requests") ?? 0
+        let drafts = JSONValue.digInt(json, "totals.drafts_offered") ?? 0
+        let accepted = JSONValue.digInt(json, "totals.drafts_accepted") ?? 0
+        if drafts > 0 { result.draftAcceptance = Double(accepted) / Double(drafts) }
+        if let promptMs = JSONValue.digNumber(json, "totals.prompt_ms"),
+           let output = JSONValue.digNumber(json, "totals.output_tokens"),
+           let decodeMs = JSONValue.digNumber(json, "totals.decode_ms"),
+           decodeMs > 0 {
+            result.detail = String(format: "%.1f tok/s", output / (decodeMs / 1000))
+            _ = promptMs
+        }
+        if let requests = json["requests"] as? [[String: Any]], let latest = requests.first {
+            if result.decodeTokensPerSecond == nil {
+                result.decodeTokensPerSecond = JSONValue.digNumber(latest, "decode_tok_s")
+            }
+        }
+        if JSONValue.digString(json, "live.state") == "reading" {
+            result.state = .loading
+        }
+        return result
     }
 }

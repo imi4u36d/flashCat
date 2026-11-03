@@ -48,7 +48,7 @@ enum ModelInstaller {
     }
 
     static func destination(engine: EngineID, repo: String) -> String {
-        EnginePaths.modelsDirectory(engine) + "/" + folderName(for: repo)
+        EnginePaths.modelPath(for: engine, model: repo)
     }
 
     /// 公共目录的落地路径。一份权重由哪些引擎共享，记在 `ModelSharing` 的
@@ -62,25 +62,32 @@ enum ModelInstaller {
     static func plan(engine: EngineID,
                      model: String,
                      draftRepository: String?,
-                     runtime: EngineRuntime?,
                      cache: String) throws -> Plan {
-        switch engine {
+        switch engine.adapter {
         case .splash:
             return try splashPlan(model: model,
                                   draftRepository: draftRepository,
-                                  runtime: runtime,
                                   cache: cache)
         case .omlx, .mtplx:
+            return try snapshotPlan(engine: engine, model: model, cache: cache)
+        case .mlxServe:
+            return try mlxServePlan(engine: engine, model: model, cache: cache)
+        case .strata:
+            return try strataPlan(engine: engine, model: model, cache: cache)
+        default:
             return try snapshotPlan(engine: engine, model: model, cache: cache)
         }
     }
 
     private static func splashPlan(model: String,
                                    draftRepository: String?,
-                                   runtime: EngineRuntime?,
                                    cache: String) throws -> Plan {
-        guard let runtime, runtime.exists else {
+        guard let installation = EngineInstallations.newest(.splash, version: nil) else {
             throw Failure.message("还没有安装 Splash 引擎，无法下载模型")
+        }
+        let runtime = EngineRuntime(root: installation.root.path)
+        guard runtime.exists else {
+            throw Failure.message("Splash pack 不完整，缺少安装器或运行时")
         }
         let script = runtime.root + "/install/models.py"
         guard Paths.fileExists(script) else {
@@ -105,28 +112,33 @@ enum ModelInstaller {
 
     /// 任取一个 Hub 仓库下到公共目录。下载器仍是引擎包里那个
     /// `huggingface_hub`，跟落盘位置无关：哪个 pack 装了就用哪个，都没有才
-    /// 回落到 Splash 的运行时。
+    /// 报错。
     static func sharedPlan(repo: String, engines: [EngineID],
-                           runtime: EngineRuntime?, cache: String) throws -> Plan {
-        var candidates = engines.filter { $0 != .splash }
-        candidates += [EngineID.omlx, .mtplx, .splash]
+                           cache: String) throws -> Plan {
+        var candidates = engines
+        candidates += EngineCatalog.allIDs
         var python: String?
         var root: String?
-        for id in candidates {
-            if id == .splash {
-                guard let runtime, runtime.exists else { continue }
-                python = runtime.pythonPath
-                root = runtime.root
-            } else {
-                guard let installation = EngineInstallations.newest(id, version: nil),
-                      Paths.fileExists(installation.entrypoint.path) else { continue }
-                python = installation.entrypoint.path
-                root = installation.root.path
-            }
+        var seen = Set<EngineID>()
+        for id in candidates where seen.insert(id).inserted {
+            // Shared downloads require a Python pack. Native adapters use their
+            // own puller and never receive flashCat's snapshot script.
+            guard let installation = EngineInstallations.newest(id, version: nil),
+                  installation.entrypoint.path.contains("/python/"),
+                  Paths.fileExists(installation.entrypoint.path) else { continue }
+            python = installation.entrypoint.path
+            root = installation.root.path
             break
         }
+        if python == nil,
+           engines.contains(.mlxServe) || seen.contains(.mlxServe),
+           let installation = EngineInstallations.newest(.mlxServe, version: nil) {
+            return try mlxServeSharedPlan(repo: repo,
+                                          installation: installation,
+                                          cache: cache)
+        }
         guard let python, let root else {
-            throw Failure.message("下载器来自引擎包：先安装 Splash、oMLX、MTPLX 中的任意一个")
+            throw Failure.message("公共下载需要已安装的 MLX-Serve，或任意一个带 Python 的引擎包：Splash、oMLX、MTPLX、Strata")
         }
         let script = try scriptPath()
         let name = repo.split(separator: ":", maxSplits: 1).first.map(String.init) ?? repo
@@ -144,6 +156,38 @@ enum ModelInstaller {
                     destination: destination)
     }
 
+    /// Use MLX-Serve's native puller when no Python downloader is installed,
+    /// then move the completed nested repository into flashCat's shared layout.
+    private static func mlxServeSharedPlan(repo: String,
+                                           installation: EngineInstallation,
+                                           cache: String) throws -> Plan {
+        let name = repo.split(separator: ":", maxSplits: 1).first.map(String.init) ?? repo
+        let home = Paths.supportDirectory + "/engine-homes/mlx-serve-shared"
+        let stagingRoot = home + "/.mlx-serve/models"
+        let staged = stagingRoot + "/" + name
+        let destination = sharedDestination(repo: name)
+        Paths.ensureDirectory(stagingRoot)
+        Paths.ensureDirectory((destination as NSString).deletingLastPathComponent)
+        var environment = self.environment(pythonRoot: installation.root.path, cache: cache)
+        environment["HOME"] = home
+        environment["MLX_SERVE_NO_UPDATE_CHECK"] = "1"
+        let script = """
+        set -euo pipefail
+        "$1" pull "$2"
+        mkdir -p "$(dirname "$3")"
+        mv "$4" "$3"
+        """
+        return Plan(engine: .mlxServe,
+                    model: repo,
+                    executable: "/bin/sh",
+                    arguments: ["-c", script, "flashcat-mlx-serve",
+                                installation.entrypoint.path, repo, destination, staged],
+                    workingDirectory: installation.root.path,
+                    environment: environment,
+                    watchDirectory: staged,
+                    destination: destination)
+    }
+
     private static func snapshotPlan(engine: EngineID, model: String, cache: String) throws -> Plan {
         guard let installation = EngineInstallations.newest(engine, version: nil) else {
             throw Failure.message("还没有安装 \(engine.displayName) 引擎，无法下载模型")
@@ -151,6 +195,9 @@ enum ModelInstaller {
         let python = installation.entrypoint.path
         guard Paths.fileExists(python) else {
             throw Failure.message("\(engine.displayName) 引擎缺少内置 Python")
+        }
+        guard python.contains("/python/") else {
+            throw Failure.message("\(engine.displayName) 是原生运行时，不能用通用快照下载器")
         }
         let script = try scriptPath()
         let repo = model.split(separator: ":", maxSplits: 1).first.map(String.init) ?? model
@@ -172,6 +219,73 @@ enum ModelInstaller {
                     environment: environment(pythonRoot: installation.root.path, cache: cache),
                     watchDirectory: destination,
                     destination: destination)
+    }
+
+    /// mlx-serve owns its downloader. Redirect its isolated HOME's model store
+    /// to flashCat's model directory so the app remains the source of truth.
+    private static func mlxServePlan(engine: EngineID, model: String, cache: String) throws -> Plan {
+        guard let installation = EngineInstallations.newest(engine, version: nil) else {
+            throw Failure.message("还没有安装 \(engine.displayName) 引擎，无法下载模型")
+        }
+        let engineHome = Paths.supportDirectory + "/engine-homes/mlx-serve"
+        let metadataRoot = engineHome + "/.mlx-serve"
+        let modelsRoot = EnginePaths.modelsDirectory(engine)
+        Paths.ensureDirectory(metadataRoot)
+        Paths.ensureDirectory(modelsRoot)
+        let link = metadataRoot + "/models"
+        if !Paths.fileExists(link) {
+            try? FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: modelsRoot)
+        }
+        let repo = model.split(separator: ":", maxSplits: 1).first.map(String.init) ?? model
+        let destination = modelsRoot + "/" + repo
+        var environment = self.environment(pythonRoot: installation.root.path, cache: cache)
+        environment["HOME"] = engineHome
+        environment["MLX_SERVE_NO_UPDATE_CHECK"] = "1"
+        return Plan(engine: engine,
+                    model: model,
+                    executable: installation.entrypoint.path,
+                    arguments: ["pull", model],
+                    workingDirectory: installation.root.path,
+                    environment: environment,
+                    watchDirectory: destination,
+                    destination: destination)
+    }
+
+    /// Strata's installer knows which members of a sharded GGUF repository are
+    /// required and prepares its own runtime pack. Do not feed it the generic
+    /// full-repository snapshot downloader.
+    private static func strataPlan(engine: EngineID, model: String, cache: String) throws -> Plan {
+        guard let installation = EngineInstallations.newest(engine, version: nil) else {
+            throw Failure.message("还没有安装 \(engine.displayName) 引擎，无法下载模型")
+        }
+        guard let profile = StrataModelProfile(modelID: model) else {
+            throw Failure.message("Strata 暂不认识这个模型；请选择 Strata 支持的 Qwen3.8-Flash-Next 模型")
+        }
+        let data = EnginePaths.modelsDirectory(engine)
+        let selectedPath = EnginePaths.modelPath(for: engine, model: model)
+        Paths.ensureDirectory(data)
+        let root = installation.root.path
+        let wrapper = root + "/flashcat_strata.py"
+        guard Paths.fileExists(wrapper), Paths.fileExists(installation.entrypoint.path) else {
+            throw Failure.message("\(engine.displayName) 运行时缺少安装包装器或内置 Python")
+        }
+        var environment = self.environment(pythonRoot: root, cache: cache)
+        environment["PYTHONPATH"] = root
+        return Plan(engine: engine,
+                    model: model,
+                    executable: installation.entrypoint.path,
+                    arguments: ["-u", wrapper,
+                                "--strata-root", root,
+                                "--models", data,
+                                "--support", EnginePaths.supportDirectory,
+                                "--model-path", selectedPath,
+                                "--install-only",
+                                "--family", profile.family,
+                                "--model", profile.model],
+                    workingDirectory: root,
+                    environment: environment,
+                    watchDirectory: data,
+                    destination: data)
     }
 
     /// A pack must never inherit the user's Python environment; a stray
@@ -331,5 +445,32 @@ enum ModelInstaller {
             total += bytes.intValue
         }
         return total
+    }
+}
+
+/// Strata uses a family/model matrix instead of a repository snapshot. Keep
+/// this translation in one place so adding another supported family does not
+/// leak into the download center.
+struct StrataModelProfile {
+    let family: String
+    let model: String
+
+    init?(modelID: String) {
+        let repo = modelID.split(separator: ":", maxSplits: 1).first.map(String.init) ?? modelID
+        let lower = repo.lowercased()
+        let variant = modelID.firstIndex(of: ":").map {
+            String(modelID[modelID.index(after: $0)...]).uppercased()
+        }
+        if lower.contains("qwen3.8-flash-next") || lower.contains("strata") {
+            family = "qwen"
+            model = variant ?? "Q2_0"
+            return
+        }
+        if lower.contains("gyro") {
+            family = "gyro"
+            model = variant ?? "Gyro-S"
+            return
+        }
+        return nil
     }
 }

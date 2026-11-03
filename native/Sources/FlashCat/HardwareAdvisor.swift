@@ -61,7 +61,7 @@ struct HardwareRecommendation: Codable, Equatable {
 enum HardwareAdvisor {
     static func recommend(machine: MachineProfile) -> HardwareRecommendation {
         var picks: [HardwareRecommendation.Pick] = []
-        for engine in EngineID.allCases {
+        for engine in EngineCatalog.allIDs {
             let catalog = ModelRecommendations.list(for: engine)
             let candidates = catalog.map {
                 FitCandidate(id: $0.id, bytes: $0.bytes,

@@ -21,7 +21,7 @@ graph TD
   GW["Gateway<br/>双方言本地 API"]
   Packs["scripts/engines<br/>pack 构建与发布"]
   Contract["manifest.json 契约<br/>schemaVersion 1"]
-  Engine["引擎 pack（外部）<br/>Splash / oMLX / MTPLX"]
+  Engine["引擎 pack（外部）<br/>Splash / oMLX / MTPLX / MLX-Serve / Strata"]
 
   App --> Kit
   Kit --> GW
@@ -49,8 +49,8 @@ graph TD
 
 1. **`FlashCatKit` 不许引 UI。** 它只 `import` `Foundation` / `Network` / `CryptoKit`。这决定它能在无窗口的测试进程里跑——`FlashCatKitTests` 有 13 个测试文件、164 个测试函数，全部针对这一层。
 2. **依赖单向。** `FlashCat` → `FlashCatKit`。Kit 里出现任何应用侧符号都是破坏。
-3. **端口段不重叠。** 每个引擎的默认端口是 `splash 8000` / `omlx 8100` / `mtplx 8200`，可用范围是 `defaultPort...defaultPort+19`；分配器在段内跳过被占端口，段外放弃。
-4. **切换方式是能力，不是选项。** `omlx = hot`，`splash` / `mtplx = restart`。应用不许对 `restart` 引擎做热切换。
+3. **端口段不重叠。** 默认端口由引擎 descriptor/manifest 声明：`splash 8000` / `omlx 8100` / `mtplx 8200` / `mlx-serve 8300` / `strata 8400`，可用范围默认是 `defaultPort...defaultPort+19`；分配器在段内跳过被占端口，段外放弃。
+4. **切换方式是能力，不是选项。** `omlx` 与 `mlx-serve` 是 `hot`，其余当前为 `restart`。应用只按 descriptor 声明的能力执行，不按引擎 id 猜测。
 5. **未知枚举值降级而非失败。** 新版本 pack 带来的未知 `capability` 解成 `.chat`，未知 `modelArgument` 解成 `.name`——一个旧版应用不会因为清单多了个词就装不上。
 6. **pack 不可移动。** 安装路径必须含版本号且装完不许挪（原生扩展带绝对 rpath）。`fix-pack-rpaths.sh` 在上游 wheel 把构建机路径烧进 `LC_RPATH` 时把它改写成 `@loader_path/...` 并重签名。
 7. **只有用户自己的 pack 可删。** pack 有四个发现位置（环境变量覆盖、用户安装目录、应用 bundle、仓库 `vendor/engines`），但只有前两个属于用户；bundle 内的删了会破坏签名，checkout 里的是构建产物——两者都列出、只读。
@@ -63,7 +63,7 @@ graph TD
 
 **引擎运行时永不随应用打包。** 三个原因共同决定：pack 是 GB 级（oMLX 一个就 590 MB，全塞进来应用会从 15 MB 变成数 GB，签名与分发一起变复杂）；引擎有自己的上游发布节奏，做成 pack 才能让引擎页比对上游、单独更新而不发新版应用；引擎是上游项目的成果，重分发二进制存在许可与合规顾虑，所以仓库只发构建脚本、让用户机器自己装。
 
-**引擎差异收敛在一个适配层。** 三个引擎的状态报文几乎没有共识：splash 把指标嵌在 `metrics`/`instance` 下，oMLX 是扁平的一份 `/api/status`，MTPLX 把真话拆在 `/health`（pid、模型）、`/v1/mtplx/snapshot`（指标）、`/v1/models`（上下文长度）三处。把这些知识集中到 `StatusParsers`，概览、菜单栏、对话才能保持引擎无关。
+**引擎差异收敛在 descriptor + adapter 两层。** descriptor 描述显示、端口、能力、模型目录布局、控制端点和遥测源；通用 OpenAI 兼容引擎可以只靠一份 manifest 接入。splash 的本地装配、Strata 的多组件安装与后台服务生命周期这类真实差异，放进各自的编译期 adapter。业务层不再为具体引擎增加散落分支。
 
 **网关自己打点。** 引擎层没有 per-session 指标：splash 只报累计比值，oMLX 只给聚合吞吐，MTPLX 连排队数都并进在跑数。唯一知道「每个请求什么时候进来、首个 token 何时到、一共吐了多少字」的地方就是网关本身，所以会话级读数在网关侧统计。
 

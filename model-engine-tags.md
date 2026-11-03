@@ -18,23 +18,24 @@ tags: [models, huggingface, tags]
 
 **落地后要折回上游文档的改动（别漏）。** 这份任务书是临时的：`goal-and-requirements.md:29` 现在写着「内置固定三档 Qwen」，那是标签制之前的事实；落地后要让 Splash 页只剩 GGUF 一档、其余归 oMLX，这句必须改，[flashcat-product](goal-and-requirements.md) 与 [README](README.md) 里「每引擎一份列表」的说法同理。`native/Sources/FlashCat/SPEC.md:19` 现在写的是「当前归属仍是列表成员（`suggested`/`isPinned`/`allows`），`ModelRecommendation` 还没有 `engines` 字段」，落地后要改成 `engines`。这三处连同本文件一起，在计划最后一步收口（见任务清单的「删掉任务书与三处指针」）。
 
-**归属是一组事实，不是一张表的成员。** `ModelRecommendation` 携带 `engines: Set<EngineID>`；目录只有一份，`list(for:)` 按标签过滤。判据是产品性的而不是技术性的：**通用 MLX 权重只给 oMLX**（oMLX 是通用引擎）、Splash / MTPLX 只吃各自的专用包——即使 Splash 技术上也能起 MLX 权重；一款模型能跑多个引擎时写多个标签，标签不是互斥的。
+**归属是一组事实，不是一张表的成员。** `ModelRecommendation` 携带 `engines: Set<EngineID>`；目录只有一份，`list(for:)` 按标签过滤。判据是产品性的而不是技术性的：**通用 MLX 权重给 oMLX 与 MLX-Serve**、Splash / MTPLX / Strata 按各自的专用包与产品分工收录——即使 Splash 技术上也能起 MLX 权重；一款模型能跑多个引擎时写多个标签，标签不是互斥的。
 
-现有 9 款按格式严格归类，没有例外。注意这张表的依据是**产品取舍**而不是引擎能力：oMLX 技术上也能起 GGUF——`native/Tests/FlashCatKitTests/Fixtures/omlx/models-status.json` 里它同时托管 `Qwen3.8-Flash-Next-GSQ-RCO-Q2_0`（`model_format: gguf`、`engine_type: vlm`、`is_helper: false`）与一份 `DFlash2-Q8_0`，`EngineStore.swift:445` 的注释也写着「all three packs serve those directly」。我们仍然不让 GGUF 进 oMLX 的推荐与搜索，理由是产品分工：GGUF/GGUF 草稿这条线归 Splash，oMLX 作为通用引擎只吃 MLX 权重。别把这张表当能力矩阵实现，也别因为「oMLX 其实能跑」就顺手放宽。
+现有 10 款按格式严格归类，没有例外。注意这张表的依据是**产品取舍**而不是引擎能力：oMLX 技术上也能起 GGUF——`native/Tests/FlashCatKitTests/Fixtures/omlx/models-status.json` 里它同时托管 `Qwen3.8-Flash-Next-GSQ-RCO-Q2_0`（`model_format: gguf`、`engine_type: vlm`、`is_helper: false`）与一份 `DFlash2-Q8_0`，`EngineStore.swift:445` 的注释也写着「all three packs serve those directly」。我们仍然不让 GGUF 进 oMLX 的推荐与搜索，理由是产品分工：GGUF/GGUF 草稿这条线归 Splash，oMLX 作为通用引擎只吃 MLX 权重。别把这张表当能力矩阵实现，也别因为「oMLX 其实能跑」就顺手放宽。
 
 | 仓库 | `engines` | 依据 |
 | --- | --- | --- |
-| `Jundot/Qwen3.6-35B-A3B-oQ4e-mtp` | `{omlx}` | oMLX 的 oQ4e 量化，带 MTP 头 |
-| `Jundot/Qwen3.8-27B-oQ4e-mtp` | `{omlx}` | 同上 |
-| `Jundot/Qwen3.8-Flash-Next-oQ4e-mtp` | `{omlx}` | 同上 |
-| `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF:Q2_0` | `{splash}` | GGUF 只走 Splash 这条专用通道（产品取舍，不是能力限制） |
+| `Jundot/Qwen3.6-35B-A3B-oQ4e-mtp` | `{omlx, mlx-serve}` | oQ4e 量化，带 MTP 头 |
+| `Jundot/Qwen3.8-27B-oQ4e-mtp` | `{omlx, mlx-serve}` | 同上 |
+| `Jundot/Qwen3.8-Flash-Next-oQ4e-mtp` | `{omlx, mlx-serve}` | 同上 |
+| `ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF:IQ3_S` | `{splash}` | 24 GB 起的 27B GGUF，IQ3_S 约 3.5 bpw |
+| `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF:Q2_0` | `{splash, strata}` | Splash 的 GGUF 通道；同一份文件可由 Strata 受管准备 |
 | `Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed` | `{mtplx}` | `library_name=mtplx` 专用包 |
 | `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed` | `{mtplx}` | 同上 |
 | `Youssofal/Qwen3.8-Flash-Next-MTPLX-Optimized-Speed` | `{mtplx}` | 同上 |
 | `Youssofal/MiMo-V2.6-Qwen-9B-MTPLX-Optimized-Speed` | `{mtplx}` | 同上；目录收录，不参与硬件三档 |
 | `Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed` | `{mtplx}` | 同上 |
 
-结论是 **Splash 页只会剩 Flash-Next 的 GGUF 一档，oMLX 页主推三档 Jundot 的 oQ4e 包，MTPLX 页主推三档 Qwen 并额外收录 MiMo 9B、Qwen3.5 4B 两款 Youssofal 包**——这是产品规则要的结果，不是遗漏。额外收录项用 `rank: 0` 参与模型页展示，但不参与硬件三档评选。**草稿仓库不成行**：`incoai/*-DFlash2` 只作为主行的 `draftRepository` 挂在主行上，界面上既不单独出现、也不带标签，所以没有「草稿该归谁」这个问题。**但下载接线目前只在 Splash 上成立**——`AppState.downloadModel` 只对 `.splash` 传草稿，`ModelInstaller.snapshotPlan` 也没有草稿参数，所以 oMLX 的草稿配对是计划而不是现状：oMLX 卡片暂时不挂 DFlash2 标签，等把草稿下载接到 oMLX（它那边用 `dflash_draft_model` 吃草稿）再放出来。
+结论是 **Splash 页主推 27B IQ3_S 与 Flash-Next Q2_0 两档 GGUF，oMLX 与 MLX-Serve 页主推三档 Jundot 的 oQ4e 包，MTPLX 页主推三档 Qwen 并额外收录 MiMo 9B、Qwen3.5 4B 两款 Youssofal 包，Strata 复用 Flash-Next Q2_0**——这是产品规则要的结果，不是遗漏。模型页会把已下载权重放在「本机模型」，把当前 Mac 内存能承载且尚未下载的档位放在「FlashCat 推荐」。额外收录项用 `rank: 0` 在低内存机器上没有正式档可跑时兜底，不参与高内存机器的推荐。**草稿仓库不成行**：`incoai/*-DFlash2` 只作为主行的 `draftRepository` 挂在主行上，界面上既不单独出现、也不带标签，所以没有「草稿该归谁」这个问题。
 
 **存量权重照常可见，页过滤只管推荐与搜索。** `ModelLibrary` 从「只列目录里的行」改为「目录 ∪ 磁盘扫描」去重合并：目录里的按标签出现在对应引擎，盘上有但目录里没有的，作为「未收录」出现在**它实际所在的那个目录对应的引擎页**。已装就是已装，标签只管推荐与下载归属。
 
@@ -50,7 +51,7 @@ tags: [models, huggingface, tags]
 
 **搜索结果只活在当前会话。** 切引擎、刷新状态、重启即散；下载完的变成「本机」留下。不落盘，也就没有缓存失效这一整类问题。
 
-**搜索按页过滤，下载落到标签对应的引擎目录。** 搜索不是跨引擎的大杂烩：模型页当前在哪一栏，就只列能进那一栏的仓库——Splash 页只出 `.gguf`、MTPLX 页只出判为 `.mtplx` 的仓库（含只有 `mtp.safetensors` 的那类）、oMLX 页只出其余 MLX（含「未验证」），GGUF 在 oMLX 页不出现（上表的产品取舍）——页过滤与格式判定共用同一个输入，即上一段的判定结果，不另外再写一套 `library_name` 条件。这与「只有 oMLX 能用的模型不出现在另外两页」是同一条规则。因此下载路由不用猜：仓库的判定结果就是它该去的引擎，标签与下载目录永远指向同一个引擎，不会出现「在 Splash 页下了个 MLX 仓库、装进 Splash 目录后又被当成 Splash 的未收录行」这种自相矛盾的局面。
+**搜索按页过滤，下载落到标签对应的引擎目录。** 搜索不是跨引擎的大杂烩：模型页当前在哪一栏，就只列该栏能消费的仓库——Splash 与 Strata 页出 `.gguf`、MTPLX 页出判为 `.mtplx` 的仓库、oMLX 与 MLX-Serve 页出 MLX（含「未验证」）。同一个 GGUF 可以同时出现在 Splash 和 Strata，同一个 MLX 行可以同时出现在 oMLX 和 MLX-Serve；其它列不出现。页过滤与格式判定共用同一个输入，不另外再写一套 `library_name` 条件。下载路由由当前选中的 engine descriptor 决定，标签、模型目录布局与下载策略保持同一个来源，不会出现「在 A 栏下了个只属于 B 的权重」这种自相矛盾的局面。
 
 ## 未确认的假设
 

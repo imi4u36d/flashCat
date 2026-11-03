@@ -86,9 +86,10 @@ final class EngineManager {
     func rebuild() {
         let previous = controllers
         var next: [EngineController] = []
-        for id in EngineID.allCases {
+        for id in EngineCatalog.allIDs {
             guard let installation = EngineInstallations.newest(id, version: nil) else { continue }
-            let port = EngineStore.shared.configuration(for: id).port ?? id.defaultPort
+            let port = EngineStore.shared.configuration(for: id).port
+                ?? installation.descriptor.defaultPort
             let controller = EngineController(id: id,
                                               installation: installation,
                                               settings: settings,

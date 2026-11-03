@@ -4,7 +4,7 @@ import XCTest
 final class EngineTuningTests: XCTestCase {
 
     func testDefaultTuningAddsNoArguments() {
-        for id in EngineID.allCases {
+        for id in EngineCatalog.allIDs {
             XCTAssertEqual(EngineTuning().arguments(for: id), [])
         }
     }
@@ -214,7 +214,7 @@ final class EngineTuningTests: XCTestCase {
         XCTAssertEqual(EngineTuning().speculativeMode(for: .mtplx), .mtp)
 
         // Pack defaults reproduce the same answer through the fallback path.
-        for id in EngineID.allCases {
+        for id in EngineCatalog.allIDs {
             XCTAssertEqual(EngineTuning.defaults(for: id).speculativeMode(for: id),
                            EngineTuning().speculativeMode(for: id))
         }
@@ -306,7 +306,7 @@ final class EngineTuningDefaultsTests: XCTestCase {
         XCTAssertNil(tuning.thinkingBudget)
         // 思考截断走环境变量，不占 CLI 参数位。
         XCTAssertEqual(tuning.arguments(for: .mtplx), ["--load-mtp"])
-        for id in EngineID.allCases {
+        for id in EngineCatalog.allIDs {
             XCTAssertEqual(EngineTuning.defaults(for: id).sanitized(), EngineTuning.defaults(for: id),
                            "defaults survive sanitizing on \(id)")
         }

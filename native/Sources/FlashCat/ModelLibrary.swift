@@ -1,7 +1,7 @@
 import Foundation
 import FlashCatKit
 
-/// 这份权重是哪来的：引擎推荐清单里的官方三档，还是用户自己从 Hub 下的。
+/// 这份权重是哪来的：引擎精选目录里的档位，还是用户自己从 Hub 下的。
 /// 只影响卡片上的徽标与文案，不影响能不能下载、能不能用——开放下载之后，
 /// 支持与否由用户自己判断。
 enum ModelSource: String {

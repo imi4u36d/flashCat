@@ -52,7 +52,7 @@ Nothing else in the pack is interpreted by the app.
 | Field | Type | Meaning |
 |---|---|---|
 | `schemaVersion` | int | Manifest format version. `1` for everything described here; bump only on breaking changes. |
-| `id` | string | Engine id, lowercase, stable across versions (`splash`, `omlx`, `mtplx`). Matches the directory name and is used as the app-side engine key. |
+| `id` | string | Engine id, lowercase, stable across versions. First-party ids are `splash`, `omlx`, `mtplx`, `mlx-serve`, `strata`. Matches the directory name and is used as the app-side engine key. |
 | `name` | string | Human-readable engine name shown in the UI. |
 | `version` | string | Exact engine version shipped in this pack. Must equal the `<version>` directory and the version the engine itself prints. |
 | `kind` | `bundled` \| `download` | `bundled`: the pack ships with (or is built into) the app. `download`: the app fetches the pack separately. |
@@ -60,7 +60,7 @@ Nothing else in the pack is interpreted by the app.
 | `minMacOS` | string | Minimum macOS version, `major.minor`. mlx-based engines need Metal features of a recent release. |
 | `entrypoint` | string | Executable to spawn, relative to the pack root. Template variables are allowed. Packs here use `python/bin/python3` (the bundled CPython). |
 | `workingDirectory` | string | cwd for the spawned process, relative to the pack root. `.` = the pack root, so relative engine paths resolve inside the pack. |
-| `modelArgument` | string | How `{model}` is filled: `name` (directory name, oMLX), `path` (absolute path inside flashCat's model folder, MTPLX), `id` (the model's own id, splash). Defaults to `name`. |
+| `modelArgument` | string | How `{model}` is filled: `name` (directory name), `path` (absolute path inside flashCat's model folder), `id` (the model's own id). Defaults to `name`. |
 | `modelsSubdirectory` | string | Directory (inside the pack or inside the user data dir, depending on the app's mode) where model folders are discovered. Created empty by the build scripts. |
 | `launchProfiles` | object | Named argv/environment recipes. `default` is used unless the user picks another profile. |
 | `launchProfiles.<name>.args` | string[] | argv passed to `entrypoint` **as an array** — never a shell string. `{port}`, `{model}`, … are substituted by the app (see below). |
@@ -72,7 +72,13 @@ Nothing else in the pack is interpreted by the app.
 | `models.path` | string | OpenAI-compatible model listing endpoint. |
 | `defaultPort` | int | Preferred localhost port. The app may pick another one and pass it via `{port}`. |
 | `modelSwitch` | `hot` \| `restart` | `hot`: the engine can load/unload models in-process. `restart`: a model change requires restarting the process with a new `{model}`. |
-| `capabilities` | string[] | Feature flags used to gate UI: `chat`, `streaming`, `vision`, `reasoning`, `multiModel`, `singleModel`, `hotLoad`, `hotUnload`, `modelRescan`, `mtp`. |
+| `capabilities` | string[] | Open capability tokens used to gate UI: `chat`, `streaming`, `vision`, `reasoning`, `multi-model`, `single-model`, `hot-load`, `hot-unload`, `model-rescan`, `draft`, `mtp`, `tool-use`, `serial`. Unknown tokens are preserved. |
+| `adapter` | string? | Compiled lifecycle adapter: `splash`, `omlx`, `mtplx`, `mlx-serve`, `strata`. Omit for the generic manifest-driven adapter. |
+| `startupTimeout` | number? | Seconds allowed for a cold start. Overrides the first-party descriptor default. |
+| `portRangeSize` | int? | Number of ports in this engine's allocation band. Defaults to 20. |
+| `modelLayout` | string? | `flat`, `nested`, or `external`. Selects how model folders are scanned and linked. |
+| `modelControl` | object? | Declarative load/unload/rescan HTTP actions. Use this instead of engine-id branches when an engine exposes generic endpoints. |
+| `telemetry` | object[]? | Ordered `{role,path,format}` sources merged into the neutral status model. |
 | `warmup` | object | **MTPLX only.** `precompiled`: pack-relative files to copy into `cacheDir` before the first launch. `cacheDir`: destination, `{home}`-anchored. Lets a machine without a compiler skip the `_paged_ops` build. |
 | `license` | string | SPDX identifier of the bundled engine (`Apache-2.0` for both omlx and mtplx). |
 
@@ -87,12 +93,47 @@ and `launchProfiles.*.args` / `.environment` values:
 | `{port}` | the port the app decided to bind |
 | `{models}` | absolute directory the app wants the engine to scan for models |
 | `{model}` | absolute path of the single model to serve (single-model engines) |
+| `{modelID}` | the selected model id before applying `modelArgument` |
+| `{modelPath}` | the resolved on-disk model path |
 | `{support}` | the app's writable support/data directory |
 | `{home}` | the user's `$HOME` |
 
 Anything else in braces (`{apiKey}`, `{foo}`, …) is **not** substituted. If an
 engine needs a value that is not in this list, either raise it with the app team
 first, or pass it through `environment`.
+
+## Model control
+
+Generic OpenAI-compatible engines should describe model lifecycle in JSON:
+
+```json
+{
+  "modelControl": {
+    "load": {
+      "method": "POST",
+      "path": "/v1/load-model",
+      "body": { "model": "{model}", "default": true }
+    },
+    "unload": {
+      "method": "POST",
+      "path": "/v1/unload-model",
+      "body": { "model": "{model}" }
+    },
+    "rescan": { "method": "POST", "path": "/v1/models/rescan" }
+  }
+}
+```
+
+`{model}` in a path is percent-encoded; `{model}` inside `body` remains the raw
+model id. A `null` body sends no JSON payload.
+
+## Telemetry
+
+Telemetry sources are fetched independently and merged by role. First-party
+formats currently include `splash.status`, `omlx.status`, `omlx.models`,
+`mtplx.snapshot`, `openai.models`, `prometheus.json`, `llama.props`,
+`strata.health`, `strata.status`, and `strata.metrics`. A manifest may omit
+sources when its first-party descriptor already defines them.
 
 ## Rules and gotchas
 

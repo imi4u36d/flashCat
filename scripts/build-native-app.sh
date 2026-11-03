@@ -1,8 +1,8 @@
 #!/bin/bash
 # Build the native macOS client (SwiftUI + AppKit) and assemble flashCat.app.
 #
-# No inference runtime ships inside the bundle any more: splash, oMLX and MTPLX
-# are all runtime packs, installed by the app's launch page from the pack index
+# No inference runtime ships inside the bundle by default: every supported
+# engine is a runtime pack, installed by the launch page from the pack index
 # (or from an existing vendor/engines checkout during development).
 #
 #   INSTALL=0 ./scripts/build-native-app.sh      keep the bundle in dist/ only
@@ -21,7 +21,7 @@ MIN_MACOS="${MIN_MACOS:-26.4}"
 #         ~/Library/Application Support/flashCat/engines. Keeps the bundle ~15 MB,
 #         and every version the engine page lists is one flashCat installed itself
 #         (so it can be deleted there).
-#   copy  embed the checkout's vendor/engines (~2.6 GB with all three engines).
+#   copy  embed the checkout's vendor/engines.
 #   link  symlink the checkout, for the fast development loop only: it breaks as
 #         soon as the checkout moves.
 EMBED_PACKS="${EMBED_PACKS:-none}"

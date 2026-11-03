@@ -161,4 +161,59 @@ final class StatusParserTests: XCTestCase {
         ], health: nil)
         XCTAssertEqual(status.activeRequests, 2)
     }
+
+    // MARK: mlx-serve
+
+    func testMLXServeMergesInventoryMetricsAndProps() {
+        let inventory = EngineTelemetrySource(role: .inventory, path: "/v1/models", format: .openAIModels)
+        let metrics = EngineTelemetrySource(role: .metrics, path: "/metrics.json", format: .prometheusJSON)
+        let props = EngineTelemetrySource(role: .props, path: "/props", format: .llamaProps)
+        let status = EngineStatusParser.parse(documents: [
+            EngineTelemetryDocument(source: inventory, json: [
+                "data": [
+                    ["id": "org/chat", "loaded": true, "state": "ready",
+                     "capabilities": ["chat", "streaming"], "context_length": 131_072],
+                    ["id": "org/image", "loaded": false, "capabilities": ["image"]],
+                ],
+            ]),
+            EngineTelemetryDocument(source: metrics, json: [
+                "counters": ["requests_success_total": 7, "requests_failed_total": 2],
+                "gauges": ["requests_running": 1, "requests_waiting": 3,
+                           "mlx_active_bytes": 4_194_304],
+                "histograms": ["time_to_first_token_seconds": ["count": 2, "sum": 0.4]],
+            ]),
+            EngineTelemetryDocument(source: props, json: [
+                "memory": ["active_bytes": 8_388_608, "peak_bytes": 12_582_912,
+                           "max_safe_context": 65_536],
+            ]),
+        ])
+
+        XCTAssertEqual(status.model, "org/chat")
+        XCTAssertEqual(status.loadedModels, ["org/chat"])
+        XCTAssertEqual(status.maximumContextTokens, 131_072)
+        XCTAssertEqual(status.activeRequests, 1)
+        XCTAssertEqual(status.queuedRequests, 3)
+        XCTAssertEqual(status.requestsCompleted, 7)
+        XCTAssertEqual(status.requestsFailed, 2)
+        XCTAssertEqual(status.ttftMilliseconds ?? 0, 200, accuracy: 0.001)
+    }
+
+    // MARK: Strata
+
+    func testStrataMetricsMapLiveAndTotals() {
+        let status = EngineStatusParser.strataMetrics([
+            "engine": ["model": "strata-qwen", "max_context": 32_768],
+            "live": ["state": "generating", "tok_s": 41.5,
+                     "prefill_tok_s_mean": 640, "running": 1, "queued": 2, "waiting": 1],
+            "totals": ["requests": 9, "output_tokens": 500, "decode_ms": 10_000],
+            "requests": [["decode_tok_s": 50]],
+        ])
+        XCTAssertEqual(status.model, "strata-qwen")
+        XCTAssertEqual(status.maximumContextTokens, 32_768)
+        XCTAssertEqual(status.decodeTokensPerSecond, 41.5)
+        XCTAssertEqual(status.prefillTokensPerSecond, 640)
+        XCTAssertEqual(status.activeRequests, 1)
+        XCTAssertEqual(status.queuedRequests, 3)
+        XCTAssertEqual(status.requestsCompleted, 9)
+    }
 }

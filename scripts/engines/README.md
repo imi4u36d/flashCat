@@ -1,8 +1,8 @@
 # Engine runtime packs
 
 自包含的本地推理引擎运行时。每个 pack 是 `vendor/engines/<engine-id>/<version>/`，
-含 `manifest.json`、`python/bin/python3`（python-build-standalone）和引擎自己的
-site-packages；App 读 `manifest.json` 决定怎么启动。字段含义见
+含 `manifest.json` 和可执行入口。入口可以是自带 CPython（`python/bin/python3`），
+也可以是原生二进制；App 读 `manifest.json` 和 adapter 描述决定怎么启动。字段含义见
 [manifest-template.md](manifest-template.md)，实测记录见 `vendor/engines/BUILD-REPORT.md`。
 
 ## 构建（不下载模型权重）
@@ -10,10 +10,13 @@ site-packages；App 读 `manifest.json` 决定怎么启动。字段含义见
 ```bash
 scripts/engines/build-mtplx-pack.sh     # -> vendor/engines/mtplx/2.12.2  (~434 MB)
 scripts/engines/build-omlx-pack.sh      # -> vendor/engines/omlx/0.7.2   (~1.7 GB)
+scripts/engines/build-splash-pack.sh    # -> vendor/engines/splash/1.4.0
+scripts/engines/build-mlx-serve-pack.sh # -> vendor/engines/mlx-serve/26.11.1 (~265 MB)
+scripts/engines/build-strata-pack.sh    # -> vendor/engines/strata/0.2.10 (~161 MB)
 # 选项：--version VER | --out DIR | --force（覆盖已有 pack）
 ```
 
-- 两个脚本都用 `uv` 取 python-build-standalone：mtplx 要 **3.13 / cp313**，
+- Python 引擎脚本用 `uv` 取 python-build-standalone：mtplx 要 **3.13 / cp313**，
   omlx 要 **3.11 / cp311**（由包内二进制轮子的 ABI 决定）。`uv` 不要求本机预装：
   首次运行自动下载独立二进制缓存到 `.tools/uv`（已 gitignore），整条链路只依赖
   macOS 自带工具（curl/tar/shasum）和网络，**不依赖 Homebrew**。
@@ -27,6 +30,9 @@ scripts/engines/build-omlx-pack.sh      # -> vendor/engines/omlx/0.7.2   (~1.7 G
   也不需要 `brew upgrade`。App 内更新同理：构建脚本自己拉取上游产物。
 - wheel 的平台 tag 是 `macosx_15_0`，pack 的 `minMacOS` 相应为 **15.0**。
 - pack **不可移动**：`_paged_ops` 的 rpath 是绝对路径，安装位置必须含版本号。
+- MLX-Serve 只使用上游签名 CLI tarball，不接 DMG；运行时是原生二进制，无 Python。
+- Strata pack 合并官方 Control 与 Metal engine component。Control 在首次使用时
+  复制到可写 support 目录，因为 `strata install/launch` 会写入自己的安装目录。
 
 ## 校验（用产物里的 python 起服务，验完杀进程释放端口）
 

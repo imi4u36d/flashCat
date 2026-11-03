@@ -25,6 +25,22 @@ final class HubModelTests: XCTestCase {
         XCTAssertEqual(model.kind, .mtplx)
     }
 
+    func testMTPLXTagWinsBeforeFileLayoutIsLoaded() {
+        // Search rows arrive before their file list is enriched. These packs
+        // also carry `mlx`, so the engine tag must be enough to avoid showing
+        // them as oMLX for the first frame.
+        let model = HubModel(id: "Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed",
+                             tags: ["mlx", "mtplx", "text-generation"])
+        XCTAssertEqual(model.kind, .mtplx)
+    }
+
+    func testGGUFStillWinsOverAnMTPLXTag() {
+        let model = HubModel(id: "someone/hybrid",
+                             tags: ["mtplx", "gguf"],
+                             paths: ["Model-Q4_K_M.gguf"])
+        XCTAssertEqual(model.kind, .gguf)
+    }
+
     func testRootGGUFMakesARepositorySplashOnly() {
         let model = HubModel(id: "unsloth/Qwen3.5-4B-GGUF",
                              libraryName: "transformers",
@@ -84,6 +100,36 @@ final class HubModelTests: XCTestCase {
                              tags: ["onnx"],
                              paths: ["model.onnx", "config.json"])
         XCTAssertEqual(model.kind, .unknown)
+    }
+
+    // MARK: Input / output
+
+    func testTextGenerationShowsTextToText() {
+        let model = HubModel(id: "LiquidAI/LFM3-1.7B",
+                             pipelineTag: "text-generation",
+                             tags: ["text-generation"])
+        XCTAssertEqual(model.ioTypes?.label, "文本 → 文本")
+    }
+
+    func testMultimodalTagWinsOverTextGeneration() {
+        // Vision-language repositories commonly publish both tags. The image
+        // input is the useful distinction; text-generation alone would hide it.
+        let model = HubModel(id: "someone/vision",
+                             pipelineTag: "text-generation",
+                             tags: ["text-generation", "image-text-to-text"])
+        XCTAssertEqual(model.ioTypes?.label, "图像+文本 → 文本")
+    }
+
+    func testSpeechTaskShowsModalities() {
+        let model = HubModel(id: "someone/asr",
+                             pipelineTag: "automatic-speech-recognition")
+        XCTAssertEqual(model.ioTypes?.label, "音频 → 文本")
+    }
+
+    func testUnknownTaskHasNoInventedModalities() {
+        let model = HubModel(id: "someone/unknown",
+                             tags: ["safetensors"])
+        XCTAssertNil(model.ioTypes)
     }
 
     // MARK: GGUF variants

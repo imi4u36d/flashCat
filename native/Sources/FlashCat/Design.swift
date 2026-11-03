@@ -124,8 +124,8 @@ enum Native {
     /// 仪表大读数（≥20pt 专用，配 Native.metricNum 取色）。
     static let metricNumFont = Font.system(size: 30, weight: .bold, design: .monospaced)
 
-    static let sidebarWidth: CGFloat = 244
-    static let railWidth: CGFloat = 84
+    static let sidebarWidth: CGFloat = 204
+    static let railWidth: CGFloat = 76
 }
 
 extension View {

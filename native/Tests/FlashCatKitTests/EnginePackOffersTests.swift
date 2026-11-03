@@ -63,7 +63,7 @@ final class EnginePackOffersTests: XCTestCase {
             throw XCTSkip("pack-index.json not present next to the checkout")
         }
         let index = try JSONDecoder().decode(EnginePackIndex.self, from: data)
-        for id in EngineID.allCases {
+        for id in EngineCatalog.allIDs {
             let releases = index.releases(for: id)
             XCTAssertFalse(releases.isEmpty, "\(id.rawValue) 没有发布条目")
             for release in releases {

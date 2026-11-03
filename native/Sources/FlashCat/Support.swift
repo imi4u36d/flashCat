@@ -65,22 +65,18 @@ enum Paths {
     static var logsDirectory: String { home + "/Library/Logs/flashCat" }
     static var logFile: String { logsDirectory + "/server.log" }
     static var pidFile: String { supportDirectory + "/server.pid" }
-    static var runtimesDirectory: String { supportDirectory + "/runtimes" }
-    static var activeRuntimeFile: String { supportDirectory + "/active-runtime" }
     static var conversationFile: String { supportDirectory + "/conversation.json" }
     static var historyFile: String { supportDirectory + "/chat-history.json" }
 
-    static var modelsDirectory: String {
-        let override = ProcessInfo.processInfo.environment["FLASHCAT_MODELS_DIR"] ?? ""
-        return override.isEmpty ? home + "/.flashcat/models" : override
-    }
+    /// Every engine, Splash included, keeps weights under the app's own data
+    /// root. Splash keeps its historical nested `owner/repo` layout.
+    static var modelsDirectory: String { supportDirectory + "/models/splash" }
 
-    static var legacyModelsDirectory: String { supportDirectory + "/models" }
-
-    static var splashModelsDirectory: String {
-        let override = ProcessInfo.processInfo.environment["FLASHCAT_DATA_DIR"] ?? ""
-        if !override.isEmpty { return override + "/models" }
-        return home + "/Library/Application Support/Splash/models"
+    /// Read-only sources from builds that kept Splash under `~/.flashcat` or
+    /// let the upstream Splash app own its assemblies.
+    static var legacySplashModelsDirectory: String { home + "/.flashcat/models" }
+    static var legacyUpstreamSplashModelsDirectory: String {
+        home + "/Library/Application Support/Splash/models"
     }
 
     static func ensureDirectory(_ path: String) {
@@ -244,11 +240,7 @@ func sha256(of path: String) -> String? {
     while true {
         let chunk = (try? handle.read(upToCount: 1 << 20)) ?? Data()
         if chunk.isEmpty { break }
-        do {
-            hasher.update(data: chunk)
-        } catch {
-            return nil
-        }
+        hasher.update(data: chunk)
     }
     return hasher.finalize().map { String(format: "%02x", $0) }.joined()
 }

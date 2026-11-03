@@ -1,6 +1,11 @@
 import SwiftUI
 import AppKit
 
+private enum MainWindowGeometry {
+    static let defaultSize = NSSize(width: 1120, height: 760)
+    static let minimumSize = NSSize(width: 760, height: 600)
+}
+
 @main
 struct FlashCatApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
@@ -13,7 +18,9 @@ struct FlashCatApp: App {
             // SwiftUI 只当壳：窗口内容（含启动页）全部是 WebUI 网页。
             webConsole
         }
-        .defaultSize(width: 1280, height: 820)
+        .defaultSize(width: MainWindowGeometry.defaultSize.width,
+                     height: MainWindowGeometry.defaultSize.height)
+        .windowResizability(.contentMinSize)
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .appInfo) {
@@ -59,6 +66,8 @@ struct FlashCatApp: App {
     /// 窗口内不再挂任何原生 sheet / alert。
     private var webConsole: some View {
         WebViewShell(state: state)
+            .frame(minWidth: MainWindowGeometry.minimumSize.width,
+                   minHeight: MainWindowGeometry.minimumSize.height)
             .overlay(MainWindow.bridge())
             // 网页自己画标题栏那一行（红绿灯 + 侧栏折叠手柄）：不忽略安全区，
             // WebView 会被压到 28pt 的原生 titlebar 下面，网页永远没法跟红绿灯对齐。
@@ -109,11 +118,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Both the canvas colour and the appearance follow the selected skin so
         // the strip above the sidebar matches instead of flashing dark.
         AppState.shared.theme.apply(to: target)
-        target.contentMinSize = NSSize(width: 1040, height: 700)
+        // The WebUI has a compact layout down to this point. Below it the
+        // navigation rail and one-column content no longer have a stable
+        // readable width, so stop the window instead of letting it collapse
+        // into a stack of clipped cards.
+        let minimumWindowSize = MainWindowGeometry.minimumSize
+        target.minSize = minimumWindowSize
+        target.contentMinSize = minimumWindowSize
         if target.frameAutosaveName.isEmpty {
             target.setFrameAutosaveName("flashCatWindow")
-            target.setContentSize(NSSize(width: 1280, height: 820))
+            target.setContentSize(MainWindowGeometry.defaultSize)
             target.center()
+        } else if target.frame.width < minimumWindowSize.width
+                    || target.frame.height < minimumWindowSize.height {
+            // Older builds allowed the window to be shrunk below the layout's
+            // floor. Recover to a usable size the next time the app launches.
+            target.setContentSize(
+                NSSize(width: max(target.contentLayoutRect.width, MainWindowGeometry.defaultSize.width),
+                       height: max(target.contentLayoutRect.height, MainWindowGeometry.defaultSize.height))
+            )
         }
     }
 
@@ -148,7 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         本地推理控制台 · v\(SPLASH_VERSION)
         当前引擎：\(engine.map { "\($0.id.displayName) \($0.installation.version)" } ?? "未选择")
         已安装：\(installed.isEmpty ? "无" : installed)
-        模型目录：\(Paths.modelsDirectory)
+        模型目录：\(EnginePaths.modelsRoot)
         """
         alert.runModal()
     }

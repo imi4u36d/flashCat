@@ -38,7 +38,7 @@ public enum EnginePackBuildPlanner {
                              release: EngineUpstreamRelease?) -> [EnginePackBuildStep] {
         var steps: [EnginePackBuildStep] = []
 
-        switch id {
+        switch id.adapter {
         case .omlx:
             // The build script fetches the upstream wheel itself; no local
             // Homebrew keg (and no `brew upgrade`) is involved.
@@ -62,6 +62,8 @@ public enum EnginePackBuildPlanner {
             }
         case .mtplx:
             break
+        default:
+            break
         }
 
         steps.append(EnginePackBuildStep(
@@ -74,10 +76,14 @@ public enum EnginePackBuildPlanner {
             command: """
             set -euo pipefail
             scripts/engines/make-pack-release.sh --engine \(id.rawValue) --version '\(version)' \
-              --out \(packsDirectory)
+              --out \(packsDirectory) --min-macos '\(minimumMacOS(for: id))'
             scripts/engines/make-pack-index.sh --packs \(packsDirectory) --out pack-index.json
             """))
         return steps
+    }
+
+    private static func minimumMacOS(for id: EngineID) -> String {
+        id.descriptor.minMacOS
     }
 
     /// Where the freshly built pack release JSON lands, so the installer can run

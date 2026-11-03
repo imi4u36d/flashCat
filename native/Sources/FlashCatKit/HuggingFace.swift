@@ -46,6 +46,7 @@ public struct HubModel: Sendable, Equatable, Identifiable {
     public let id: String
     public let downloads: Int
     public let libraryName: String?
+    public let pipelineTag: String?
     public let tags: [String]
     public let paths: [String]
     public let sizes: [String: Int]
@@ -53,12 +54,14 @@ public struct HubModel: Sendable, Equatable, Identifiable {
     public init(id: String,
                 downloads: Int = 0,
                 libraryName: String? = nil,
+                pipelineTag: String? = nil,
                 tags: [String] = [],
                 paths: [String] = [],
                 sizes: [String: Int] = [:]) {
         self.id = id
         self.downloads = downloads
         self.libraryName = libraryName
+        self.pipelineTag = pipelineTag
         self.tags = tags
         self.paths = paths
         self.sizes = sizes
@@ -81,6 +84,24 @@ public struct HubModel: Sendable, Equatable, Identifiable {
                                    sizes: sizes,
                                    ggufVariant: variant)
     }
+
+    /// The task's input and output modalities, when the Hub metadata names one.
+    public var ioTypes: HubIOTypes? {
+        HubModelLayout.ioTypes(pipelineTag: pipelineTag, tags: tags)
+    }
+}
+
+/// Human-facing modalities for one Hub task, e.g. `文本 → 文本`.
+public struct HubIOTypes: Sendable, Equatable {
+    public let input: String
+    public let output: String
+
+    public init(input: String, output: String) {
+        self.input = input
+        self.output = output
+    }
+
+    public var label: String { "\(input) → \(output)" }
 }
 
 public enum HubModelLayout {
@@ -88,10 +109,10 @@ public enum HubModelLayout {
     ///
     /// Precedence, highest first: the author's own `library_name`, then the
     /// evidence that Splash can serve the repository (a `.gguf` at the root or a
-    /// complete split folder), then an MTPLX runtime (`mtp.safetensors`), then
-    /// MLX. An MTPLX pack also carries the `mlx` tag, so its own tag has to win
-    /// over that one; a repository holding `.gguf` files is served by Splash no
-    /// matter what else it carries.
+    /// complete split folder), then an MTPLX runtime (`mtp.safetensors`) or
+    /// `mtplx` tag, then MLX. MTPLX packs also carry the `mlx` tag, so the
+    /// engine-specific evidence has to win over that one; a repository holding
+    /// `.gguf` files is served by Splash no matter what else it carries.
     public static func kind(libraryName: String?, tags: [String], paths: [String]) -> HubModelKind {
         let library = libraryName?.lowercased()
         let tags = Set(tags.map { $0.lowercased() })
@@ -106,7 +127,8 @@ public enum HubModelLayout {
             || !splitGGUFFolders(paths).isEmpty {
             return .gguf
         }
-        if lowered.contains("mtp.safetensors")
+        if tags.contains("mtplx")
+            || lowered.contains("mtp.safetensors")
             || lowered.contains("mtplx_runtime.json") {
             return .mtplx
         }
@@ -117,6 +139,62 @@ public enum HubModelLayout {
             return .unmarked
         }
         return .unknown
+    }
+
+    /// Map the repository's declared task to modalities. Some multimodal
+    /// repositories also carry `text-generation`; modality-specific tags are
+    /// checked first so an image model is not flattened to text-only.
+    public static func ioTypes(pipelineTag: String?, tags: [String]) -> HubIOTypes? {
+        let declared = Set(
+            ([pipelineTag].compactMap { $0 } + tags)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        )
+        func has(_ values: String...) -> Bool {
+            values.contains { declared.contains($0) }
+        }
+
+        if has("image-text-to-text", "visual-question-answering", "document-question-answering") {
+            return HubIOTypes(input: "图像+文本", output: "文本")
+        }
+        if has("audio-text-to-text") {
+            return HubIOTypes(input: "音频+文本", output: "文本")
+        }
+        if has("automatic-speech-recognition") {
+            return HubIOTypes(input: "音频", output: "文本")
+        }
+        if has("text-to-speech", "text-to-audio") {
+            return HubIOTypes(input: "文本", output: "音频")
+        }
+        if has("text-to-image") {
+            return HubIOTypes(input: "文本", output: "图像")
+        }
+        if has("image-to-image", "image-segmentation", "object-detection", "depth-estimation") {
+            return HubIOTypes(input: "图像", output: "图像")
+        }
+        if has("image-classification", "zero-shot-image-classification") {
+            return HubIOTypes(input: "图像", output: "分类")
+        }
+        if has("text-to-video") {
+            return HubIOTypes(input: "文本", output: "视频")
+        }
+        if has("image-to-video", "video-to-video") {
+            return HubIOTypes(input: "视频", output: "视频")
+        }
+        if has("video-classification") {
+            return HubIOTypes(input: "视频", output: "分类")
+        }
+        if has("any-to-any") {
+            return HubIOTypes(input: "多模态", output: "多模态")
+        }
+        if has("feature-extraction", "sentence-similarity") {
+            return HubIOTypes(input: "文本", output: "向量")
+        }
+        if has("text-generation", "text2text-generation", "summarization", "translation",
+               "fill-mask", "question-answering", "table-question-answering",
+               "token-classification", "text-classification") {
+            return HubIOTypes(input: "文本", output: "文本")
+        }
+        return nil
     }
 
     /// The GGUFs at a repository's root that the engine will load.
@@ -413,6 +491,7 @@ public actor HubSearchClient {
         return HubModel(id: id,
                         downloads: (raw["downloads"] as? Int) ?? 0,
                         libraryName: raw["library_name"] as? String,
+                        pipelineTag: raw["pipeline_tag"] as? String,
                         tags: (raw["tags"] as? [String]) ?? [],
                         paths: paths,
                         sizes: sizes)

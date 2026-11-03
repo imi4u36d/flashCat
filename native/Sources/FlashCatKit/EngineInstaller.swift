@@ -47,8 +47,8 @@ public struct EnginePackIndex: Codable, Sendable, Equatable {
     /// Keyed by `EngineID.rawValue`. Unknown keys are kept out by `loadIndex`,
     /// so a UI can iterate the dictionary without filtering.
     public var engines: [String: [EnginePackRelease]]
-
-    public init(schemaVersion: Int = 1, engines: [String: [EnginePackRelease]] = [:]) {
+    public init(schemaVersion: Int = 1,
+                engines: [String: [EnginePackRelease]] = [:]) {
         self.schemaVersion = schemaVersion
         self.engines = engines
     }
@@ -64,6 +64,7 @@ public struct EnginePackIndex: Codable, Sendable, Equatable {
     public func latest(for id: EngineID) -> EnginePackRelease? {
         releases(for: id).first
     }
+
 }
 
 // MARK: - Errors
@@ -234,7 +235,10 @@ public actor EngineInstaller {
             }
             var index = decoded
             index.engines = decoded.engines
-                .filter { EngineID(rawValue: $0.key) != nil }
+                .filter { raw, _ in
+                    guard let id = EngineID(rawValue: raw) else { return false }
+                    return EngineCatalog.allIDs.contains(id)
+                }
                 .mapValues { releases in
                     releases.map { $0.resolvedAgainst(index: fetched.url) }
                 }

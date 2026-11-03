@@ -40,7 +40,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$ENGINE" ] || [ -z "$VERSION" ]; then
-  echo "usage: $0 --engine <omlx|mtplx|splash> --version <x.y.z> [--out DIR] [--base-url URL]" >&2
+  echo "usage: $0 --engine <splash|omlx|mtplx|mlx-serve|strata> --version <x.y.z> [--out DIR] [--base-url URL]" >&2
   exit 2
 fi
 

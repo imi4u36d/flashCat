@@ -3,8 +3,8 @@ import FlashCatKit
 
 /// 公共模型目录：权重只下载一份，哪些引擎能看见它由一张授权表决定。
 ///
-/// 为什么不是「复制到每个引擎目录」：27B 的 4bit 就是 16 GB，三个引擎各存一
-/// 份就是 48 GB，缓存目录再存一份更糟。共享目录让同一份文件同时被多个引擎
+/// 为什么不是「复制到每个引擎目录」：27B 的 4bit 就是 16 GB，每个引擎各存
+/// 一份会让磁盘成倍膨胀，缓存目录再存一份更糟。共享目录让同一份文件同时被多个引擎
 /// 服务——授权过的 pack 引擎（oMLX / MTPLX）在各自模型目录里得到一条符号链
 /// 接，启动时按自己的路径加载；Splash 不需要链接，`--target` 直接指向共享
 /// 目录里的绝对路径，它再用 assembly 里的软链挂上去。
@@ -36,7 +36,7 @@ enum ModelSharing {
     private static func write(_ table: [String: Set<EngineID>]) {
         var raw: [String: [String]] = [:]
         for (repo, engines) in table where !engines.isEmpty {
-            raw[repo] = EngineID.allCases.filter { engines.contains($0) }.map(\.rawValue)
+            raw[repo] = EngineCatalog.allIDs.filter { engines.contains($0) }.map(\.rawValue)
         }
         Paths.ensureDirectory(Paths.supportDirectory)
         guard let data = try? JSONSerialization.data(withJSONObject: raw,
@@ -82,7 +82,13 @@ enum ModelSharing {
 
     /// 共享模型在某个引擎目录里的链接路径。
     static func linkPath(engine: EngineID, repo: String) -> String {
-        EnginePaths.modelsDirectory(engine) + "/" + folder(for: repo)
+        let root = EnginePaths.modelsDirectory(engine)
+        switch engine.descriptor.modelLayout {
+        case .nested:
+            return root + "/" + repo
+        case .flat, .external:
+            return root + "/" + folder(for: repo)
+        }
     }
 
     /// 这份权重是不是共享目录里的（而不是某个引擎自己目录里的副本）。
@@ -145,16 +151,21 @@ enum ModelSharing {
     static func synchronize() {
         let manager = FileManager.default
         let table = table()
-        for id in EngineID.allCases where id != .splash {
+        for id in EngineCatalog.allIDs where id.adapter != .splash {
             let root = EnginePaths.modelsDirectory(id)
-            for name in (try? manager.contentsOfDirectory(atPath: root)) ?? [] {
-                let full = root + "/" + name
-                guard let attributes = try? manager.attributesOfItem(atPath: full),
-                      attributes[.type] as? FileAttributeType == .typeSymbolicLink,
-                      let target = try? manager.destinationOfSymbolicLink(atPath: full),
-                      target.hasPrefix(directory + "/") else { continue }
-                if table[repo(forFolder: name)]?.contains(id) == true { continue }
-                try? manager.removeItem(atPath: full)
+            let allowed = Set(
+                table.filter { $0.value.contains(id) }
+                    .map { path(for: $0.key) }
+            )
+            for full in modelLinks(under: root, nested: id.descriptor.modelLayout == .nested) {
+                guard let target = try? manager.destinationOfSymbolicLink(atPath: full) else { continue }
+                let absolute = target.hasPrefix("/")
+                    ? target
+                    : (full as NSString).deletingLastPathComponent + "/" + target
+                let normalized = URL(fileURLWithPath: absolute).standardizedFileURL.path
+                if normalized.hasPrefix(directory + "/"), !allowed.contains(normalized) {
+                    try? manager.removeItem(atPath: full)
+                }
             }
             for (repo, engines) in table where engines.contains(id) {
                 guard Paths.fileExists(path(for: repo)) else { continue }
@@ -167,8 +178,31 @@ enum ModelSharing {
                     continue
                 }
                 Paths.ensureDirectory(root)
+                if id.descriptor.modelLayout == .nested {
+                    Paths.ensureDirectory((link as NSString).deletingLastPathComponent)
+                }
                 try? manager.createSymbolicLink(atPath: link, withDestinationPath: path(for: repo))
             }
         }
+    }
+
+    private static func modelLinks(under root: String, nested: Bool) -> [String] {
+        let manager = FileManager.default
+        var result: [String] = []
+        for name in (try? manager.contentsOfDirectory(atPath: root)) ?? [] where !name.hasPrefix(".") {
+            let full = root + "/" + name
+            let type = (try? manager.attributesOfItem(atPath: full)[.type]) as? FileAttributeType
+            if type == .typeSymbolicLink {
+                result.append(full)
+                continue
+            }
+            guard nested, type == .typeDirectory else { continue }
+            for child in (try? manager.contentsOfDirectory(atPath: full)) ?? [] where !child.hasPrefix(".") {
+                let path = full + "/" + child
+                let childType = (try? manager.attributesOfItem(atPath: path)[.type]) as? FileAttributeType
+                if childType == .typeSymbolicLink { result.append(path) }
+            }
+        }
+        return result
     }
 }

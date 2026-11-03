@@ -150,11 +150,21 @@ enum EnginePaths {
     }
 
     static func modelsDirectory(_ id: EngineID) -> String {
-        // Splash's models are the ones flashCat already keeps and downloads into;
-        // the pack points at the very same folder, so existing installs keep
-        // working after the engine moved out of the app bundle.
-        if id == .splash { return Paths.modelsDirectory }
         return modelsRoot + "/" + id.rawValue
+    }
+
+    /// Resolve a model selection to its on-disk directory. Most pack engines
+    /// use flat `owner--repo` names; Hugging Face-native engines may preserve
+    /// the nested repository path.
+    static func modelPath(for id: EngineID, model: String) -> String {
+        let root = modelsDirectory(id)
+        let base = model.split(separator: ":", maxSplits: 1).first.map(String.init) ?? model
+        switch id.descriptor.modelLayout {
+        case .nested:
+            return root + "/" + base
+        case .flat, .external:
+            return root + "/" + ModelInstaller.folderName(for: base)
+        }
     }
 
     static func logFile(_ id: EngineID) -> String {
@@ -222,7 +232,7 @@ enum EngineInstallations {
             for version in versions {
                 guard found[version] == nil else { continue }
                 let directory = engineRoot + "/" + version
-                guard let installation = try? EngineInstallation.load(root: URL(fileURLWithPath: directory)),
+                guard let installation = EngineInstallation.load(root: URL(fileURLWithPath: directory)),
                       installation.id == id else { continue }
                 found[version] = installation
             }
@@ -235,6 +245,7 @@ enum EngineInstallations {
         guard let version else { return all.first }
         return all.first { $0.manifest.version == version }
     }
+
 }
 
 /// flashCat's own model folder is the only place its engines read weights from.
@@ -275,7 +286,8 @@ enum EngineModelStore {
 
         var plans: [(link: String, target: String)] = []
         var dangling: [String] = []
-        for link in links(under: root, depth: id == .splash ? 2 : 1) {
+        let modelDepth = id.descriptor.modelLayout == .nested ? 2 : 1
+        for link in links(under: root, depth: modelDepth) {
             if let target = realTarget(of: link) {
                 // 公共目录里的权重由 ModelSharing 管：那是多个引擎共用的同一份
                 // 文件，这里「搬进来」会把共享变成某个引擎独吞，磁盘直接翻倍。

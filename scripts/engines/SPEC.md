@@ -11,11 +11,11 @@ depends-on: [flashcat-manifest-contract]
 
 ## 职责
 
-把三个形态各异的上游产物打成同一种自包含运行时 pack，并把它们汇总成应用消费的发布索引。应用本身只发脚本，不发引擎二进制。
+把形态各异的上游产物打成同一种自包含运行时 pack，并把它们汇总成应用消费的发布索引。应用本身只发脚本，不发引擎二进制。
 
-pack 的形状固定：`vendor/engines/<engine-id>/<version>/`，内含 `manifest.json`、自带的 CPython（`python/bin/python3`）和引擎自己的 site-packages。应用读 `manifest.json` 决定怎么启动，其余文件一概不解释——那份契约见 [manifest 契约](manifest-template.md)。
+pack 的统一形状是 `vendor/engines/<engine-id>/<version>/`。入口可以是自带的 CPython，也可以是原生二进制；应用只读入口路径、`manifest.json` 与 adapter 声明，不解释其余文件——那份契约见 [manifest 契约](manifest-template.md)。
 
-## 三个上游，三种打法
+## 多上游，多打法
 
 差异是本质的，脚本没有强行统一：
 
@@ -24,6 +24,8 @@ pack 的形状固定：`vendor/engines/<engine-id>/<version>/`，内含 `manifes
 | splash | 官方发行 tarball | CPython 随包自带 | 发行包已经带好 `python/`、`install/`、`server/`、`engine/`，解包即成 pack |
 | mtplx | PyPI `mtplx==<v>` | CPython **3.13 / cp313** | 原生扩展 `_paged_ops` 在构建期编译进 `cache/`，并由清单的 `warmup` 声明，目标机无需编译器 |
 | omlx | 上游 GitHub release 的 **cp311 wheel** | CPython **3.11 / cp311** | 不在 PyPI；wheel 平台 tag 是 `macosx_15_0`，故清单 `minMacOS` 为 15.0 |
+| mlx-serve | 官方 `mlx-serve-bin-macos-arm64.tar.gz` | 无 Python | 只接签名 CLI server，不接 DMG；入口是原生二进制 |
+| strata | 官方 Control + Metal engine component | Control 自带 **CPython 3.12** | Control 必须复制到可写 support 目录；模型和 engine 由 Strata 受管 |
 
 - **`uv` 取 CPython。** 两个脚本都用 `uv` 拿 python-build-standalone，且 **不要求本机预装**：首次运行自动把独立二进制缓存到 `.tools/uv`（已 gitignore），整条链路只依赖 macOS 自带的 `curl` / `tar` / `shasum` 和网络，**不依赖 Homebrew**。
 - **mlx 版本钉死决定缓存指纹。** mtplx 的 `mlx` / `mlx-metal` / `mlx-lm` / `nanobind` 必须钉住版本——mlx 版本会改变原生扩展的缓存指纹，浮动的依赖会让「构建期编译好、运行期免编译」这一招失效。
@@ -49,4 +51,4 @@ pack 的形状固定：`vendor/engines/<engine-id>/<version>/`，内含 `manifes
 
 ## 已知限制
 
-- 三个构建脚本没有任何自动化测试；清单解码与版本比对在 `FlashCatKitTests` 里有覆盖，但「能不能真的打出一个能跑的 pack」只能靠上面的手工校验流程。
+- 构建脚本本身不做完整自动化测试；清单解码与版本比对在 `FlashCatKitTests` 里有覆盖。真实发布前仍需运行对应脚本，并用 `PackInstallIntegrationTests` 指向产物做安装/入口验证。

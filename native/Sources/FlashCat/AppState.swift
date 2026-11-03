@@ -107,7 +107,7 @@ final class AppState: ObservableObject {
     /// 草稿接受率（DFlash2 / MTP）的时间序列，采样节奏与吞吐一致，
     /// 概览页用它画第二条实时曲线。value 是 0…1 的比例。
     @Published var acceptance: [ThroughputSample] = []
-    /// 应用内对话流式回复的本地测速（tok/s）。三个引擎对「解码速度」的口径
+    /// 应用内对话流式回复的本地测速（tok/s）。各引擎对「解码速度」的口径
     /// 并不一致：splash 报实时值，oMLX 报开机以来的累计均值（只在请求结束
     /// 时跳一格）。生成期间概览卡与曲线统一改用这个本地口径，空闲时回落到
     /// 引擎自报的读数。
@@ -131,7 +131,7 @@ final class AppState: ObservableObject {
     @Published private(set) var hubResults: [HubModel] = []
     /// 公共目录里已落盘的仓库 id（模型广场标「已在本机」用）。
     @Published private(set) var sharedRepos: [String] = []
-    /// 本机已有的全部仓库：公共目录加三个引擎自己的模型目录。比 `sharedRepos`
+    /// 本机已有的全部仓库：公共目录加各引擎自己的模型目录。比 `sharedRepos`
     /// 宽——引擎目录里手放的、或从引擎推荐里下的权重同样算「已经有了」，下载
     /// 弹窗据此把下载按钮换成「已下载」。跟着 `reloadModels` 走，不进两秒一次的
     /// 快照热路径。
@@ -248,14 +248,6 @@ final class AppState: ObservableObject {
     var controller: EngineController? { engines?.active }
     var activeEngine: EngineID { engines?.activeID ?? .splash }
     var availableEngines: [EngineID] { engines?.installedIDs ?? [] }
-
-    /// Splash's pack doubles as this app's model installer: hub models are
-    /// fetched by the same Python that serves them. `nil` until splash is
-    /// installed, which is why downloading asks for it explicitly.
-    var splashRuntime: EngineRuntime? {
-        guard let root = EngineInstallations.newest(.splash, version: nil)?.root.path else { return nil }
-        return EngineRuntime(root: root)
-    }
 
     init() {
         theme = ThemeController(settings: settings)
@@ -492,7 +484,7 @@ final class AppState: ObservableObject {
     }
 
     /// 流式回复的本地测速：每个增量累计 token 估算数，窗口攒满 ~0.9 秒算一次
-    /// 瞬时速率，与引擎轮询采样同样的节奏落点。三个引擎共用这一个口径，
+    /// 瞬时速率，与引擎轮询采样同样的节奏落点。所有引擎共用这一个口径，
     /// 曲线在生成期间就是真实在动的。
     private func recordStreamDelta(_ piece: String) {
         let tokens = Self.estimateTokens(piece)
@@ -517,13 +509,17 @@ final class AppState: ObservableObject {
 
     func bootstrap() {
         let service = ModelCatalogService()
-        service.migrateLegacyDirectory()
+        let migration = service.migrateLegacyDirectories()
+        if !migration.isEmpty {
+            let moved = migration.moved + migration.archived
+            toast("已把 \(moved) 项旧模型数据迁入 Application Support/flashCat")
+        }
         Paths.ensureDirectory(Paths.modelsDirectory)
 
         // 旧版本用软链接把 ~/.omlx、~/.mtplx 的权重挂进模型目录；现在模型必须
         // 真正待在自己的目录里，启动时把链接换成权重本身，并清掉失效链接。
         var adopted = 0
-        for engine in EngineID.allCases {
+        for engine in EngineCatalog.allIDs {
             adopted += EngineModelStore.adoptExistingWeights(engine).adopted.count
         }
         if adopted > 0 {
@@ -533,7 +529,7 @@ final class AppState: ObservableObject {
         // 授权表是公共目录的真相：启动时按它把各引擎目录里的链接对齐。
         ModelSharing.synchronize()
 
-        catalog = service.load(runtime: splashRuntime)
+        catalog = service.load()
         if catalog.machine.isEmpty {
             selectedModel = settings.model
         } else if settings.model.isEmpty {
@@ -655,14 +651,14 @@ final class AppState: ObservableObject {
         objectWillChange.send()
     }
 
-    /// 本机已经有这些仓库：公共目录里的 + 三个引擎模型目录里的权重。
+    /// 本机已经有这些仓库：公共目录里的 + 各引擎模型目录里的权重。
     /// 模型广场和手填下载都按它判「已下载」，所以启动时（`bootstrap`）也要扫
     /// 一次——只挂在 `reloadModels` 上会等引擎安装/下载/授权变化才第一次算，
     /// 刚开app 时广场会全是「下载」。
     /// 三次目录扫描的 stat 走 `EngineModelStore` 的 meta 缓存，只有新增目录才真读盘。
     func refreshLocalRepos() {
         var local = Set(sharedRepos.map { ModelSharing.canonical($0) })
-        for id in EngineID.allCases {
+        for id in EngineCatalog.allIDs {
             for model in LocalEngineModels.scan(engine: id,
                                                 directory: EnginePaths.modelsDirectory(id)) {
                 local.insert(ModelSharing.canonical(model.id))
@@ -678,7 +674,7 @@ final class AppState: ObservableObject {
         // reloadModels 走（不进每两秒的快照），磁盘不会被反复扫。
         sharedRepos = ModelSharing.scan().map { $0.id }
         refreshLocalRepos()
-        catalog = ModelCatalogService().load(runtime: splashRuntime)
+        catalog = ModelCatalogService().load()
         controller?.updateCatalog(catalog)
         if selectedModel.isEmpty, let first = catalog.machine.first {
             selectedModel = first.id
@@ -834,7 +830,7 @@ final class AppState: ObservableObject {
         let unfinished = Set(downloadTasks.map { ModelSharing.canonical($0.model) })
         let shared = sharedModels(for: id)
             .filter { !unfinished.contains(ModelSharing.canonical($0.id)) }
-        if id == .splash {
+        if id.adapter == .splash {
             // 公共目录里的权重已经在 catalog.local 里（load 会把 ModelSharing.scan()
             // 并进来），这里只过滤没下完的，不再追加一遍。
             return catalog.machine
@@ -858,7 +854,9 @@ final class AppState: ObservableObject {
             .map { model in
                 // Splash 认 `owner/repo`，两个 pack 认扁平目录名——启动时交给引擎
                 // 的就是这个 id，不能用另一种写法。
-                let id = engine == .splash ? model.id : ModelInstaller.folderName(for: model.id)
+                let id = engine.adapter == .splash || engine.descriptor.modelLayout == .nested
+                    ? model.id
+                    : ModelInstaller.folderName(for: model.id)
                 return EngineModel(id: id,
                                    path: model.targetName,
                                    bytes: model.bytes,
@@ -879,7 +877,7 @@ final class AppState: ObservableObject {
     /// rows whether or not that engine is installed, running or holding a model.
     func libraryEntries(for engine: EngineID) -> [ModelLibraryEntry] {
         let installed: [ModelInfo]
-        if engine == .splash {
+        if engine.adapter == .splash {
             installed = catalog.machine.filter { ModelSharing.visible($0.id, engine: .splash) }
         } else {
             installed = engineModels(for: engine).map {
@@ -893,7 +891,7 @@ final class AppState: ObservableObject {
         return ModelLibrary.entries(installed: installed,
                                     engine: engine,
                                     recommendations: libraryRecommendations(for: engine)) { id in
-            engine == .splash ? self.catalog.draftRepository(id, family: nil) : nil
+            engine.adapter == .splash ? self.catalog.draftRepository(id, family: nil) : nil
         }
     }
 
@@ -946,7 +944,9 @@ final class AppState: ObservableObject {
     /// The search hits the given column may show. Ownership comes from the
     /// repository's own format, so a row never appears in two columns.
     func hubResults(for engine: EngineID) -> [HubSearchResult] {
-        hubSearch.results.filter { $0.engine == engine }
+        hubSearch.results
+            .filter { $0.engines.contains(engine) }
+            .map { $0.targeting(engine) }
     }
 
     // MARK: draft assignments
@@ -1573,7 +1573,8 @@ final class AppState: ObservableObject {
         // 界面和引擎会各说各话，直到有人手动重启。先停引擎再动手。
         let serving = engine == activeEngine && selectedModel == id
         if serving { stopService() }
-        let path = EnginePaths.modelsDirectory(engine) + "/" + id
+        let path = engineModels(for: engine).first(where: { $0.id == id })?.path
+            ?? EnginePaths.modelPath(for: engine, model: id)
         do {
             try FileManager.default.removeItem(atPath: path)
         } catch {
@@ -1612,7 +1613,7 @@ final class AppState: ObservableObject {
             return false
         }
         let recommendation = ModelRecommendations.recommendation(for: id)
-        let draft = engine == .splash
+        let draft = engine.adapter == .splash
             ? (catalog.draftRepository(id, family: family) ?? recommendation?.draftRepository)
             : nil
 
@@ -1621,7 +1622,6 @@ final class AppState: ObservableObject {
             plan = try ModelInstaller.plan(engine: engine,
                                            model: id,
                                            draftRepository: draft,
-                                           runtime: splashRuntime,
                                            cache: settings.hfCache)
         } catch {
             notice = (error as? ModelInstaller.Failure)?.message ?? "\(error)"
@@ -1659,7 +1659,6 @@ final class AppState: ObservableObject {
         do {
             plan = try ModelInstaller.sharedPlan(repo: target,
                                                  engines: engines,
-                                                 runtime: splashRuntime,
                                                  cache: settings.hfCache)
         } catch {
             notice = (error as? ModelInstaller.Failure)?.message ?? "\(error)"
@@ -1694,6 +1693,12 @@ final class AppState: ObservableObject {
                 self?.hubResults = models
                 self?.hubHasMore = models.count >= HubClient.pageSize
                 self?.hubLoading = false
+                // Quantization and memory need real file sizes, which the list
+                // endpoint does not return. Show the rows immediately, then
+                // fill in metadata a few repositories at a time.
+                let enriched = await HubClient.enrich(models)
+                guard !Task.isCancelled else { return }
+                self?.hubResults = enriched
             } catch {
                 guard !Task.isCancelled else { return }
                 self?.hubResults = []
@@ -2181,7 +2186,11 @@ final class AppState: ObservableObject {
         // Splash addresses a model by its repository id, the packs by the
         // folder name flashCat gave it.
         let repo = model.split(separator: ":", maxSplits: 1).first.map(String.init) ?? model
-        let installed = engine == .splash ? model : ModelInstaller.folderName(for: repo)
+        let installed = engine.adapter == .splash
+            || engine.descriptor.modelLayout == .nested
+            || engine.descriptor.modelLayout == .external
+            ? model
+            : ModelInstaller.folderName(for: repo)
         append(log: "==> 已下载 \(model)", engine: engine)
         outcome = .finished
         // A launch-triggered fetch is followed by the launch itself: no toast

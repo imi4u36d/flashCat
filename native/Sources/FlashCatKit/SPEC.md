@@ -11,11 +11,11 @@ depends-on: [flashcat-manifest-contract]
 
 ## 职责
 
-把三个引擎的差异收敛成一套引擎无关的类型与判定，供应用壳和网关使用。它描述引擎「是什么」和「该怎么启动」，但从不真的启动任何东西。
+把所有受支持引擎的差异收敛成一套引擎无关的类型与判定，供应用壳和网关使用。它描述引擎「是什么」和「该怎么启动」，但从不真的启动任何东西。
 
-- **引擎身份与几何。** `EngineID`（splash / omlx / mtplx）连同各自的默认端口、可用端口段、启动预算、切换模式、能力位。
-- **清单。** 解码 pack 的 `manifest.json`，并展开 `{root}` `{port}` `{models}` `{model}` `{support}` `{home}` 六个模板变量。
-- **状态归一。** 把三份互不相似的状态报文折成一个 `EngineStatus`。
+- **引擎身份与 descriptor。** `EngineID`、`EngineCatalog` 和 `EngineDescriptor` 统一描述显示、默认端口、端口段、启动预算、切换模式、能力位、模型布局、控制端点和遥测源。
+- **清单。** 解码 pack 的 `manifest.json`，并展开 `{root}` `{port}` `{models}` `{model}` `{modelID}` `{modelPath}` `{support}` `{home}` 八个模板变量。
+- **状态归一。** 把 descriptor 声明的模型清单、状态、指标和 props 报文折成一个 `EngineStatus`。
 - **路由与调参。** `EngineRoutes` 记住每个引擎的实际端点形状，`EngineTuning` 保存每引擎的可选旋钮（`nil` = 交给引擎，不做迁移）。
 - **上游版本。** 读 GitHub release，与已装版本比对，得出「安装 / 更新 / 重装」。
 - **Splash 的家族表。** 解析 pack 里的 `install/families.py`，得出「模型家族 → 它发布的 DFlash2 draft」；再按 `model.json` 记下的 family（优先）或折叠后的模型 id 反查一个模型该配哪个 draft。
@@ -25,18 +25,27 @@ depends-on: [flashcat-manifest-contract]
 
 ## 边界
 
-- **只允许 `Foundation` / `Network` / `CryptoKit`。** 不许 `AppKit`、`SwiftUI`、`WebKit`。这条约束换来的是：整层可以在没有窗口的测试进程里跑——`FlashCatKitTests` 13 个文件、164 个测试全打在这里。
+- **只允许 `Foundation` / `Network` / `CryptoKit`。** 不许 `AppKit`、`SwiftUI`、`WebKit`。这条约束换来的是：整层可以在没有窗口的测试进程里跑——`FlashCatKitTests` 的单元和 pack 契约测试都打在这里。
 - **不拥有进程。** 不 spawn、不 kill、不轮询端口、不写 pid 文件。Kit 只输出「该怎么启动」，执行归应用壳。
 - **不拥有 UI 状态，不读用户偏好。** 配置从外部传入，Kit 不碰 `UserDefaults`。
 - **禁止反向依赖** 应用壳里的任何符号。
+- **受支持引擎是显式集合，不是运行时引擎市场。** `EngineCatalog` 是唯一的引擎清单元数据；`EngineID`/`EngineCapability` 使用开放值只是为了减少扩散的类型分支，不表示用户可以运行时安装任意新引擎。
 - 网关是本模块的子模块，见 [flashcat-gateway](Gateway/SPEC.md)；它同样受以上约束。
+
+## 添加一个新引擎
+
+1. 在 `EngineCatalog.builtIns` 增加一个 descriptor（稳定 id、显示、端口、切换模式、能力、模型布局、控制端点、遥测源）和对应的 `EngineID` 便利常量。
+2. 产出 pack 的 `manifest.json`。标准 OpenAI 兼容引擎到此为止；它的 load/unload/rescan、模型清单和指标应全部由 manifest 描述。
+3. 只有真实生命周期差异才新增 adapter，例如 Splash 的本地装配、Strata 的受管 Control/engine。adapter 也不能把 `if engine == ...` 扩散回 `EngineManager`、安装中心或页面。
+4. 用 `PackInstallIntegrationTests` 指向真实归档，验证安装、入口和 manifest；为每种新的 `telemetry.format` 增加解析测试。
+5. UI 不增加引擎数组；它只消费快照中的 `engineCatalog`。
 
 ## 不变量与代价
 
-- **端口几何刻意避开上游默认值。** splash 8000 / omlx 8100 / mtplx 8200，每段 20 个端口（`defaultPort...defaultPort+19`）。选 8100 / 8200 而不是上游自己用的 8099 / 8000，是为了让应用管理的实例和用户手工起的上游实例不打架；段外不放宽是刻意的——一个引擎的实例不该跑到另一个引擎的号段里。
+- **端口几何刻意避开上游默认值。** 当前为 splash 8000 / omlx 8100 / mtplx 8200 / mlx-serve 8300 / strata 8400，每段默认 20 个端口。默认端口、段大小和切换模式都来自 descriptor；段外不放宽是刻意的。
 - **家族声明 `None` 就是没有 draft。** `families.py` 里 `ModelFamily("x", None, …)` 与「表里没这个家族」是两件事：前者以家族的回答为准，不许被应用里写死的已知表覆盖成「其实没发布过的 draft」；后者才回落到已知表，再没有就按无加速处理。
-- **未知枚举值降级，不失败。** 新版本 pack 可能带来当前应用不认识的 `capability` 或 `modelArgument`。解码时降级为 `.chat` / `.name`，那个值走不到相应 UI，但引擎仍然装得上、起得来。
-- **解析器是唯一知道差异的地方。** 三份状态报文的形状知识只许存在于 `StatusParsers`；任何别处出现 `"metrics.decode_tokens_per_second"` 之类的路径都是把差异漏出去了。
+- **未知开放值不失败。** `EngineID` 与 `EngineCapability` 是开放值；新 pack 带来的未知 capability 会保留原文，未知 `modelArgument` 才回落到 `.name`。引擎仍然装得上、起得来。
+- **解析器是唯一知道状态形状的地方。** 各家状态报文的字段知识只许存在于 `StatusParsers`；控制器只按 descriptor 拉取 source，再交给解析器按 `format` 合并。
 - **仓库归属的顺序不许调。** 格式判定自上而下先命中先得：`library_name=mtplx` → GGUF 证据（`library_name=gguf`、`gguf` 标记、根级非 `mmproj` 的 `*.gguf`、完整 `VARIANT/`） → MTPLX 运行时（`mtp.safetensors`、`mtplx_runtime.json`） → `library_name=mlx` 或 `mlx` 标记。GGUF 证据必须排在 MTP 运行时之前：带根级 `.gguf`（`mmproj-*` 这种多模态投影不算）又带 MTP 头的仓库归 Splash（`.gguf` 是 Splash 专用通道，属产品取舍——oMLX 也能起 GGUF，`Fixtures/omlx/models-status.json` 里就有两份；这里排先是为了把仓库判给 Splash），若判成 MTPLX 就会送进一个只吃 safetensors 的引擎，直接加载失败。回归由 `HubModelTests` 的 `testGGUFWinsOverAnMTPTRuntimeItAlsoCarries` 守着。
 - **GGUF 量化名以引擎的实现为准，不以猜名为准。** `HubModelLayout` 里的 variant 枚举逐条镜像 splash `install/upstream.py` 的 `select_gguf` 的四种情形：根级候选的共享词前缀之后是 token；`VARIANT/` 目录名是 token（且要五位数分片齐全）；共享前缀吃光名字时用「唯一以 `-VARIANT` 结尾」的尾部兜底；只有一个根级 GGUF、又没有分片目录时**不给 variant**（id 就是 `owner/repo`，拼出 token 反而被引擎拒）。两边任何一侧改了规则，另一个必须同步——否则界面报出的量化名引擎不收。
 - **启动阶段只认真正命名阶段的行。** 早期版本用裸词 `kv` / `context` 匹配，而 splash 每次启动都打印的内存计划行里恰好含这两个词，于是每次启动都报出一个引擎并不存在的「准备上下文」阶段——真正的过程是预热（arena 组装、专家表流入、最大前缀与解码预热、内存审计），以及 macOS 还没还够内存时的等待。回归由 `EngineStartupStageTests` 的两条用例守着。

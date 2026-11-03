@@ -2,102 +2,59 @@ import Foundation
 
 // MARK: - Identity
 
-/// The inference backends flashCat can drive. Each one is a peer: its own
-/// runtime installation, port, log file, model directory and status schema.
-public enum EngineID: String, Codable, CaseIterable, Identifiable, Sendable {
-    case splash
-    case omlx
-    case mtplx
+/// Stable runtime identity. It is not a closed enum so all supported engines
+/// can be treated uniformly by descriptors and adapters. The supported set is
+/// still an explicit source catalog (`EngineCatalog`), not a runtime engine
+/// marketplace.
+public struct EngineID: RawRepresentable, Codable, Hashable, Identifiable,
+                        Sendable, Comparable, CustomStringConvertible {
+    public let rawValue: String
+
+    public init?(rawValue: String) {
+        let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return nil }
+        self.rawValue = normalized
+    }
+
+    /// Internal/constant construction for ids already known to be valid.
+    public init(_ rawValue: String) {
+        self.rawValue = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    public init(from decoder: Decoder) throws {
+        let value = try decoder.singleValueContainer().decode(String.self)
+        guard let id = Self(rawValue: value) else {
+            throw DecodingError.dataCorruptedError(in: try decoder.singleValueContainer(),
+                                                   debugDescription: "engine id must not be empty")
+        }
+        self = id
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 
     public var id: String { rawValue }
+    public var description: String { rawValue }
+    public static func < (lhs: EngineID, rhs: EngineID) -> Bool { lhs.rawValue < rhs.rawValue }
 
-    public var displayName: String {
-        switch self {
-        case .splash: return "Splash"
-        case .omlx: return "oMLX"
-        case .mtplx: return "MTPLX"
-        }
-    }
+    public static let splash = EngineID("splash")
+    public static let omlx = EngineID("omlx")
+    public static let mtplx = EngineID("mtplx")
+    public static let mlxServe = EngineID("mlx-serve")
+    public static let strata = EngineID("strata")
 
-    /// Fixed port bands keep the three engines from fighting over one port and
-    /// stay clear of the defaults the upstream apps use (oMLX 8099, MTPLX 8000).
-    public var defaultPort: Int {
-        switch self {
-        case .splash: return 8000
-        case .omlx: return 8100
-        case .mtplx: return 8200
-        }
-    }
-
+    public var descriptor: EngineDescriptor { EngineCatalog.descriptor(for: self) }
+    public var displayName: String { descriptor.displayName }
+    public var defaultPort: Int { descriptor.defaultPort }
     public var portRange: ClosedRange<Int> {
-        defaultPort...(defaultPort + 19)
+        defaultPort...(defaultPort + max(descriptor.portRangeSize, 1) - 1)
     }
-
-    /// Startup budget. MTPLX re-warms its Metal kernels for every model load,
-    /// oMLX paged-weights takes a while, splash can pull from the hub.
-    public var startupTimeout: TimeInterval {
-        switch self {
-        case .splash: return 300
-        case .omlx: return 180
-        case .mtplx: return 300
-        }
-    }
-
-    public var switchMode: ModelSwitchMode {
-        switch self {
-        case .omlx: return .hot
-        case .splash, .mtplx: return .restart
-        }
-    }
-
-    public var capabilities: Set<EngineCapability> {
-        switch self {
-        case .splash:
-            return [.chat, .streaming, .vision, .reasoning, .singleModel, .draft]
-        case .omlx:
-            return [.chat, .streaming, .vision, .reasoning, .multiModel, .hotLoad, .hotUnload, .modelRescan]
-        case .mtplx:
-            return [.chat, .streaming, .vision, .reasoning, .singleModel, .mtp]
-        }
-    }
-}
-
-public enum EngineCapability: String, Codable, Hashable, Sendable {
-    case chat
-    case streaming
-    case vision
-    case reasoning
-    case multiModel
-    case hotLoad
-    case hotUnload
-    case modelRescan
-    case singleModel
-    case draft
-    case mtp
-
-    /// Short label for the console UI; the manifest only carries the raw token.
-    public var displayName: String {
-        switch self {
-        case .chat: return "对话"
-        case .streaming: return "流式"
-        case .vision: return "视觉"
-        case .reasoning: return "推理"
-        case .multiModel: return "多模型"
-        case .hotLoad: return "热加载"
-        case .hotUnload: return "热卸载"
-        case .modelRescan: return "模型重扫"
-        case .singleModel: return "单模型"
-        case .draft: return "DFlash2"
-        case .mtp: return "MTP"
-        }
-    }
-
-    /// Decoding an unknown capability must not fail the whole manifest: a pack
-    /// built by a newer flashCat may advertise something this build predates.
-    public init(from decoder: Decoder) throws {
-        let raw = try decoder.singleValueContainer().decode(String.self)
-        self = EngineCapability(rawValue: raw) ?? .chat
-    }
+    public var startupTimeout: TimeInterval { descriptor.startupTimeout }
+    public var switchMode: ModelSwitchMode { descriptor.switchMode }
+    public var capabilities: Set<EngineCapability> { Set(descriptor.capabilities) }
+    public var adapter: EngineAdapterID { descriptor.adapter }
 }
 
 public enum EnginePackKind: String, Codable, Sendable {
@@ -188,6 +145,14 @@ public struct EngineManifest: Codable, Sendable {
     public let modelArgument: EngineModelArgument?
     public let capabilities: [EngineCapability]
     public let license: String?
+    /// Optional adapter/lifecycle contract. Older packs omit these fields and
+    /// continue to use the first-party descriptor for their id.
+    public let adapter: EngineAdapterID?
+    public let portRangeSize: Int?
+    public let startupTimeout: TimeInterval?
+    public let modelLayout: EngineModelLayout?
+    public let modelControl: EngineModelControlSpec?
+    public let telemetry: [EngineTelemetrySource]?
 
     public init(schemaVersion: Int = 1,
                 id: EngineID,
@@ -208,7 +173,13 @@ public struct EngineManifest: Codable, Sendable {
                 modelSwitch: ModelSwitchMode,
                 modelArgument: EngineModelArgument? = nil,
                 capabilities: [EngineCapability],
-                license: String? = nil) {
+                license: String? = nil,
+                adapter: EngineAdapterID? = nil,
+                portRangeSize: Int? = nil,
+                startupTimeout: TimeInterval? = nil,
+                modelLayout: EngineModelLayout? = nil,
+                modelControl: EngineModelControlSpec? = nil,
+                telemetry: [EngineTelemetrySource]? = nil) {
         self.schemaVersion = schemaVersion
         self.id = id
         self.name = name
@@ -229,6 +200,12 @@ public struct EngineManifest: Codable, Sendable {
         self.modelArgument = modelArgument
         self.capabilities = capabilities
         self.license = license
+        self.adapter = adapter
+        self.portRangeSize = portRangeSize
+        self.startupTimeout = startupTimeout
+        self.modelLayout = modelLayout
+        self.modelControl = modelControl
+        self.telemetry = telemetry
     }
 
     public var capabilitySet: Set<EngineCapability> { Set(capabilities) }
@@ -254,6 +231,7 @@ public struct EngineInstallation: Sendable {
     }
 
     public var version: String { manifest.version }
+    public var descriptor: EngineDescriptor { EngineDescriptor.resolve(manifest: manifest) }
 
     public static func manifestURL(root: URL) -> URL {
         root.appendingPathComponent("manifest.json")

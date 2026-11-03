@@ -33,39 +33,43 @@ final class PackInstallIntegrationTests: XCTestCase {
     func testInstallsRealPackArchive() async throws {
         let environment = ProcessInfo.processInfo.environment
         let archive = environment["FLASHCAT_TEST_PACK"]!
+        let expectedEngine = environment["FLASHCAT_TEST_ENGINE"]
+            .flatMap(EngineID.init(rawValue:)) ?? .omlx
+        let expectedVersion = environment["FLASHCAT_TEST_VERSION"] ?? "0.7.2"
         let expectedSHA = environment["FLASHCAT_TEST_PACK_SHA"] ?? sha256(of: archive)
         let bytes = (try? FileManager.default.attributesOfItem(atPath: archive)[.size] as? Int) ?? nil
 
         let installer = EngineInstaller(environment: EngineInstallEnvironment(packsDirectory: root))
-        let release = EnginePackRelease(version: "0.7.2",
+        let release = EnginePackRelease(version: expectedVersion,
                                         url: URL(fileURLWithPath: archive).absoluteString,
                                         sha256: expectedSHA,
                                         bytes: bytes)
 
         let phases = Counter()
-        let installation = try await installer.install(release, for: .omlx) { phase in
+        let installation = try await installer.install(release, for: expectedEngine) { phase in
             phases.record(phase)
         }
 
-        XCTAssertEqual(installation.manifest.id, .omlx)
-        XCTAssertEqual(installation.manifest.version, "0.7.2")
+        XCTAssertEqual(installation.manifest.id, expectedEngine)
+        XCTAssertEqual(installation.manifest.version, expectedVersion)
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: installation.entrypoint.path),
                       "entrypoint must be executable: \(installation.entrypoint.path)")
-        let versions = await installer.installedVersions(.omlx)
-        XCTAssertEqual(versions, ["0.7.2"])
-        let installedRoot = await installer.installedRoot(.omlx, version: "0.7.2")
-        XCTAssertEqual(installedRoot, root + "/omlx/0.7.2")
+        let versions = await installer.installedVersions(expectedEngine)
+        XCTAssertEqual(versions, [expectedVersion])
+        let installedRoot = await installer.installedRoot(expectedEngine, version: expectedVersion)
+        XCTAssertEqual(installedRoot, root + "/" + expectedEngine.rawValue + "/" + expectedVersion)
 
         // Staging and partial files must not survive a successful install.
         let leftovers = (try? FileManager.default.contentsOfDirectory(atPath: root)) ?? []
         XCTAssertFalse(leftovers.contains(".staging"), "staging left behind: \(leftovers)")
         XCTAssertFalse(leftovers.contains(".downloads"), "downloads left behind: \(leftovers)")
 
-        // The pack is large; make sure the interpreter actually runs.
-        let python = installation.root.appendingPathComponent("python/bin/python3").path
+        // Make sure the entrypoint actually runs on this machine.
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: python)
-        process.arguments = ["-c", "import sys; print(sys.version_info[0])"]
+        process.executableURL = installation.entrypoint
+        process.arguments = installation.entrypoint.lastPathComponent == "python3"
+            ? ["-c", "import sys; print(sys.version_info[0])"]
+            : ["--version"]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = Pipe()
@@ -74,7 +78,11 @@ final class PackInstallIntegrationTests: XCTestCase {
         XCTAssertEqual(process.terminationStatus, 0)
         let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        XCTAssertEqual(output, "3", "unexpected interpreter: \(output ?? "nil")")
+        if installation.entrypoint.lastPathComponent == "python3" {
+            XCTAssertEqual(output, "3", "unexpected interpreter: \(output ?? "nil")")
+        } else {
+            XCTAssertFalse(output?.isEmpty ?? true, "entrypoint produced no version output")
+        }
 
         let seen = phases.snapshot()
         XCTAssertTrue(seen.contains { if case .verifying = $0 { return true } else { return false } })
@@ -85,24 +93,27 @@ final class PackInstallIntegrationTests: XCTestCase {
 
     func testRejectsCorruptArchiveWithoutDamagingExistingInstall() async throws {
         let archive = ProcessInfo.processInfo.environment["FLASHCAT_TEST_PACK"]!
+        let expectedEngine = ProcessInfo.processInfo.environment["FLASHCAT_TEST_ENGINE"]
+            .flatMap(EngineID.init(rawValue:)) ?? .omlx
+        let expectedVersion = ProcessInfo.processInfo.environment["FLASHCAT_TEST_VERSION"] ?? "0.7.2"
         let installer = EngineInstaller(environment: EngineInstallEnvironment(packsDirectory: root))
 
-        var good = EnginePackRelease(version: "0.7.2",
+        var good = EnginePackRelease(version: expectedVersion,
                                      url: URL(fileURLWithPath: archive).absoluteString,
                                      sha256: ProcessInfo.processInfo.environment["FLASHCAT_TEST_PACK_SHA"]
                                         ?? sha256(of: archive))
-        _ = try await installer.install(good, for: .omlx) { _ in }
+        _ = try await installer.install(good, for: expectedEngine) { _ in }
 
-        good.version = "0.7.3"
+        good.version = expectedVersion + ".corrupt"
         good.sha256 = String(repeating: "0", count: 64)
         do {
-            _ = try await installer.install(good, for: .omlx) { _ in }
+            _ = try await installer.install(good, for: expectedEngine) { _ in }
             XCTFail("corrupt archive should not install")
         } catch {
             XCTAssertTrue(error is EngineInstallError)
         }
-        let versions = await installer.installedVersions(.omlx)
-        XCTAssertEqual(versions, ["0.7.2"])
+        let versions = await installer.installedVersions(expectedEngine)
+        XCTAssertEqual(versions, [expectedVersion])
     }
 
     private func sha256(of path: String) -> String {

@@ -265,7 +265,8 @@ function flushPendingRender() {
 
 function toast(message) {
   const el = document.getElementById("toast");
-  el.textContent = message;
+  const bad = /失败|错误|无法|不能|不可|异常/.test(String(message));
+  el.innerHTML = `${icon(bad ? "alert" : "circleCheck", "toast-icon", 15)}<span>${esc(message)}</span>`;
   el.classList.add("show");
   clearTimeout(el.__t);
   el.__t = setTimeout(() => el.classList.remove("show"), 2200);
@@ -284,6 +285,12 @@ function applyAppearance() {
 const esc = (s) => String(s == null ? "" : s)
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;");
+
+// One icon family for every in-app glyph. The app/mascot artwork is separate
+// and deliberately stays untouched.
+function icon(name, cls, size) {
+  return window.FCIcons ? window.FCIcons.svg(name, cls || "", size) : "";
+}
 
 function fmtBytes(n) {
   if (!n || n <= 0) return "—";
@@ -653,6 +660,9 @@ function restoreFocus(key) {
 
 function closeMenus() {
   document.querySelectorAll(".popover").forEach((p) => p.remove());
+  document.querySelectorAll("[data-menu][aria-expanded='true']").forEach((el) => {
+    el.setAttribute("aria-expanded", "false");
+  });
   UI.menuOpen = null;
   flushPendingRender();
 }
@@ -724,9 +734,11 @@ function popover(anchorId, items) {
   if (!anchor) return;
   const box = document.createElement("div");
   box.className = "popover";
+  box.setAttribute("role", "menu");
+  box.setAttribute("aria-label", "操作菜单");
   box.innerHTML = items.map((it) => it === "-" ? '<div class="sep"></div>'
     : it.header ? `<div class="menu-head">${it.label}</div>`
-    : `<div class="item ${it.on ? "on" : ""}" data-act="${esc(it.act)}" data-arg="${esc(it.arg || "")}">${it.label}${it.on ? '<span class="check">✓</span>' : ""}</div>`).join("");
+    : `<div class="item ${it.on ? "on" : ""}" role="menuitem" tabindex="-1" data-act="${esc(it.act)}" data-arg="${esc(it.arg || "")}">${it.label}${it.on ? icon("check", "menu-check", 14) : ""}</div>`).join("");
   box.addEventListener("click", (e) => {
     const item = e.target.closest(".item");
     if (!item) return;
@@ -739,6 +751,7 @@ function popover(anchorId, items) {
   const r = anchor.getBoundingClientRect();
   box.style.top = Math.max(8, Math.min(r.bottom + 4, window.innerHeight - box.offsetHeight - 8)) + "px";
   box.style.left = Math.max(8, Math.min(r.left, window.innerWidth - box.offsetWidth - 8)) + "px";
+  anchor.setAttribute("aria-expanded", "true");
   UI.menuOpen = anchorId;
 }
 
@@ -923,24 +936,15 @@ function nav(page) {
 }
 
 // ---------- 侧栏 ----------
-// 实心矢量图标：统一 24 视窗、currentColor 填充，随 nav-item 的配色/悬停/选中状态走。
-// 说明：文字符号（◧ ❝ ◫ ⚙）在不同字体下粗细与基线都不一致，缩小后尤其糊，故全部改 SVG。
-function navIcon(paths) {
-  return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${paths}</svg>`;
-}
+// One optical family across navigation and controls. These are Lucide glyphs,
+// rendered with the same 24px box and 1.75 stroke as every action icon.
 const NAV_ICONS = {
-  // 概览：四宫格仪表盘
-  overview: navIcon(`<path d="M4 2.6h5.4a1.6 1.6 0 0 1 1.6 1.6v5.6a1.6 1.6 0 0 1-1.6 1.6H4a1.6 1.6 0 0 1-1.6-1.6V4.2A1.6 1.6 0 0 1 4 2.6Zm10 0h6a1.6 1.6 0 0 1 1.6 1.6v3.4a1.6 1.6 0 0 1-1.6 1.6h-6a1.6 1.6 0 0 1-1.6-1.6V4.2A1.6 1.6 0 0 1 14 2.6Zm0 9.2h6a1.6 1.6 0 0 1 1.6 1.6v6.4a1.6 1.6 0 0 1-1.6 1.6h-6a1.6 1.6 0 0 1-1.6-1.6v-6.4a1.6 1.6 0 0 1 1.6-1.6Zm-10 3.6h5.4a1.6 1.6 0 0 1 1.6 1.6v2.8a1.6 1.6 0 0 1-1.6 1.6H4a1.6 1.6 0 0 1-1.6-1.6v-2.8A1.6 1.6 0 0 1 4 15.4Z"/>`),
-  // 对话：实心气泡
-  chat: navIcon(`<path d="M5 2.8h14A3.7 3.7 0 0 1 22.7 6.5v7.6a3.7 3.7 0 0 1-3.7 3.7h-5.6l-4.6 3.6a1 1 0 0 1-1.6-.8v-2.8H5a3.7 3.7 0 0 1-3.7-3.7V6.5A3.7 3.7 0 0 1 5 2.8Z"/>`),
-  // 模型：层叠权重
-  models: navIcon(`<path d="M11.3 2.4a1.6 1.6 0 0 1 1.4 0l8.9 4.3a1 1 0 0 1 0 1.8l-8.9 4.3a1.6 1.6 0 0 1-1.4 0L2.4 8.5a1 1 0 0 1 0-1.8l8.9-4.3Z"/><path d="M2.6 12.2a1 1 0 0 1 1.4-.5l7.3 3.5a1.6 1.6 0 0 0 1.4 0l7.3-3.5a1 1 0 0 1 .9 1.8l-8.4 4a3.6 3.6 0 0 1-3.2 0l-8.2-4a1 1 0 0 1-.5-1.3Z"/><path d="M2.6 17.4a1 1 0 0 1 1.4-.5l7.3 3.5a1.6 1.6 0 0 0 1.4 0l7.3-3.5a1 1 0 0 1 .9 1.8l-8.4 4a3.6 3.6 0 0 1-3.2 0l-8.2-4a1 1 0 0 1-.5-1.3Z"/>`),
-  // 引擎：推理芯片
-  engines: navIcon(`<path fill-rule="evenodd" d="M6.8 4.6h10.4a2.2 2.2 0 0 1 2.2 2.2v10.4a2.2 2.2 0 0 1-2.2 2.2H6.8a2.2 2.2 0 0 1-2.2-2.2V6.8a2.2 2.2 0 0 1 2.2-2.2Zm1.6 4.4v6h7.2v-6H8.4Z"/><g stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M8.6 1.5v3.1M12 1.5v3.1M15.4 1.5v3.1M8.6 19.4v3.1M12 19.4v3.1M15.4 19.4v3.1M1.5 8.6h3.1M1.5 12h3.1M1.5 15.4h3.1M19.4 8.6h3.1M19.4 12h3.1M19.4 15.4h3.1"/></g>`),
-  // 日志：实心文档 + 镂空行
-  logs: navIcon(`<path fill-rule="evenodd" d="M6.2 2.2h11.6A2.2 2.2 0 0 1 20 4.4v15.2a2.2 2.2 0 0 1-2.2 2.2H6.2A2.2 2.2 0 0 1 4 19.6V4.4a2.2 2.2 0 0 1 2.2-2.2Zm1.6 5a1.1 1.1 0 0 0 0 2.2h8.4a1.1 1.1 0 0 0 0-2.2H7.8Zm0 4.4a1.1 1.1 0 0 0 0 2.2h8.4a1.1 1.1 0 0 0 0-2.2H7.8Zm0 4.4a1.1 1.1 0 0 0 0 2.2h5a1.1 1.1 0 0 0 0-2.2h-5Z"/>`),
-  // 设置：实心齿轮（描边同色 + round join，把小尺寸下的尖角磨圆）
-  settings: navIcon(`<path fill-rule="evenodd" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" d="M22.14 10.21 L22.14 13.79 L19.1 13.7 L18.02 16.13 L20.44 17.91 L17.91 20.44 L15.81 18.22 L13.33 19.18 L13.79 22.14 L10.21 22.14 L10.3 19.1 L7.87 18.02 L6.09 20.44 L3.56 17.91 L5.78 15.81 L4.82 13.33 L1.86 13.79 L1.86 10.21 L4.9 10.3 L5.98 7.87 L3.56 6.09 L6.09 3.56 L8.19 5.78 L10.67 4.82 L10.21 1.86 L13.79 1.86 L13.7 4.9 L16.13 5.98 L17.91 3.56 L20.44 6.09 L18.22 8.19 L19.18 10.67 Z M8.2 12a3.8 3.8 0 1 0 7.6 0a3.8 3.8 0 1 0 -7.6 0Z"/>`),
+  overview: icon("dashboard"),
+  chat: icon("message"),
+  models: icon("layers"),
+  engines: icon("cpu"),
+  logs: icon("scrollText"),
+  settings: icon("settings"),
 };
 const NAV_NAMES = { overview: "概览", chat: "对话", models: "模型", engines: "引擎", logs: "日志", settings: "设置" };
 
@@ -960,10 +964,9 @@ const LOGO_SVG = `<svg viewBox="0 0 1024 1024" aria-hidden="true" focusable="fal
   <circle fill="#FFFFFF" cx="671" cy="555" r="24"/>
 </svg>`;
 
-// 侧栏手柄：macOS 的侧栏图标——一块面板 + 一道竖缝，缝左边就是被收起来的那一栏。
-// 不做 chevron：‹ 那种尖角在小字号下永远毛糙，读起来也更像「返回」而不是「收起面板」。
-// 描边做到 2.2/24（16px 下约 1.5px），再细就跟旁边 17px 的实心导航图标不是一个重量级。
-const SIDE_ICON = navIcon(`<path fill-rule="evenodd" d="M6.2 3h11.6A3.2 3.2 0 0 1 21 6.2v11.6A3.2 3.2 0 0 1 17.8 21H6.2A3.2 3.2 0 0 1 3 17.8V6.2A3.2 3.2 0 0 1 6.2 3Zm-.4 2.2a.8.8 0 0 0-.8.8v12a.8.8 0 0 0 .8.8h12a.8.8 0 0 0 .8-.8V6a.8.8 0 0 0-.8-.8H5.8Z"/><rect x="8.6" y="5.2" width="1.9" height="13.6" rx=".95"/>`);
+// The same panel glyph changes state by moving its own divider left; it never
+// swaps to an unrelated chevron.
+const SIDE_ICON = icon("panelLeft");
 
 function renderSide() {
   const st = S.engine || {};
@@ -976,9 +979,9 @@ function renderSide() {
     : (st.state === "stopping" ? "停止中"
     : (running ? "运行中" : (st.state === "failed" ? "异常" : "已停止"))));
   const dotCls = st.switching || st.state === "starting" || st.state === "stopping" ? "warn pulse" : (running ? "ok" : (st.state === "failed" ? "err" : ""));
-  const act = running ? `<span class="act" data-a="stop">停止</span>`
-    : (st.state === "starting" || st.switching ? `<span class="act busy">…</span>`
-    : `<span class="act" data-a="start">启动</span>`);
+  const act = running ? `<span class="act" data-a="stop">${icon("stop", "", 13)}停止</span>`
+    : (st.state === "starting" || st.switching ? `<span class="act busy"><span class="mini-spinner"></span></span>`
+    : `<span class="act" data-a="start">${icon("play", "", 13)}启动</span>`);
   const threads = (S.threads || []).map((t) =>
     `<div class="recent" data-act="openThread" data-arg="${esc(t.id)}">${esc(t.title)}<span class="tm">${relTime(t.updatedAt)}</span></div>`).join("");
   const dlCount = (S.downloads && S.downloads.tasks || []).length;
@@ -1001,13 +1004,13 @@ function renderSide() {
     <div class="engine-card" id="engineCard">
       <div class="row1"><span class="dot ${dotCls}"></span><span class="st">${statusText}</span>${act}</div>
       <div class="more">
-        <div class="model switch" id="sideModelSwitcher" data-menu="sidebarModelSwitcher" title="${esc(S.selectedModel || "")} · 点击切换模型"><span class="nm">${esc(shortModel(S.selectedModel) || "未选择模型")}</span><span class="caret">⌄</span></div>
+        <div class="model switch" id="sideModelSwitcher" data-menu="sidebarModelSwitcher" title="${esc(S.selectedModel || "")} · 点击切换模型"><span class="nm">${esc(shortModel(S.selectedModel) || "未选择模型")}</span>${icon("chevronDown", "caret", 13)}</div>
         <div class="chips">${["splash", "omlx", "mtplx"].map((e) =>
           `<span class="echip ${S.engine.id === e ? "on" : ""}" data-engine="${e}">${e === "splash" ? "Splash" : e === "omlx" ? "oMLX" : "MTPLX"}</span>`).join("")}</div>
         <div class="foot"><span>${esc((st.id || "").toUpperCase())} ${esc(st.version || "")}</span><span>:${S.port}</span></div>
       </div>
     </div>
-    ${dlCount ? `<div class="side-dl" data-act="openDownloadCenter">↓ ${dlCount} 个下载任务</div>` : ""}`;
+    ${dlCount ? `<div class="side-dl" data-act="openDownloadCenter">${icon("download", "", 14)}<span>${dlCount} 个下载任务</span></div>` : ""}`;
 
   const side = document.getElementById("side");
   if (html !== lastSideHTML) {
@@ -1064,12 +1067,30 @@ function bindOnce(el, type, fn) {
 }
 
 function bindActs(root) {
-  root.querySelectorAll("[data-act]").forEach((el) => {
+  root.querySelectorAll("[data-act], [data-menu]").forEach((el) => {
+    // Clickable DIV/SPAN controls predate the button cleanup. Keep them
+    // operable from the keyboard while preserving their existing layout contract.
+    const nativeControl = /^(BUTTON|A|INPUT|SELECT|TEXTAREA)$/.test(el.tagName);
+    if (!nativeControl) {
+      if (!el.hasAttribute("role")) el.setAttribute("role", "button");
+      if (!el.hasAttribute("tabindex")) el.tabIndex = 0;
+      if (!el.__fc_keyboard) {
+        el.__fc_keyboard = true;
+        el.addEventListener("keydown", (e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          el.click();
+        });
+      }
+    }
+    if (el.hasAttribute("data-menu") && !el.hasAttribute("aria-haspopup")) {
+      el.setAttribute("aria-haspopup", "menu");
+    }
     if (el.__bound) return;
     el.__bound = true;
     el.addEventListener("click", (e) => {
       e.stopPropagation();
-      handleAction(el.dataset.act, el.dataset.arg);
+      if (el.dataset.act) handleAction(el.dataset.act, el.dataset.arg);
     });
   });
   // data-menu（⋯/模型切换）统一由 document 捕获阶段监听处理，这里不重复绑定。
@@ -1094,7 +1115,7 @@ function sparkSVG(samples, opts) {
   const color = o.color || "#FF7A45";
   const gid = "spark-fill-" + (o.id || "default");
   if (!samples || samples.length < 2) {
-    return `<div class="empty" style="height:88px;padding:0;display:grid;place-items:center">${esc(o.empty || "启动并生成一次回复后，这里会显示吞吐曲线")}</div>`;
+    return `<div class="spark-empty">${icon("activity", "spark-empty-icon", 18)}<span>${esc(o.empty || "启动并生成一次回复后，这里会显示吞吐曲线")}</span></div>`;
   }
   const W = 800, H = 88;
   const max = o.max != null ? o.max : Math.max(...samples.map((s) => s.v), 10) * 1.15;
@@ -1113,17 +1134,17 @@ function sparkSVG(samples, opts) {
       <stop offset="0" stop-color="${color}" stop-opacity=".28"/><stop offset="1" stop-color="${color}" stop-opacity="0"/>
     </linearGradient></defs>
     ${guide}
-    <path d="${area}" fill="url(#${gid})"/>
-    <path d="${line}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>
-    <circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="3.5" fill="${color}"/>
+    <path class="spark-area" d="${area}" fill="url(#${gid})"/>
+    <path class="spark-line" d="${line}" pathLength="1" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>
+    <circle class="spark-end" cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="3.5" fill="${color}"/>
   </svg>`;
 }
 
-function metricCard(label, tag, value, unit, hint, hero, loading) {
+function metricCard(iconName, label, tag, value, unit, hint, hero, loading) {
   // 骨架和数字占同一个槽，切状态时交叉淡变；loading 时 hint 清空——
   // 骨架旁边挂着上一轮的速度读数，是另一种“一闪”。
   return `<div class="metric ${hero ? "hero-m" : ""}${loading ? " is-loading" : ""}">
-    <div class="lb"><span>${esc(label)}</span><span class="tag">${esc(tag)}</span></div>
+    <div class="lb"><span class="metric-label">${icon(iconName, "metric-icon", 14)}<span>${esc(label)}</span></span><span class="tag">${esc(tag)}</span></div>
     <div class="mv">
       <div class="val">${esc(value)}<small>${esc(unit)}</small></div>
       <div class="skeleton"></div>
@@ -1199,18 +1220,18 @@ function sessionTile(s, total) {
 // 把原来那条细状态条展开成控制台：模型信息一眼可读，切换和启停不用离页。
 function engineHero(st, stats, statusText, dotCls, stage, busy) {
   const meta = ENGINE_META[st.id]
-    || { name: (st.id || "ENGINE").toUpperCase(), grad: "linear-gradient(135deg,#8E8E93,#636366)" };
+    || { name: (st.id || "ENGINE").toUpperCase(), color: "#767676", grad: "linear-gradient(135deg,#8E8E93,#636366)" };
   const isRun = running();
   // 切换中留一个「取消等待」：真正干活的引擎不该被打断（权重搬到一半的进程
   // 吃 SIGINT 要等 20 秒强杀），但界面不能只能死等。取消之后状态交回引擎自己
   // 的启动阶段，进度和秒数继续走。
   const actions = st.switching
-    ? `<button class="btn-p ghost" disabled>${esc(statusText)}…</button><button class="btn-p" data-act="abortSwitch" title="不再等这次切换；引擎仍在后台加载">取消等待</button>`
+    ? `<button class="btn-p ghost" disabled><span class="mini-spinner"></span>${esc(statusText)}</button><button class="btn-p quiet" data-act="abortSwitch" title="不再等这次切换；引擎仍在后台加载"><span>取消等待</span></button>`
     : busy
-    ? `<button class="btn-p ghost" disabled>${esc(statusText)}…</button>`
+    ? `<button class="btn-p ghost" disabled><span class="mini-spinner"></span>${esc(statusText)}</button>`
     : (isRun
-      ? `<button class="btn-p ghost" data-act="restart" title="重启服务以重新加载当前模型">重启</button><button class="btn-p danger" data-act="stop">停止</button>`
-      : `<button class="btn-p dl" data-act="start">启动引擎</button>`);
+      ? `<button class="btn-p ghost" data-act="restart" title="重启服务以重新加载当前模型">${icon("refresh")}<span>重启</span></button><button class="btn-p danger" data-act="stop">${icon("stop")}<span>停止</span></button>`
+      : `<button class="btn-p dl primary" data-act="start">${icon("play")}<span>启动引擎</span></button>`);
   const metaBits = [`<span>ENGINE ${esc((st.id || "").toUpperCase())} ${esc(st.version || "")}</span>`, `<span>PORT :${esc(S.port)}</span>`];
   // 启动中就把已等待的时间摆出来：预热阶段引擎可能几分钟不打一行日志。
   if (st.state === "starting" || st.switching) {
@@ -1259,16 +1280,15 @@ function engineHero(st, stats, statusText, dotCls, stage, busy) {
             <span class="hm-eng" style="background:${meta.grad}">${esc(meta.name)}</span>
             <span class="hm-name" title="${esc(S.selectedModel || "")}">${esc(shortModel(S.selectedModel) || "未选择模型")}</span>
             <span class="hm-switch">
-              <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              ${icon("chevronDown", "", 12)}
               切换模型
             </span>
           </div>
           <div class="hero-meta">${metaBits.join("")}</div>
         </div>
         <div class="hero-api">
-          <div class="endpoint"><span class="fmt o">OpenAI</span><span class="url">${esc(S.gatewayURL)}</span><span class="copy" data-act="copyGateway" data-arg="openai">复制</span></div>
-          <div class="endpoint"><span class="fmt c">Claude</span><span class="url">${esc(claudeURL)}</span><span class="copy" data-act="copyGateway" data-arg="claude">复制</span></div>
-          <div class="gw-hint">Claude 填根地址即可，SDK 会自行拼上 /v1/messages</div>
+          <div class="endpoint"><span class="fmt o">OpenAI</span><span class="url">${esc(S.gatewayURL)}</span><button class="copy" data-act="copyGateway" data-arg="openai" title="复制 OpenAI 地址">${icon("copy", "", 13)}<span>复制</span></button></div>
+          <div class="endpoint"><span class="fmt c">Claude</span><span class="url">${esc(claudeURL)}</span><button class="copy" data-act="copyGateway" data-arg="claude" title="复制 Claude 地址">${icon("copy", "", 13)}<span>复制</span></button></div>
         </div>
       </div>
     </div>`;
@@ -1338,7 +1358,7 @@ function pageOverview() {
     : "等待生成请求";
   const sessionBody = sessions.length
     ? `<div class="sess-grid">${sessions.map((s) => sessionTile(s, ctxTotal)).join("")}</div>`
-    : `<div class="sess-empty">还没有请求经过网关 —— 应用内对话和外部 API 调用（${esc(String(S.gatewayURL || "").replace(/\/v1$/, ""))}）都会以实时一格出现在这里</div>`;
+    : `<div class="sess-empty">${icon("activity", "sess-empty-icon", 18)}<span>还没有请求经过网关。应用内对话和外部 API 调用（${esc(String(S.gatewayURL || "").replace(/\/v1$/, ""))}）都会实时出现在这里。</span></div>`;
   const headNum = loading ? "" : (idle ? `均值 ${avgDecode != null ? avgDecode.toFixed(1) : "—"}` : (currentDecode != null ? `当前 ${currentDecode.toFixed(1)}` : ""));
   const rangeBtn = (value, label) => `<button type="button" class="${UI.chartRange === value ? "on" : ""}" data-act="chartRange" data-arg="${value}">${label}</button>`;
 
@@ -1347,10 +1367,10 @@ function pageOverview() {
     ${st.failure ? `<div class="confirm-strip" style="border-color:color-mix(in srgb, var(--w-err) 40%,transparent);color:var(--w-err);background:color-mix(in srgb, var(--w-err) 9%,transparent)">${esc(st.failure)}</div>` : ""}
     ${engineHero(st, stats, statusText, dotCls, stage, busyState)}
     <div class="metrics">
-      ${metricCard("解码速度", loading ? "SYNC" : (liveRate != null ? "LIVE" : (sharedEngine ? `聚合 ${active} 路` : "LIVE")), liveRate != null ? liveRate.toFixed(1) : (stats && stats.decodeTokensPerSecond ? stats.decodeTokensPerSecond.toFixed(1) : "—"), "tok/s", decodeHint, true, loading)}
-      ${metricCard("首字延迟", sharedEngine && engineTtft ? "含并发" : "TTFT", stats && stats.ttftMilliseconds != null ? Math.round(stats.ttftMilliseconds) : (lastTtft != null ? Math.round(lastTtft * 1000) : "—"), "ms", sharedEngine && engineTtft ? `${active} 路并跑下的统计值` : "最近请求", false, loading)}
-      ${metricCard("预填充", sharedEngine ? "含并发" : "PREFILL", stats && stats.prefillTokensPerSecond ? Math.round(stats.prefillTokensPerSecond) : "—", "tok/s", "引擎 prefill 采样", false, loading)}
-      ${metricCard("内存压力", "MEM", stats && mem ? Math.round(stats.memoryBytes / stats.physicalMemoryBytes * 100) : "—", "%",
+      ${metricCard("gauge", "解码速度", loading ? "SYNC" : (liveRate != null ? "LIVE" : (sharedEngine ? `聚合 ${active} 路` : "LIVE")), liveRate != null ? liveRate.toFixed(1) : (stats && stats.decodeTokensPerSecond ? stats.decodeTokensPerSecond.toFixed(1) : "—"), "tok/s", decodeHint, true, loading)}
+      ${metricCard("arrowUp", "预填充", sharedEngine ? "含并发" : "PREFILL", stats && stats.prefillTokensPerSecond ? Math.round(stats.prefillTokensPerSecond) : "—", "tok/s", "引擎 prefill 采样", false, loading)}
+      ${metricCard("timer", "首字延迟", sharedEngine && engineTtft ? "含并发" : "TTFT", stats && stats.ttftMilliseconds != null ? Math.round(stats.ttftMilliseconds) : (lastTtft != null ? Math.round(lastTtft * 1000) : "—"), "ms", sharedEngine && engineTtft ? `${active} 路并跑下的统计值` : "最近请求", false, loading)}
+      ${metricCard("hardDrive", "内存压力", "MEM", stats && mem ? Math.round(stats.memoryBytes / stats.physicalMemoryBytes * 100) : "—", "%",
         mem ? `${stats.memoryPressureText && stats.memoryPressureText !== "正常" ? stats.memoryPressureText + " · " : ""}${fmtBytes(stats.memoryBytes)} / ${fmtBytes(stats.physicalMemoryBytes)}` : "引擎运行后显示", false, loading)}
     </div>
     <div class="chart-card wide">
@@ -1380,6 +1400,7 @@ function pageChat() {
   const msgs = S.messages || [];
   const body = msgs.length ? msgs.map((m, i) => msgRow(m, i)).join("")
     : `<div class="empty">
+        <div class="empty-mark">${icon("messagePlus", "", 22)}</div>
         <div class="t">开始一次本地对话</div>
         <div>所有推理都在这台设备上完成。没有账号，没有云端，也没有内容上传。</div>
         <div class="suggestions">
@@ -1395,8 +1416,8 @@ function pageChat() {
       <span class="dot ${running() ? "ok" : ""}"></span>
       <div class="mdl" id="modelSwitcher" data-menu="modelSwitcher">${esc(shortModel(S.selectedModel))}<small>点击切换模型</small></div>
       <div class="right">
-        <span class="icon-btn" id="chatMore" data-menu="chatMore">⋯</span>
-        <span class="cap on click" data-act="newChat">＋ 新对话</span>
+        <button class="icon-btn" id="chatMore" data-menu="chatMore" title="更多对话操作" aria-label="更多对话操作">${icon("ellipsis")}</button>
+        <button class="cap on click" data-act="newChat">${icon("messagePlus")}<span>新对话</span></button>
       </div>
     </div>
     <div class="msgs" id="msgs">${body}</div>
@@ -1405,9 +1426,9 @@ function pageChat() {
       <textarea id="chatInput" rows="1" data-key="chatInput" placeholder="输入消息…（⏎ 发送 · ⇧⏎ 换行）${running() ? "" : " · 启动本地服务后可发送"}"></textarea>
       <div class="row">
         <span class="cap">${esc(shortModel(S.selectedModel))}</span>
-        <span class="cap click" data-act="chatParams" title="温度 / Top P / 最大 tokens / 系统提示词">参数设置</span>
-        <span class="cap click" id="thinkLevel" data-menu="thinkLevel" title="思考等级（列表来自推理引擎）">思考 · ${esc(thinkChipLabel())} ⌄</span>
-        <button class="send ${S.generating ? "stop" : ""}" id="sendBtn" ${!S.generating && (!running() || !(UI.chatDraft || "").trim()) ? "disabled" : ""}>${S.generating ? "停止" : "发送"}</button>
+        <button class="cap click" data-act="chatParams" title="温度 / Top P / 最大 tokens / 系统提示词">${icon("sliders")}<span>参数</span></button>
+        <button class="cap click" id="thinkLevel" data-menu="thinkLevel" title="思考等级（列表来自推理引擎）">${icon("brain")}<span>思考 · ${esc(thinkChipLabel())}</span>${icon("chevronDown", "cap-caret", 12)}</button>
+        <button class="send ${S.generating ? "stop" : ""}" id="sendBtn" ${!S.generating && (!running() || !(UI.chatDraft || "").trim()) ? "disabled" : ""}>${icon(S.generating ? "stop" : "arrowUp")}<span>${S.generating ? "停止" : "发送"}</span></button>
       </div>
     </div></div>`;
 }
@@ -1423,7 +1444,7 @@ function msgRow(m, index) {
   const open = UI.thinkOpen[m.id];
   const think = !isUser && m.reasoning ? `
     <div class="think ${open ? "open" : ""}" data-think="${esc(m.id)}">
-      <div class="th">思考过程${m.thinkSeconds ? " · " + m.thinkSeconds.toFixed(1) + "s" : ""} ${open ? "▲" : "▼"}</div>
+      <div class="th"><span>思考过程${m.thinkSeconds ? " · " + m.thinkSeconds.toFixed(1) + "s" : ""}</span>${icon("chevronDown", "think-caret", 12)}</div>
       <div class="tb">${esc(m.reasoning)}</div>
     </div>` : "";
   const failed = m.content && m.content.startsWith("出错：");
@@ -1626,9 +1647,9 @@ function chatParamsBody() {
         <div class="ctl"><textarea class="cp-sys" data-key="cpSystem" data-cptext="systemPrompt" rows="4" placeholder="例如：你是一个简洁的本地助手。">${esc(d.systemPrompt)}</textarea></div></div>
     </div>
     <div class="modal-foot">
-      <button class="btn-quiet" data-act="resetChatParams">恢复默认</button>
-      <button class="btn-quiet" data-act="closeChatParams">取消</button>
-      <button class="btn-main" data-act="saveChatParams">应用</button>
+      <button class="btn-quiet" data-act="resetChatParams">${icon("rotate")}<span>恢复默认</span></button>
+      <button class="btn-quiet" data-act="closeChatParams">${icon("x")}<span>取消</span></button>
+      <button class="btn-main" data-act="saveChatParams">${icon("check")}<span>应用</span></button>
     </div>`;
 }
 
@@ -1712,7 +1733,7 @@ function hubCard(r) {
     <div class="summary">${esc(r.summary || "")}</div>
     <div class="ft"><span class="sz">${esc(r.repo)}</span>
       ${quant}
-      <button class="btn-p dl" data-act="downloadModel" data-arg="${esc(r.engine)}|${esc(id)}">下载</button></div>
+      <button class="btn-p dl primary" data-act="downloadModel" data-arg="${esc(r.engine)}|${esc(id)}">${icon("download")}<span>下载</span></button></div>
   </div>`;
 }
 
@@ -1723,12 +1744,12 @@ function pageModels() {
     <h2 class="pg">模型</h2>
     <div class="chipbar">
       ${chips.map(([id, name]) => `<span class="echip ${lib.engine === id ? "on" : ""}" data-act="browseEngine" data-arg="${id}">${name}</span>`).join(" ")}
-      <span class="search"><input data-key="modelsSearch" placeholder="⌕ 搜索模型…" value="${esc(UI.modelsSearch)}"></span>
+      <label class="search">${icon("search", "search-icon", 14)}<input data-key="modelsSearch" placeholder="搜索模型…" value="${esc(UI.modelsSearch)}" aria-label="搜索模型"></label>
       ${[["all", "全部"], ["local", "本机"], ["remote", "可下载"]].map(([v, n]) =>
         `<span class="filter ${UI.modelsFilter === v ? "on" : ""}" data-f="${v}">${n}</span>`).join("")}
-      <span class="filter" style="margin-left:auto" data-act="rescan" data-arg="${esc(lib.engine)}">↻ 刷新状态</span>
-      <span class="filter" data-act="openHub">＋ 下载模型</span>
-      <span class="filter" data-act="openDownloadCenter">下载中心${S.downloads && S.downloads.tasks.length ? " · " + S.downloads.tasks.length : ""}</span>
+      <button class="filter" style="margin-left:auto" data-act="rescan" data-arg="${esc(lib.engine)}">${icon("refresh")}<span>刷新状态</span></button>
+      <button class="filter action" data-act="openHub">${icon("plus")}<span>下载模型</span></button>
+      <button class="filter" data-act="openDownloadCenter">${icon("download")}<span>下载中心${S.downloads && S.downloads.tasks.length ? " · " + S.downloads.tasks.length : ""}</span></button>
     </div>
     <div id="modelsGrid">${modelsGridHTML()}</div>`;
 }
@@ -1751,7 +1772,7 @@ function modelCard(e) {
   const dl = e.installed ? null : downloadOf(e.engine, e.id);
   const tags = [];
   // 硬件推荐标签排在最前：它是这一档「为什么是它」的说明，不随后面换用什么模型消失。
-  if (e.recommendedTag) tags.push(`<span class="mtag rec">★ ${esc(e.recommendedTag)}</span>`);
+  if (e.recommendedTag) tags.push(`<span class="mtag rec">${icon("check", "tag-icon", 11)}${esc(e.recommendedTag)}</span>`);
   // 来源只有两种：清单里的（引擎推荐）和用户自己下的（个人下载）。
   // 不靠它把人拦住，只是让人一眼看出这行是哪来的。
   tags.push(e.source === "personal"
@@ -1772,17 +1793,17 @@ function modelCard(e) {
   (e.tags || []).forEach((t) => tags.push(`<span class="mtag">${esc(t)}</span>`));
   if (e.minMemory) tags.push(`<span class="mtag">内存下限 ${e.minMemory} GB</span>`);
   const actions = e.installed
-    ? (e.isDraft ? "" : `<button class="btn-p" data-act="useModel" data-arg="${esc(e.engine)}|${esc(e.id)}">使用</button>`)
+    ? (e.isDraft ? "" : `<button class="btn-p primary" data-act="useModel" data-arg="${esc(e.engine)}|${esc(e.id)}">${icon("play")}<span>使用</span></button>`)
     : (dl
       ? (dl.status === "paused" || dl.status === "failed"
-        ? `<button class="btn-p dl" data-act="resumeDownload" data-arg="${esc(e.engine)}|${esc(e.id)}">${dl.status === "failed" ? "重试" : "继续"}</button>`
-        : `<button class="btn-p ghost" data-act="pauseDownload" data-arg="${esc(e.engine)}|${esc(e.id)}">暂停</button>`)
-      : `<button class="btn-p dl" data-act="downloadModel" data-arg="${esc(e.engine)}|${esc(e.id)}">下载</button>`);
+        ? `<button class="btn-p dl primary" data-act="resumeDownload" data-arg="${esc(e.engine)}|${esc(e.id)}">${icon("refresh")}<span>${dl.status === "failed" ? "重试" : "继续"}</span></button>`
+        : `<button class="btn-p ghost" data-act="pauseDownload" data-arg="${esc(e.engine)}|${esc(e.id)}">${icon("pause")}<span>暂停</span></button>`)
+      : `<button class="btn-p dl primary" data-act="downloadModel" data-arg="${esc(e.engine)}|${esc(e.id)}">${icon("download")}<span>下载</span></button>`);
   // 「⋯」只在已安装时出现：未安装的卡片唯一可做的操作是下载，卡片上已有
   // 「下载」按钮，菜单里再放一个属于重复入口。未安装时不渲染空的「⋯」。
   // 样式用 btn-p ghost 胶囊，和「使用 / 下载」按钮同高同形，不再是方形小按钮。
   const more = e.installed
-    ? `<button class="btn-p ghost more" data-act="modelMenu" data-arg="${esc(e.engine)}|${esc(e.id)}" title="更多操作">⋯</button>`
+    ? `<button class="btn-p ghost more" data-act="modelMenu" data-arg="${esc(e.engine)}|${esc(e.id)}" title="更多操作" aria-label="更多操作">${icon("ellipsis")}</button>`
     : "";
   return `<div class="model-card ${inUse ? "inuse" : ""}">
     <div class="nm" title="${esc(e.id)}">${esc(e.display || e.id)}</div>
@@ -1966,8 +1987,8 @@ function repoProbePanel(d) {
     ["总体积", m.size ? fmtBytes(m.size) : "未知"],
     ["文件", files.length ? `${files.length} 个${biggest ? ` · 最大 ${fmtBytes(biggest)}` : ""}` : "—"],
     ["参数量", m.parameters ? fmtParams(m.parameters) : "—"],
-    ["下载量", m.downloads ? `↓ ${fmtCompact(m.downloads)}` : "—"],
-    ["点赞", m.likes ? `♥ ${fmtCompact(m.likes)}` : "—"],
+    ["下载量", m.downloads ? `${icon("download", "meta-icon", 12)} ${fmtCompact(m.downloads)}` : "—"],
+    ["点赞", m.likes ? `${icon("heart", "meta-icon", 12)} ${fmtCompact(m.likes)}` : "—"],
     ["更新", String(m.updated || "").slice(0, 10) || "—"],
     ["许可", m.license || "—"],
     ["任务", m.pipeline || "—"],
@@ -1999,8 +2020,8 @@ function hubRow(m) {
   const meta = [];
   if (m.parameters) meta.push(`${fmtParams(m.parameters)} 参数`);
   if (m.size) meta.push(fmtBytes(m.size));
-  meta.push(`↓ ${fmtCompact(m.downloads)}`);
-  if (m.likes) meta.push(`♥ ${fmtCompact(m.likes)}`);
+  meta.push(`${icon("download", "meta-icon", 12)} ${fmtCompact(m.downloads)}`);
+  if (m.likes) meta.push(`${icon("heart", "meta-icon", 12)} ${fmtCompact(m.likes)}`);
   const tags = [];
   if (m.mlx) tags.push("MLX");
   if (m.gguf) tags.push("GGUF");
@@ -2014,8 +2035,8 @@ function hubRow(m) {
       ${tags.length ? `<div class="mtags" style="margin-top:4px">${tags.map((t) => `<span class="mtag">${esc(t)}</span>`).join("")}</div>` : ""}
     </div>
     <div style="display:flex;align-items:center;gap:8px;flex:none">
-      ${local ? `<span class="mtag ok">已在本机</span>` : ""}
-      ${local ? `<button class="btn-p ghost" disabled>已下载</button>` : `<button class="btn-p dl" data-act="hubDownload" data-arg="${esc(m.id)}">下载</button>`}
+      ${local ? `<span class="mtag ok">${icon("check", "tag-icon", 11)}已在本机</span>` : ""}
+      ${local ? `<button class="btn-p ghost" disabled>${icon("check")}<span>已下载</span></button>` : `<button class="btn-p dl primary" data-act="hubDownload" data-arg="${esc(m.id)}">${icon("download")}<span>下载</span></button>`}
     </div>
   </div>`;
 }
@@ -2029,7 +2050,7 @@ function hubBody() {
   const page = h.page || 0;
   const head = `<div class="ctl" style="display:flex;gap:8px;align-items:center;margin:2px 0 10px">
       <input class="field" data-key="hubq" data-hubq style="flex:1;min-width:0;text-align:left;padding:6px 10px" placeholder="搜 Hugging Face：qwen3.5、mlx、gguf…" value="${esc(d.query)}" spellcheck="false">
-      <button class="btn-p" data-act="hubSearch">搜索</button>
+      <button class="btn-p primary" data-act="hubSearch">${icon("search")}<span>搜索</span></button>
     </div>
     <div class="ctl" style="display:flex;gap:8px;align-items:center;margin-bottom:4px;flex-wrap:wrap">
       <span class="filter ${sort === "trending" ? "on" : ""}" data-act="hubSort" data-arg="trending">推荐</span>
@@ -2053,9 +2074,9 @@ function hubPager() {
   const page = h.page || 0;
   const busy = h.loading ? "disabled" : "";
   return `<div class="hub-pager">
-      <button class="btn-quiet" data-act="hubPage" data-arg="prev" ${page > 0 && !h.loading ? "" : "disabled"}>上一页</button>
+      <button class="btn-quiet" data-act="hubPage" data-arg="prev" ${page > 0 && !h.loading ? "" : "disabled"}>${icon("arrowLeft")}<span>上一页</span></button>
       <span class="sz">第 ${page + 1} 页</span>
-      <button class="btn-quiet" data-act="hubPage" data-arg="next" ${h.hasMore && !h.loading ? "" : busy || "disabled"}>下一页</button>
+      <button class="btn-quiet" data-act="hubPage" data-arg="next" ${h.hasMore && !h.loading ? "" : busy || "disabled"}><span>下一页</span>${icon("arrowRight")}</button>
     </div>`;
 }
 
@@ -2082,8 +2103,8 @@ function hubDetailBody() {
   const meta = [];
   if (m.size) meta.push(fmtBytes(m.size));
   if (m.parameters) meta.push(`${fmtParams(m.parameters)} 参数`);
-  meta.push(`↓ ${fmtCompact(m.downloads)}`);
-  if (m.likes) meta.push(`♥ ${fmtCompact(m.likes)}`);
+  meta.push(`${icon("download", "meta-icon", 12)} ${fmtCompact(m.downloads)}`);
+  if (m.likes) meta.push(`${icon("heart", "meta-icon", 12)} ${fmtCompact(m.likes)}`);
   return `<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:8px">
       <span class="mono" style="font-size:12px">${esc(m.id)}</span>
       <span class="sz">${meta.map(esc).join(" · ")}</span>
@@ -2097,18 +2118,18 @@ function hubDetailBody() {
     </div>
     <div style="max-height:46vh;overflow-y:auto">${inner}</div>
     <div class="modal-foot">
-      <button class="btn-quiet" data-act="hubOpenLink" data-arg="${esc(m.id)}">在 Hugging Face 打开</button>
+      <button class="btn-quiet" data-act="hubOpenLink" data-arg="${esc(m.id)}">${icon("external")}<span>在 Hugging Face 打开</span></button>
       ${repoLocal(m.id)
-        ? `<span class="sz" style="margin-left:auto">这台机器上已经有了</span><button class="btn-p ghost" disabled>已下载</button>`
-        : `<button class="btn-main" data-act="hubDownload" data-arg="${esc(m.id)}" style="margin-left:auto">下载</button>`}
+        ? `<span class="sz" style="margin-left:auto">这台机器上已经有了</span><button class="btn-p ghost" disabled>${icon("check")}<span>已下载</span></button>`
+        : `<button class="btn-main" data-act="hubDownload" data-arg="${esc(m.id)}" style="margin-left:auto">${icon("download")}<span>下载</span></button>`}
     </div>`;
 }
 
 // ---------- 引擎 ----------
 const ENGINE_META = {
-  splash: { name: "Splash", grad: "linear-gradient(135deg,#FF9F0A,#FF375F)" },
-  omlx: { name: "oMLX", grad: "linear-gradient(135deg,#2AA8A0,#1F5FBF)" },
-  mtplx: { name: "MTPLX", grad: "linear-gradient(135deg,#5E5CE6,#7B2CBF)" },
+  splash: { name: "Splash", color: "#D26A20", grad: "linear-gradient(135deg,#FF9F0A,#FF375F)" },
+  omlx: { name: "oMLX", color: "#177F86", grad: "linear-gradient(135deg,#2AA8A0,#1F5FBF)" },
+  mtplx: { name: "MTPLX", color: "#5B57C9", grad: "linear-gradient(135deg,#5E5CE6,#7B2CBF)" },
 };
 const ENGINE_CAPS = {
   splash: ["DFlash2 投机解码", "视觉多模态"],
@@ -2146,19 +2167,19 @@ function pageEngines() {
 
     let ft = "";
     if (busy) {
-      ft = `<div class="ft"><span class="btn-p ghost" style="pointer-events:none">安装 ${Math.round((info.progress || 0) * 100)}%</span><span style="font-size:11px;color:var(--w-ink-3)">${esc(info.step || "")}</span></div>`;
+      ft = `<div class="ft"><span class="install-progress">${icon("loader", "spin-icon")}安装 ${Math.round((info.progress || 0) * 100)}%</span><span style="font-size:11px;color:var(--w-ink-3)">${esc(info.step || "")}</span></div>`;
     } else {
       const btns = [];
-      if (up && up.status === "update") btns.push(`<button class="btn-p ghost" data-act="installEngine" data-arg="${id}">${installed ? "更新到 " + esc(up.version) : "安装 " + esc(up.version)}</button>`);
-      if (!installed) btns.push(`<button class="btn-p dl" data-act="installEngine" data-arg="${id}">安装运行时</button>`);
-      btns.push(`<button class="btn-p ghost" data-act="nav" data-arg="logs">查看日志</button>`);
-      btns.push(`<button class="btn-p ghost" data-act="engineConfig" data-arg="${id}" ${installed ? "" : "disabled"}>配置…</button>`);
-      btns.push(`<button class="icon-btn" data-menu="engineMenu" data-arg="${id}" title="更多操作">⋯</button>`);
+      if (up && up.status === "update") btns.push(`<button class="btn-p ghost" data-act="installEngine" data-arg="${id}">${icon("cloudDownload")}<span>${installed ? "更新到 " + esc(up.version) : "安装 " + esc(up.version)}</span></button>`);
+      if (!installed) btns.push(`<button class="btn-p dl primary" data-act="installEngine" data-arg="${id}">${icon("download")}<span>安装运行时</span></button>`);
+      btns.push(`<button class="btn-p ghost" data-act="nav" data-arg="logs">${icon("scrollText")}<span>查看日志</span></button>`);
+      btns.push(`<button class="btn-p ghost" data-act="engineConfig" data-arg="${id}" ${installed ? "" : "disabled"}>${icon("sliders")}<span>配置</span></button>`);
+      btns.push(`<button class="icon-btn" data-menu="engineMenu" data-arg="${id}" title="更多操作" aria-label="更多操作">${icon("ellipsis")}</button>`);
       ft = `<div class="ft">${btns.join("")}</div>`;
     }
     return `<div class="eng-card">
       <div class="hd">
-        <span class="eng-ico" style="background:${meta.grad}">${meta.name[0]}</span>
+        <span class="eng-ico" style="--engine-accent:${meta.color}">${icon("cpu", "", 19)}</span>
         <div class="nm">${meta.name}</div>
         <div class="right"><span class="dot ${dot}"></span>${stTag}</div>
       </div>
@@ -2269,9 +2290,9 @@ function configBody() {
         <div class="set-row"><div class="lab"><b>端口</b><small>默认 ${info.port || "—"}，可顺延</small></div>
           <div class="ctl"><input class="field" style="width:96px" ${portDisabled ? "disabled" : ""} data-cfgport value="${esc(cfgModel().port)}"></div></div>
         <div class="set-row"><div class="lab"><b>模型目录</b><small>${esc(info.modelsDir || "")}</small></div>
-          <div class="ctl"><button class="btn-quiet" data-finder="engineModels|${id}">打开</button></div></div>
+          <div class="ctl"><button class="btn-quiet" data-finder="engineModels|${id}">${icon("folderOpen")}<span>打开</span></button></div></div>
         <div class="set-row"><div class="lab"><b>引擎日志</b><small>启动命令行与引擎输出</small></div>
-          <div class="ctl"><button class="btn-quiet" data-finder="engineLogs|${id}">查看</button></div></div>
+          <div class="ctl"><button class="btn-quiet" data-finder="engineLogs|${id}">${icon("fileText")}<span>查看</span></button></div></div>
       </div>
       ${engineCards}
       <div class="set-card">
@@ -2281,8 +2302,8 @@ function configBody() {
       </div>
     </div>
     <div class="modal-foot">
-      <button class="btn-quiet" data-act="closeConfig">取消</button>
-      <button class="btn-main" data-act="saveEngineConfig">保存</button>
+      <button class="btn-quiet" data-act="closeConfig">${icon("x")}<span>取消</span></button>
+      <button class="btn-main" data-act="saveEngineConfig">${icon("check")}<span>保存</span></button>
     </div>`;
 }
 
@@ -2381,9 +2402,9 @@ function pageLogs() {
     <div class="chipbar">
       ${[["all", "全部"], ["info", "提示"], ["warning", "警告"], ["error", "错误"]].map(([v, n]) =>
         `<span class="filter ${UI.logFilter === v ? "on" : ""}" data-lf="${v}">${n}${v !== "all" ? " " + counts[v] : ""}</span>`).join("")}
-      <span class="search"><input data-key="logSearch" placeholder="⌕ 搜索关键词…" value="${esc(UI.logSearch)}"></span>
-      <span class="filter ${UI.logPaused ? "on" : ""}" style="margin-left:auto" id="pauseBtn">⏸ ${UI.logPaused ? "继续" : "暂停滚动"}</span>
-      <span class="icon-btn" id="logMenuBtn" data-menu="logMenu">⋯</span>
+      <label class="search">${icon("search", "search-icon", 14)}<input data-key="logSearch" placeholder="搜索关键词…" value="${esc(UI.logSearch)}" aria-label="搜索日志"></label>
+      <button class="filter ${UI.logPaused ? "on" : ""}" style="margin-left:auto" id="pauseBtn">${icon(UI.logPaused ? "play" : "pause")}<span>${UI.logPaused ? "继续" : "暂停滚动"}</span></button>
+      <button class="icon-btn" id="logMenuBtn" data-menu="logMenu" title="更多日志操作" aria-label="更多日志操作">${icon("ellipsis")}</button>
     </div>
     <div class="log-console" id="logConsole" data-managed></div>`;
 }
@@ -2574,8 +2595,8 @@ function savebarState(d) {
 
 function savebarHTML(d) {
   const st = savebarState(d);
-  return `<div class="savebar ${st.dirty ? "" : "quiet"}" id="savebar" data-sig="${esc(JSON.stringify(st))}">${esc(st.headline)}
-    ${st.dirty ? `<button class="btn-quiet" id="discardBtn">放弃更改</button><button class="btn-main" id="saveBtn" ${st.portInvalid ? "disabled" : ""}>${st.restartHint ? "保存并重启" : "保存"}</button>` : ""}
+  return `<div class="savebar ${st.dirty ? "" : "quiet"}" id="savebar" data-sig="${esc(JSON.stringify(st))}">${icon(st.dirty ? "alert" : "circleCheck", "savebar-icon", 15)}<span>${esc(st.headline)}</span>
+    ${st.dirty ? `<button class="btn-quiet" id="discardBtn">${icon("x")}<span>放弃更改</span></button><button class="btn-main" id="saveBtn" ${st.portInvalid ? "disabled" : ""}>${icon(st.restartHint ? "refresh" : "check")}<span>${st.restartHint ? "保存并重启" : "保存"}</span></button>` : ""}
   </div>`;
 }
 
@@ -2591,7 +2612,7 @@ function pageSettings() {
     <h2 class="pg">设置</h2>
     <div class="set-card">
       ${row("外观", "跟随系统 / 浅色 / 深色，选中立即生效，无需保存",
-        seg([["system", "跟随系统"], ["light", "浅色"], ["dark", "深色"]], S.appearance, "appearance"))}
+        seg([["system", `${icon("monitor")}<span>跟随系统</span>`], ["light", `${icon("sun")}<span>浅色</span>`], ["dark", `${icon("moon")}<span>深色</span>`]], S.appearance, "appearance"))}
       ${row("随 flashCat 启动引擎", "打开应用时自动把默认引擎拉起来", tgl(d.autoStart, "autoStart"))}
       ${row("登录时启动", "把 flashCat 加入 macOS 登录项", tgl(d.launchAtLogin, "launchAtLogin"))}
     </div>
@@ -2688,7 +2709,7 @@ function pageRecommend() {
   const allFit = rows.every((r) => r.fit === "good" || r.fit === "unknown");
 
   const cards = rows.map((r) => {
-    const meta = ENGINE_META[r.engine] || { name: r.engineName || r.engine, grad: "linear-gradient(135deg,#8E8E93,#636366)" };
+    const meta = ENGINE_META[r.engine] || { name: r.engineName || r.engine, color: "#767676", grad: "linear-gradient(135deg,#8E8E93,#636366)" };
     const fits = r.fit === "good" || r.fit === "unknown";
     const tags = [];
     if (r.minMemory) tags.push(`<span class="mtag">内存下限 ${r.minMemory} GB</span>`);
@@ -2701,13 +2722,13 @@ function pageRecommend() {
         ? `<p class="lc-serial">可用磁盘小于这一档的体积，安装可能在下载中途失败。</p>` : "");
     return `<div class="launch-card">
       <div class="lc-head">
-        <span class="eng-ico" style="background:${meta.grad}">${esc(meta.name[0])}</span>
+        <span class="eng-ico" style="--engine-accent:${meta.color}">${icon("cpu", "", 19)}</span>
         <div class="lc-name"><b>${esc(meta.name)}</b>
           <div class="lc-model" title="${esc(r.model)}">${esc(r.display || r.model)}</div>
           <span class="mtags">${tags.join("")}</span></div>
         <div class="lc-side">
           <span class="lc-ver${fits ? "" : " warn"}">推荐 · ${esc(r.reason)}</span>
-          <button class="btn-p dl" data-act="recommendInstall" data-arg="${esc(r.engine)}">用这个引擎</button>
+          <button class="btn-p dl primary" data-act="recommendInstall" data-arg="${esc(r.engine)}">${icon("arrowRight")}<span>用这个引擎</span></button>
         </div>
       </div>
       ${caveat}
@@ -2724,7 +2745,7 @@ function pageRecommend() {
       <p class="launch-sub">按这台机器的内存和可用磁盘算的：每个引擎给一档最能发挥它的模型。引擎装好后会自动下载这一档。</p>
       ${cfg}
       ${cards || `<div class="confirm-strip">没有找到可推荐的模型，自己挑一个吧。</div>`}
-      <div class="rec-skip"><span data-act="skipRecommendation">跳过，我自己选</span></div>
+      <div class="rec-skip"><button data-act="skipRecommendation">跳过，我自己选</button></div>
       <p class="launch-note">推荐只算这一次。</p>
       ${UI.recommendConfirm ? recommendConfirmHTML(UI.recommendConfirm) : ""}
     </div>`;
@@ -2749,8 +2770,8 @@ function recommendConfirmHTML(engine) {
     <div class="modal-text">先安装 <b>${esc(meta.name)}</b> 运行时（${esc(size)}${esc(source)}），装好后自动下载 <b>${esc(model)}</b>${row.reason ? `（${esc(row.reason)}）` : ""}。模型下载要等引擎装完才能开始，所以顺序不能反。<br><br>
       两步都能停：装引擎时在启动页看进度，模型下载可以在「下载中心」里暂停或取消。</div>
     <div class="modal-foot">
-      <button class="btn-quiet" data-act="closeRecommendConfirm">取消</button>
-      <button class="btn-main" data-act="confirmRecommendInstall">安装并下载</button>
+      <button class="btn-quiet" data-act="closeRecommendConfirm">${icon("x")}<span>取消</span></button>
+      <button class="btn-main" data-act="confirmRecommendInstall">${icon("cloudDownload")}<span>安装并下载</span></button>
     </div>
   </div></div>`;
 }
@@ -2786,9 +2807,9 @@ function pageLaunch() {
     if (busy) {
       action = "";
     } else if (latestVersion && !latestInstalled) {
-      action = `<button class="btn-p dl" data-act="installEngineLaunch" data-arg="${id}">安装</button>`;
+      action = `<button class="btn-p dl primary" data-act="installEngineLaunch" data-arg="${id}">${icon("download")}<span>安装</span></button>`;
     } else if (latestVersion && latestInstalled) {
-      action = `<button class="btn-p ghost" disabled>已安装</button>`;
+      action = `<button class="btn-p ghost" disabled>${icon("check")}<span>已安装</span></button>`;
     } else {
       action = `<span class="mtag" style="color:var(--w-info)">暂无可用版本</span>`;
     }
@@ -2799,7 +2820,7 @@ function pageLaunch() {
 
     return `<div class="launch-card">
       <div class="lc-head">
-        <span class="eng-ico" style="background:${meta.grad}">${meta.name[0]}</span>
+        <span class="eng-ico" style="--engine-accent:${meta.color}">${icon("cpu", "", 19)}</span>
         <div class="lc-name"><b>${meta.name}</b>
           <span class="mtags">${(ENGINE_CAPS[id] || []).map((t) => `<span class="mtag${ENGINE_CAP_WARN.has(t) ? " warn" : ""}">${esc(t)}</span>`).join("")}
           ${newestInstalled ? (S.engine.id === id ? `<span class="mtag ok">当前引擎</span>` : `<span class="mtag">已安装 v${esc(newestInstalled)}</span>`) : ""}</span></div>
@@ -2832,7 +2853,7 @@ function pageLaunch() {
       ${rows}
       <p class="launch-note">安装包来自发布索引（<span class="mono">FLASHCAT_PACK_INDEX_URL</span>，或应用内置的 pack-index.json）。已在本机构建好的安装包也会直接被识别：把它们放进 <span class="mono">~/Library/Application Support/flashCat/engines/&lt;引擎&gt;/&lt;版本&gt;</span> 即可。</p>
       <div class="launch-start">
-        <button class="btn-p dl" data-act="finishLaunch" ${S.launchNeedsSetup ? "disabled" : ""}>开始使用</button>
+        <button class="btn-p dl primary" data-act="finishLaunch" ${S.launchNeedsSetup ? "disabled" : ""}>${icon("arrowRight")}<span>开始使用</span></button>
       </div>
     </div>`;
 }
@@ -2852,16 +2873,16 @@ function renderOverlays() {
           ? `「${esc(shortModel(p.model))}」尚未下载（${esc(p.engine.toUpperCase())} 引擎），确认后将开始下载，完成后自动启用。`
           : `切换到 ${esc(p.engine.toUpperCase())} 引擎的「${esc(shortModel(p.model))}」？`}</div>
         <div class="modal-foot">
-          <button class="btn-quiet" data-act="cancelUse">取消</button>
-          <button class="btn-main" data-act="confirmUse">${p.needsDownload ? "下载并使用" : "确认使用"}</button>
+          <button class="btn-quiet" data-act="cancelUse">${icon("x")}<span>取消</span></button>
+          <button class="btn-main" data-act="confirmUse">${icon(p.needsDownload ? "cloudDownload" : "check")}<span>${p.needsDownload ? "下载并使用" : "确认使用"}</span></button>
         </div>`, "cancelUse"));
     } else if (p.kind === "switch") {
       parts.push(modal(`
         <div class="modal-title">切换模型</div>
         <div class="modal-text">切换到「${esc(shortModel(p.model))}」？正在运行的服务将重启以加载新模型。</div>
         <div class="modal-foot">
-          <button class="btn-quiet" data-act="cancelSwitch">取消</button>
-          <button class="btn-main" data-act="confirmSwitch">确认切换</button>
+          <button class="btn-quiet" data-act="cancelSwitch">${icon("x")}<span>取消</span></button>
+          <button class="btn-main" data-act="confirmSwitch">${icon("check")}<span>确认切换</span></button>
         </div>`, "cancelSwitch"));
     }
   }
@@ -2872,8 +2893,8 @@ function renderOverlays() {
       <div class="modal-title">${esc(name)} 还没安装</div>
       <div class="modal-text">这个模型由 ${esc(name)} 引擎驱动，先安装 ${esc(name)} 才能切换到它。</div>
       <div class="modal-foot">
-        <button class="btn-quiet" data-act="cancelInstall">取消</button>
-        <button class="btn-main" data-act="confirmInstall">去安装</button>
+        <button class="btn-quiet" data-act="cancelInstall">${icon("x")}<span>取消</span></button>
+        <button class="btn-main" data-act="confirmInstall">${icon("download")}<span>去安装</span></button>
       </div>`, "cancelInstall"));
   }
   // 对话参数
@@ -2896,8 +2917,8 @@ function renderOverlays() {
       <div class="hub-body">${hubBody()}</div>
       <div class="modal-foot">
         ${hubPager()}
-        <button class="btn-quiet" data-act="hubManual">手填仓库 id…</button>
-        <button class="btn-quiet" data-act="closeHub">关闭</button>
+        <button class="btn-quiet" data-act="hubManual">${icon("plus")}<span>手填仓库 id</span></button>
+        <button class="btn-quiet" data-act="closeHub">${icon("x")}<span>关闭</span></button>
       </div>`, "closeHub", true));
   }
   // 模型卡（盖在模型广场上面）
@@ -2920,10 +2941,10 @@ function renderOverlays() {
         ${local ? "" : `<div class="ctl" style="margin:16px 0 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="sz">装完给谁用：</span> ${enginePickChips(d.engines, "repoPick")}</div>`}
       </div>
       <div class="modal-foot">
-        <button class="btn-quiet" data-act="closeRepoDownload">${local ? "关闭" : "取消"}</button>
+        <button class="btn-quiet" data-act="closeRepoDownload">${icon("x")}<span>${local ? "关闭" : "取消"}</span></button>
         ${local
-          ? `<button class="btn-p ghost" style="margin-left:0" disabled>已下载</button>`
-          : `<button class="btn-main" data-act="confirmRepoDownload">开始下载</button>`}
+          ? `<button class="btn-p ghost" style="margin-left:0" disabled>${icon("check")}<span>已下载</span></button>`
+          : `<button class="btn-main" data-act="confirmRepoDownload">${icon("download")}<span>开始下载</span></button>`}
       </div>`, "closeRepoDownload", true));
   }
   // 共享模型的引擎授权
@@ -2934,8 +2955,8 @@ function renderOverlays() {
       <div class="modal-text">公共目录里的权重只有一份。勾选的引擎会在自己的模型目录里看到它（符号链接，不占额外磁盘）；取消勾选只收回可见性，不删文件。</div>
       <div class="ctl">${enginePickChips(s.engines, "sharePick")}</div>
       <div class="modal-foot">
-        <button class="btn-quiet" data-act="closeShareEngines">取消</button>
-        <button class="btn-main" data-act="confirmShareEngines">保存</button>
+        <button class="btn-quiet" data-act="closeShareEngines">${icon("x")}<span>取消</span></button>
+        <button class="btn-main" data-act="confirmShareEngines">${icon("check")}<span>保存</span></button>
       </div>`, "closeShareEngines", true));
   }
   // 下载中心
@@ -2982,7 +3003,7 @@ function modal(inner, cancelAct, wide) {
   if (wide && cancelAct) {
     body = inner.replace(
       /^(\s*)<div class="modal-title">([\s\S]*?)<\/div>/,
-      `$1<div class="modal-head"><div class="modal-title">$2</div><button class="modal-x" data-act="${esc(cancelAct)}" title="关闭">✕</button></div>`,
+      `$1<div class="modal-head"><div class="modal-title">$2</div><button class="modal-x" data-act="${esc(cancelAct)}" title="关闭" aria-label="关闭">${icon("x")}</button></div>`,
     );
   }
   return `<div class="mask" data-overlay="${esc(cancelAct || "modal")}" data-cancel="${esc(cancelAct || "")}"><div class="modal ${wide ? "wide" : ""}">${body}</div></div>`;
@@ -3124,7 +3145,7 @@ function downloadsBody() {
   const tasks = (S.downloads && S.downloads.tasks) || [];
   const active = S.downloads && S.downloads.active;
   if (!tasks.length) {
-    return `<div class="empty" style="padding:44px 20px"><div class="t">没有下载任务</div><div>在模型卡片或「可下载」里点下载，进度会显示在这里</div></div>`;
+    return `<div class="empty download-empty"><div class="empty-mark">${icon("download", "", 22)}</div><div class="t">没有下载任务</div><div>在模型卡片或「可下载」里点下载，进度会显示在这里</div></div>`;
   }
   const rows = tasks.map((t) => {
     const isRun = active && active.engine === t.engine && active.model === t.model;
@@ -3143,14 +3164,14 @@ function downloadsBody() {
       : (t.status === "failed" ? "上次下载失败，可重试" : "等待当前下载结束"));
     let btns = "";
     if (isRun) {
-      btns = `<button class="btn-p ghost" data-act="pauseDownload" data-arg="${esc(t.engine)}|${esc(t.model)}">暂停</button>
-              <button class="btn-p ghost" data-act="cancelDownload" data-arg="${esc(t.engine)}|${esc(t.model)}">取消</button>`;
+      btns = `<button class="btn-p ghost" data-act="pauseDownload" data-arg="${esc(t.engine)}|${esc(t.model)}">${icon("pause")}<span>暂停</span></button>
+              <button class="btn-p ghost" data-act="cancelDownload" data-arg="${esc(t.engine)}|${esc(t.model)}">${icon("x")}<span>取消</span></button>`;
     } else if (t.status === "paused") {
-      btns = `<button class="btn-p ghost" data-act="resumeDownload" data-arg="${esc(t.engine)}|${esc(t.model)}">继续</button>
-              <button class="btn-p ghost" data-act="cancelDownload" data-arg="${esc(t.engine)}|${esc(t.model)}">移除</button>`;
+      btns = `<button class="btn-p ghost" data-act="resumeDownload" data-arg="${esc(t.engine)}|${esc(t.model)}">${icon("play")}<span>继续</span></button>
+              <button class="btn-p ghost" data-act="cancelDownload" data-arg="${esc(t.engine)}|${esc(t.model)}">${icon("trash")}<span>移除</span></button>`;
     } else if (t.status === "failed") {
-      btns = `<button class="btn-p ghost" data-act="resumeDownload" data-arg="${esc(t.engine)}|${esc(t.model)}">重试</button>
-              <button class="btn-p ghost" data-act="removeTask" data-arg="${esc(t.engine)}|${esc(t.model)}">移除</button>`;
+      btns = `<button class="btn-p ghost" data-act="resumeDownload" data-arg="${esc(t.engine)}|${esc(t.model)}">${icon("refresh")}<span>重试</span></button>
+              <button class="btn-p ghost" data-act="removeTask" data-arg="${esc(t.engine)}|${esc(t.model)}">${icon("trash")}<span>移除</span></button>`;
     }
     return `<div class="dl-row">
       <div class="dl-main">
@@ -3194,6 +3215,11 @@ document.addEventListener("mousedown", (e) => {
 })();
 
 window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && UI.menuOpen) {
+    e.preventDefault();
+    closeMenus();
+    return;
+  }
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "n") { e.preventDefault(); handleAction("newChat"); }
   // 概览主卡的模型切换是 role=button 的 div：键盘 Enter / 空格也要能打开菜单。
   if (e.key === "Enter" || e.key === " ") {

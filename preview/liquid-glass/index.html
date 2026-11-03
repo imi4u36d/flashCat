@@ -7,6 +7,10 @@
   <meta name="theme-color" content="#f1f5fb">
   <title>flashCat · Liquid Glass Preview</title>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="model-workspace.css">
+  <link rel="stylesheet" href="engine-workspace.css">
+  <link rel="stylesheet" href="chat-thinking.css">
+  <link rel="stylesheet" href="overlay-bounds.css">
 </head>
 <body>
   <canvas id="ambient" aria-hidden="true"></canvas>
@@ -37,14 +41,24 @@
       <div class="window-sheen" aria-hidden="true"></div>
       <header class="titlebar" data-drag-region>
         <div class="traffic" aria-label="窗口控制">
-          <button class="traffic-dot close" data-window-action="close" aria-label="关闭窗口"></button>
-          <button class="traffic-dot minimize" data-window-action="minimize" aria-label="最小化窗口"></button>
-          <button class="traffic-dot maximize" data-window-action="maximize" aria-label="缩放窗口"></button>
+          <button class="traffic-dot close" data-window-action="close" aria-label="关闭窗口"><span class="sr-only">关闭窗口</span></button>
+          <button class="traffic-dot minimize" data-window-action="minimize" aria-label="最小化窗口"><span class="sr-only">最小化窗口</span></button>
+          <button class="traffic-dot maximize" data-window-action="maximize" aria-label="缩放窗口"><span class="sr-only">缩放窗口</span></button>
         </div>
 
         <button class="sidebar-toggle" id="sidebarToggle" type="button"
                 aria-label="折叠边栏" aria-expanded="true" title="折叠边栏（⌘\）">
           <span class="sidebar-toggle-glyph" aria-hidden="true"></span>
+        </button>
+
+        <button class="top-engine-control" id="topEngineControl" type="button"
+                data-action="toggle-engine" aria-label="停止引擎">
+          <span class="top-engine-dot" id="topEngineDot"></span>
+          <strong>Splash</strong>
+          <span id="topEngineState">运行中</span>
+          <span class="top-engine-divider"></span>
+          <b id="topEngineRate">104 tok/s</b>
+          <span class="top-engine-action" id="topEngineAction"></span>
         </button>
 
         <div class="toolbar-actions">
@@ -62,7 +76,7 @@
 
       <div class="app-body">
         <aside class="sidebar" id="sidebar" aria-label="主导航">
-          <div class="sidebar-brand">
+          <header class="sidebar-brand">
             <div class="brand-icon-wrap">
               <img src="app-icon.png" alt="" class="brand-icon">
               <span class="brand-live" aria-hidden="true"></span>
@@ -70,37 +84,15 @@
             <div class="brand-copy">
               <strong>flashCat</strong>
             </div>
-          </div>
+          </header>
 
           <nav class="primary-nav" id="primaryNav" aria-label="工作区"></nav>
 
-          <div class="sidebar-spacer"></div>
+          <span class="sidebar-spacer" aria-hidden="true"></span>
 
-          <section class="engine-mini glass-surface" aria-label="引擎状态">
-            <button class="engine-mini-main" type="button" data-action="toggle-engine">
-              <span class="engine-pulse" id="miniEnginePulse"></span>
-              <span class="engine-mini-copy">
-                <strong id="miniEngineName">Splash</strong>
-                <span id="miniEngineState">运行中 · 104 tok/s</span>
-              </span>
-              <span class="engine-mini-action" id="miniEngineAction"></span>
-            </button>
-            <div class="engine-mini-meter" aria-hidden="true"><i id="miniMeter"></i></div>
-          </section>
-
-          <button class="download-float glass-surface" type="button" data-action="downloads">
-            <span class="download-float-icon" id="sidebarDownloadIcon"></span>
-            <span>
-              <strong>2 个模型下载中</strong>
-              <span>Qwen 3.8 · 68%</span>
-            </span>
-            <span class="download-ring" style="--p:68"></span>
-          </button>
-          <div class="sidebar-resize" id="sidebarResize" role="separator"
-               aria-orientation="vertical" aria-label="调整侧边栏宽度"
-               aria-valuemin="180" aria-valuemax="320" aria-valuenow="208" tabindex="0">
-            <span></span>
-          </div>
+          <hr class="sidebar-resize" id="sidebarResize" role="separator"
+              aria-orientation="vertical" aria-label="调整侧边栏宽度"
+              aria-valuemin="72" aria-valuemax="320" aria-valuenow="200" tabindex="0">
         </aside>
 
         <main class="content-shell" id="mainContent" tabindex="-1">
@@ -140,7 +132,7 @@
           <h2 id="inspectorTitle">生成参数</h2>
         </div>
         <button class="glass-icon-btn small" type="button" data-close-inspector
-                aria-label="关闭参数面板"></button>
+                aria-label="关闭参数面板"><span class="sr-only">关闭参数面板</span></button>
       </header>
       <div class="inspector-body"></div>
     </section>
@@ -153,7 +145,7 @@
           <h2 id="downloadTitle">下载中心</h2>
         </div>
         <button class="glass-icon-btn small" type="button" data-close-downloads
-                aria-label="关闭下载中心"></button>
+                aria-label="关闭下载中心"><span class="sr-only">关闭下载中心</span></button>
       </header>
       <div class="download-list">
         <article class="download-item">
@@ -184,6 +176,11 @@
   <script src="icons.js"></script>
   <script src="overview-components.js"></script>
   <script src="page-components.js"></script>
+  <script src="model-workspace.js"></script>
+  <script src="engine-workspace.js"></script>
+  <script src="chat-thinking.js"></script>
+  <script src="overlay-bounds.js"></script>
+  <script src="motion-guard.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

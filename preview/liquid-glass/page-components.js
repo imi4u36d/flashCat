@@ -31,11 +31,11 @@
         ? `<span class="typing-dots" aria-label="正在思考"><i></i><i></i><i></i></span>`
         : lines.map((line, index) => `<p>${esc(line)}${message.streaming && index === lines.length - 1 ? '<span class="stream-caret"></span>' : ""}</p>`).join("");
       return `<article class="message ai">
-        <div class="avatar">${icon("message", 14)}</div>
+        <div class="avatar ai-icon">${icon("brain", 14)}</div>
         <div class="message-body">
           <div class="reasoning" data-reasoning>
             <button class="reasoning-toggle" type="button" data-action="toggle-reasoning" aria-expanded="false">
-              ${icon("brain", 11)}<span>思考过程</span><span style="margin-left:auto">${icon("chevronDown", 11)}</span>
+              ${icon("brain", 11)}<span class="reasoning-label">思考过程</span><span class="reasoning-caret">${icon("chevronDown", 11)}</span>
             </button>
             <div class="reasoning-copy"><div><p>${esc(message.reasoning || "正在整理回答策略。")}</p></div></div>
           </div>
@@ -71,9 +71,9 @@
             <label class="visually-hidden" for="chatInput">消息</label>
             <textarea id="chatInput" rows="1" placeholder="输入消息…"></textarea>
             <div class="composer-row">
-              <button class="composer-chip" type="button" data-action="open-inspector">${icon("sliders", 12)}<span>参数</span></button>
-              <button class="composer-chip" type="button" data-action="thinking-cycle">${icon("brain", 12)}<span>思考 · ${esc(state.params.thinking)}</span></button>
               <span class="spacer"></span>
+              <button class="composer-chip" type="button" data-action="open-inspector">${icon("sliders", 12)}<span>参数</span></button>
+              ${window.FCChatThinking ? window.FCChatThinking.trigger(state) : ""}
               <button class="send-button" id="sendButton" type="button" data-action="send-chat" aria-label="发送消息">
                 ${icon(state.chatStreaming ? "stop" : "arrowUp", 14)}
               </button>
@@ -84,12 +84,12 @@
   }
 
   function models(state, allModels) {
-    const current = allModels.find((model) => model.name === state.model) || allModels[0];
     const filtered = modelFilter(allModels, state);
     return `
       <section class="models-workspace">
         <div class="models-topbar">
-          <div class="engine-tabs" aria-label="按引擎筛选">
+          <div class="engine-tabs" data-engine-tabs aria-label="按引擎筛选">
+            <span class="engine-tab-indicator" aria-hidden="true"></span>
             ${["全部", "Splash", "oMLX", "MTPLX"].map((engine) =>
               `<button type="button" class="${state.modelFilter === engine ? "active" : ""}" data-model-filter="${engine}">${engine}</button>`).join("")}
           </div>
@@ -100,54 +100,59 @@
           <span class="spacer"></span>
           <button class="button icon-only" type="button" data-action="refresh-models" aria-label="刷新">${icon("refresh", 14)}</button>
         </div>
-        <div class="models-main-grid">
-          <section class="widget model-library-widget">
-            <div class="section-line-head">
-              <span>本机模型</span><span>1</span>
-            </div>
-            ${currentModelRow(current, state)}
-            <div class="section-line-head">
-              <span>可下载</span><span>${filtered.length}</span>
-            </div>
-            <div class="model-row-list" id="modelsGrid">${modelRows(filtered, state)}</div>
-          </section>
-          <aside class="widget download-widget">
-            <div class="section-line-head">
-              <span>下载</span><span>2 项</span>
-            </div>
-            <div class="download-minimal-list">
-              ${downloadRow("Qwen3.8-27B-4bit", "MLX", "13.8 / 20.2 GB", 68)}
-              ${downloadRow("Qwen3.5-4B-Q4_K_M", "GGUF", "1.7 / 2.6 GB", 64, true)}
-            </div>
-            <button class="download-more" type="button" data-action="downloads">
-              <span>打开下载中心</span>${icon("chevronRight", 12)}
-            </button>
-            <div class="market-shortcut">
-              <span>${icon("search", 14)}</span>
-              <div><strong>模型广场</strong><small>在 Hugging Face 中查找</small></div>
-              <button class="glass-icon-btn small" type="button" data-action="search-hub" aria-label="打开模型广场">${icon("chevronRight", 13)}</button>
-            </div>
-          </aside>
-        </div>
+        <div class="models-card-grid" id="modelsGrid">${modelTiles(filtered, state)}</div>
       </section>`;
   }
 
   function modelFilter(allModels, state) {
     const search = state.modelSearch.trim().toLowerCase();
-    return allModels.slice(1).filter((model) => {
+    return allModels.filter((model) => {
       const engineMatch = state.modelFilter === "全部" || model.engine === state.modelFilter;
       const searchMatch = !search || `${model.name} ${model.repo} ${model.engine}`.toLowerCase().includes(search);
       return engineMatch && searchMatch;
     });
   }
 
-  function modelRows(models, state) {
+  function modelTiles(models, state) {
     if (!models.length) return `<div class="empty-row">没有匹配的模型</div>`;
-    return models.map((model) => {
+    return models.map((model, index) => {
+      const current = model.name === state.model;
       const busy = state.downloadsInFlight.has(model.name);
       const done = state.downloaded.has(model.name);
       const progress = state.downloadsInFlight.get(model.name) || 0;
-      return `<div class="model-row" data-model-name="${esc(model.name)}">
+      return `<article class="model-tile ${current ? "is-current" : ""}" style="--row:${index}" data-model-name="${esc(model.name)}">
+        <header class="model-tile-head">
+          <span class="model-tile-icon">${icon(current ? "brain" : "database", 16)}</span>
+          <span class="model-tile-flags">
+            <span>${esc(model.engine)}</span><span>${esc(model.format)}</span><span>${esc(model.size)}</span>
+          </span>
+          ${current ? `<span class="model-current-badge"><i></i>使用中</span>` : ""}
+        </header>
+        <h2>${esc(prettyModel(model.name))}</h2>
+        <p class="model-tile-repo">${esc(model.repo)}</p>
+        <div class="model-tile-tags">
+          ${model.flags.map((flag) => `<span>${esc(flag)}</span>`).join("")}
+        </div>
+        <footer class="model-tile-foot">
+          <span>${esc(model.memory)}</span>
+          ${current
+            ? `<span class="model-tile-running">已加载</span>`
+            : `<button class="model-tile-action" type="button" data-download-model="${esc(model.name)}" ${busy ? "disabled" : ""}>
+                ${icon(busy ? "loader" : done ? "check" : "download", 12)}
+                <span>${done ? "已下载" : busy ? `${Math.round(progress)}%` : "下载"}</span>
+              </button>`}
+        </footer>
+      </article>`;
+    }).join("");
+  }
+
+  function modelRows(models, state) {
+    if (!models.length) return `<div class="empty-row">没有匹配的模型</div>`;
+    return models.map((model, rowIndex) => {
+      const busy = state.downloadsInFlight.has(model.name);
+      const done = state.downloaded.has(model.name);
+      const progress = state.downloadsInFlight.get(model.name) || 0;
+      return `<div class="model-row" style="--row:${rowIndex}" data-model-name="${esc(model.name)}">
         <span class="model-row-mark">${icon("database", 14)}</span>
         <span class="model-row-copy">
           <strong>${esc(prettyModel(model.name))}</strong>
@@ -237,7 +242,8 @@
     return `
       <section class="logs-workspace">
         <div class="logs-topbar">
-          <div class="filter-pills">
+          <div class="filter-pills sliding-segments" data-sliding-segments>
+            <span class="segment-slider" aria-hidden="true"></span>
             ${["全部", "提示", "警告", "错误"].map((filter) =>
               `<button class="filter-pill ${state.logFilter === filter ? "active" : ""}" type="button" data-log-filter="${filter}">${filter}<b>${counts[filter]}</b></button>`).join("")}
           </div>
@@ -270,7 +276,8 @@
           <section class="settings-group">
             <div class="settings-row">
               <div class="settings-copy"><strong>外观</strong><span>跟随系统或固定外观</span></div>
-              <div class="settings-segmented" data-appearance-choice>
+              <div class="settings-segmented sliding-segments" data-appearance-choice data-sliding-segments>
+                <span class="segment-slider" aria-hidden="true"></span>
                 ${["system", "light", "dark"].map((choice) =>
                   `<button type="button" class="${state.theme === choice ? "active" : ""}" data-appearance="${choice}">${choice === "system" ? "跟随系统" : choice === "light" ? "浅色" : "深色"}</button>`).join("")}
               </div>
@@ -292,7 +299,8 @@
             </div>
             <div class="settings-row">
               <div class="settings-copy"><strong>思考模式</strong></div>
-              <div class="settings-segmented" data-thinking-choice>
+              <div class="settings-segmented sliding-segments" data-thinking-choice data-sliding-segments>
+                <span class="segment-slider" aria-hidden="true"></span>
                 ${["自动", "关闭", "开启"].map((choice) =>
                   `<button type="button" class="${state.settings.thinking === choice ? "active" : ""}" data-thinking="${choice}">${choice}</button>`).join("")}
               </div>
@@ -332,5 +340,5 @@
       </section>`;
   }
 
-  window.FCPages = { chat, models, modelRows, engines, logs, settings };
+  window.FCPages = { chat, models, modelTiles, modelRows, engines, logs, settings };
 }());

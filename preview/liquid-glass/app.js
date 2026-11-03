@@ -87,6 +87,8 @@ const ENGINES = [
     glyph: "S",
     color: "#ff8b63",
     version: "1.5.0",
+    latest: "1.6.0",
+    installed: true,
     port: "8000",
     state: "running",
     description: "单模型、最省事，DFlash2 草稿加速",
@@ -98,6 +100,8 @@ const ENGINES = [
     glyph: "O",
     color: "#65b9ff",
     version: "0.7.3rc1",
+    latest: "0.7.3rc1",
+    installed: true,
     port: "8100",
     state: "stopped",
     description: "多模型常驻，模型热切换不停进程",
@@ -109,8 +113,10 @@ const ENGINES = [
     glyph: "M",
     color: "#ad8cff",
     version: "2.12.2",
+    latest: "2.12.2",
+    installed: false,
     port: "8200",
-    state: "stopped",
+    state: "not-installed",
     description: "长上下文与多 token 预测",
     uptime: "—",
     pid: "—",
@@ -152,11 +158,13 @@ const state = {
   page: "overview",
   theme: localStorage.getItem("fc-preview-theme") || "light",
   sidebarCollapsed: localStorage.getItem("fc-preview-sidebar") === "rail",
-  sidebarWidth: Math.max(180, Math.min(320, Number(localStorage.getItem("fc-preview-sidebar-width")) || 208)),
+  sidebarWidth: Math.max(180, Math.min(320, Number(localStorage.getItem("fc-preview-sidebar-width")) || 200)),
   engineRunning: true,
   engineBusy: false,
   engine: "Splash",
   activeEngineView: "Splash",
+  engineConfigOpen: null,
+  engineConfigDraft: null,
   model: MODELS[0].name,
   chartRange: "45 秒",
   metricTick: 0,
@@ -169,6 +177,16 @@ const state = {
     login: true,
     gateway: true,
     thinking: "自动",
+    reasoningEffort: "medium",
+    reasoningEffortLabel: "中",
+    reasoningEfforts: [
+      { value: "minimal", label: "最少" },
+      { value: "low", label: "低" },
+      { value: "medium", label: "中" },
+      { value: "high", label: "高" },
+      { value: "xhigh", label: "极高" },
+      { value: "max", label: "最大" },
+    ],
     appearance: localStorage.getItem("fc-preview-theme") || "light",
   },
   engines: JSON.parse(JSON.stringify(ENGINES)),
@@ -198,6 +216,10 @@ let flowAnimation = 0;
 let flowState = null;
 let flowHistory = [];
 let sidebarAnimTimer = 0;
+let modelListAnimationToken = 0;
+let hasRenderedPage = false;
+let overlayCloseToken = 0;
+let overlayTrigger = null;
 
 const LOG_SEED = [
   { level: "INFO", msg: "Ready · ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF · context 262K · http://127.0.0.1:8000" },
@@ -246,9 +268,7 @@ function resolvedTheme() {
 
 function renderToolbarIcons() {
   $("#downloadIcon").innerHTML = icon("download", 15);
-  $("#sidebarDownloadIcon").innerHTML = icon("download", 15);
   $("#commandIcon").innerHTML = icon("search", 18);
-  $("#miniEngineAction").innerHTML = icon("stop", 12);
   updateThemeIcon();
 }
 
@@ -305,7 +325,12 @@ function syncNavActive() {
 function renderPage(animate = true) {
   const frame = $("#pageFrame");
   if (!frame) return;
+  const firstRender = !hasRenderedPage;
+  const previousView = frame.dataset.view;
+  const scrollTop = $("#mainContent").scrollTop;
+  const focusState = captureFocusState(frame);
   const commit = () => {
+    if (window.FCChatThinking) window.FCChatThinking.close({ restoreFocus: false });
     stopFlowVisualization();
     frame.classList.remove("is-leaving");
     frame.dataset.view = state.page;
@@ -313,8 +338,8 @@ function renderPage(animate = true) {
     const renderers = {
       overview: renderOverview,
       chat: () => window.FCPages.chat(state),
-      models: () => window.FCPages.models(state, MODELS),
-      engines: () => window.FCPages.engines(state),
+      models: () => window.FCModelWorkspace.render(state, MODELS),
+      engines: () => window.FCEngineWorkspace.render(state),
       logs: () => {
         const lines = LOG_SEED.concat(generatedLogs());
         const counts = Object.fromEntries(["全部", "提示", "警告", "错误"].map((filter) => [filter, logCount(filter, lines)]));
@@ -330,19 +355,73 @@ function renderPage(animate = true) {
         startFlowVisualization();
       });
     }
+    if (state.page === "models") {
+      requestAnimationFrame(updateEngineTabIndicator);
+    }
+    requestAnimationFrame(updateSlidingSegments);
+    if (previousView === state.page) {
+      $("#mainContent").scrollTop = scrollTop;
+    }
+    restoreFocusState(focusState);
+    hasRenderedPage = true;
   };
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (animate && !reduceMotion && document.startViewTransition) {
     document.startViewTransition(commit);
+  } else if (!animate && !firstRender && !reduceMotion && window.FCMotionGuard) {
+    window.FCMotionGuard.fadeSwap(frame, commit, {
+      durationOut: 70,
+      durationIn: 150,
+      distance: 2,
+    });
   } else {
     commit();
-    if (animate && !reduceMotion) {
+    if (!firstRender && !reduceMotion) {
       frame.animate(
-        [{ opacity: .72, transform: "translateY(4px)" }, { opacity: 1, transform: "none" }],
-        { duration: 220, easing: "cubic-bezier(.2,.8,.2,1)" }
+        [{ opacity: .82, transform: "translateY(2px)" }, { opacity: 1, transform: "none" }],
+        { duration: animate ? 220 : 160, easing: "cubic-bezier(.2,.8,.2,1)" }
       );
     }
   }
+}
+
+function captureFocusState(root) {
+  const active = document.activeElement;
+  if (!active || active === document.body || !root.contains(active)) return null;
+  const attributes = [
+    "data-setting-toggle",
+    "data-engine-toggle",
+    "data-appearance",
+    "data-model-filter",
+    "data-page",
+    "data-action",
+    "id",
+  ];
+  for (const attribute of attributes) {
+    const value = active.getAttribute(attribute);
+    if (!value) continue;
+    return {
+      selector: `[${attribute}="${cssEscape(value)}"]`,
+      start: active.selectionStart,
+      end: active.selectionEnd,
+    };
+  }
+  return null;
+}
+
+function restoreFocusState(focusState) {
+  if (!focusState) return;
+  requestAnimationFrame(() => {
+    const target = $(focusState.selector);
+    if (!target || target.disabled) return;
+    target.focus({ preventScroll: true });
+    if (
+      typeof focusState.start === "number" &&
+      typeof target.setSelectionRange === "function"
+    ) {
+      target.setSelectionRange(focusState.start, focusState.end);
+    }
+  });
 }
 
 function pageHeader(title, subtitle, actions = "") {
@@ -683,12 +762,7 @@ function renderModels() {
 }
 
 function filteredModels() {
-  const search = state.modelSearch.trim().toLowerCase();
-  return MODELS.slice(1).filter((model) => {
-    const engineMatch = state.modelFilter === "全部" || model.engine === state.modelFilter;
-    const searchMatch = !search || `${model.name} ${model.repo} ${model.engine}`.toLowerCase().includes(search);
-    return engineMatch && searchMatch;
-  });
+  return window.FCModelWorkspace.filterModels(MODELS, state);
 }
 
 function modelCard(model) {
@@ -916,7 +990,10 @@ function setTheme(theme) {
   document.documentElement.dataset.theme = next;
   updateThemeIcon();
   drawAmbient(performance.now());
-  if (state.page === "settings") renderPage(false);
+  if (state.page === "settings") {
+    $$("[data-appearance]").forEach((button) => button.classList.toggle("active", button.dataset.appearance === theme));
+    updateSlidingSegments();
+  }
   if (previous !== next) showToast(next === "dark" ? "已切换到深色外观" : "已切换到浅色外观");
 }
 
@@ -964,6 +1041,10 @@ function toggleEngine(engineId = state.engine) {
   }
   const target = state.engines.find((engine) => engine.id === engineId);
   if (!target || target.state === "starting") return;
+  if (target.installed === false) {
+    showToast(`请先下载 ${engineId} 运行时`, "error");
+    return;
+  }
   if (target.state === "running") {
     target.state = "stopped";
     target.uptime = "—";
@@ -975,35 +1056,158 @@ function toggleEngine(engineId = state.engine) {
   target.state = "starting";
   target.uptime = "加载中";
   target.pid = "—";
-  renderPage(false);
+  renderPage(true);
   setTimeout(() => {
     target.state = "running";
     target.uptime = "00:00:01";
     target.pid = String(100000 + Math.floor(Math.random() * 80000));
     showToast(`${engineId} 已启动`);
-    renderPage(false);
+    renderPage(true);
     pulseHaptic();
   }, 1500);
 }
 
-function updateEngineChrome() {
-  const dot = $("#engineStatusDot");
-  const text = $("#engineStatusText");
-  const miniPulse = $("#miniEnginePulse");
-  const miniState = $("#miniEngineState");
-  const miniAction = $("#miniEngineAction");
-  const miniMeter = $("#miniMeter");
-  if (dot) {
-    dot.classList.toggle("is-stopped", !state.engineRunning && !state.engineBusy);
-    dot.classList.toggle("is-busy", state.engineBusy);
+function defaultEngineTuning(id) {
+  if (id === "Splash") return { dflash: true, pleSSDOffload: true };
+  if (id === "oMLX") return { mtp: true, dflash: false, pleSSDOffload: true };
+  if (id === "MTPLX") return { loadMtp: true, mtp: true };
+  return {};
+}
+
+function openEngineConfig(id) {
+  const engine = state.engines.find((item) => item.id === id);
+  if (!engine || engine.installed === false) return;
+  state.activeEngineView = id;
+  state.engineConfigOpen = id;
+  state.engineConfigDraft = {
+    engine: id,
+    port: String(engine.port || ""),
+    tuning: Object.assign(defaultEngineTuning(id), engine.tuning || {}),
+  };
+  renderPage(true);
+  pulseHaptic();
+}
+
+function closeEngineConfig() {
+  const panel = $(".fc-engine-panel");
+  const finish = () => {
+    state.engineConfigOpen = null;
+    state.engineConfigDraft = null;
+    renderPage(true);
+  };
+  if (!panel || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    finish();
+    return;
   }
-  if (text) text.textContent = `Splash · ${state.engineBusy ? "切换中" : state.engineRunning ? "运行中" : "已停止"}`;
-  $("#miniEngineName").textContent = state.engine;
-  miniPulse.classList.toggle("stopped", !state.engineRunning && !state.engineBusy);
-  miniPulse.classList.toggle("busy", state.engineBusy);
-  miniState.textContent = state.engineBusy ? "正在切换运行状态" : state.engineRunning ? "运行中 · 104 tok/s" : "已停止";
-  miniAction.innerHTML = icon(state.engineRunning ? "stop" : "play", 12);
-  miniMeter.style.width = state.engineRunning ? "64%" : "0%";
+  panel.animate(
+    [{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateX(18px)" }],
+    { duration: 170, easing: "cubic-bezier(.4,0,.2,1)", fill: "forwards" }
+  ).finished.then(finish).catch(finish);
+}
+
+function saveEngineConfig() {
+  const id = state.engineConfigOpen;
+  if (!id || !state.engineConfigDraft) return;
+  const engine = state.engines.find((item) => item.id === id);
+  if (engine) {
+    engine.tuning = { ...(state.engineConfigDraft.tuning || {}) };
+    engine.port = String(state.engineConfigDraft.port || engine.port);
+  }
+  showToast(`${id} 配置已保存`);
+  closeEngineConfig();
+}
+
+function setEngineConfigToggle(key) {
+  if (!state.engineConfigDraft) return;
+  const id = state.engineConfigOpen;
+  const tuning = state.engineConfigDraft.tuning;
+  tuning[key] = !tuning[key];
+  if (id === "oMLX") {
+    if (key === "mtp" && tuning.mtp) tuning.dflash = false;
+    if (key === "dflash" && tuning.dflash) tuning.mtp = false;
+  }
+  if (id === "MTPLX" && key === "mtp" && !tuning.mtp) tuning.loadMtp = false;
+  syncEngineConfigControls();
+}
+
+function syncEngineConfigControls() {
+  const panel = $(".fc-engine-panel");
+  const draft = state.engineConfigDraft;
+  if (!panel || !draft) return;
+  const tuning = draft.tuning || {};
+  $$("[data-fc-engine-toggle]", panel).forEach((button) => {
+    const key = button.dataset.fcEngineToggle;
+    const on = Boolean(tuning[key]);
+    button.classList.toggle("fc-engine-switch-on", on);
+    button.setAttribute("aria-checked", String(on));
+  });
+  const setDisabled = (selector, disabled) => {
+    $$(selector, panel).forEach((element) => {
+      element.disabled = Boolean(disabled);
+      element.classList.toggle("fc-engine-switch-disabled", Boolean(disabled) && element.classList.contains("fc-engine-switch"));
+    });
+  };
+  if (state.engineConfigOpen === "Splash") {
+    setDisabled('[data-fc-engine-field="draftModel"]', tuning.dflash === false);
+    setDisabled('[data-fc-engine-toggle="pleSSDOffload"]', Boolean(tuning.pleMemory));
+  } else if (state.engineConfigOpen === "oMLX") {
+    setDisabled('[data-fc-engine-field="mtpDepth"]', !tuning.mtp);
+  } else if (state.engineConfigOpen === "MTPLX") {
+    setDisabled('[data-fc-engine-field="mtpQuantBits"]', !tuning.mtp);
+    setDisabled('[data-fc-engine-toggle="loadMtp"]', !tuning.mtp);
+  }
+}
+
+function runEngineInstall(id, kind) {
+  const engine = state.engines.find((item) => item.id === id);
+  if (!engine) return;
+  engine.busy = true;
+  engine.progress = 12;
+  renderPage(false);
+  showToast(kind === "update" ? `正在更新 ${id}` : `正在下载 ${id}`);
+  setTimeout(() => {
+    engine.busy = false;
+    engine.progress = 100;
+    engine.installed = true;
+    engine.version = engine.latest || engine.version;
+    engine.state = engine.state === "not-installed" ? "stopped" : engine.state;
+    showToast(kind === "update" ? `${id} 已更新到 v${engine.version}` : `${id} 运行时已安装`);
+    renderPage(false);
+    pulseHaptic();
+  }, 1200);
+}
+
+function removeEngineRuntime(id) {
+  const engine = state.engines.find((item) => item.id === id);
+  if (!engine) return;
+  const running = id === "Splash" ? state.engineRunning : engine.state === "running";
+  if (running) {
+    showToast("请先停止引擎再删除运行时", "error");
+    return;
+  }
+  engine.installed = false;
+  engine.state = "not-installed";
+  if (state.engineConfigOpen === id) {
+    state.engineConfigOpen = null;
+    state.engineConfigDraft = null;
+  }
+  showToast(`${id} 运行时已删除`);
+  renderPage(false);
+}
+
+function updateEngineChrome() {
+  const dot = $("#topEngineDot");
+  const label = $("#topEngineState");
+  const rate = $("#topEngineRate");
+  const action = $("#topEngineAction");
+  const control = $("#topEngineControl");
+  if (!dot || !label || !rate || !action || !control) return;
+  dot.classList.toggle("is-stopped", !state.engineRunning && !state.engineBusy);
+  dot.classList.toggle("is-busy", state.engineBusy);
+  label.textContent = state.engineBusy ? "切换中" : state.engineRunning ? "运行中" : "已停止";
+  rate.textContent = state.engineRunning ? `${(104 + Math.sin(state.metricTick / 7) * 2.8).toFixed(0)} tok/s` : "—";
+  action.innerHTML = icon(state.engineRunning ? "stop" : "play", 11);
+  control.setAttribute("aria-label", state.engineRunning ? "停止引擎" : "启动引擎");
 }
 
 function sendChat() {
@@ -1124,31 +1328,83 @@ function cssEscape(value) {
 
 function toggleSetting(key) {
   state.settings[key] = !state.settings[key];
-  renderPage(false);
+  const button = $(`[data-setting-toggle="${key}"]`);
+  if (button) {
+    button.classList.toggle("on", state.settings[key]);
+    button.setAttribute("aria-checked", String(state.settings[key]));
+  }
   showToast(key === "gateway" ? `API 网关已${state.settings.gateway ? "开启" : "关闭"}` : "设置已更新");
 }
 
 function openOverlay(kind) {
   const layer = $("#overlayLayer");
+  overlayCloseToken += 1;
+  if (!state.currentOverlay) {
+    overlayTrigger = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+  }
+  const panel = overlayPanel(kind);
+  if (panel) {
+    panel.getAnimations().forEach((animation) => animation.cancel());
+  }
   state.currentOverlay = kind;
+  layer.classList.remove("command-open", "inspector-open", "downloads-open", "model-open");
   layer.classList.add("is-open", `${kind}-open`);
   layer.setAttribute("aria-hidden", "false");
 }
 
-function closeOverlays() {
+function overlayPanel(kind) {
+  return {
+    command: $("#commandPalette"),
+    inspector: $("#inspector"),
+    downloads: $("#downloadSheet"),
+    model: $("#modelPopover"),
+  }[kind] || null;
+}
+
+function closeOverlays(options = {}) {
   const layer = $("#overlayLayer");
-  layer.classList.remove("is-open", "command-open", "inspector-open", "downloads-open", "model-open");
-  layer.setAttribute("aria-hidden", "true");
-  state.currentOverlay = "";
-  $("#inspector").setAttribute("aria-modal", "false");
-  $("#commandPalette").setAttribute("aria-modal", "false");
-  if (state.chatStreaming && state.page === "chat") {
-    $("#chatInput")?.focus();
+  const kind = state.currentOverlay;
+  if (!layer || (!kind && !layer.classList.contains("is-open"))) return;
+  const panel = overlayPanel(kind);
+  const trigger = overlayTrigger;
+  const token = ++overlayCloseToken;
+  overlayTrigger = null;
+  if (window.FCOverlayBounds && $("#modelPopover")) {
+    window.FCOverlayBounds.clear($("#modelPopover"), { restore: true });
   }
+  const finish = () => {
+    if (token !== overlayCloseToken) return;
+    layer.classList.remove("is-open", "command-open", "inspector-open", "downloads-open", "model-open");
+    layer.setAttribute("aria-hidden", "true");
+    state.currentOverlay = "";
+    $("#inspector").setAttribute("aria-modal", "false");
+    $("#commandPalette").setAttribute("aria-modal", "false");
+    if (panel) panel.getAnimations().forEach((animation) => animation.cancel());
+    if (options.restoreFocus !== false && trigger?.isConnected) {
+      trigger.focus({ preventScroll: true });
+    } else if (state.chatStreaming && state.page === "chat") {
+      $("#chatInput")?.focus();
+    }
+  };
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (options.immediate || !panel || reduceMotion || typeof panel.animate !== "function") {
+    finish();
+    return;
+  }
+  const backdrop = $(".command-backdrop");
+  const exits = [panel];
+  if (kind === "command" && backdrop) exits.push(backdrop);
+  Promise.all(exits.map((element) => (
+    window.FCMotionGuard
+      ? window.FCMotionGuard.exit(element, { duration: 150, distance: 6 })
+      : Promise.resolve()
+  ))).then(finish, finish);
 }
 
 function openCommand() {
-  closeOverlays();
+  closeOverlays({ immediate: true, restoreFocus: false });
   openOverlay("command");
   $("#commandPalette").setAttribute("aria-modal", "true");
   const input = $("#commandInput");
@@ -1230,7 +1486,7 @@ function runCommand(index) {
 }
 
 function openInspector() {
-  closeOverlays();
+  closeOverlays({ immediate: true, restoreFocus: false });
   openOverlay("inspector");
   const p = state.params;
   $("#inspector").innerHTML = `
@@ -1279,7 +1535,7 @@ function updateRangeVisual(input) {
 }
 
 function openDownloads() {
-  closeOverlays();
+  closeOverlays({ immediate: true, restoreFocus: false });
   openOverlay("downloads");
   const sheet = $("#downloadSheet");
   sheet.innerHTML = `
@@ -1302,23 +1558,39 @@ function openDownloads() {
 }
 
 function openModelPopover(anchor) {
-  closeOverlays();
+  if ($("#overlayLayer").classList.contains("model-open")) {
+    closeOverlays();
+    return;
+  }
+  closeOverlays({ immediate: true, restoreFocus: false });
   openOverlay("model");
   const popover = $("#modelPopover");
-  popover.innerHTML = MODELS.slice(0, 4).map((model) => `
-    <button class="model-option" type="button" data-select-model="${esc(model.name)}">
+  popover.innerHTML = MODELS.slice(0, 4).map((model, index) => `
+    <button class="model-option" style="--i:${index}" type="button" data-select-model="${esc(model.name)}">
       <span class="model-option-icon">${icon("brain", 14)}</span>
       <span class="model-option-copy"><strong>${esc(shortModel(model.name))}</strong><span>${esc(model.engine)} · ${esc(model.size)} · ${esc(model.format)}</span></span>
       ${model.name === state.model ? `<span class="model-option-check">${icon("check", 14)}</span>` : ""}
-    </button>`).join("") + `
-    <div class="model-popover-sep"></div>
-    <button class="model-popover-action" type="button" data-action="search-hub">${icon("search", 14)}<span>在模型广场继续查找</span></button>`;
+    </button>`).join("");
   const rect = anchor.getBoundingClientRect();
   const width = 318;
   const left = Math.max(14, Math.min(window.innerWidth - width - 14, rect.left));
-  const top = Math.min(window.innerHeight - 300, rect.bottom + 8);
-  popover.style.left = `${left}px`;
-  popover.style.top = `${Math.max(54, top)}px`;
+  if (window.FCOverlayBounds) {
+    window.FCOverlayBounds.place(anchor, popover, {
+      boundary: ".window",
+      preferredSide: "bottom",
+      align: "start",
+      gap: 8,
+      padding: 14,
+      width,
+      maxHeight: 420,
+      scroll: true,
+      flip: true,
+      clamp: true,
+    });
+  } else {
+    popover.style.left = `${left}px`;
+    popover.style.top = `${rect.bottom + 8}px`;
+  }
 }
 
 function selectModel(name) {
@@ -1327,6 +1599,12 @@ function selectModel(name) {
   showToast(`已切换到 ${shortModel(name)}`);
   updateEngineChrome();
   renderPage(false);
+  requestAnimationFrame(() => {
+    const title = $("[data-model-title]");
+    if (!title) return;
+    title.classList.add("is-switching");
+    setTimeout(() => title.classList.remove("is-switching"), 860);
+  });
   pulseHaptic();
 }
 
@@ -1399,6 +1677,7 @@ function startLiveTelemetry() {
 
   setInterval(() => {
     state.metricTick += 1;
+    updateEngineChrome();
     const spark = $("[data-live-spark]");
     if (spark && state.engineRunning) {
       $$("i", spark).forEach((bar, index) => {
@@ -1932,10 +2211,12 @@ function bindSidebarResize() {
   const handle = $("#sidebarResize");
   if (!handle) return;
   let dragging = false;
+  let dragWidth = state.sidebarWidth;
+  let restoreWidth = state.sidebarWidth;
 
-  const applyWidth = (width, persist = false) => {
-    const next = Math.round(Math.max(180, Math.min(320, width)));
-    state.sidebarWidth = next;
+  const applyWidth = (width, persist = false, remember = true) => {
+    const next = Math.round(Math.max(72, Math.min(320, width)));
+    if (remember) state.sidebarWidth = next;
     document.documentElement.style.setProperty("--sidebar-width", `${next}px`);
     handle.setAttribute("aria-valuenow", String(next));
     if (persist) localStorage.setItem("fc-preview-sidebar-width", String(next));
@@ -1946,11 +2227,16 @@ function bindSidebarResize() {
     dragging = true;
     document.body.classList.add("sidebar-resizing");
     if (state.sidebarCollapsed) {
+      restoreWidth = state.sidebarWidth;
       state.sidebarCollapsed = false;
       document.body.classList.remove("sidebar-collapsed");
       localStorage.setItem("fc-preview-sidebar", "full");
       $("#sidebarToggle").setAttribute("aria-expanded", "true");
-      applyWidth(180);
+      applyWidth(180, false, false);
+      dragWidth = 180;
+    } else {
+      restoreWidth = $("#sidebar").getBoundingClientRect().width;
+      dragWidth = restoreWidth;
     }
     handle.setPointerCapture?.(event.pointerId);
   });
@@ -1958,14 +2244,27 @@ function bindSidebarResize() {
   handle.addEventListener("pointermove", (event) => {
     if (!dragging) return;
     const left = $("#sidebar").getBoundingClientRect().left;
-    applyWidth(event.clientX - left);
+    dragWidth = Math.round(Math.max(72, Math.min(320, event.clientX - left)));
+    applyWidth(dragWidth, false, false);
   });
 
   const finish = () => {
     if (!dragging) return;
     dragging = false;
     document.body.classList.remove("sidebar-resizing");
-    localStorage.setItem("fc-preview-sidebar-width", String(state.sidebarWidth));
+    if (dragWidth <= 168) {
+      state.sidebarCollapsed = true;
+      document.body.classList.add("sidebar-collapsed");
+      localStorage.setItem("fc-preview-sidebar", "rail");
+      applyWidth(restoreWidth, true);
+      $("#sidebarToggle").setAttribute("aria-expanded", "false");
+    } else {
+      state.sidebarCollapsed = false;
+      document.body.classList.remove("sidebar-collapsed");
+      localStorage.setItem("fc-preview-sidebar", "full");
+      applyWidth(dragWidth, true);
+      $("#sidebarToggle").setAttribute("aria-expanded", "true");
+    }
     updateNavIndicator();
   };
   handle.addEventListener("pointerup", finish);
@@ -1984,7 +2283,7 @@ function bindSidebarResize() {
   });
 
   handle.addEventListener("dblclick", () => {
-    applyWidth(208, true);
+    applyWidth(200, true);
     updateNavIndicator();
   });
 }
@@ -2004,6 +2303,46 @@ function handleClick(event) {
 
   if (event.target.closest("[data-close-command], [data-close-inspector], [data-close-downloads]")) {
     closeOverlays();
+    return;
+  }
+
+  const thinkingTrigger = event.target.closest("[data-fc-thinking-trigger]");
+  if (thinkingTrigger) {
+    if (window.FCChatThinking?.isOpen()) window.FCChatThinking.close();
+    else window.FCChatThinking?.open(thinkingTrigger, state, {
+      boundary: ".window",
+      align: "start",
+      gap: 9,
+      padding: 12,
+      width: 304,
+      maxHeight: 520,
+    });
+    return;
+  }
+
+  const thinkingChoice = event.target.closest("[data-fc-thinking-kind]");
+  if (thinkingChoice) {
+    const kind = thinkingChoice.dataset.fcThinkingKind;
+    const value = thinkingChoice.dataset.fcThinkingValue;
+    if (kind === "mode") {
+      state.settings.thinking = value === "automatic" ? "自动" : value === "off" ? "关闭" : "开启";
+      state.params.thinking = state.settings.thinking;
+      if (value === "on") {
+        state.settings.reasoningEffort = state.settings.reasoningEffort || "medium";
+      }
+    } else if (kind === "effort") {
+      state.settings.thinking = "开启";
+      state.params.thinking = "开启";
+      state.settings.reasoningEffort = value;
+      state.settings.reasoningEffortLabel = window.FCChatThinking.EFFORTS.find((item) => item.value === value)?.label || value;
+    }
+    if (kind === "mode" && value === "on") {
+      requestAnimationFrame(() => window.FCChatThinking?.update(state));
+    } else {
+      window.FCChatThinking?.update(state);
+      window.FCChatThinking?.close();
+    }
+    syncThinkingTriggerLabel();
     return;
   }
 
@@ -2030,15 +2369,16 @@ function handleClick(event) {
 
   const filter = event.target.closest("[data-model-filter]");
   if (filter) {
-    state.modelFilter = filter.dataset.modelFilter;
-    renderPage(false);
+    setModelFilter(filter.dataset.modelFilter);
     return;
   }
 
   const logFilter = event.target.closest("[data-log-filter]");
   if (logFilter) {
     state.logFilter = logFilter.dataset.logFilter;
-    renderPage(false);
+    $$("[data-log-filter]").forEach((button) => button.classList.toggle("active", button === logFilter));
+    updateSlidingSegment(logFilter.parentElement);
+    filterLogRows();
     return;
   }
 
@@ -2051,6 +2391,52 @@ function handleClick(event) {
   const selectModelButton = event.target.closest("[data-select-model]");
   if (selectModelButton) {
     selectModel(selectModelButton.dataset.selectModel);
+    return;
+  }
+
+  const engineConfig = event.target.closest("[data-engine-config]");
+  if (engineConfig) {
+    openEngineConfig(engineConfig.dataset.engineConfig);
+    return;
+  }
+
+  if (event.target.closest("[data-engine-config-close], [data-act='closeConfig']")) {
+    closeEngineConfig();
+    return;
+  }
+
+  if (event.target.closest("[data-act='saveEngineConfig']")) {
+    saveEngineConfig();
+    return;
+  }
+
+  const engineConfigToggle = event.target.closest("[data-fc-engine-toggle]");
+  if (engineConfigToggle) {
+    setEngineConfigToggle(engineConfigToggle.dataset.fcEngineToggle);
+    return;
+  }
+
+  const engineDownload = event.target.closest("[data-engine-download]");
+  if (engineDownload) {
+    runEngineInstall(engineDownload.dataset.engineDownload, "download");
+    return;
+  }
+
+  const engineUpdate = event.target.closest("[data-engine-update]");
+  if (engineUpdate) {
+    runEngineInstall(engineUpdate.dataset.engineUpdate, "update");
+    return;
+  }
+
+  const engineRemove = event.target.closest("[data-engine-remove]");
+  if (engineRemove) {
+    removeEngineRuntime(engineRemove.dataset.engineRemove);
+    return;
+  }
+
+  const finder = event.target.closest("[data-finder]");
+  if (finder) {
+    showToast("已在 Finder 中定位");
     return;
   }
 
@@ -2086,8 +2472,11 @@ function handleClick(event) {
     state.params.thinking = value;
     if (state.currentOverlay === "inspector") {
       $$("[data-thinking]", $("#inspector")).forEach((button) => button.classList.toggle("active", button === thinking));
+      updateSlidingSegment(thinking.parentElement);
     } else {
-      renderPage(false);
+      $$("[data-thinking]", $("[data-thinking-choice]")).forEach((button) => button.classList.toggle("active", button.dataset.thinking === value));
+      const group = $("[data-thinking-choice]");
+      if (group) updateSlidingSegment(group);
     }
     showToast(`思考模式 · ${value}`);
     return;
@@ -2153,6 +2542,9 @@ function handleAction(action, element) {
       break;
     case "refresh-models":
       showToast("模型状态已刷新");
+      break;
+    case "refresh-engines":
+      showToast("引擎状态已刷新");
       break;
     case "use-model":
       showToast("当前权重已在使用");
@@ -2221,14 +2613,97 @@ function handleInput(event) {
     const key = event.target.dataset.param;
     state.params[key] = Number(event.target.value);
     updateRangeVisual(event.target);
+  } else if (event.target.matches("[data-fc-engine-field]")) {
+    if (!state.engineConfigDraft) return;
+    const key = event.target.dataset.fcEngineField;
+    if (key === "port") state.engineConfigDraft.port = event.target.value;
+    else state.engineConfigDraft.tuning[key] = event.target.value;
   }
 }
 
 function updateModelsGrid() {
   const grid = $("#modelsGrid");
   if (!grid) return;
+  modelListAnimationToken += 1;
   const filtered = filteredModels();
-  grid.innerHTML = window.FCPages.modelRows(filtered, state);
+  const commit = () => {
+    grid.innerHTML = window.FCModelWorkspace.cards(filtered, state);
+  };
+  if (window.FCMotionGuard) {
+    window.FCMotionGuard.fadeSwap(grid, commit, {
+      durationOut: 70,
+      durationIn: 150,
+      distance: 3,
+    });
+  } else {
+    commit();
+  }
+}
+
+function updateEngineTabIndicator(prepare = true) {
+  const tabs = $("[data-engine-tabs]");
+  if (!tabs) return;
+  if (tabs.classList.contains("fc-model-engine-switch")) {
+    const engines = ["全部", "Splash", "oMLX", "MTPLX"];
+    tabs.style.setProperty("--fc-filter-index", String(Math.max(0, engines.indexOf(state.modelFilter))));
+    return;
+  }
+  const active = $("button.active", tabs);
+  const indicator = tabs ? $(".engine-tab-indicator", tabs) : null;
+  if (!tabs || !active || !indicator) return;
+  indicator.style.width = `${active.offsetWidth}px`;
+  indicator.style.transform = `translateX(${active.offsetLeft - 3}px)`;
+  if (prepare) requestAnimationFrame(() => tabs.classList.add("is-ready"));
+}
+
+function updateSlidingSegments() {
+  $$("[data-sliding-segments]").forEach(updateSlidingSegment);
+}
+
+function syncThinkingTriggerLabel() {
+  const trigger = $("[data-fc-thinking-trigger]");
+  if (!trigger) return;
+  const mode = state.settings.thinking;
+  const label = mode === "开启"
+    ? (state.settings.reasoningEffortLabel || "中")
+    : mode;
+  const value = $(".fc-thinking-trigger-value", trigger);
+  if (value) value.textContent = label;
+  trigger.dataset.fcThinkingMode = mode === "开启" ? "on" : mode === "关闭" ? "off" : "automatic";
+}
+
+function updateSlidingSegment(container) {
+  if (!container) return;
+  const active = $("button.active", container);
+  const slider = $(".segment-slider", container);
+  if (!active || !slider) return;
+  slider.style.width = `${active.offsetWidth}px`;
+  slider.style.left = `${active.offsetLeft}px`;
+}
+
+function setModelFilter(filter) {
+  state.modelFilter = filter;
+  $$("[data-model-filter]").forEach((button) => {
+    const active = button.dataset.modelFilter === filter;
+    button.classList.toggle("active", active);
+    button.classList.toggle("fc-model-filter-button-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  updateEngineTabIndicator();
+  const grid = $("#modelsGrid");
+  if (!grid) return;
+  const token = ++modelListAnimationToken;
+  grid.classList.add("is-leaving");
+  setTimeout(() => {
+    if (token !== modelListAnimationToken) return;
+    const filtered = filteredModels();
+    grid.innerHTML = window.FCModelWorkspace.cards(filtered, state);
+    grid.classList.remove("is-leaving");
+    grid.classList.add("is-entering");
+    setTimeout(() => {
+      if (token === modelListAnimationToken) grid.classList.remove("is-entering");
+    }, 520);
+  }, 110);
 }
 
 function filterLogRows() {
@@ -2237,7 +2712,24 @@ function filterLogRows() {
   $$(".log-line").forEach((line) => {
     const matchesLevel = !level || line.dataset.logLevel === level;
     const matchesSearch = !query || line.dataset.logText.includes(query);
-    line.classList.toggle("hidden", !matchesLevel || !matchesSearch);
+    const hidden = !matchesLevel || !matchesSearch;
+    if (hidden) {
+      if (!line.classList.contains("hidden")) {
+        line.classList.add("is-filtering-out");
+        setTimeout(() => {
+          if (line.classList.contains("is-filtering-out")) {
+            line.classList.add("hidden");
+            line.classList.remove("is-filtering-out");
+          }
+        }, 120);
+      }
+    } else {
+      line.classList.remove("hidden", "is-filtering-out");
+      line.animate(
+        [{ opacity: 0, transform: "translateY(-3px)" }, { opacity: 1, transform: "none" }],
+        { duration: 180, easing: "cubic-bezier(.16,1,.3,1)" }
+      );
+    }
   });
 }
 

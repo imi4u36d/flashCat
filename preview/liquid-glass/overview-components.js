@@ -18,6 +18,8 @@
     if (name.includes("Qwen3.6-35B")) return "Qwen3.6 35B";
     return name.length > 26 ? `${name.slice(0, 24)}…` : name;
   };
+  const rollingText = (text) => Array.from(text).map((char, index) =>
+    `<span class="model-char" style="--i:${index}">${char === " " ? "&nbsp;" : esc(char)}</span>`).join("");
 
   function pageHeader() {
     return `
@@ -47,7 +49,7 @@
         <div class="engine-widget-main">
           <div class="engine-widget-copy">
             <span class="status-pill ${running ? "" : "stopped"}"><i></i>Splash · ${status}</span>
-            <h2 title="${esc(shortModel(state.model))}">${esc(displayModel(state.model))}</h2>
+            <h2 class="model-title" data-model-title title="${esc(shortModel(state.model))}">${rollingText(displayModel(state.model))}</h2>
             <div class="engine-actions">
               <button class="button primary" type="button" data-action="model-menu">
                 ${icon("layers", 14)}<span>切换模型</span>

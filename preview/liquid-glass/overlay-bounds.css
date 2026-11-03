@@ -1,0 +1,85 @@
+/*
+ * FCOverlayBounds visual contract.
+ * All classes intentionally use the fc-bounds- prefix.
+ */
+
+.fc-bounds-panel,
+.fc-bounds-panel *,
+.fc-bounds-panel *::before,
+.fc-bounds-panel *::after {
+  box-sizing: border-box;
+}
+
+.fc-bounds-managed {
+  position: fixed !important;
+  right: auto !important;
+  bottom: auto !important;
+  margin: 0 !important;
+  touch-action: pan-y;
+}
+
+.fc-bounds-measuring {
+  animation: none !important;
+  transition: none !important;
+  contain: layout style !important;
+  pointer-events: none !important;
+}
+
+.fc-bounds-scroll-y {
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color:
+    color-mix(in srgb, var(--text-3, #7b8190) 34%, transparent)
+    transparent;
+}
+
+.fc-bounds-scroll-y::-webkit-scrollbar {
+  width: 7px;
+}
+
+.fc-bounds-scroll-y::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.fc-bounds-scroll-y::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background:
+    color-mix(in srgb, var(--text-3, #7b8190) 34%, transparent)
+    padding-box;
+}
+
+.fc-bounds-scroll-y::-webkit-scrollbar-thumb:hover,
+.fc-bounds-scroll-y:focus-within::-webkit-scrollbar-thumb {
+  background:
+    color-mix(in srgb, var(--text-3, #7b8190) 52%, transparent)
+    padding-box;
+}
+
+.fc-bounds-scroll-y:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent, #ff668c) 72%, white);
+  outline-offset: 2px;
+}
+
+.fc-bounds-constrained {
+  max-width: 100%;
+}
+
+.fc-bounds-animated {
+  transition:
+    left 180ms cubic-bezier(.2, .82, .2, 1),
+    top 180ms cubic-bezier(.2, .82, .2, 1),
+    width 180ms cubic-bezier(.2, .82, .2, 1),
+    max-width 180ms cubic-bezier(.2, .82, .2, 1),
+    max-height 180ms cubic-bezier(.2, .82, .2, 1);
+}
+
+.fc-bounds-flipped {
+  transform-origin: var(--fc-bounds-anchor-x, 50%) var(--fc-bounds-anchor-y, 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fc-bounds-animated {
+    transition: none;
+  }
+}

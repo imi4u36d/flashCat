@@ -24,17 +24,17 @@ tags: [models, huggingface, tags]
 
 | 仓库 | `engines` | 依据 |
 | --- | --- | --- |
-| `mlx-community/Qwen3.6-35B-A3B-4bit` | `{omlx}` | MLX 权重，通用 |
-| `mlx-community/Qwen3.8-27B-4bit` | `{omlx}` | 同上 |
-| `Jundot/Qwen3.6-35B-A3B-oQ4e-mtp` | `{omlx}` | 带 MTP 头的 MLX 权重，仍是 MLX |
-| `mlx-works/Qwen3.8-27B-oQ4e-mtp` | `{omlx}` | 同上 |
+| `Jundot/Qwen3.6-35B-A3B-oQ4e-mtp` | `{omlx}` | oMLX 的 oQ4e 量化，带 MTP 头 |
+| `Jundot/Qwen3.8-27B-oQ4e-mtp` | `{omlx}` | 同上 |
 | `Jundot/Qwen3.8-Flash-Next-oQ4e-mtp` | `{omlx}` | 同上 |
 | `ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF:Q2_0` | `{splash}` | GGUF 只走 Splash 这条专用通道（产品取舍，不是能力限制） |
 | `Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed` | `{mtplx}` | `library_name=mtplx` 专用包 |
 | `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed` | `{mtplx}` | 同上 |
 | `Youssofal/Qwen3.8-Flash-Next-MTPLX-Optimized-Speed` | `{mtplx}` | 同上 |
+| `Youssofal/MiMo-V2.6-Qwen-9B-MTPLX-Optimized-Speed` | `{mtplx}` | 同上；目录收录，不参与硬件三档 |
+| `Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed` | `{mtplx}` | 同上 |
 
-结论是 **Splash 页只会剩 Flash-Next 的 GGUF 一档，MTPLX 页只剩三款 Youssofal 包，其余全部在 oMLX**——这是产品规则要的结果，不是遗漏。**草稿仓库不成行**：`incoai/*-DFlash2` 只作为主行的 `draftRepository` 挂在主行上，界面上既不单独出现、也不带标签，所以没有「草稿该归谁」这个问题。**但下载接线目前只在 Splash 上成立**——`AppState.downloadModel` 只对 `.splash` 传草稿，`ModelInstaller.snapshotPlan` 也没有草稿参数，所以 oMLX 的草稿配对是计划而不是现状：oMLX 卡片暂时不挂 DFlash2 标签，等把草稿下载接到 oMLX（它那边用 `dflash_draft_model` 吃草稿）再放出来。
+结论是 **Splash 页只会剩 Flash-Next 的 GGUF 一档，oMLX 页主推三档 Jundot 的 oQ4e 包，MTPLX 页主推三档 Qwen 并额外收录 MiMo 9B、Qwen3.5 4B 两款 Youssofal 包**——这是产品规则要的结果，不是遗漏。额外收录项用 `rank: 0` 参与模型页展示，但不参与硬件三档评选。**草稿仓库不成行**：`incoai/*-DFlash2` 只作为主行的 `draftRepository` 挂在主行上，界面上既不单独出现、也不带标签，所以没有「草稿该归谁」这个问题。**但下载接线目前只在 Splash 上成立**——`AppState.downloadModel` 只对 `.splash` 传草稿，`ModelInstaller.snapshotPlan` 也没有草稿参数，所以 oMLX 的草稿配对是计划而不是现状：oMLX 卡片暂时不挂 DFlash2 标签，等把草稿下载接到 oMLX（它那边用 `dflash_draft_model` 吃草稿）再放出来。
 
 **存量权重照常可见，页过滤只管推荐与搜索。** `ModelLibrary` 从「只列目录里的行」改为「目录 ∪ 磁盘扫描」去重合并：目录里的按标签出现在对应引擎，盘上有但目录里没有的，作为「未收录」出现在**它实际所在的那个目录对应的引擎页**。已装就是已装，标签只管推荐与下载归属。
 

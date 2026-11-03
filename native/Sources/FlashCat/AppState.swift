@@ -712,25 +712,6 @@ final class AppState: ObservableObject {
         showsRecommendationPage = true
     }
 
-    /// Re-detect this Mac and keep the new answer. Called from the settings
-    /// card; deliberately does not reopen the first-run page.
-    func recheckHardware() {
-        recomputeRecommendation()
-        // Name the tiers: a recheck that only says "done" leaves the user no way
-        // to see what changed without opening the settings card.
-        guard let picks = hardwareRecommendation?.picks, !picks.isEmpty else {
-            toast("已按当前配置重新检测，但没有可推荐的模型")
-            return
-        }
-        let summary = picks.map { pick -> String in
-            let engine = pick.engineID?.displayName ?? pick.engine
-            // 档位名 + （不匹配时）为什么，例如「MTPLX Qwen3.8-Flash-Next（内存可能不够）」。
-            return pick.verdict.runs ? "\(engine) \(pick.shortName)"
-                                     : "\(engine) \(pick.shortName)（\(pick.reason)）"
-        }.joined(separator: " · ")
-        toast("已重新检测：\(summary)")
-    }
-
     private func recomputeRecommendation() {
         let recommendation = HardwareAdvisor.recommend(machine: DeviceProfile.current().machine)
         hardwareRecommendation = recommendation

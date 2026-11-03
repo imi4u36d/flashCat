@@ -262,7 +262,6 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
                 state.dismissRecommendation(engine: engine)
             }
         case "skipRecommendation": state.dismissRecommendation(engine: nil)
-        case "recheckHardware": state.recheckHardware()
         case "pauseDownload": state.pauseDownload()
         case "resumeDownload": downloadTask(from: body) { state.resumeDownload($0) }
         case "cancelDownload": downloadTask(from: body) { state.cancelDownload($0) }
@@ -896,10 +895,6 @@ enum WebSnapshot {
             recommendationDict["memoryGB"] = recommendation.memoryGB
             recommendationDict["freeDiskText"] = recommendation.freeDiskBytes > 0
                 ? Format.size(Int(recommendation.freeDiskBytes)) : ""
-            // 设置页的「硬件推荐」卡要写清「这台机器 · 什么时候算的」，所以摘要
-            // 和检测时间一起给，网页不再自己拼（也不会漏掉磁盘那一项）。
-            recommendationDict["machineSummary"] = recommendation.machineSummary
-            recommendationDict["computedAt"] = recommendation.computedAt.timeIntervalSince1970 * 1000
             recommendationDict["rows"] = EngineID.allCases.compactMap { engine -> [String: Any]? in
                 guard let pick = recommendation.pick(for: engine) else { return nil }
                 let model = ModelRecommendations.recommendation(for: pick.model)

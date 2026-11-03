@@ -26,7 +26,8 @@ struct ModelRecommendation: Identifiable, Hashable {
     let draftRepository: String?
     /// How strong this row is within its engine (bigger is stronger); the
     /// hardware recommendation picks "the best this machine can run" from it
-    /// instead of guessing strength from the memory floor.
+    /// instead of guessing strength from the memory floor. Zero keeps a row in
+    /// the engine catalog without putting it on the hardware three-tier ladder.
     let rank: Int
     /// The engines that may serve this row. A row outside an engine's set is
     /// never offered there — neither as a recommendation nor through search.
@@ -72,22 +73,28 @@ enum ModelRecommendations {
     /// pairs with, and the page never offers them on their own.
     static let catalog: [ModelRecommendation] = [
         ModelRecommendation(
-            id: "mlx-community/Qwen3.6-35B-A3B-4bit",
-            bytes: 20_400_000_000, minimumMemory: 32,
-            summary: "35B MoE，只激活 3B，长上下文更省内存",
-            // 草稿头先不写进标签：下载只给 Splash 传草稿，oMLX 现在拉不到，
-            // 卡片上挂着「DFlash2」却拿不到加速比不挂更糟。
-            tags: ["MLX", "MoE"],
-            draftRepository: "incoai/Qwen3.6-35B-A3B-DFlash2",
+            id: "Jundot/Qwen3.6-35B-A3B-oQ4e-mtp",
+            bytes: 22_100_000_000, minimumMemory: 32,
+            summary: "MoE 的 oQ4e 量化，保留 MTP 草稿头",
+            tags: ["oQ4e", "MoE", "MTP"],
+            draftRepository: nil,
             rank: 2,
             engines: [.omlx]),
         ModelRecommendation(
-            id: "mlx-community/Qwen3.8-27B-4bit",
-            bytes: 15_600_000_000, minimumMemory: 24,
-            summary: "27B 稠密 4 位，通用档",
-            tags: ["MLX"],
-            draftRepository: "incoai/Qwen3.8-27B-DFlash2",
+            id: "Jundot/Qwen3.8-27B-oQ4e-mtp",
+            bytes: 15_800_000_000, minimumMemory: 24,
+            summary: "27B 稠密 oQ4e 量化，保留 MTP 草稿头",
+            tags: ["oQ4e", "MTP"],
+            draftRepository: nil,
             rank: 1,
+            engines: [.omlx]),
+        ModelRecommendation(
+            id: "Jundot/Qwen3.8-Flash-Next-oQ4e-mtp",
+            bytes: 108_000_000_000, minimumMemory: 128,
+            summary: "125B MoE 的 oQ4e 版，Flash-Next 里最省内存的一档",
+            tags: ["oQ4e", "MoE", "视觉", "MTP"],
+            draftRepository: nil,
+            rank: 3,
             engines: [.omlx]),
         ModelRecommendation(
             id: "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF:Q2_0",
@@ -97,30 +104,6 @@ enum ModelRecommendations {
             draftRepository: "incoai/Qwen3.8-Flash-Next-DFlash2",
             rank: 3,
             engines: [.splash]),
-        ModelRecommendation(
-            id: "Jundot/Qwen3.6-35B-A3B-oQ4e-mtp",
-            bytes: 22_100_000_000, minimumMemory: 32,
-            summary: "MoE 的 oQ4 混合精度，保留 MTP 草稿头",
-            tags: ["oQ4", "MoE", "MTP"],
-            draftRepository: nil,
-            rank: 2,
-            engines: [.omlx]),
-        ModelRecommendation(
-            id: "mlx-works/Qwen3.8-27B-oQ4e-mtp",
-            bytes: 17_200_000_000, minimumMemory: 24,
-            summary: "27B 稠密 oQ4（imatrix 校准），oMLX 自家量化",
-            tags: ["oQ4", "MTP"],
-            draftRepository: nil,
-            rank: 1,
-            engines: [.omlx]),
-        ModelRecommendation(
-            id: "Jundot/Qwen3.8-Flash-Next-oQ4e-mtp",
-            bytes: 108_000_000_000, minimumMemory: 128,
-            summary: "125B MoE 的 oQ4 版，Flash-Next 里最省内存的一档",
-            tags: ["oQ4", "MoE", "视觉", "MTP"],
-            draftRepository: nil,
-            rank: 3,
-            engines: [.omlx]),
         ModelRecommendation(
             id: "Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed",
             bytes: 0, minimumMemory: 32,
@@ -144,6 +127,23 @@ enum ModelRecommendations {
             tags: ["MTP", "MoE", "视觉"],
             draftRepository: nil,
             rank: 3,
+            engines: [.mtplx]),
+        ModelRecommendation(
+            id: "Youssofal/MiMo-V2.6-Qwen-9B-MTPLX-Optimized-Speed",
+            bytes: 8_100_000_000, minimumMemory: 16,
+            summary: "MiMo-V2.6 Qwen 9B，MTPLX 官方优化包",
+            tags: ["MTP"],
+            draftRepository: nil,
+            // 目录收录不等于硬件三档：rank 0 会出现在模型页，但不参与星级选择。
+            rank: 0,
+            engines: [.mtplx]),
+        ModelRecommendation(
+            id: "Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed",
+            bytes: 2_400_000_000, minimumMemory: 8,
+            summary: "Qwen3.5 4B，MTPLX 轻量优化包",
+            tags: ["MTP"],
+            draftRepository: nil,
+            rank: 0,
             engines: [.mtplx]),
     ]
 

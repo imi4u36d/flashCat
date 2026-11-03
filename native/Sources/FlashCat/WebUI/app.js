@@ -138,7 +138,7 @@ window.__fc__ = {
 // 「没碰它，那个提示条却一直在闪」。sidebar 仍不进指纹：折叠只改布局宽度。
 const SHELL_FIELDS = ["page", "appearance", "toast", "engine", "port",
                       "selectedModel", "threads", "pending", "pendingInstall",
-                      // 推荐结果决定模型页的 ★ 标签和设置页那张卡，任何一页都要跟。
+                      // 推荐结果决定模型页的 ★ 标签，任何一页都要跟。
                       "recommendation"];
 const PAGE_FIELDS = {
   overview: ["stats", "throughput", "sessions", "draftLabel", "endpointURL",
@@ -319,13 +319,6 @@ function stageLabel(st) {
   const stage = st && st.startupStage;
   if (!stage || stage === "就绪" || stage === "启动中") return "";
   return stage;
-}
-// 设置页的「检测于 …」：本地时间，秒级没有意义，不显示。
-function fmtWhen(ms) {
-  if (!ms) return "";
-  const d = new Date(ms);
-  const p = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 function relTime(ms) {
   if (!ms) return "";
@@ -791,7 +784,6 @@ function handleAction(act, arg) {
     }
     case "closeRecommendConfirm": UI.recommendConfirm = null; render(); break;
     case "skipRecommendation": cmd("skipRecommendation"); break;
-    case "recheckHardware": cmd("recheckHardware"); break;
     case "installEngineLaunch": cmd("installEngine", { engine: arg, launch: true }); break;
     case "openLaunchPage": cmd("openLaunchPage"); break;
     case "finishLaunch": cmd("finishLaunch"); break;
@@ -2617,29 +2609,7 @@ function pageSettings() {
       ${row("默认模型", "引擎启动时自动加载", field("defaultModel", d.defaultModel, true))}
       ${row("下载缓存目录", "默认沿用 HF_HUB_CACHE", field("hfCache", d.hfCache, true))}
     </div>
-    ${recCardHTML()}
     ${savebarHTML(d)}`;
-}
-
-// 设置页的「硬件推荐」卡：这台机器是什么、什么时候算的、每个引擎推了哪一档。
-// 重新检测只重算并刷新这里的标签，不会把首次运行的推荐页再弹一次。
-function recCardHTML() {
-  const rec = S.recommendation || {};
-  const rows = rec.rows || [];
-  const rowsHTML = rows.map((r) => {
-    const name = (ENGINE_META[r.engine] || {}).name || r.engineName || r.engine;
-    const fits = r.fit === "good" || r.fit === "unknown";
-    return `<div class="set-row"><div class="lab"><b>${esc(name)}</b><small>${esc(r.display || r.model)}</small></div>
-      <div class="ctl"><span class="mtag${fits ? " rec" : " warn"}">${esc(r.reason)}</span></div></div>`;
-  }).join("");
-  const summary = rec.machineSummary
-    ? esc(rec.machineSummary) + (rec.computedAt ? " · 检测于 " + fmtWhen(rec.computedAt) : "")
-    : "这台机器的配置还没检测过";
-  return `<div class="set-card">
-      <div class="set-row"><div class="lab"><b>硬件推荐</b><small>${summary}</small></div>
-        <div class="ctl"><span class="filter" data-act="recheckHardware">重新检测</span></div></div>
-      ${rowsHTML}
-    </div>`;
 }
 
 function engines3() { return ["splash", "omlx", "mtplx"]; }
@@ -2755,7 +2725,7 @@ function pageRecommend() {
       ${cfg}
       ${cards || `<div class="confirm-strip">没有找到可推荐的模型，自己挑一个吧。</div>`}
       <div class="rec-skip"><span data-act="skipRecommendation">跳过，我自己选</span></div>
-      <p class="launch-note">推荐只算这一次，之后可以在「设置 → 硬件推荐」里重新检测。</p>
+      <p class="launch-note">推荐只算这一次。</p>
       ${UI.recommendConfirm ? recommendConfirmHTML(UI.recommendConfirm) : ""}
     </div>`;
 }

@@ -150,7 +150,8 @@ curl http://127.0.0.1:9000/v1/messages \
 | Qwen 3.8 27B | 约 16 ~ 21 GB | 新一代，质量和速度更均衡 |
 | Qwen 3.8 Flash-Next | 约 99 GB | 最重的一档，需要 128 GB 内存 |
 
-三档在每个引擎里都用该引擎能真正跑起来的格式准备好了。想跑别的模型，点模型页右上角
+三档主推在每个引擎里都用该引擎能真正跑起来的格式准备好了；oMLX 使用 Jundot 的 `oQ4e` 量化，
+MTPLX 另收录 MiMo 9B 与 Qwen3.5 4B 两个 Youssofal 优化包。想跑别的模型，点模型页右上角
 「＋ 下载模型」打开模型广场，搜或浏览 Hugging Face 仓库，点开看模型卡再下：权重落到公共目录、只存一份，下完再勾给
 哪些引擎用（勾选只决定可见性，不复制文件）。能不能被某个引擎加载由引擎自己判断，
 卡片上会标出这个模型是「引擎推荐」还是「个人下载」。
@@ -165,8 +166,8 @@ defaults write com.zhuo.flashCat hfToken hf_xxx                    # 有权限�
 挂着代理软件也不需要额外配置。
 
 > 下一版会把归属改成引擎标签、并开放 Hugging Face 搜索（见 `model-engine-tags.md`）：
-> 那时模型页按标签分栏，Splash 只剩 Flash-Next 的 GGUF、MTPLX 只剩三款专用包，
-> 其余通用 MLX 权重全部归 oMLX。
+> 那时模型页按标签分栏，Splash 只剩 Flash-Next 的 GGUF、oMLX 主推三款 Jundot `oQ4e` 包，
+> MTPLX 主推三款 Qwen 并另收录 MiMo 9B、Qwen3.5 4B。
 
 磁盘上的位置（清理时用得上）：
 

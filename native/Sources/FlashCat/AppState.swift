@@ -91,11 +91,24 @@ final class AppState: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "chat.threadID") }
     }
 
+    /// 网页侧「最近对话」用它高亮当前线程；threadID 本身只用于落盘。
+    var currentThreadID: String { threadID }
+
     static func newThreadID() -> String {
         String(Int(Date().timeIntervalSince1970 * 1_000_000))
     }
     @Published var generating = false
     @Published var generationStatus: String?
+
+    /// Low-latency token pipe into the WebUI. WebBridge installs the sink; the
+    /// debounced full snapshot still carries the authoritative text, so losing
+    /// an event can never leave the conversation in a wrong state.
+    var streamEventSink: ((ChatStreamEvent) -> Void)?
+    /// Monotonic across generations — never reset. The snapshot publishes this
+    /// value as a watermark so the web view can ignore deltas it already has.
+    private var streamSeq = 0
+    private var streamMessageID = ""
+    var currentStreamSeq: Int { streamSeq }
     /// Persistent banner for errors that need the reader's attention.
     @Published var notice: String?
     /// Transient bottom toast.
@@ -197,9 +210,17 @@ final class AppState: ObservableObject {
     /// Bytes the Hub says the whole repository needs, printed by the downloader
     /// before the transfer starts.
     private var downloadTotalBytes = 0
+    /// 本次会话里 downloader 宣布「还要抓」的字节数。Splash 的每个仓库只报
+    /// 尚未进缓存的那部分，续传时它是「剩余」而不是总量，所以总量要用
+    /// `downloadResumeBytes + downloadFetchedBytes` 重新算。
+    private var downloadFetchedBytes = 0
     /// The running downloader child process; terminating it is how pause and
     /// cancel stop the transfer while the Hub's partial files stay on disk.
     private var downloadProcess: Process?
+    /// Sibling marker for the model folder this transfer writes. It is created
+    /// before the child starts and removed only on success, so a canceled or
+    /// crashed download can never pass the scanner as an installed model.
+    private var downloadIncompleteMarker: String?
     /// Set while a caller waits for a download to end (a launch that has to
     /// fetch the model's DFlash2 draft first). Reported once, in
     /// `finishDownload`, whichever way the process ended.
@@ -211,6 +232,10 @@ final class AppState: ObservableObject {
     private var cancelRequested = false
     private var lastWatchBytes = 0
     private var lastWatchDate: Date?
+    /// Bytes this transfer already had on disk when it (re)started. A resumed
+    /// download begins counting from here instead of 0, so both the card and
+    /// the download center keep showing 已下载/总量 across a pause.
+    private var downloadResumeBytes = 0
     /// Hub cache folders the running download fills, discovered from the
     /// child's `Fetching …` lines. Splash's tqdm only counts finished files —
     /// its bar sits at 0% for minutes while one shard streams — so byte growth
@@ -777,27 +802,42 @@ final class AppState: ObservableObject {
     }
 
     /// Only one engine runs at a time: two MLX engines would fight for the same
-    /// unified memory, so switching stops the old one first.
+    /// unified memory, so switching stops the old one first — and waits for it
+    /// to really exit before the new engine is allowed to load anything.
+    ///
+    /// `start` keeps "switch" meaning "serve this engine": the destination is
+    /// started even when the previous one was idle, so a switch never leaves the
+    /// reader staring at a stopped engine. Callers that have a download to finish
+    /// first (the library sheet) pass `false` and start after it.
     @discardableResult
-    func switchEngine(_ id: EngineID) -> Bool {
+    func switchEngine(_ id: EngineID, start: Bool = true) async -> Bool {
         guard let engines, id != engines.activeID else { return false }
         // 换引擎本身就是重启进程：正在进行的切换（包括跨引擎跳过去的那一半）
         // 已经没有意义，直接作废。以前这里 toast 一句就 return，读者再点最多
         // 的选择都没反应，而那个被跳过的切换还在原地挂着。
         if isSwitchingModel { retireModelSwitch() }
+        // A pending「切换模型？」sheet names the old engine's weights; it can
+        // no longer be confirmed once the engine under it changed.
+        confirmingModelSwitch = nil
         guard engines.controller(id) != nil else {
             requestEngineInstall(id)
             return false
         }
-        let wasRunning = isRunning
-        engines.activate(id)
+        let activated = await engines.activate(id)
+        // The pack disappeared (or the handoff was cancelled) while the old
+        // engine was stopping: do not point the library at an engine we are not
+        // actually running.
+        guard activated || activeEngine == id else {
+            requestEngineInstall(id)
+            return false
+        }
         libraryEngine = id
         reloadModels()
         // Switching to an engine must not keep the previous engine's model id:
         // the remembered one only survives if this engine can serve it.
         adoptSavedModel(for: id)
         syncController()
-        if wasRunning { startService() }
+        if start, !selectedModel.isEmpty { startService() }
         toast("已切换到 \(id.displayName)")
         return true
     }
@@ -843,7 +883,11 @@ final class AppState: ObservableObject {
                 }
         }
         let scanned = LocalEngineModels.scan(engine: id, directory: EnginePaths.modelsDirectory(id))
-        return scanned.filter { !unfinished.contains($0.id) } + shared
+        // Flat-layout packs (oMLX, MTPLX, Strata) scan as `owner--repo` while
+        // the download task is keyed by `owner/repo`. Canonicalise both sides
+        // or the partial folder slips through and the card flips to "使用"
+        // before the transfer is done.
+        return scanned.filter { !unfinished.contains(ModelSharing.canonical($0.id)) } + shared
     }
 
     /// 公共目录里授权给这个引擎的权重。oMLX / MTPLX 目录里也有它们，但那是
@@ -1012,13 +1056,29 @@ final class AppState: ObservableObject {
     func confirmLibraryUse() {
         guard let request = pendingLibraryUse else { return }
         pendingLibraryUse = nil
-        // A failed switch (engine uninstalled between dialog and confirm, say)
-        // must not leave a download pointed at a runtime that is not there.
-        guard switchEngine(request.engine) else { return }
-        if request.needsDownload {
-            downloadModel(request.model, engine: request.engine)
-        } else {
-            applyModel(request.model)
+        // The engine handoff is async (it waits for the old process to let go of
+        // its weights), so the download / model pick follows it in the same task
+        // instead of assuming the switch already happened.
+        Task { [weak self] in
+            guard let self else { return }
+            // A failed switch (engine uninstalled between dialog and confirm,
+            // say) must not leave a download pointed at a runtime that is not
+            // there.
+            guard self.engineIsInstalled(request.engine) else {
+                self.requestEngineInstall(request.engine)
+                return
+            }
+            // Don't start the destination's old weights: either the download
+            // follows, or applyModel starts the picked model itself.
+            let switched = await self.switchEngine(request.engine, start: false)
+            // Only follow the handoff when it landed on the requested engine;
+            // a failed activation must not point a download at another runtime.
+            guard switched || self.activeEngine == request.engine else { return }
+            if request.needsDownload {
+                self.downloadModel(request.model, engine: request.engine)
+            } else {
+                self.applyModel(request.model)
+            }
         }
     }
 
@@ -1079,6 +1139,11 @@ final class AppState: ObservableObject {
     /// Make `engine` the running one and load `model` on it in one motion.
     /// The sidebar still switches engines explicitly, but the model switcher
     /// hides the hop: from the reader's point of view only the model changed.
+    ///
+    /// The handoff is a real unload, not just a load: the old engine is stopped
+    /// and awaited (process gone, port released) before the new one starts, so
+    /// two models never sit in unified memory at the same time. The switcher
+    /// shows 「停止旧引擎」 during that wait and 「加载新模型」 afterwards.
     private func hopEngine(_ engine: EngineID, model: String) {
         guard let engines, engines.controller(engine) != nil else { return }
         let wasRunning = isRunning
@@ -1086,30 +1151,35 @@ final class AppState: ObservableObject {
         // 权重加载）在这里作废，而不是排队等它结束——排队就是「点了新模型，
         // 界面还停在旧的那一次切换里」。
         retireModelSwitch()
-        engines.activate(engine)
-        libraryEngine = engine
-        reloadModels()
-        // The picked model wins over the engine's remembered one.
-        selectModel(model)
-        engines.setModel(model, for: engine)
-        syncController()
-
-        guard wasRunning else {
-            toast("已切换到 \(engine.displayName) · \(shortModelName(model))")
-            return
-        }
-
-        // The old engine's weights are already gone (activate stops it), so
-        // the hop is purely a load. Keep the switcher's inline progress until
-        // the new engine reports ready, the same way a same-engine switch
-        // does.
-        switchingModel = model
-        switchStage = "加载新模型"
+        confirmingModelSwitch = nil
         let generation = switchGeneration
+        // 停着的时候不再只换选择：跨引擎选模型同样意味着「现在就跑它」，
+        // 所以界面直接进入「启动引擎」。
+        switchingModel = model
+        switchStage = wasRunning ? "停止旧引擎" : "启动引擎"
+
         switchTask = Task { [weak self] in
-            guard let self, let controller = self.controller else {
-                self?.settleModelSwitch(generation: generation,
-                                        outcome: .failed("\(engine.displayName) 没有可用的控制器"))
+            guard let self else { return }
+            // 只在这里换引擎：等旧引擎真的退出，再让新引擎加载权重。
+            let activated = await engines.activate(engine)
+            // 被更新的选择接管了：状态与引擎都归那一代，这里静默退出。
+            guard generation == self.switchGeneration else { return }
+            guard activated || self.activeEngine == engine else {
+                self.settleModelSwitch(generation: generation,
+                                       outcome: .failed("\(engine.displayName) 没有可用的控制器"))
+                return
+            }
+            self.libraryEngine = engine
+            self.reloadModels()
+            // The picked model wins over the engine's remembered one.
+            self.selectModel(model)
+            engines.setModel(model, for: engine)
+            self.syncController()
+
+            self.switchStage = "加载新模型"
+            guard let controller = self.controller else {
+                self.settleModelSwitch(generation: generation,
+                                       outcome: .failed("\(engine.displayName) 没有可用的控制器"))
                 return
             }
             await controller.start(localModel: self.selectedModelInfo, requestedModel: model)
@@ -1229,27 +1299,37 @@ final class AppState: ObservableObject {
     /// gone, then load — and reports back when it is really done. The previous
     /// design fired a process restart from the view model and a hot load from
     /// here at the same time, which is what wedged the engine mid-switch.
+    ///
+    /// 切换等于「让它现在就用这份权重」：引擎停着时不是只记住选择，而是直接用
+    /// 新权重启动。以前这里只 toast「已切换」，读者看到引擎一直停着，以为切换
+    /// 没生效。
     private func beginModelSwitch(to id: String) {
-        guard isRunning, let controller else {
-            // Nothing is resident, so there is nothing to unload: the choice only
-            // takes effect on the next start.
-            retireModelSwitch()
-            toast("已切换到 \(shortModelName(id))")
-            return
-        }
-
         // 上一次切换（比如跨引擎跳过来的那一次加载）先作废，这一次从头开始。
         retireModelSwitch()
         let generation = switchGeneration
+        let wasRunning = isRunning
         switchingModel = id
-        switchStage = "准备切换"
+        switchStage = wasRunning ? "准备切换" : "启动引擎"
         switchTask = Task { [weak self] in
+            guard let self, let controller = self.controller else {
+                self?.settleModelSwitch(generation: generation,
+                                        outcome: .failed("\(self?.activeEngine.displayName ?? "引擎") 没有可用的控制器"))
+                return
+            }
+            guard wasRunning else {
+                await controller.start(localModel: self.selectedModelInfo, requestedModel: id)
+                let ready = await controller.waitForSwitchReady(id, timeout: self.activeEngine.startupTimeout)
+                self.settleModelSwitch(generation: generation, outcome: ready
+                    ? .ready
+                    : .failed(controller.failureMessage ?? "\(self.activeEngine.displayName) 未能在预期时间内就绪"))
+                return
+            }
             let outcome = await controller.switchModel(id) { stage in
                 // 被接管之后就不要再往新切换的阶段行里写了。
-                guard let self, generation == self.switchGeneration else { return }
+                guard generation == self.switchGeneration else { return }
                 self.switchStage = stage
             }
-            self?.settleModelSwitch(generation: generation, outcome: outcome)
+            self.settleModelSwitch(generation: generation, outcome: outcome)
         }
     }
 
@@ -1263,6 +1343,9 @@ final class AppState: ObservableObject {
         switchGeneration &+= 1
         switchingModel = nil
         switchStage = ""
+        // 排队的模型 id 只属于这台引擎；换引擎/被接管之后它就指向另一份权重
+        // 目录里的名字，留着只会在下一次收起时把别人的模型当成这台引擎的。
+        queuedSwitchModel = nil
     }
 
     /// 切换的唯一出口。先核对代数：被接管/被取消的旧任务到这里就静默退出，
@@ -1312,10 +1395,14 @@ final class AppState: ObservableObject {
         retireModelSwitch()
     }
 
+    /// Display name for a model id: the repository's own name, not a made-up
+    /// product alias. Engines that keep weights in a flat `owner--repo` folder
+    /// are canonicalised first so toasts do not print the storage form.
     func shortModelName(_ id: String) -> String {
         let value = id.trimmingCharacters(in: .whitespaces)
         if value.isEmpty { return "—" }
-        return value.split(separator: "/").last.map(String.init) ?? value
+        let canonical = value.replacingOccurrences(of: "--", with: "/")
+        return canonical.split(separator: "/").last.map(String.init) ?? canonical
     }
 
     // MARK: logs
@@ -1328,6 +1415,21 @@ final class AppState: ObservableObject {
     }
 
     // MARK: chat
+
+    private func emitStream(_ kind: ChatStreamEvent.Kind,
+                            channel: ChatStreamEvent.Channel? = nil,
+                            text: String? = nil,
+                            cancelled: Bool = false) {
+        guard let sink = streamEventSink, !streamMessageID.isEmpty else { return }
+        streamSeq += 1
+        sink(ChatStreamEvent(kind: kind,
+                             id: streamMessageID,
+                             seq: streamSeq,
+                             at: Date().timeIntervalSince1970 * 1000,
+                             channel: channel,
+                             text: text,
+                             cancelled: cancelled))
+    }
 
     func send(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1343,6 +1445,8 @@ final class AppState: ObservableObject {
         messages.append(ChatMessage(role: "user", content: trimmed, model: selectedModel, createdAt: Date()))
         let assistantIndex = messages.count
         messages.append(ChatMessage(role: "assistant", content: "", model: selectedModel, createdAt: Date(), streaming: true))
+        streamMessageID = messages[assistantIndex].id.uuidString
+        emitStream(.begin)
         generating = true
         generationStatus = "生成中"
         liveDecodeRate = nil
@@ -1371,9 +1475,14 @@ final class AppState: ObservableObject {
                     Task { @MainActor in
                         guard assistantIndex < self.messages.count else { return }
                         if self.messages[assistantIndex].firstTokenSeconds == nil {
-                            self.messages[assistantIndex].firstTokenSeconds = Date().timeIntervalSince(started)
+                            let ttft = Date().timeIntervalSince(started)
+                            self.messages[assistantIndex].firstTokenSeconds = ttft
+                            // 正文首字之前的这段时间就是思考阶段；记下来，回答结束后
+                            // 折叠的思考块仍能给出真实时长。
+                            self.messages[assistantIndex].thinkingSeconds = ttft
                         }
                         self.messages[assistantIndex].content += piece
+                        self.emitStream(.delta, channel: .content, text: piece)
                         self.recordStreamDelta(piece)
                     }
                 },
@@ -1381,6 +1490,7 @@ final class AppState: ObservableObject {
                     Task { @MainActor in
                         guard assistantIndex < self.messages.count else { return }
                         self.messages[assistantIndex].reasoning = (self.messages[assistantIndex].reasoning ?? "") + piece
+                        self.emitStream(.delta, channel: .reasoning, text: piece)
                         if self.messages[assistantIndex].content.isEmpty {
                             self.generationStatus = "思考中"
                         }
@@ -1448,6 +1558,7 @@ final class AppState: ObservableObject {
                 messages[assistantIndex].streaming = false
             }
             generating = false
+            emitStream(.end)
             conversation.save(messages)
             history.save(messages: messages, threadID: threadID)
             threads = history.load()
@@ -1474,7 +1585,9 @@ final class AppState: ObservableObject {
     }
 
     func cancelGeneration() {
+        let wasGenerating = generating
         chatClient.cancel()
+        if wasGenerating { emitStream(.end, cancelled: true) }
         generating = false
         generationStatus = "已取消"
         if let index = messages.lastIndex(where: { $0.streaming }) {
@@ -1506,7 +1619,9 @@ final class AppState: ObservableObject {
             ChatMessage(role: $0.role, content: $0.content, model: $0.model,
                         createdAt: $0.createdAt, usage: $0.usage,
                         seconds: $0.seconds, tokensPerSecond: $0.tokensPerSecond,
-                        firstTokenSeconds: $0.firstTokenSeconds)
+                        firstTokenSeconds: $0.firstTokenSeconds,
+                        thinkingSeconds: $0.thinkingSeconds,
+                        reasoning: $0.reasoning)
         }
         threadID = thread.id
         section = .chat
@@ -1577,6 +1692,7 @@ final class AppState: ObservableObject {
             ?? EnginePaths.modelPath(for: engine, model: id)
         do {
             try FileManager.default.removeItem(atPath: path)
+            try? FileManager.default.removeItem(atPath: path + ".flashcat-incomplete")
         } catch {
             notice = "删除失败：\(error.localizedDescription)"
             return
@@ -1797,6 +1913,7 @@ final class AppState: ObservableObject {
         let repo = ModelSharing.canonical(id)
         ModelSharing.forget(repo)
         try? FileManager.default.removeItem(atPath: ModelSharing.path(for: repo))
+        try? FileManager.default.removeItem(atPath: ModelSharing.path(for: repo) + ".flashcat-incomplete")
         if selectedModel == repo || selectedModel == ModelInstaller.folderName(for: repo) {
             selectedModel = ""
             adoptSavedModel(for: activeEngine)
@@ -1828,19 +1945,39 @@ final class AppState: ObservableObject {
         pauseRequested = false
         cancelRequested = false
         downloadSpeed = 0
-        lastWatchBytes = 0
+        // Resume, not restart: a paused/failed row already recorded where the
+        // transfer stood, and the Hub's partial files are still on disk. Seed
+        // the progress with those bytes so the bar continues from 已下载/总量
+        // instead of dropping back to 0%. A brand-new download has no row and
+        // therefore starts at zero.
+        let previous = downloadTasks.first { $0.engine == engine && $0.model == id }
+        let resumeTotal = max(previous?.totalBytes ?? 0, 0)
+        let previousBytes = max(previous?.downloadedBytes ?? 0, 0)
+        // Without a known total the row still knows how many bytes were on
+        // disk; keep them and let the first TOTAL line supply the denominator.
+        let resumeBytes = resumeTotal > 0 ? min(previousBytes, resumeTotal) : previousBytes
+        downloadResumeBytes = resumeBytes
+        downloadFetchedBytes = 0
+        lastWatchBytes = resumeBytes
         lastWatchDate = nil
         downloadWatchDirectories = []
         downloadWatchBaselines = [:]
+        downloadIncompleteMarker = plan.incompleteMarker
+        if let marker = plan.incompleteMarker {
+            Paths.ensureDirectory((marker as NSString).deletingLastPathComponent)
+            FileManager.default.createFile(atPath: marker, contents: nil)
+        }
         upsertTask(engine: engine, model: id) { task in
             task.status = .downloading
             task.shared = shared
+            task.downloadedBytes = resumeBytes
+            task.totalBytes = max(task.totalBytes, resumeTotal)
             if task.addedAt.timeIntervalSinceNow < -60 * 60 * 24 * 30 { task.addedAt = Date() }
         }
         downloadingModel = id
         downloadingEngine = engine
-        downloadFraction = 0
-        downloadTotalBytes = 0
+        downloadTotalBytes = resumeTotal
+        downloadFraction = resumeTotal > 0 ? Double(resumeBytes) / Double(resumeTotal) : 0
         append(log: shared == nil
             ? "==> \(engine.displayName) 下载模型：\(id)"
             : "==> 下载模型到公共目录：\(id)", engine: engine)
@@ -1866,8 +2003,12 @@ final class AppState: ObservableObject {
             DispatchQueue.main.async {
                 self.append(log: line, engine: engine)
                 if let total = Self.totalBytes(in: line) {
-                    self.downloadTotalBytes = total
-                    self.upsertTask(engine: engine, model: id) { $0.totalBytes = max($0.totalBytes, total) }
+                    // Snapshot downloader: TOTAL is the repository's full size,
+                    // so it is the denominator with or without a resume.
+                    self.downloadTotalBytes = max(total, self.downloadResumeBytes)
+                    self.upsertTask(engine: engine, model: id) {
+                        $0.totalBytes = max($0.totalBytes, self.downloadTotalBytes)
+                    }
                     if let directory = plan.watchDirectory {
                         if !self.downloadWatchDirectories.contains(directory) {
                             self.downloadWatchDirectories.append(directory)
@@ -1876,12 +2017,14 @@ final class AppState: ObservableObject {
                     }
                 } else if let fetch = Self.fetchPlan(in: line) {
                     // Splash's installer announces every repository it is
-                    // about to fetch with its exact byte size. Those sums are
-                    // the total, and the repos' Hub cache folders are what
-                    // fills up — watching them gives byte progress, which
-                    // tqdm alone never provides (its bar only counts finished
-                    // files, so it sits at 0% while a shard streams).
-                    self.downloadTotalBytes += fetch.bytes
+                    // about to fetch with its exact byte size. On a fresh
+                    // download those sizes sum to the total; on a resume the
+                    // cache already holds part of the repository and the
+                    // announcement only covers what is still missing, so the
+                    // denominator is 已下载 + 剩余, never just 剩余.
+                    self.downloadFetchedBytes += fetch.bytes
+                    self.downloadTotalBytes = max(self.downloadTotalBytes,
+                                                  self.downloadResumeBytes + self.downloadFetchedBytes)
                     self.upsertTask(engine: engine, model: id) {
                         $0.totalBytes = max($0.totalBytes, self.downloadTotalBytes)
                     }
@@ -1924,6 +2067,17 @@ final class AppState: ObservableObject {
             downloadingModel = nil
             downloadingEngine = nil
             downloadFraction = nil
+            downloadTotalBytes = 0
+            downloadResumeBytes = 0
+            downloadFetchedBytes = 0
+            lastWatchBytes = 0
+            lastWatchDate = nil
+            downloadWatchDirectories = []
+            downloadWatchBaselines = [:]
+            downloadIncompleteMarker = nil
+            if let marker = plan.incompleteMarker {
+                try? FileManager.default.removeItem(atPath: marker)
+            }
             removeTask(engine: engine, model: id)
             notice = "无法启动下载：\(error.localizedDescription)"
             return false
@@ -2025,8 +2179,29 @@ final class AppState: ObservableObject {
             process.terminate()
         } else {
             removeTask(engine: task.engine, model: task.model)
+            discardPartialDownload(task)
             toast("已从下载中心移除")
         }
+    }
+
+    /// Removing a paused/failed row is the explicit "throw the partial bytes
+    /// away" action. Only folders still carrying the incomplete marker are
+    /// touched, so a finished model that happens to share the id is safe.
+    private func discardPartialDownload(_ task: ModelDownloadTask) {
+        let path: String
+        if let shared = task.shared, !shared.isEmpty {
+            path = ModelSharing.path(for: task.model)
+        } else if task.engine.adapter == .splash {
+            return
+        } else {
+            path = EnginePaths.modelPath(for: task.engine, model: task.model)
+        }
+        let marker = ModelInstaller.incompleteMarker(for: path)
+        guard Paths.fileExists(marker) else { return }
+        try? FileManager.default.removeItem(atPath: path)
+        try? FileManager.default.removeItem(atPath: marker)
+        EngineModelStore.invalidateMetaCache()
+        reloadModels()
     }
 
     /// Remove a finished/failed/stale row from the center.
@@ -2090,7 +2265,9 @@ final class AppState: ObservableObject {
                 guard !Task.isCancelled else { return }
                 // A folder's first sighting sets its baseline, so weights that
                 // were already in the cache before this download don't count.
-                var downloaded = 0
+                // The bytes the resumed transfer started with are added back on
+                // top: they are part of this model, unlike a foreign cache entry.
+                var downloaded = self.downloadResumeBytes
                 for (index, directory) in directories.enumerated() {
                     if let baseline = self.downloadWatchBaselines[directory] {
                         downloaded += max(sizes[index] - baseline, 0)
@@ -2124,6 +2301,8 @@ final class AppState: ObservableObject {
     private func finishDownload(engine: EngineID, model: String, status: Int32) {
         let sharedRepo = pendingSharedRepo
         let sharedEngines = pendingSharedEngines
+        let incompleteMarker = downloadIncompleteMarker
+        downloadIncompleteMarker = nil
         pendingSharedRepo = nil
         pendingSharedEngines = []
         downloadWatchTask?.cancel()
@@ -2134,6 +2313,8 @@ final class AppState: ObservableObject {
         downloadFraction = nil
         downloadTotalBytes = 0
         downloadSpeed = 0
+        downloadResumeBytes = 0
+        downloadFetchedBytes = 0
         lastWatchBytes = 0
         lastWatchDate = nil
         downloadWatchDirectories = []
@@ -2159,9 +2340,13 @@ final class AppState: ObservableObject {
         }
         if cancelRequested {
             cancelRequested = false
-            removeTask(engine: engine, model: model)
-            append(log: "==> 已取消下载 \(model)", engine: engine)
-            toast("已取消下载")
+            // Keep the row as paused: the partial bytes and the marker are
+            // still on disk, so the model card must keep showing that state
+            // instead of flipping back to a clickable "下载". Removing the row
+            // is a second, explicit step in the download center.
+            upsertTask(engine: engine, model: model) { $0.status = .paused }
+            append(log: "==> 已停止下载 \(model)，进度已保留", engine: engine)
+            toast("已停止下载，可在下载中心继续或移除")
             outcome = .cancelled
             return
         }
@@ -2176,6 +2361,14 @@ final class AppState: ObservableObject {
         }
 
         removeTask(engine: engine, model: model)
+        if let incompleteMarker {
+            try? FileManager.default.removeItem(atPath: incompleteMarker)
+        }
+        // The scan at the top of this method still saw the marker; drop the
+        // cached byte count and rescan now that the destination is complete,
+        // so the card can flip from progress to "使用".
+        EngineModelStore.invalidateMetaCache()
+        reloadModels()
 
         if let sharedRepo {
             publishShared(repo: sharedRepo, engines: sharedEngines)

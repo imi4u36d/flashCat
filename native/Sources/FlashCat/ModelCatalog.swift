@@ -85,6 +85,7 @@ final class ModelCatalogService {
             throw CatalogError(message: "这款模型还没有下载，没有可删除的权重")
         }
         try? FileManager.default.removeItem(atPath: model.path)
+        try? FileManager.default.removeItem(atPath: model.path + ".flashcat-incomplete")
         let parent = (model.path as NSString).deletingLastPathComponent
         if Paths.fileExists(parent), let items = try? FileManager.default.contentsOfDirectory(atPath: parent), items.isEmpty {
             try? FileManager.default.removeItem(atPath: parent)
@@ -130,6 +131,9 @@ final class ModelCatalogService {
     }
 
     private func parseRepository(_ repository: String) -> ModelInfo? {
+        // A download still in flight (or canceled) leaves this marker; the
+        // folder may already carry config.json, but it is not servable yet.
+        if Paths.fileExists(repository + ".flashcat-incomplete") { return nil }
         let entries = entriesOf(repository)
         let hasConfig = entries.contains { basename($0) == "config.json" }
         let ggufs = entries.filter {
@@ -182,7 +186,7 @@ final class ModelCatalogService {
             }
         }
         id = id ?? fallbackId
-        guard let modelId = id, modelId.contains("/") else { return nil }
+        guard let modelId = Self.repositoryId(from: id) else { return nil }
 
         // An assembly is served from its target directory. The path has to be
         // absolute: flashcat_serve.py resolves a relative --target against the
@@ -201,6 +205,29 @@ final class ModelCatalogService {
             family: family,
             draftPath: Paths.fileExists(draft) ? draft : nil
         )
+    }
+
+    /// 装配体里的 `model` 在 splash 1.4 是 `owner/repo`，1.5 改成了权重的绝对
+    /// 路径（GGUF 文件或 MLX 目录）。菜单、引擎和授权表都按 `owner/repo` 寻址，
+    /// 直接把路径当 id 会在切换器里多出一条以 `.gguf` 结尾的假模型，选中它也
+    /// 永远找不到允许的权重，所以这里把路径收回成仓库 id。
+    static func repositoryId(from raw: String?) -> String? {
+        guard var value = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        value = value.replacingOccurrences(of: "\\", with: "/")
+        let lowered = value.lowercased()
+        if lowered.hasSuffix(".gguf") || lowered.hasSuffix(".safetensors") {
+            value = (value as NSString).deletingLastPathComponent
+        }
+        if value.hasPrefix("/") {
+            let name = (value as NSString).lastPathComponent
+            let owner = ((value as NSString).deletingLastPathComponent as NSString).lastPathComponent
+            guard !name.isEmpty, !owner.isEmpty, !owner.hasPrefix(".") else { return nil }
+            return owner + "/" + name
+        }
+        guard value.contains("/") else { return nil }
+        return value
     }
 
     private func splitPart(_ path: String) -> Int {

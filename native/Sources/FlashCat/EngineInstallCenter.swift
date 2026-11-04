@@ -222,6 +222,25 @@ final class EngineInstallCenter: ObservableObject {
         }
     }
 
+    /// Remove every runtime version flashCat owns for `id`. Bundled packs and
+    /// checkout builds are not ours; `removableVersions` filters those out, so
+    /// an empty set means "nothing to delete" rather than "delete everything".
+    @discardableResult
+    func removeRuntime(_ id: EngineID) async -> Bool {
+        guard let installer else { return false }
+        var removed = false
+        for version in EngineInstallations.removableVersions(id) {
+            do {
+                if try await installer.uninstall(id, version: version) { removed = true }
+            } catch {
+                onToast?("删除 \(id.displayName) \(version) 失败：\(error.localizedDescription)")
+            }
+        }
+        refreshInstalled()
+        onChange?()
+        return removed
+    }
+
     // MARK: Upstream check
 
     /// Probes GitHub for the newest release of every engine. Unauthenticated and

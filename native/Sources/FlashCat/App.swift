@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 private enum MainWindowGeometry {
-    static let defaultSize = NSSize(width: 1120, height: 760)
+    static let defaultSize = NSSize(width: 1280, height: 820)
     static let minimumSize = NSSize(width: 760, height: 600)
 }
 

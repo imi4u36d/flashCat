@@ -36,6 +36,18 @@ enum ModelInstaller {
         let watchDirectory: String?
         /// Where the weights end up, for the confirmation prompt.
         let destination: String
+        /// Sibling marker written before the transfer starts and removed only
+        /// when it succeeds. A canceled or crashed download leaves it behind,
+        /// so a half-written snapshot (config.json + tokenizer already on
+        /// disk) can never be mistaken for an installed model. Nil for Splash:
+        /// its partials live in the Hub cache until the assembly is complete.
+        let incompleteMarker: String?
+    }
+
+    /// Marker lives next to the model folder, not inside it: the downloader
+    /// owns that directory, and nested engines must be free to create it.
+    static func incompleteMarker(for destination: String) -> String {
+        destination + ".flashcat-incomplete"
     }
 
     // MARK: Destination
@@ -107,7 +119,8 @@ enum ModelInstaller {
                     workingDirectory: runtime.root,
                     environment: environment(pythonRoot: runtime.root, cache: cache),
                     watchDirectory: nil,
-                    destination: Paths.modelsDirectory)
+                    destination: Paths.modelsDirectory,
+                    incompleteMarker: nil)
     }
 
     /// 任取一个 Hub 仓库下到公共目录。下载器仍是引擎包里那个
@@ -153,7 +166,8 @@ enum ModelInstaller {
                     workingDirectory: root,
                     environment: environment(pythonRoot: root, cache: cache),
                     watchDirectory: destination,
-                    destination: destination)
+                    destination: destination,
+                    incompleteMarker: incompleteMarker(for: destination))
     }
 
     /// Use MLX-Serve's native puller when no Python downloader is installed,
@@ -185,7 +199,8 @@ enum ModelInstaller {
                     workingDirectory: installation.root.path,
                     environment: environment,
                     watchDirectory: staged,
-                    destination: destination)
+                    destination: destination,
+                    incompleteMarker: incompleteMarker(for: destination))
     }
 
     private static func snapshotPlan(engine: EngineID, model: String, cache: String) throws -> Plan {
@@ -218,7 +233,8 @@ enum ModelInstaller {
                     workingDirectory: installation.root.path,
                     environment: environment(pythonRoot: installation.root.path, cache: cache),
                     watchDirectory: destination,
-                    destination: destination)
+                    destination: destination,
+                    incompleteMarker: incompleteMarker(for: destination))
     }
 
     /// mlx-serve owns its downloader. Redirect its isolated HOME's model store
@@ -248,7 +264,8 @@ enum ModelInstaller {
                     workingDirectory: installation.root.path,
                     environment: environment,
                     watchDirectory: destination,
-                    destination: destination)
+                    destination: destination,
+                    incompleteMarker: incompleteMarker(for: destination))
     }
 
     /// Strata's installer knows which members of a sharded GGUF repository are
@@ -285,7 +302,8 @@ enum ModelInstaller {
                     workingDirectory: root,
                     environment: environment,
                     watchDirectory: data,
-                    destination: data)
+                    destination: data,
+                    incompleteMarker: incompleteMarker(for: selectedPath))
     }
 
     /// A pack must never inherit the user's Python environment; a stray

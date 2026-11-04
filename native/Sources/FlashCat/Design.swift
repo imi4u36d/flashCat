@@ -3,7 +3,8 @@ import AppKit
 
 // MARK: - Palette
 //
-// 设计方向：「精密仪器」（docs/ui/redesign-precision-instrument.html）。
+// 原生侧设计 token（菜单栏面板、原生浮层与 AppKit 控件）。
+// 主界面的视觉规范以 WebUI-SPEC.md 与 preview/liquid-glass 为准。
 // 画布退后，数据向前，状态即视觉 —— 页面底色是暖纸白（日）/ 暖石墨（夜），
 // 卡片是纯色面板 + 1px 毛发描边，数字是等宽大读数，状态色是页面里
 // 饱和度最高的颜色。品牌日出渐变只允许出现在三处（App 图标与侧栏 Logo、

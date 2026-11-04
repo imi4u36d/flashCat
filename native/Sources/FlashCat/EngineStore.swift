@@ -467,6 +467,10 @@ enum EngineModelStore {
     /// file embeds its own vocab, and all three packs serve those directly.
     static func isWeightsDirectory(_ path: String, engine: EngineID) -> Bool {
         let manager = FileManager.default
+        // flashCat writes this sibling marker before starting a model download
+        // and removes it only on success. A canceled or crashed snapshot still
+        // has config.json + tokenizer on disk, but it must not become a model.
+        if manager.fileExists(atPath: path + ".flashcat-incomplete") { return false }
         if hasGGUF(path) { return true }
         guard manager.fileExists(atPath: path + "/config.json") else { return false }
         let tokenizerFiles = ["tokenizer.json", "tokenizer_config.json", "chat_template.jinja",

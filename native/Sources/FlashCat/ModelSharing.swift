@@ -115,6 +115,7 @@ enum ModelSharing {
             let path = directory + "/" + name
             var isDirectory: ObjCBool = false
             guard manager.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else { continue }
+            guard !manager.fileExists(atPath: path + ".flashcat-incomplete") else { continue }
             guard EngineModelStore.isWeightsDirectory(path, engine: .omlx) else { continue }
             models.append(model(repo: repo(forFolder: name), path: path))
         }

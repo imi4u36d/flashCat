@@ -8,8 +8,6 @@
 不需要敲命令行，不需要为每个引擎记一套参数；打开就能用，
 需要接别的工具时它就是一个 `http://127.0.0.1:9000/v1` 这样的地址。
 
-<img src="assets/screenshots/chat.png" alt="flashCat 对话页" />
-
 ---
 
 ## 它能做什么
@@ -68,12 +66,8 @@
 占用了多少上下文（例如 `18K / 262K`）。右侧是 API 网关地址
 （OpenAI 与 Claude 各一行，都能一键复制）。
 
-<img src="assets/screenshots/overview.png" alt="概览" width="100%" />
-
 **对话** —— 内置聊天窗口。顶部可以切模型、调温度 / top-p / 最大输出、设置思考模式。
 每条回复下方标着 tok/s 和首字延迟。对话记录存在本地，可以新建和翻看历史。
-
-<img src="assets/screenshots/chat.png" alt="对话" width="100%" />
 
 **模型** —— 每个引擎一份模型库，顶部先选引擎（没装的引擎也能先看它支持什么）。
 装好的可以直接点「使用」，没装的点「下载」原地拉取，卡上标着体积和内存下限。
@@ -81,22 +75,14 @@
 按下载量排序，按「全部 / MLX / GGUF」筛权重格式，翻页继续往下看（HF 那边一页 30 条），点一行打开模型卡（README / 文件清单 / 标签），看完再决定要不要下。权重落到公共目录、
 只存一份，下完再勾给哪些引擎用；卡片上的来源分为「引擎推荐」和「个人下载」两种。
 
-<img src="assets/screenshots/models.png" alt="模型" width="100%" />
-
 **引擎** —— 每个引擎一张卡片：状态、端口、启动参数、上游版本比对，
 可以一键更新、打开安装目录、查看日志、卸载某个版本。
-
-<img src="assets/screenshots/engines.png" alt="引擎" width="100%" />
 
 **日志** —— 当前引擎的实时输出，可按「全部 / 提示 / 警告 / 错误」过滤、
 搜关键词、暂停滚动、清空。
 
-<img src="assets/screenshots/logs.png" alt="日志" width="100%" />
-
 **设置** —— 外观、端口、开机自启、思考模式、推理等级、默认模型、下载缓存目录等，
 改完底部会出现保存条。
-
-<img src="assets/screenshots/settings.png" alt="设置" width="100%" />
 
 ## 用自己的客户端连它
 
@@ -168,7 +154,7 @@ defaults write com.zhuo.flashCat hfToken hf_xxx                    # 有权限�
 下载器（python）不读 macOS 的系统代理设置，所以启动下载时会把系统代理原样传给它；
 挂着代理软件也不需要额外配置。
 
-模型归属使用引擎标签（见 `model-engine-tags.md`）：Splash 只出 GGUF，oMLX 主推 Jundot
+模型归属使用引擎标签：Splash 只出 GGUF，oMLX 主推 Jundot
 `oQ4e` 包，MTPLX 主推 Qwen 并在低内存机器上兜底 MiMo 9B、Qwen3.5 4B。
 
 磁盘上的位置（清理时用得上）：

@@ -28,6 +28,10 @@ final class ChatHistory {
         var seconds: Double?
         var tokensPerSecond: Double?
         var firstTokenSeconds: Double?
+        /// 思考流与思考时长随线程落盘：重开应用后折叠块仍在，旧回答也还记得
+        /// 「思考了 8.4 秒」。两者都是可选的，缺字段的老历史照常解码。
+        var reasoning: String?
+        var thinkingSeconds: Double?
     }
 
     func load() -> [ChatThread] {
@@ -78,7 +82,9 @@ final class ChatHistory {
                                                  usage: usage,
                                                  seconds: message.seconds,
                                                  tokensPerSecond: message.tokensPerSecond,
-                                                 firstTokenSeconds: message.firstTokenSeconds)
+                                                 firstTokenSeconds: message.firstTokenSeconds,
+                                                 thinkingSeconds: message.thinkingSeconds,
+                                                 reasoning: message.reasoning)
                           })
             }
         }
@@ -127,7 +133,9 @@ final class ChatHistory {
                       completionTokens: message.usage?.completionTokens,
                       seconds: message.seconds,
                       tokensPerSecond: message.tokensPerSecond,
-                      firstTokenSeconds: message.firstTokenSeconds)
+                      firstTokenSeconds: message.firstTokenSeconds,
+                      reasoning: message.reasoning,
+                      thinkingSeconds: message.thinkingSeconds)
     }
 
     static func parseLegacyDate(_ raw: String?) -> Date? {
@@ -200,6 +208,8 @@ final class ConversationStore {
         let firstTokenSeconds: Double?
         let model: String?
         let createdAt: Double?
+        let reasoning: String?
+        let thinkingSeconds: Double?
     }
 
     func load() -> [ChatMessage] {
@@ -218,7 +228,9 @@ final class ConversationStore {
                                usage: usage,
                                seconds: item.seconds,
                                tokensPerSecond: item.tokensPerSecond,
-                               firstTokenSeconds: item.firstTokenSeconds)
+                               firstTokenSeconds: item.firstTokenSeconds,
+                               thinkingSeconds: item.thinkingSeconds,
+                               reasoning: item.reasoning)
         }
     }
 
@@ -253,7 +265,9 @@ final class ConversationStore {
                           tokensPerSecond: message.tokensPerSecond,
                           firstTokenSeconds: message.firstTokenSeconds,
                           model: message.model,
-                          createdAt: message.createdAt?.timeIntervalSince1970)
+                          createdAt: message.createdAt?.timeIntervalSince1970,
+                          reasoning: message.reasoning,
+                          thinkingSeconds: message.thinkingSeconds)
         }
         guard !stored.isEmpty else { return }
         Paths.ensureDirectory(Paths.supportDirectory)

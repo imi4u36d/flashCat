@@ -59,7 +59,7 @@ graph TD
 
 ## 决策
 
-**表现层是网页，SwiftUI 只当壳。** 有一个给定的视觉稿（「精密仪器」）要求六个页面 1:1 还原，原生视图做不到那种还原度。因此状态管线留在 Swift（Combine 全量快照推给网页），表现层整体是 `WebUI/` 里的 HTML/CSS/JS，通过 `WKWebView` 承载。代价是多一层跨语言桥，收益是视觉稿能被精确实现。详见 [flashcat-webui](native/Sources/FlashCat/WebUI-SPEC.md)。
+**表现层是网页，SwiftUI 只当壳。** 视觉源就是 `native/Sources/FlashCat/WebUI/` 本身（Liquid Glass 方向），玻璃质感、浮层与动效在原生视图里难以 1:1 还原；早期的独立预览稿与同步脚本已移除。因此状态管线留在 Swift（Combine 全量快照推给网页），表现层整体是 `WebUI/` 里的 HTML/CSS/JS，通过 `WKWebView` 承载。代价是多一层跨语言桥，收益是视觉稿能被精确实现。详见 [flashcat-webui](native/Sources/FlashCat/WebUI-SPEC.md)。
 
 **引擎运行时永不随应用打包。** 三个原因共同决定：pack 是 GB 级（oMLX 一个就 590 MB，全塞进来应用会从 15 MB 变成数 GB，签名与分发一起变复杂）；引擎有自己的上游发布节奏，做成 pack 才能让引擎页比对上游、单独更新而不发新版应用；引擎是上游项目的成果，重分发二进制存在许可与合规顾虑，所以仓库只发构建脚本、让用户机器自己装。
 

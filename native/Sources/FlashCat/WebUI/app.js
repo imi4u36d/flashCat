@@ -1,3447 +1,3104 @@
-/* flashCat WebUI · 渲染引擎与桥接客户端
-   Swift 侧把全量状态快照推给 window.__fc__.push(state)；
-   本侧只做渲染与命令回传（webkit.messageHandlers.bridge）。 */
-
 "use strict";
 
-// ---------- 桥 ----------
-function cmd(type, payload) {
-  const message = Object.assign({ type }, payload || {});
-  if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bridge) {
-    window.webkit.messageHandlers.bridge.postMessage(message);
-  } else {
-    console.log("[cmd]", message);
-  }
-}
-
-// ---------- 本地 UI 状态 ----------
-const UI = {
-  chartRange: 45,           // 45 / 300 / 0（全部）
-  modelsFilter: "all",      // all / local / remote
-  modelsSearch: "",
-  // 每张搜索结果卡选中的量化：key = repo，值 = 量化名（空串表示默认）
-  quant: {},
-  logFilter: "all",         // all / info / warning / error
-  logSearch: "",
-  logPaused: false,
-  logSnapshot: null,
-  logOpen: {},              // 日志行 id -> true（展开详情，跨重绘保持）
-  thinkOpen: {},            // messageId -> bool
-  settingsDraft: null,      // 设置页草稿
-  menuOpen: null,           // 打开的浮层 id
-  chatParamsOpen: false,    // 对话参数弹层
-  chatParamsDraft: null,
-  downloadsOpen: false,     // 下载中心弹层
-  configEngine: null,       // 引擎配置弹层（engine id）
-  configDraft: null,        // 配置草稿 {tuning, port}
-  recommendConfirm: null,   // 推荐页上待确认的引擎（确认弹层）
-  hubOpen: false,           // 模型广场弹层（搜 HF / 看模型卡）
-  hubTab: "card",           // 模型卡弹层里的 tab：card / files / tags
-  hubDraft: null,           // 模型广场搜索框草稿 {query}（不触发重绘，保光标）
-  probeBusyRepo: null,      // 手填下载：正在等预检的仓库 id（本地「查中」标记）
-  pendingRender: false,     // 交互期间（菜单打开/输入中）挂起的重绘
-  streamStart: {},          // 生成中消息 id -> 本地起始时刻（livestrip 计时用）
-  composing: false,         // IME 组合输入中（挂起重绘防打断）
-  navIntent: null,          // 本地刚切到的页 {page, at}：旧快照不许把它掀回去
-  pointerDown: false,       // 指针按住期间不重建侧栏（重建会吞掉 click）
-  sideDirty: false,         // 按住期间攒下的侧栏改动，抬手后补渲染
-  chatScroll: null,         // 重绘前捕获的对话滚动位 {top, nearBottom}
-  chatFollowFrame: 0,       // 流式跟随的 rAF；新内容到达时重定向而不是硬跳
-  chatAutoScroll: false,    // 区分程序滚动与用户滚动
-  chatFollowPending: false, // 侧栏动画期间布局不完整，收口后补一次底部对齐
-  logScroll: null,          // 重绘前捕获的日志控制台滚动位 {top, h, nearTop}
-};
-let S = null; // 最近一次 Swift 快照
-let lastPushJSON = null;   // 内容未变化的推送不再整页重绘
-let lastOverlayJSON = null; // 弹层（广场/模型卡/预检/下载中心）内容指纹，输入期间只刷这一层
-let lastSideHTML = null;   // 侧栏上次渲染的 HTML：内容没变就不重建 DOM
-
-// ---------- 快照入口 ----------
-window.__fc__ = {
-  push(state) {
-    const prev = S;
-    // 快速连点时，Swift 侧还在路上的快照可能带着上一页的 page。本地刚切过的页
-    // 不能被它掀回去（表现就是「点了没反应」），以本地意图为准，等对齐后清掉。
-    const intent = UI.navIntent;
-    if (intent) {
-      if (state.page === intent.page) UI.navIntent = null;
-      else if (Date.now() - intent.at < 1500) state.page = intent.page;
-      else UI.navIntent = null;
-    }
-    S = state;
-    // 换页才重置草稿；同页推送（心跳/去抖）不能把用户正在编辑的草稿吹掉。
-    if (!prev || prev.page !== state.page) {
-      UI.settingsDraft = null;
-      UI.configDraft = null;
-    } else if (state.page === "settings" && UI.settingsDraft && prev.settings &&
-               comparableSettings(UI.settingsDraft) === comparableSettings(prev.settings)) {
-      // 草稿还没被用户改过（仍与进入页面时的快照一致）就让它作废，
-      // 下次按最新快照重建。否则保存竞态（保存推送在路上时心跳先渲染了一帧）
-      // 或后台改写（安装完成改 defaultModel、端口被占改 ports）都会被
-      // 旧草稿顶成凭空的「有未保存的更改」。
-      UI.settingsDraft = null;
-    }
-    applyAppearance();
-    applySidebar();
-    if (prev && state.toast && state.toast !== prev.toast) toast(state.toast);
-    // 侧栏折叠/展开动画进行中：快照照单全收（S 已更新、外观/侧栏已应用），
-    // 但指纹与整页重绘推迟到动画收口——动画里每帧都在重排，此刻再同步串一遍
-    // snapshotKey（对话页要 stringify 全部 messages）和 render，动画就被顶掉
-    // 几帧。数据晚 0.26s 上屏看不出来；换页不在此列，点了导航就要立刻有反应。
-    const pageChanged = !prev || prev.page !== state.page;
-    if (!pageChanged && Date.now() < sideAnimUntil) {
-      if (!sideAnimFlush) {
-        sideAnimFlush = setTimeout(() => {
-          sideAnimFlush = 0;
-          // 动画期间的快照都没算过指纹：清掉，让收口这一次必重绘。
-          lastPushJSON = null;
-          if (interactionHold()) UI.pendingRender = true;
-          else render();
-        }, sideAnimUntil - Date.now() + 5);
-      }
-      return;
-    }
-    // 指纹只覆盖本页可见字段：折叠只改布局宽度，不该为它整页重绘（会丢对话滚动位）。
-    const json = snapshotKey(state);
-    // 菜单开着或正在输入设置项时不整页重绘，交互结束后补一次。
-    if (interactionHold()) {
-      UI.pendingRender = true;
-      lastPushJSON = json;
-      // 整页重绘会连输入框一起换掉（光标就没了），所以输入期间只挂起。可弹层
-      // 是独立的一层，而且它的内容偏偏都在输入框还有焦点时才回来：手填仓库的
-      // 预检结果、广场搜索的列表、下载中心的进度。不刷这一层，界面就永远停在
-      // 「正在查 Hugging Face…」/「加载中」。renderOverlays 自己会把焦点和光标
-      // 位置放回去，只在弹层内容真的变了时才重建。
-      if (!UI.composing) {
-        const overlay = overlayKey(state);
-        if (overlay !== lastOverlayJSON) {
-          lastOverlayJSON = overlay;
-          renderOverlays();
-        }
-      }
-      return;
-    }
-    lastOverlayJSON = overlayKey(state);
-    // 快照与上次完全一致（心跳空转）时只补走本地时钟，不整页重绘。
-    if (prev && prev.page === state.page && lastPushJSON === json) { tickLive(); return; }
-    lastPushJSON = json;
-    render();
-  },
-  // 侧栏折叠的轻量专线（⌘\ 菜单 / Swift 侧改动）：不推全量快照，立刻切档。
-  // 点击手柄的路径不走这里——handleAction 已本地翻转过，这里只是校准兜底。
-  setSidebar(visible) {
-    if (S) S.sidebar = !!visible;
-    applySidebar();
-  },
-};
-
-// 快照指纹：只取「当前这一页真的会渲染」的字段，用于「内容没变就不重绘」的判断。
-// 指纹不能再比整包快照：引擎运行时 stats 每秒变一次、日志尾巴每秒都在长，
-// 于是任何页面（含设置页）都会被每秒一次的推送整页重绘——看上去就是
-// 「没碰它，那个提示条却一直在闪」。sidebar 仍不进指纹：折叠只改布局宽度。
-const SHELL_FIELDS = ["page", "appearance", "toast", "engine", "port",
-                      "selectedModel", "threads", "pending", "pendingInstall",
-                      // 推荐结果决定模型页的 ★ 标签，任何一页都要跟。
-                      "recommendation"];
-const PAGE_FIELDS = {
-  overview: ["stats", "throughput", "sessions", "draftLabel", "endpointURL",
-             "gatewayURL", "gatewayClaudeURL", "modelsMenu", "context"],
-  chat: ["messages", "generating", "generationStatus", "modelsMenu", "library", "settings"],
-  models: ["engineCatalog", "library", "downloads", "modelsMenu", "hubSearch"],
-  engines: ["engineCatalog", "enginesInstall", "packIndex"],
-  logs: ["logs"],
-  settings: ["settings"],
-};
-const LAUNCH_FIELDS = ["launchPage", "launchNeedsSetup", "engineCatalog", "packIndex", "pending",
-                       "pendingInstall", "enginesInstall", "downloads", "engine",
-                       "recommendation"];
-
-function snapshotKey(state) {
-  if (!state) return "";
-  // 推荐页亮着时 launchPage 是 false（Swift 里两者互斥），但推荐页用的是同一套
-  // 独立版式、同一批字段：确认弹层的体积来自 enginesInstall，发布索引晚到也必须
-  // 重绘，否则弹层会一直停在「大小以发布索引为准」。
-  const standalone = !!(state.launchPage || (state.recommendation && state.recommendation.show));
-  const keys = standalone
-    ? LAUNCH_FIELDS
-    : SHELL_FIELDS.concat(PAGE_FIELDS[state.page] || []);
-  const parts = keys.map((k) => (state[k] === undefined ? null : state[k]));
-  // 侧栏徽标与「↓ N 个下载任务」只关心数量；下载中心开着时才需要完整进度。
-  parts.push(((state.downloads && state.downloads.tasks) || []).length);
-  parts.push(((state.library && state.library.entries) || []).filter((x) => x.installed).length);
-  if (UI.downloadsOpen) parts.push(state.downloads);
-  // 广场列表、模型卡、手填预检的内容全在 hub 快照里，而且都是「点了之后过一会儿
-  // 才回来」的异步结果。指纹不带 hub，这些结果回来时会被上面那条「内容没变就
-  // 不重绘」挡掉——界面永远停在「加载中 / 正在查 Hugging Face…」。
-  if (UI.hubOpen || UI.repoDlOpen || (state.hub && (state.hub.detail || state.hub.detailLoading))) {
-    parts.push(state.hub);
-  }
-  return JSON.stringify(parts);
-}
-
-// 侧边栏折叠：状态由 Swift 持有（菜单「折叠侧边栏 ⌘\」也在改它），
-// 网页只负责把 body 切到 rail 一档，宽度与手柄滑动过渡交给 CSS。
-function applySidebar() {
-  const rail = !!(S && S.sidebar === false);
-  const next = rail ? "rail" : "full";
-  // 真正切换那一档时开一个 300ms 的窗口（--side-t 是 .26s），期间的纯数据刷新延后重绘。
-  // 同窗口给 body 挂 side-anim：.msg/.log-line 的 content-visibility 只在这一小段
-  // 开（动画每帧重排的大头），平时必须关着——CV 下重绘恢复滚动位会被钳回 0。
-  if (document.body.dataset.side !== next) {
-    sideAnimUntil = Date.now() + 300;
-    document.body.classList.add("side-anim");
-    clearTimeout(sideAnimClassTimer);
-    sideAnimClassTimer = setTimeout(() => {
-      const msgs = document.getElementById("msgs");
-      const follow = UI.chatFollowPending ||
-        (!!msgs && msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 48);
-      UI.chatFollowPending = false;
-      document.body.classList.remove("side-anim");
-      // CV 收起后消息才恢复真实高度。若收起前就在底部，补一次对齐，
-      // 避免首屏长对话在动画结束时多出一两行的底部空隙。
-      if (follow) requestAnimationFrame(() => {
-        const liveMsgs = document.getElementById("msgs");
-        if (liveMsgs && S && S.page === "chat") liveMsgs.scrollTop = liveMsgs.scrollHeight;
-      });
-    }, 320);
-  }
-  document.body.dataset.side = next;
-  // 手柄的文案跟着翻：本地先翻状态时快照还没回来，aria/title 不能停在旧值上。
-  const btn = document.querySelector(".side-toggle");
-  if (btn) {
-    const label = rail ? "展开侧边栏" : "折叠侧边栏";
-    btn.setAttribute("aria-expanded", rail ? "false" : "true");
-    btn.setAttribute("aria-label", label);
-    btn.title = label + "（⌘\\）";
-  }
-}
-
-// 首帧之后跑一遍「假折叠」：rail 那一套样式、布局、合成层先在后台算过一遍，
-// 真正点下去就不用现搭。不预热的话第一次折叠会卡 100ms 以上，之后才顺——
-// 用户看到的就是「第一次点很顿，后面就好了」。整个过程在同一个任务里跑完，
-// 中间不会落帧，所以看不出来。
-let sideWarmed = false;
-function warmSideTransition() {
-  if (sideWarmed) return;
-  sideWarmed = true;
-  const root = document.documentElement;
-  const prev = document.body.dataset.side || "full";
-  root.style.setProperty("--side-t", "0s");
-  document.body.dataset.side = prev === "rail" ? "full" : "rail";
-  void document.body.offsetWidth;
-  document.body.dataset.side = prev;
-  void document.body.offsetWidth;
-  root.style.removeProperty("--side-t");
-}
-
-// 快照未变时的本地时钟补走：概览 UP 计时、日志跟随时间戳。
-function tickLive() {
-  if (!S) return;
-  if (S.page === "overview") {
-    const el = document.getElementById("uptime");
-    if (el) el.textContent = "UP " + fmtUptime(S.stats && S.stats.startedAt);
-  } else if (S.page === "logs" && !UI.logPaused) {
-    const f = document.getElementById("followLine");
-    if (f) f.textContent = "█ 实时跟随中 · " + new Date().toTimeString().slice(0, 8);
-  }
-}
-window.__fcToast = function (message) { toast(message); };
-
-function interactionHold() {
-  if (UI.menuOpen || UI.composing) return true;
-  const key = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.key : null;
-  // chatInput 除外：生成中的心跳推送要保持消息区实时刷新。
-  return !!key && key !== "chatInput";
-}
-
-// 弹层内容指纹：只取「开了弹层就一定会渲染」的那几项。输入框还占着焦点时，
-// 整页重绘要等交互结束，但这一类异步结果必须当场刷出来。
-function overlayKey(state) {
-  const hub = (state && state.hub) || {};
-  const probe = hub.probe || {};
-  const detail = hub.detail || null;
-  const tasks = ((state && state.downloads && state.downloads.tasks) || [])
-    .map((t) => `${t.id}:${t.status}:${Math.round((t.progress || 0) * 100)}`);
-  return JSON.stringify([
-    !!hub.loading, (hub.results || []).length, hub.error || "",
-    hub.detailLoading ? 1 : 0, detail ? detail.id : "",
-    probe.repo || "", !!probe.loading, probe.error || "",
-    probe.detail ? probe.detail.id : "",
-    tasks,
-  ]);
-}
-
-function flushPendingRender() {
-  if (UI.pendingRender && !interactionHold()) {
-    UI.pendingRender = false;
-    render();
-  }
-}
-
-function toast(message) {
-  const el = document.getElementById("toast");
-  const bad = /失败|错误|无法|不能|不可|异常/.test(String(message));
-  el.innerHTML = `${icon(bad ? "alert" : "circleCheck", "toast-icon", 15)}<span>${esc(message)}</span>`;
-  el.classList.add("show");
-  clearTimeout(el.__t);
-  el.__t = setTimeout(() => el.classList.remove("show"), 2200);
-}
-
-// ---------- 外观 ----------
-const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
-darkQuery.addEventListener("change", () => { if (S && S.appearance === "system") render(); });
-function applyAppearance() {
-  const mode = !S || S.appearance === "system" ? (darkQuery.matches ? "dark" : "light")
-             : S.appearance;
-  document.body.dataset.mode = mode;
-}
-
-// ---------- 工具 ----------
-const esc = (s) => String(s == null ? "" : s)
-  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+const icon = (name, size = 16, cls = "") => window.FCIcons.svg(name, cls, size);
+const esc = (value) => String(value == null ? "" : value)
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;");
 
-// One icon family for every in-app glyph. The app/mascot artwork is separate
-// and deliberately stays untouched.
-function icon(name, cls, size) {
-  return window.FCIcons ? window.FCIcons.svg(name, cls || "", size) : "";
-}
+const NAV_ITEMS = [
+  { id: "overview", label: "概览", hint: "状态与性能", icon: "dashboard", shortcut: "1" },
+  { id: "chat", label: "对话", hint: "本地推理会话", icon: "message", shortcut: "2" },
+  { id: "models", label: "模型", hint: "模型库与推荐", icon: "layers", shortcut: "3", badge: "3" },
+  { id: "engines", label: "引擎", hint: "运行时管理", icon: "cpu", shortcut: "4" },
+  { id: "logs", label: "日志", hint: "实时运行输出", icon: "scrollText", shortcut: "5" },
+  { id: "settings", label: "设置", hint: "系统与外观", icon: "settings", shortcut: "6" },
+];
 
-function fmtBytes(n) {
-  if (!n || n <= 0) return "—";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let v = n, i = 0;
-  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
-  return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
-}
-function fmtRate(v) {
-  if (!v || v <= 0) return "";
-  return fmtBytes(v) + "/s";
-}
-// token 数按「千」收敛：概览里 262144 → 262K，四位数以下原样给。
-function fmtTokens(n) {
-  if (!n || n <= 0) return "—";
-  return n >= 1000 ? Math.round(n / 1000) + "K" : String(n);
-}
-function fmtUptime(startedAt) {
-  if (!startedAt) return "—";
-  const s = Math.max(0, Math.floor(Date.now() / 1000 - startedAt));
-  const h = String(Math.floor(s / 3600)).padStart(2, "0");
-  const m = String(Math.floor(s % 3600 / 60)).padStart(2, "0");
-  return `${h}:${m}:${String(s % 60).padStart(2, "0")}`;
-}
-// 启动已等待的秒数。引擎在「加载权重 → 预热」之间可能几分钟不吭声，
-// 有这行数字，慢就是慢，而不是看起来卡死。
-function fmtElapsed(sec) {
-  const s = Math.max(0, Math.floor(sec || 0));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-}
-// 「就绪 / 启动中」是状态本身，不该再当阶段名重复一遍。
-function stageLabel(st) {
-  const stage = st && st.startupStage;
-  if (!stage || stage === "就绪" || stage === "启动中") return "";
-  return stage;
-}
-function relTime(ms) {
-  if (!ms) return "";
-  const diff = Date.now() - ms;
-  if (diff < 60000) return "刚刚";
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`;
-  return "昨天";
-}
-// 进度环（安装进度用）
-function ringSVG(fraction, size, label) {
-  const p = Math.min(Math.max(fraction || 0, 0), 1);
-  const r = (size - 7) / 2, c = 2 * Math.PI * r;
-  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" class="ring">
-    <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="var(--w-line)" stroke-width="3.5"/>
-    <circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke="var(--w-accent)" stroke-width="3.5"
-      stroke-linecap="round" stroke-dasharray="${(c * p).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 ${size / 2} ${size / 2})"/>
-    <text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" font-size="${size >= 40 ? 11 : 9.5}" fill="var(--w-ink)">${label != null ? label : Math.round(p * 100) + "%"}</text>
-  </svg>`;
-}
+const MODELS = [
+  {
+    name: "Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+    repo: "ISTA-DASLab / Qwen3.8-Flash-Next",
+    engine: "Splash",
+    format: "GGUF",
+    size: "63.8 GB",
+    memory: "64 GB 内存起",
+    flags: ["DFlash2 加速", "MoE", "视觉", "256K"],
+    installed: true,
+  },
+  {
+    name: "Qwen3.8-27B-4bit",
+    repo: "mlx-community / Qwen3.8-27B-4bit",
+    engine: "oMLX",
+    format: "MLX",
+    size: "14.5 GB",
+    memory: "24 GB 内存起",
+    flags: ["热切换", "MoE", "思考"],
+    installed: false,
+  },
+  {
+    name: "Qwen3.6-35B-A3B-4bit",
+    repo: "mlx-community / Qwen3.6-35B-A3B-4bit",
+    engine: "oMLX",
+    format: "MLX",
+    size: "19.0 GB",
+    memory: "32 GB 内存起",
+    flags: ["4bit", "MoE", "长上下文"],
+    installed: false,
+  },
+  {
+    name: "MiMo-9B-MTPLX",
+    repo: "youssofal / MiMo-9B-MTPLX",
+    engine: "MTPLX",
+    format: "MTPLX",
+    size: "5.4 GB",
+    memory: "16 GB 内存起",
+    flags: ["低内存兜底", "多 token"],
+    installed: false,
+  },
+  {
+    name: "Qwen3.5-4B-Q4_K_M",
+    repo: "bartowski / Qwen3.5-4B-GGUF",
+    engine: "Splash",
+    format: "GGUF",
+    size: "2.6 GB",
+    memory: "8 GB 内存起",
+    flags: ["Q4_K_M", "轻量"],
+    installed: false,
+  },
+  {
+    name: "Strata-Serve-8B-MLX",
+    repo: "flashcat / strata-serve-8b",
+    engine: "MTPLX",
+    format: "MTPLX",
+    size: "7.8 GB",
+    memory: "18 GB 内存起",
+    flags: ["长上下文", "工具调用"],
+    installed: false,
+  },
+];
 
-// 极简 markdown：段落 / 标题 / 代码块 / 引用 / 列表 / 行内代码与加粗
-function md(text) {
-  const src = String(text == null ? "" : text);
-  const blocks = [];
-  const lines = src.replace(/\r\n/g, "\n").split("\n");
-  let i = 0, para = [];
-  const flush = () => { if (para.length) { blocks.push(["p", para.join("\n")]); para = []; } };
-  while (i < lines.length) {
-    const t = lines[i].trim();
-    if (!t) { flush(); i++; continue; }
-    if (t.startsWith("```") || t.startsWith("~~~")) {
-      flush();
-      const mark = t.slice(0, 3);
-      const lang = esc(t.slice(3).trim() || "CODE");
-      i++;
-      const code = [];
-      while (i < lines.length && !lines[i].trim().startsWith(mark)) { code.push(lines[i]); i++; }
-      i++;
-      blocks.push(["code", `<pre><code>${esc(code.join("\n"))}</code></pre>`, lang]);
-      continue;
-    }
-    if (/^#{1,4}\s/.test(t)) { flush(); blocks.push(["h", esc(t.replace(/^#+\s*/, "")), t.match(/^#+/)[0].length]); i++; continue; }
-    if (t.startsWith(">")) { flush(); const q = []; while (i < lines.length && lines[i].trim().startsWith(">")) { q.push(lines[i].trim().slice(1).trim()); i++; } blocks.push(["q", esc(q.join("\n"))]); continue; }
-    if (/^[-*+•]\s/.test(t) || /^\d+[.)]\s/.test(t)) {
-      flush();
-      const items = [];
-      while (i < lines.length && (/^[-*+•]\s/.test(lines[i].trim()) || /^\d+[.)]\s/.test(lines[i].trim()))) {
-        items.push(lines[i].trim().replace(/^([-*+•]|\d+[.)])\s*/, "")); i++;
-      }
-      blocks.push(["ul", items.map((x) => `<li>${inline(x)}</li>`).join("")]);
-      continue;
-    }
-    if (t === "---" || t === "***") { flush(); blocks.push(["hr"]); i++; continue; }
-    para.push(lines[i]); i++;
-  }
-  flush();
-  if (!blocks.length) blocks.push(["p", ""]);
-  return blocks.map(([k, a, b]) => {
-    switch (k) {
-      case "p": return `<p>${inline(a)}</p>`;
-      case "h": return `<p style="font-weight:700;font-size:${b <= 2 ? 14.5 : 13.5}px">${inline(a)}</p>`;
-      case "code": return a;
-      case "q": return `<p style="border-left:3px solid var(--w-line-strong);padding-left:10px;color:var(--w-ink-2)">${inline(a)}</p>`;
-      case "ul": return `<ul style="margin:0;padding-left:18px">${a}</ul>`;
-      default: return "<hr>";
-    }
-  }).join("");
+const ENGINES = [
+  {
+    id: "Splash",
+    glyph: "S",
+    color: "#ff8b63",
+    version: "1.5.0",
+    latest: "1.6.0",
+    installed: true,
+    port: "8000",
+    state: "running",
+    description: "单模型、最省事，DFlash2 草稿加速",
+    uptime: "00:54:18",
+    pid: "95976",
+  },
+  {
+    id: "oMLX",
+    glyph: "O",
+    color: "#65b9ff",
+    version: "0.7.3rc1",
+    latest: "0.7.3rc1",
+    installed: true,
+    port: "8100",
+    state: "stopped",
+    description: "多模型常驻，模型热切换不停进程",
+    uptime: "—",
+    pid: "—",
+  },
+  {
+    id: "MTPLX",
+    glyph: "M",
+    color: "#ad8cff",
+    version: "2.12.2",
+    latest: "2.12.2",
+    installed: false,
+    port: "8200",
+    state: "not-installed",
+    description: "长上下文与多 token 预测",
+    uptime: "—",
+    pid: "—",
+  },
+];
 
-  function inline(s) {
-    return esc(s)
-      .replace(/`([^`]+)`/g, "<code>$1</code>")
-      .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
-      // 图片先于链接：badge 常写成 [![alt](img)](url)，先吃掉图片，
-      // 剩下的一层链接还能正常出来。
-      .replace(/!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g, '<img class="mdimg" alt="$1" src="$2">')
-      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a class="mdlink" data-href="$2">$1</a>');
-  }
-}
+const INITIAL_MESSAGES = [
+  {
+    id: "m1",
+    role: "user",
+    content: "用三句话介绍本地大模型的优势。",
+  },
+  {
+    id: "m2",
+    role: "assistant",
+    content: "本地大模型把推理留在你的设备上，**数据不必离开这台 Mac**，隐私边界更清楚。\n\n- 不依赖云端网络，离线或弱网环境里依然能工作，首字响应更稳定。\n- 没有按 token 计费，长期高频使用时更容易控制成本。\n- 可以围绕自己的资料做定制，`system prompt` 与检索都在本机。\n\n> 代价是硬件投入与运维要自己承担——这也是它更适合固定工作流的原因。",
+    reasoning: "用户要求用三句话介绍优势。回答应覆盖隐私、离线与响应、长期成本。保持精炼，不引入不相关的对比。",
+    rate: "87.4",
+    ttft: "601",
+    tokens: "120",
+    thinkingSeconds: 4.2,
+  },
+  {
+    id: "m3",
+    role: "user",
+    content: "那它在隐私和成本上分别怎么权衡？分点说。",
+  },
+  {
+    id: "m4",
+    role: "assistant",
+    content: "**隐私**\n\n数据可以在本地处理，适合敏感资料；代价是磁盘、权限与日志仍要自己管理。\n\n**成本**\n\n高频、离线、批量处理更划算；代价是前期硬件投入和后续维护。\n\n**结论**\n\n数据敏感且调用量大时更适合本地，低频或需要持续跟随新模型时云端仍更经济。",
+    reasoning: "需要分别讨论隐私与成本，并给出平衡结论。保留短句和清晰分点。",
+    rate: "100.6",
+    ttft: "1688",
+    tokens: "356",
+    thinkingSeconds: 6.8,
+  },
+];
 
-// ---------- 渲染骨架 ----------
-let renderQueued = false;
-let pageChangedQueued = false;
-// 侧栏折叠动画的截止时刻。动画期间不让「纯数据刷新」重绘整页：
-// 概览页的 stats 每秒变一次，1s 心跳有约 1/4 的概率正好落在 260ms 的过渡里，
-// 那一下会把 main.innerHTML 整块换掉（几十个节点 + 折线图重画），
-// 动画就被顶掉一拍——看上去就是「展开到一半卡一下」。让路即可，数据晚 0.26s 上屏看不出来。
-// 换页不在此列：用户点了导航就要立刻有反应。
-let sideAnimUntil = 0;
-// side-anim 类的收口定时器：窗口过了就把 CV 关回去（见 applySidebar / app.css）。
-let sideAnimClassTimer = 0;
-// 动画期间的收口定时器：多个快照挤在动画里只排一次，收口时按最新 S 重绘。
-let sideAnimFlush = 0;
-function render(pageChanged) {
-  if (pageChanged) pageChangedQueued = true;
-  if (renderQueued) return;
-  renderQueued = true;
-  const run = () => {
-    renderQueued = false;
-    const pc = pageChangedQueued;
-    pageChangedQueued = false;
-    renderNow(pc);
-  };
-  const wait = sideAnimUntil - Date.now();
-  if (wait > 0 && !pageChanged) setTimeout(run, wait);
-  else requestAnimationFrame(run);
-}
-
-// ---------- 局部更新（DOM morph）----------
-// 整页 innerHTML 替换的代价不只是那几毫秒：节点身份全换了，CSS 动画从 0% 重来
-// （流式 spinner 6 秒内被重置 57 次）、滚动容器归零、输入框内容与选中态丢失、
-// 展开态要靠 UI.* 手工抢救。这里改成「解析新 HTML → 与旧树逐节点对齐 → 只改真正
-// 变了的文本和属性」，能复用的节点一律复用，动画/滚动/焦点/输入法组字自然保住。
-function paint(el, html, reuse) {
-  if (!reuse) { el.innerHTML = html; return; }
-  const tpl = document.createElement("template");
-  tpl.innerHTML = html;
-  morphChildren(el, tpl.content);
-}
-
-// 节点能否就地打补丁：标签、id、data-key 都对得上才复用，否则整块换掉。
-function sameNode(a, b) {
-  if (a.nodeType !== b.nodeType) return false;
-  if (a.nodeType === 3) return true;                 // 文本：直接改 nodeValue
-  if (a.nodeType !== 1) return false;                // 注释等：整块换掉
-  if (a.tagName !== b.tagName) return false;
-  if (a.id !== b.id) return false;                   // id 变了说明角色变了
-  return (a.getAttribute("data-key") || "") === (b.getAttribute("data-key") || "")
-    && (a.getAttribute("data-overlay") || "") === (b.getAttribute("data-overlay") || "");
-}
-
-// 节点的稳定身份：优先 data-key（消息按 id），其次 data-log（日志行按 id），
-// 弹层根节点用 data-overlay（按关闭动作区分）。
-function nodeKey(el) {
-  if (!el || el.nodeType !== 1 || !el.getAttribute) return null;
-  const k = el.getAttribute("data-key") || el.getAttribute("data-log") || el.getAttribute("data-overlay");
-  return k ? el.tagName + "|" + k : null;
-}
-
-function morphChildren(parent, source) {
-  // 必须先拍成数组再遍历！childNodes 是活集合，appendChild/replaceChild 会把节点
-  // 从 source 里摘走，活集合当场左移 —— 按活集合走会每搬一个就跳过一个，页面直
-  // 接被搬空（换页后整页空白就是这么来的）。
-  const oldKids = Array.prototype.slice.call(parent.childNodes);
-  const newKids = Array.prototype.slice.call(source.childNodes);
-  // 旧节点按 key 建索引。日志/消息是从头部插入的：纯按下标对齐会让后面每一条
-  // 都被当成"变了"重写一遍（800 行日志一次推送要写八百个节点）。有 key 的先按
-  // key 配对，没 key 的再退回下标对齐。
-  const oldByKey = new Map();
-  oldKids.forEach((n) => { const k = nodeKey(n); if (k && !oldByKey.has(k)) oldByKey.set(k, n); });
-  const used = new Set();
-  const plan = new Array(newKids.length);
-  for (let i = 0; i < newKids.length; i++) {
-    const nk = newKids[i];
-    const k = nodeKey(nk);
-    let m = k ? oldByKey.get(k) : null;
-    if (m && used.has(m)) m = null;
-    if (!m) {
-      const ok = oldKids[i];
-      if (ok && !used.has(ok) && sameNode(ok, nk)) m = ok;
-    }
-    if (m) used.add(m);
-    plan[i] = m;
-  }
-  for (let i = 0; i < newKids.length; i++) {
-    const nk = newKids[i];
-    const m = plan[i];
-    const ref = parent.childNodes[i] || null;
-    if (m) { morphNode(m, nk); if (m !== ref) parent.insertBefore(m, ref); }
-    else parent.insertBefore(nk, ref);
-  }
-  for (let i = 0; i < oldKids.length; i++) if (!used.has(oldKids[i])) oldKids[i].remove();
-}
-
-// 指标读数的过渡：旧值滚到新值，而不是换掉那个字。
-// 只动数字部分——单位、小数位、千分位沿用新值；变化小于 0.5 或任一侧不是纯数字
-// （"—"、"/"）时直接换，别让每秒一次的读数变成一直在抖的噪声。
-const valTicks = new WeakMap();
-function animateValue(node, next) {
-  const prev = node.nodeValue;
-  const numeric = (s) => /^\s*-?[\d.,]+\s*$/.test(s);
-  const a = parseFloat(prev.replace(/,/g, ""));
-  const b = parseFloat(next.replace(/,/g, ""));
-  if (!numeric(prev) || !numeric(next) || !isFinite(a) || !isFinite(b) || Math.abs(b - a) < 0.5) {
-    node.nodeValue = next;
-    return;
-  }
-  const m = next.match(/(\d[\d,]*)(\.\d+)?/);
-  const decimals = m && m[2] ? m[2].length - 1 : 0;
-  const grouped = !!(m && m[1].includes(","));
-  const fmt = (v) => {
-    const s = grouped
-      ? Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
-      : Math.abs(v).toFixed(decimals);
-    return (v < 0 ? "-" : "") + s;
-  };
-  const tok = (valTicks.get(node) || 0) + 1;
-  valTicks.set(node, tok);
-  const t0 = performance.now();
-  const step = (now) => {
-    if (valTicks.get(node) !== tok) return;   // 有更新的一帧插队了，让它接手
-    const p = Math.min(1, (now - t0) / 320);
-    const e = 1 - Math.pow(1 - p, 3);
-    node.nodeValue = p >= 1 ? next : fmt(a + (b - a) * e);
-    if (p < 1) requestAnimationFrame(step);
-  };
-  requestAnimationFrame(step);
-}
-
-function morphNode(a, b) {
-  if (a.nodeType === 3) {
-    if (a.nodeValue === b.nodeValue) return;
-    // 指标读数：换的是「值」，不是「字」。让它从旧值滚到新值，别整块跳一下。
-    if (a.parentNode && a.parentNode.classList && a.parentNode.classList.contains("val")) {
-      animateValue(a, b.nodeValue);
-      return;
-    }
-    a.nodeValue = b.nodeValue;
-    return;
-  }
-  morphAttrs(a, b);
-  // data-managed：这块内容自己维护（日志控制台 800 行，每秒整段重拼 ≈ 24ms），
-  // morph 只对齐属性、不碰子节点。
-  if (b.getAttribute && b.getAttribute("data-managed") !== null) return;
-  morphChildren(a, b);
-}
-
-function morphAttrs(a, b) {
-  const want = b.attributes;
-  for (let i = 0; i < want.length; i++) {
-    const n = want[i].name;
-    if (a.getAttribute(n) !== want[i].value) a.setAttribute(n, want[i].value);
-  }
-  const have = a.attributes;
-  for (let i = have.length - 1; i >= 0; i--) {
-    const n = have[i].name;
-    if (!b.hasAttribute(n)) a.removeAttribute(n);
-  }
-  // 属性驱动不了的选中态单独对齐；输入框的 value 属性故意不碰，免得打断输入。
-  if (a.tagName === "INPUT" && (b.type === "checkbox" || b.type === "radio")) a.checked = b.checked;
-  if (a.tagName === "OPTION") a.selected = b.selected;
-}
-
-function renderNow(pageChanged) {
-  if (!S) return;
-  closeMenus();
-  const focusKey = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.key : null;
-  // 首次运行的推荐页和启动页是同一套「独立版式」（无侧栏、占满窗口），
-  // 所以 launchPage 为假时也要先看推荐页：磁盘上还没有引擎的机器，默认
-  // 页就是这张，不能直接掉进对话页。
-  const recommending = !!(S.recommendation && S.recommendation.show);
-  const standalone = recommending || !!S.launchPage;
-  const launch = !!S.launchPage && !recommending;
-  document.body.classList.toggle("launch-mode", standalone);
-  document.getElementById("side").style.display = standalone ? "none" : "";
-  const main = document.getElementById("main");
-  main.className = "main" + (standalone ? " launch-main" : (S.page === "chat" ? " chat-main" : (S.page === "logs" ? " logs-main" : "")));
-  if (recommending) {
-    main.innerHTML = pageRecommend();
-    bindActs(main);
-    bindRecommendOverlay(main);
-    restoreFocus(focusKey);
-    return;
-  }
-  if (launch) {
-    main.innerHTML = pageLaunch();
-    bindActs(main);
-    restoreFocus(focusKey);
-    return;
-  }
-  // 页面切换：轻量淡入，弱化整页 innerHTML 替换的闪烁感。
-  if (pageChanged) {
-    main.classList.remove("page-in");
-    void main.offsetWidth;
-    main.classList.add("page-in");
-  }
-  // 整页 innerHTML 替换会连滚动容器（#msgs / #logConsole）一起重建，
-  // scrollTop 归零——这就是流式输出时「对话看着看着被弹回顶部」的根因。
-  // 重绘前记住滚动位与是否近底，渲染完成后由 afterXxxRender 恢复。
-  UI.chatScroll = null;
-  UI.logScroll = null;
-  // 其余页没有内滚容器，.main 自己就是滚动条：引擎页的安装/下载进度每秒推一次、
-  // 设置页点一个开关都会整页重绘，不记住 scrollTop 就是「看一半被弹回顶部」。
-  // 换页（pageChanged）仍回顶部，符合直觉。
-  let mainScroll = (!pageChanged && S.page !== "chat") ? main.scrollTop : null;
-  if (!pageChanged) {
-    const msgsEl = document.getElementById("msgs");
-    if (S.page === "chat" && msgsEl)
-      UI.chatScroll = { top: msgsEl.scrollTop, nearBottom: msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 140 };
-    const conEl = document.getElementById("logConsole");
-    if (S.page === "logs" && conEl)
-      // 倒序吸顶跟随：nearTop 记录是否在顶部附近；h 记录内容高度，
-      // 恢复时用高度差 delta 补偿顶部插入的新日志（见 afterLogsRender）。
-      UI.logScroll = { top: conEl.scrollTop, h: conEl.scrollHeight, nearTop: conEl.scrollTop < 140 };
-  }
-  renderSide();
-  // 换页仍整块重建（保留 page-in 过渡语义）；同页刷新走 morph，节点和动画都留着。
-  const reuse = !pageChanged;
-  switch (S.page) {
-    case "overview": paint(main, pageOverview(), reuse); break;
-    // 流式期间每秒多次推送只改 livestrip 里的文本，spinner 的 CSS 动画不再被打回 0%。
-    case "chat": paint(main, pageChat(), reuse); afterChatRender(pageChanged); break;
-    case "models": paint(main, pageModels(), reuse); afterModelsRender(); break;
-    case "engines": paint(main, pageEngines(), reuse); break;
-    case "logs": paint(main, pageLogs(), reuse); afterLogsRender(); break;
-    case "settings": paint(main, pageSettings(), reuse); afterSettingsRender(); break;
-  }
-  // 每页统一绑定 data-act；这是此前多页按钮失灵的根因（只绑定过对话/日志两页）。
-  bindActs(main);
-  renderOverlays();
-  restoreFocus(focusKey);
-  // 恢复非对话页的滚动位。放在 restoreFocus 之后：focus() 自带的 scrollIntoView
-  // 语义不会再把位置拽走。内容高度变化（如设置页点开「推理等级」多出一行）时
-  // 浏览器会自行夹到合法范围，不会滚过头。
-  if (mainScroll != null) main.scrollTop = mainScroll;
-  if (!sideWarmed) requestAnimationFrame(warmSideTransition);
-}
-
-// 近底才吸底：流式输出时跟随滚动，用户上翻阅读时不拽回底部。
-// （日志页已改为倒序吸顶，不走这里；对话页恢复逻辑在 afterChatRender 内联。）
-function stickScroll(el, force) {
-  if (!el) return;
-  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 140;
-  if (force || nearBottom) el.scrollTop = el.scrollHeight;
-}
-
-function restoreFocus(key) {
-  if (!key) return;
-  const el = document.querySelector(`[data-key="${key}"]`);
-  if (el && el.focus) el.focus();
-}
-
-function closeMenus() {
-  document.querySelectorAll(".popover").forEach((p) => p.remove());
-  document.querySelectorAll("[data-menu][aria-expanded='true']").forEach((el) => {
-    el.setAttribute("aria-expanded", "false");
-  });
-  UI.menuOpen = null;
-  flushPendingRender();
-}
-
-document.addEventListener("click", (e) => {
-  UI.lastClickEl = e.target;
-  // markdown 里的链接触统一外开：WebView 一旦真跳转就把整个控制台换掉了。
-  const mdLink = e.target.closest && e.target.closest("a.mdlink");
-  if (mdLink) {
-    e.preventDefault();
-    e.stopPropagation();
-    const url = mdLink.dataset.href;
-    if (url) cmd("openURL", { url });
-    return;
-  }
-  const menuBtn = e.target.closest && e.target.closest("[data-menu]");
-  const modelMenuBtn = e.target.closest && e.target.closest("[data-act='modelMenu']");
-  if (!menuBtn && !modelMenuBtn) {
-    if (UI.menuOpen && !e.target.closest(".popover")) { closeMenus(); UI.menuOpen = null; }
-    return;
-  }
-  // 菜单按钮：捕获阶段统一处理并拦截，避免 bubble 侧重复触发。
-  e.stopPropagation();
-  e.preventDefault();
-  if (menuBtn) {
-    switch (menuBtn.dataset.menu) {
-      case "modelSwitcher": modelSwitcherMenu(); return;
-      case "sidebarModelSwitcher": sidebarModelMenu(); return;
-      case "chatMore": chatMoreMenu(); return;
-      case "thinkLevel": thinkLevelMenu(); return;
-      case "engineMenu": engineMenu(menuBtn.dataset.arg); return;
-      case "logMenu": logMenu(); return;
-    }
-  }
-  if (modelMenuBtn) modelMenu(modelMenuBtn.dataset.arg);
-}, true);
-
-// ---------- 原生窗口手感：不选中、不拖拽、不弹浏览器的右键菜单 ----------
-function isEditableTarget(el) {
-  if (!el) return false;
-  const tag = (el.tagName || "").toUpperCase();
-  return tag === "INPUT" || tag === "TEXTAREA" || el.isContentEditable === true;
-}
-
-// 右键：网页是应用外壳，不该出现「重新载入 / 检查元素 / 前进后退」那套。
-// 输入框里仍保留系统编辑菜单（粘贴 / 全选）。
-window.addEventListener("contextmenu", (e) => {
-  if (!isEditableTarget(e.target)) e.preventDefault();
-}, true);
-
-// 除表单控件外一律不可拖选（CSS 的 user-select 是主手段，这里兜住 WebKit 的边角）。
-document.addEventListener("selectstart", (e) => {
-  if (!isEditableTarget(e.target)) e.preventDefault();
-}, true);
-document.addEventListener("dragstart", (e) => e.preventDefault(), true);
-
-// 按住指针期间不重建侧栏：mouseup 时目标若已被换掉，click 事件根本不会触发。
-document.addEventListener("pointerdown", () => { UI.pointerDown = true; }, true);
-document.addEventListener("pointerup", () => {
-  UI.pointerDown = false;
-  if (UI.sideDirty && S) { UI.sideDirty = false; renderSide(); }
-}, true);
-document.addEventListener("pointercancel", () => { UI.pointerDown = false; }, true);
-
-function popover(anchorId, items) {
-  if (UI.menuOpen === anchorId) { closeMenus(); return; }
-  closeMenus();
-  const anchor = document.getElementById(anchorId) || UI.lastClickEl;
-  if (!anchor) return;
-  const box = document.createElement("div");
-  box.className = "popover";
-  box.setAttribute("role", "menu");
-  box.setAttribute("aria-label", "操作菜单");
-  box.innerHTML = items.map((it) => it === "-" ? '<div class="sep"></div>'
-    : it.header ? `<div class="menu-head">${it.label}</div>`
-    : `<div class="item ${it.on ? "on" : ""}" role="menuitem" tabindex="-1" data-act="${esc(it.act)}" data-arg="${esc(it.arg || "")}">${it.label}${it.on ? icon("check", "menu-check", 14) : ""}</div>`).join("");
-  box.addEventListener("click", (e) => {
-    const item = e.target.closest(".item");
-    if (!item) return;
-    closeMenus();
-    handleAction(item.dataset.act, item.dataset.arg);
-  });
-  // 挂到 body、按视口定位：侧栏引擎卡的锚点在 #main 外面，
-  // 挂在 #main 里会算出负坐标被夹到左上角。
-  document.body.appendChild(box);
-  const r = anchor.getBoundingClientRect();
-  box.style.top = Math.max(8, Math.min(r.bottom + 4, window.innerHeight - box.offsetHeight - 8)) + "px";
-  box.style.left = Math.max(8, Math.min(r.left, window.innerWidth - box.offsetWidth - 8)) + "px";
-  anchor.setAttribute("aria-expanded", "true");
-  UI.menuOpen = anchorId;
-}
-
-function handleAction(act, arg) {
-  switch (act) {
-    case "nav": nav(arg); break;
-    // 折叠/展开侧栏：先本地翻转（点击即出效果），再让 Swift 落盘并回推快照校准。
-    case "toggleSidebar":
-      if (S) { S.sidebar = S.sidebar === false; applySidebar(); }
-      cmd("toggleSidebar");
-      break;
-    case "openThread": cmd("openThread", { id: arg }); break;
-    case "newChat": cmd("newChat"); break;
-    case "copyConversation": cmd("copyConversation"); break;
-    case "clearChat": cmd("clearChat"); break;
-    case "clearThreads": cmd("clearThreads"); break;
-    case "chatParams": UI.chatParamsOpen = true; UI.chatParamsDraft = null; render(); break;
-    case "setEffort": cmd("setEffort", { effort: arg }); break;
-    case "browseEngine": cmd("browseEngine", { engine: arg }); break;
-    case "useModel": { const [engine, id] = arg.split("|"); cmd("useModel", { engine, id }); break; }
-    case "downloadModel": { const [engine, id] = arg.split("|"); cmd("downloadModel", { engine, id }); break; }
-    case "revealModel": { const [engine, id] = arg.split("|"); cmd("revealModel", { engine, id }); break; }
-    case "removeModel": { const [engine, id] = arg.split("|"); cmd("removeModel", { engine, id }); break; }
-    case "engineMenu": engineMenu(arg); break;
-    case "engineConfig": UI.configEngine = arg; UI.configDraft = null; render(); break;
-    case "openFinder": cmd("openFinder", { kind: arg, engine: UI.configEngine || undefined }); break;
-    case "openFinderEngine": { const [kind, eng] = arg.split("|"); cmd("openFinder", { kind, engine: eng }); break; }
-    case "installEngine": cmd("installEngine", { engine: arg }); break;
-    // 推荐页：先弹确认（写清装什么、多大、装完下哪个模型），确认才动安装。
-    case "recommendInstall":
-      UI.recommendConfirm = arg;
-      render();
-      break;
-    case "confirmRecommendInstall": {
-      const engine = UI.recommendConfirm;
-      UI.recommendConfirm = null;
-      // 先本地重绘把弹层关掉，再发命令：装不上时 Swift 只推一条 toast，而 toast
-      // 不在独立版式的字段集里、指纹不变就不会重绘 —— 弹层会卡在屏幕上，再点
-      // 「安装并下载」还是空操作（engine 已经为 null）。
-      render();
-      if (engine) cmd("recommendInstall", { engine });
-      break;
-    }
-    case "closeRecommendConfirm": UI.recommendConfirm = null; render(); break;
-    case "skipRecommendation": cmd("skipRecommendation"); break;
-    case "installEngineLaunch": cmd("installEngine", { engine: arg, launch: true }); break;
-    case "openLaunchPage": cmd("openLaunchPage"); break;
-    case "finishLaunch": cmd("finishLaunch"); break;
-    case "start": cmd("startService"); break;
-    case "stop": cmd("stopService"); break;
-    case "restart": cmd("restartService"); break;
-    case "confirmUse": cmd("confirmLibraryUse"); break;
-    case "cancelUse": cmd("cancelLibraryUse"); break;
-    case "confirmSwitch": cmd("confirmModelSwitch"); break;
-    case "cancelSwitch": cmd("cancelModelSwitch"); break;
-    case "abortSwitch": cmd("abortModelSwitch"); break;
-    case "confirmInstall": cmd("confirmEngineInstall"); break;
-    case "cancelInstall": cmd("cancelEngineInstall"); break;
-    case "chartRange": UI.chartRange = Number(arg); render(); break;
-    case "copyGateway": cmd("copyGateway", { style: arg || "openai" }); break;
-    case "openHub": {
-      UI.hubOpen = true;
-      hubDraft();
-      // 首次打开先拉一屏推荐：空列表弹层看着像坏了。
-      const h = S.hub || {};
-      if (!(h.results || []).length && !h.loading) cmd("searchHub", { query: "", sort: h.sort || "trending" });
-      render();
-      restoreFocus("hubq");
-      break;
-    }
-    case "closeHub": UI.hubOpen = false; render(); break;
-    case "hubSearch": cmd("searchHub", { query: hubDraft().query, sort: (S.hub || {}).sort || "trending", filter: (S.hub || {}).filter || "all", page: 0 }); break;
-    case "hubSort": cmd("searchHub", { query: hubDraft().query, sort: arg, filter: (S.hub || {}).filter || "all", page: 0 }); break;
-    // 筛权重格式和翻页都从第 0 页/当前页重取：HF 的 skip 是纯偏移量，页码越界
-    // 只会拿到空数组，所以「上一页」必须在 0 处止住。
-    case "hubFilter": cmd("searchHub", { query: hubDraft().query, sort: (S.hub || {}).sort || "trending", filter: arg, page: 0 }); break;
-    case "hubPage": {
-      const h = S.hub || {};
-      const page = (h.page || 0) + (arg === "next" ? 1 : -1);
-      if (page < 0 || (arg === "next" && !h.hasMore)) break;
-      cmd("searchHub", { query: hubDraft().query, sort: h.sort || "trending", filter: h.filter || "all", page });
-      break;
-    }
-    case "hubOpenDetail": UI.hubTab = "card"; cmd("hubDetail", { repo: arg }); break;
-    case "hubCloseDetail": cmd("closeHubDetail"); break;
-    case "hubTab": UI.hubTab = arg; render(); break;
-    case "hubOpenLink": cmd("openURL", { url: `https://huggingface.co/${arg}` }); break;
-    case "hubManual": UI.hubOpen = false; UI.repoDlOpen = true; repoDlDraft(); render(); restoreFocus("repoDlRepo"); break;
-    case "hubDownload": {
-      // 下载前只剩「勾引擎」这一步，和手填 id 走同一条确认弹层。
-      // 模型卡要一起收掉：确认弹层盖在它上面，下完还留着半截卡很难看。
-      cmd("closeHubDetail");
-      const d = repoDlDraft();
-      d.repo = arg;
-      d.error = "";
-      UI.hubOpen = false;
-      UI.repoDlOpen = true;
-      render();
-      restoreFocus("repoDlRepo");
-      // 从广场点进来时 id 已经是完整的，直接查一次，不用等输入。
-      repoProbeSoon(arg);
-      break;
-    }
-    case "openRepoDownload": UI.repoDlOpen = true; repoDlDraft(); render(); restoreFocus("repoDlRepo"); break;
-    case "closeRepoDownload":
-      repoProbeStop();
-      cmd("clearRepoProbe");
-      UI.repoDlOpen = false;
-      UI.repoDl = null;
-      render();
-      break;
-    case "repoPick": { const d = repoDlDraft(); d.engines[arg] = !d.engines[arg]; render(); restoreFocus("repoDlRepo"); break; }
-    case "confirmRepoDownload": {
-      const d = repoDlDraft();
-      const repo = (d.repo || "").trim();
-      if (!/^[^\s/]+\/[^\s/]+$/.test(repo)) {
-        d.error = "仓库 id 要写成 owner/repo，例如 Qwen/Qwen3.5-9B";
-        render(); restoreFocus("repoDlRepo");
-        break;
-      }
-      // 已经在本机的不再下一遍：只要不是换目录，重复下只会多占一份盘。
-      if (repoLocal(repo)) {
-        d.error = "这个仓库已经在本机了，不用再下";
-        render(); restoreFocus("repoDlRepo");
-        break;
-      }
-      const engines = engineIDs().filter((k) => d.engines[k]);
-      cmd("downloadRepo", { repo, engines });
-      UI.repoDlOpen = false; UI.repoDl = null; UI.downloadsOpen = true;
-      render();
-      break;
-    }
-    case "shareEngines": { const [engine, id] = arg.split("|"); openShareEngines(engine, id); break; }
-    case "sharePick": if (UI.shareEdit) { UI.shareEdit.engines[arg] = !UI.shareEdit.engines[arg]; render(); } break;
-    case "closeShareEngines": UI.shareEdit = null; render(); break;
-    case "confirmShareEngines": {
-      const s = UI.shareEdit;
-      if (s) cmd("setModelEngines", { repo: s.id, engines: engineIDs().filter((k) => s.engines[k]) });
-      UI.shareEdit = null;
-      render();
-      break;
-    }
-    case "openDownloadCenter": UI.downloadsOpen = true; render(); break;
-    case "closeDownloads": UI.downloadsOpen = false; render(); break;
-    case "closeConfig": UI.configEngine = null; UI.configDraft = null; render(); break;
-    case "closeChatParams": UI.chatParamsOpen = false; UI.chatParamsDraft = null; render(); break;
-    case "pauseDownload": { const t = taskArg(arg); cmd("pauseDownload", t); break; }
-    case "resumeDownload": { const t = taskArg(arg); cmd("resumeDownload", t); break; }
-    case "cancelDownload": { const t = taskArg(arg); cmd("cancelDownload", t); break; }
-    case "removeTask": { const t = taskArg(arg); cmd("removeTask", t); break; }
-    case "saveEngineConfig": saveEngineConfig(); break;
-    case "saveChatParams": saveChatParams(); break;
-    case "resetChatParams": resetChatParams(); break;
-    case "logMenu": logMenu(); break;
-    case "clearLogs": cmd("clearLogs"); break;
-    case "rescan": cmd("rescan", { engine: arg }); break;
-    case "copyLog": copyVisibleLogText(); break;
-  }
-}
-
-function taskArg(arg) {
-  const [engine, model] = String(arg || "").split("|");
-  return { engine, model };
-}
-
-// 乐观导航：本地先切页渲染（快照数据已在手），再通知 Swift。
-// 原实现只发命令等 Swift 回推，固定叠加 100ms 去抖 + 100ms 排队，菜单切换必然发黏。
-function nav(page) {
-  if (!S) { cmd("nav", { page }); return; }
-  if (S.page === page) { cmd("nav", { page }); return; }
-  S.page = page;
-  UI.settingsDraft = null;
-  UI.configDraft = null;
-  UI.menuOpen = null;
-  // 记下这次点击的意图：Swift 回推的旧快照不许把页面掀回上一页。
-  UI.navIntent = { page, at: Date.now() };
-  // 指纹跟上本地这一帧：Swift 的确认推送内容一致时不再二次整页重绘（否则每次
-  // 切页都会渲两遍，第二遍还会把按下的元素换掉，连点就容易丢 click）。
-  lastPushJSON = snapshotKey(S);
-  render(true);
-  cmd("nav", { page });
-}
-
-// ---------- 侧栏 ----------
-// One optical family across navigation and controls. These are Lucide glyphs,
-// rendered with the same 24px box and 1.75 stroke as every action icon.
-const NAV_ICONS = {
-  overview: icon("dashboard"),
-  chat: icon("message"),
-  models: icon("layers"),
-  engines: icon("cpu"),
-  logs: icon("scrollText"),
-  settings: icon("settings"),
+const state = {
+  page: "overview",
+  theme: localStorage.getItem("fc-preview-theme") || "light",
+  sidebarCollapsed: localStorage.getItem("fc-preview-sidebar") === "rail",
+  sidebarWidth: Math.max(180, Math.min(320, Number(localStorage.getItem("fc-preview-sidebar-width")) || 200)),
+  engineRunning: true,
+  engineBusy: false,
+  engine: "Splash",
+  activeEngineView: "Splash",
+  engineConfigOpen: null,
+  engineConfigDraft: null,
+  model: MODELS[0].name,
+  chartRange: "45 秒",
+  metricTick: 0,
+  modelFilter: "全部",
+  modelSearch: "",
+  downloaded: new Set(),
+  downloadsInFlight: new Map(),
+  settings: {
+    launchEngine: true,
+    login: true,
+    gateway: true,
+    thinking: "自动",
+    reasoningEffort: "medium",
+    reasoningEffortLabel: "中",
+    reasoningEfforts: [
+      { value: "minimal", label: "最少" },
+      { value: "low", label: "低" },
+      { value: "medium", label: "中" },
+      { value: "high", label: "高" },
+      { value: "xhigh", label: "极高" },
+      { value: "max", label: "最大" },
+    ],
+    appearance: localStorage.getItem("fc-preview-theme") || "light",
+  },
+  engines: JSON.parse(JSON.stringify(ENGINES)),
+  chatMessages: JSON.parse(JSON.stringify(INITIAL_MESSAGES)),
+  chatStreaming: false,
+  logPaused: false,
+  logFilter: "全部",
+  logSearch: "",
+  commandIndex: 0,
+  commandItems: [],
+  currentOverlay: "",
+  params: {
+    temperature: 0.7,
+    topP: 0.92,
+    tokens: 4096,
+    thinking: "自动",
+  },
 };
-const NAV_NAMES = { overview: "概览", chat: "对话", models: "模型", engines: "引擎", logs: "日志", settings: "设置" };
 
-// 品牌猫头：与应用图标（scripts/cat_icon.py 画的扁平猫头）同一条轮廓曲线，
-// 内联 SVG 而非 CSS 渐变方块，侧栏 / 会话页与 Dock 里的图标永远一致。
-// 渐变 id 全文档共享：两处 logo 引用同一个 id，浏览器解析到第一份 defs 即可。
-const LOGO_SVG = `<svg viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
-  <defs><linearGradient id="fc-logo-fur" x1="0" y1="0" x2="0.45" y2="1">
-    <stop offset="0" stop-color="#FF9E6B"/><stop offset="0.5" stop-color="#F75C86"/><stop offset="1" stop-color="#C247A8"/>
-  </linearGradient></defs>
-  <path fill="url(#fc-logo-fur)" d="M100 430 C105 300 130 120 185 100 C200 84 236 88 252 112 C300 150 352 206 396 246 C446 206 578 206 628 246 C672 206 724 150 772 112 C788 88 824 84 839 100 C894 120 919 300 924 430 C931 492 938 552 938 622 C938 822 748 956 512 956 C276 956 86 822 86 622 C86 552 93 492 100 430 Z"/>
-  <path fill="#B23184" opacity="0.9" d="M168 368 L238 168 L376 258 Z M856 368 L786 168 L648 258 Z"/>
-  <path fill="#FFF6EC" stroke="#FFF6EC" stroke-width="26" stroke-linejoin="round" d="M546 300 L448 393 L509 393 L484 467 L592 424 L531 424 Z"/>
-  <ellipse fill="#2A1220" cx="335" cy="585" rx="76" ry="96" transform="rotate(-9 335 585)"/>
-  <ellipse fill="#2A1220" cx="689" cy="585" rx="76" ry="96" transform="rotate(9 689 585)"/>
-  <circle fill="#FFFFFF" cx="317" cy="555" r="24"/>
-  <circle fill="#FFFFFF" cx="671" cy="555" r="24"/>
-</svg>`;
+let ambientAnimation = 0;
+let pointerX = window.innerWidth * 0.5;
+let pointerY = window.innerHeight * 0.28;
+let logSequence = 0;
+let chatTimer = 0;
+let chartRangeTimer = 0;
+let flowAnimation = 0;
+let flowState = null;
+let flowHistory = [];
+let sidebarAnimTimer = 0;
+let modelListAnimationToken = 0;
+let hasRenderedPage = false;
+let overlayCloseToken = 0;
+let overlayTrigger = null;
 
-// The same panel glyph changes state by moving its own divider left; it never
-// swaps to an unrelated chevron.
-const SIDE_ICON = icon("panelLeft");
+const LOG_SEED = [
+  { level: "INFO", msg: "Ready · ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF · context 262K · http://127.0.0.1:8000" },
+  { level: "INFO", msg: "Long requests keep their KV on the SSD cache: 262144 tokens of context (bound: model; window 262144, resident 262144)." },
+  { level: "INFO", msg: "Kernel policy for GPU family 10 with 40 cores." },
+  { level: "INFO", msg: "SSD cache: up to 32.0 GiB of temporary files in /var/folders/qk/vwmf128x2m9bt6rj_knt8604000gn/T/" },
+  { level: "INFO", msg: "Decode cycles verify the rows the verify budget chooses (--verify-rows auto)." },
+  { level: "INFO", msg: "Routed experts load with their layers: memory holds their 32402 MiB (--expert-memory auto)." },
+  { level: "INFO", msg: "The PLE table loads with the weights: memory holds its 27465 MiB (--ple-memory auto)." },
+  { level: "INFO", msg: "Weights loaded in 7.68 s." },
+  { level: "WARN", msg: "Output truncated: request touched the 4096 token generation ceiling; reasoning and answer share this budget." },
+  { level: "INFO", msg: "Started · input 63 · cached 0 · output 120 · TTFT 0.1s · 95.5 tok/s · 2.1 tok/cycle" },
+  { level: "INFO", msg: "Done · input 63 · cached 0 · output 120 · TTFT 0.1s · 87.4 tok/s · 2.1 tok/cycle" },
+  { level: "ERROR", msg: "oMLX probe skipped: runtime is installed but the service is not running on :8100." },
+  { level: "INFO", msg: "Gateway accepted POST /v1/chat/completions · OpenAI dialect · stream=true" },
+  { level: "INFO", msg: "Gateway route resolved · splash:8000 · model Qwen3.8-Flash-Next-GSQ-RCO-GGUF" },
+  { level: "INFO", msg: "Chat template patched to render later system messages in place." },
+];
 
-function renderSide() {
-  const st = S.engine || {};
-  const localCount = (S.library && S.library.entries || []).filter((x) => x.installed).length;
-  const running = st.running;
-  // starting/stopping 必须先于 running 判断：进程一拉起 running 就为 true，
-  // 但此刻引擎还在加载权重，卡片不能提前报"运行中"。
-  const statusText = st.switching ? `切换中${stageLabel(st) ? " · " + stageLabel(st) : ""}`
-    : (st.state === "starting" ? `启动中${stageLabel(st) ? " · " + stageLabel(st) : ""}`
-    : (st.state === "stopping" ? "停止中"
-    : (running ? "运行中" : (st.state === "failed" ? "异常" : "已停止"))));
-  const dotCls = st.switching || st.state === "starting" || st.state === "stopping" ? "warn pulse" : (running ? "ok" : (st.state === "failed" ? "err" : ""));
-  const act = running ? `<span class="act" data-a="stop">${icon("stop", "", 13)}停止</span>`
-    : (st.state === "starting" || st.switching ? `<span class="act busy"><span class="mini-spinner"></span></span>`
-    : `<span class="act" data-a="start">${icon("play", "", 13)}启动</span>`);
-  const threads = (S.threads || []).map((t) =>
-    `<div class="recent" data-act="openThread" data-arg="${esc(t.id)}">${esc(t.title)}<span class="tm">${relTime(t.updatedAt)}</span></div>`).join("");
-  const dlCount = (S.downloads && S.downloads.tasks || []).length;
-
-  // 注意：模板里不带 active 类。切页只改 class（见 syncNavActive），整块重建会把
-  // 用户正按着的 nav-item 在 mouseup 之前换掉，click 事件就永远不触发了。
-  // 同理，模板也刻意不含折叠态：折叠只是一次布局变化，一旦让 html 随折叠而变，
-  // 每次点手柄都会在动画途中把整棵子树换成新节点 —— 过渡被打断，看起来就是
-  // 「先僵一下，再跳一格」。aria/title 由 applySidebar() 事后补到按钮上。
-  const html = `
-    <div class="brand"><div class="logo">${LOGO_SVG}</div></div>
-    ${["overview", "chat", "models", "engines", "logs", "settings"].map((p) => `
-      <div class="nav-item" data-act="nav" data-arg="${p}" title="${NAV_NAMES[p]}">
-        <span class="ico">${NAV_ICONS[p]}</span><span class="lbl">${NAV_NAMES[p]}</span>
-        ${p === "models" && localCount ? `<span class="badge">${localCount}</span>` : ""}
-      </div>`).join("")}
-    <div class="group">最近对话</div>
-    <div class="recents"><div>${threads || '<div class="recent" style="color:var(--w-ink-3)">暂无对话</div>'}</div></div>
-    <div class="engine-card" id="engineCard">
-      <div class="row1"><span class="dot ${dotCls}"></span><span class="st">${statusText}</span>${act}</div>
-      <div class="more">
-        <div class="model switch" id="sideModelSwitcher" data-menu="sidebarModelSwitcher" title="${esc(S.selectedModel || "")} · 点击切换模型"><span class="nm">${esc(shortModel(S.selectedModel) || "未选择模型")}</span>${icon("chevronDown", "caret", 13)}</div>
-        <div class="chips">${engineIDs().map((e) =>
-          `<span class="echip ${S.engine.id === e ? "on" : ""}" data-engine="${e}">${esc(engineMeta(e).name)}</span>`).join("")}</div>
-        <div class="foot"><span>${esc((st.id || "").toUpperCase())} ${esc(st.version || "")}</span><span>:${S.port}</span></div>
-      </div>
-    </div>
-    ${dlCount ? `<div class="side-dl" data-act="openDownloadCenter">${icon("download", "", 14)}<span>${dlCount} 个下载任务</span></div>` : ""}`;
-
-  const side = document.getElementById("side");
-  if (html !== lastSideHTML) {
-    // 按住指针时先攒着：等抬手再换 DOM，免得这次点击落到被替换掉的节点上。
-    if (UI.pointerDown) {
-      UI.sideDirty = true;
-    } else {
-      side.innerHTML = html;
-      lastSideHTML = html;
-      bindSide(side);
-      // 重建后按钮是新节点，折叠态的 aria/title 要重新贴一遍。
-      applySidebar();
-    }
+function init() {
+  const hashPage = location.hash.replace(/^#/, "");
+  if (NAV_ITEMS.some((item) => item.id === hashPage)) state.page = hashPage;
+  document.documentElement.dataset.theme = resolvedTheme();
+  document.documentElement.style.setProperty("--sidebar-width", `${state.sidebarWidth}px`);
+  document.body.classList.toggle("sidebar-collapsed", state.sidebarCollapsed);
+  renderToolbarIcons();
+  renderNav();
+  renderPage(false);
+  updateEngineChrome();
+  bindGlobalEvents();
+  startClock();
+  startAmbient();
+  initFlowHistory();
+  startLiveTelemetry();
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    document.documentElement.classList.add("reduce-motion");
   }
+}
+
+function resolvedTheme() {
+  if (state.theme === "system") {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  return state.theme;
+}
+
+function renderToolbarIcons() {
+  $("#downloadIcon").innerHTML = icon("download", 15);
+  $("#commandIcon").innerHTML = icon("search", 18);
+  updateThemeIcon();
+}
+
+function updateThemeIcon() {
+  $("#themeIcon").innerHTML = icon(resolvedTheme() === "dark" ? "sun" : "moon", 15);
+  $("#themeToggle").setAttribute("aria-label", resolvedTheme() === "dark" ? "切换到浅色外观" : "切换到深色外观");
+}
+
+function renderNav() {
+  const nav = $("#primaryNav");
+  nav.innerHTML = `<span class="nav-indicator" aria-hidden="true"></span>${NAV_ITEMS.map((item) => `
+    <button type="button" class="nav-item ${state.page === item.id ? "active" : ""}"
+            data-page="${item.id}" aria-current="${state.page === item.id ? "page" : "false"}"
+            title="${esc(item.label)}（⌘${item.shortcut}）">
+      <span class="nav-icon">${icon(item.icon, 18)}</span>
+      <span class="nav-label">${esc(item.label)}</span>
+      ${item.badge ? `<span class="nav-badge">${esc(item.badge)}</span>` : ""}
+    </button>`).join("")}`;
+  requestAnimationFrame(updateNavIndicator);
+}
+
+function updateNavIndicator() {
+  const indicator = $(".nav-indicator");
+  const active = $(".nav-item.active");
+  if (!indicator || !active) return;
+  const y = active.offsetTop;
+  indicator.style.setProperty("--nav-y", `${y}px`);
+  indicator.style.height = `${active.offsetHeight}px`;
+}
+
+function navigate(page, options = {}) {
+  if (!NAV_ITEMS.some((item) => item.id === page)) return;
+  if (!options.force && state.page === page) {
+    $("#mainContent").scrollTo({ top: 0, behavior: "smooth" });
+    return;
+  }
+  closeOverlays();
+  state.page = page;
   syncNavActive();
+  $("#mainContent").scrollTop = 0;
+  renderPage(!options.immediate);
+  history.replaceState(null, "", `#${page}`);
 }
 
-
-/// 切页只换 active 类，不重建侧栏 DOM（重建会打断正在进行的点击）。
 function syncNavActive() {
-  const page = S && S.page;
-  document.querySelectorAll("#side .nav-item").forEach((el) => {
-    el.classList.toggle("active", el.dataset.arg === page);
+  $$(".nav-item").forEach((item) => {
+    const active = item.dataset.page === state.page;
+    item.classList.toggle("active", active);
+    item.setAttribute("aria-current", active ? "page" : "false");
   });
+  requestAnimationFrame(updateNavIndicator);
 }
 
-function bindSide(side) {
-  const card = side.querySelector("#engineCard");
-  if (card) {
-    card.querySelectorAll("[data-a]").forEach((el) => {
-      el.addEventListener("click", (e) => { e.stopPropagation(); handleAction(el.dataset.a); });
-    });
-    // 引擎 chip：点当前引擎跳引擎页，点其他引擎直接切换（一键 switchEngine）。
-    card.querySelectorAll(".echip").forEach((el) => {
-      el.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const eng = el.dataset.engine;
-        if (eng === S.engine.id) nav("engines");
-        else cmd("switchEngine", { engine: eng });
+function renderPage(animate = true, options = {}) {
+  const frame = $("#pageFrame");
+  if (!frame) return;
+  const firstRender = !hasRenderedPage;
+  const previousView = frame.dataset.view;
+  const scrollTop = $("#mainContent").scrollTop;
+  const focusState = captureFocusState(frame);
+  const commit = () => {
+    if (window.FCChatThinking) window.FCChatThinking.close({ restoreFocus: false });
+    stopFlowVisualization();
+    frame.classList.remove("is-leaving");
+    frame.dataset.view = state.page;
+    $("#mainContent").dataset.view = state.page;
+    const renderers = {
+      overview: renderOverview,
+      chat: () => window.FCPages.chat(state),
+      models: () => window.FCModelWorkspace.render(state, MODELS),
+      engines: () => window.FCEngineWorkspace.render(state),
+      logs: () => {
+        const lines = LOG_SEED.concat(generatedLogs());
+        const counts = Object.fromEntries(["全部", "提示", "警告", "错误"].map((filter) => [filter, logCount(filter, lines)]));
+        return window.FCPages.logs(state, logLinesHtml(lines), counts);
+      },
+      settings: () => window.FCPages.settings(state),
+    };
+    frame.innerHTML = (renderers[state.page] || renderOverview)();
+    if (state.page === "chat") scrollChatToBottom(false);
+    if (state.page === "overview") {
+      requestAnimationFrame(() => {
+        inspectChartSegment();
+        startFlowVisualization();
       });
+    }
+    if (state.page === "models") {
+      requestAnimationFrame(updateEngineTabIndicator);
+    }
+    requestAnimationFrame(updateSlidingSegments);
+    if (previousView === state.page) {
+      $("#mainContent").scrollTop = scrollTop;
+    }
+    restoreFocusState(focusState);
+    hasRenderedPage = true;
+  };
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // instant：立刻换 DOM，不要页面级过渡 —— 引擎配置面板要自己演左栏收窄，
+  // 套一层 view transition 会变成新旧两套布局的叠影。
+  if (options.instant) {
+    commit();
+  } else if (animate && !reduceMotion && document.startViewTransition) {
+    document.startViewTransition(commit);
+  } else if (!animate && !firstRender && !reduceMotion && window.FCMotionGuard) {
+    window.FCMotionGuard.fadeSwap(frame, commit, {
+      durationOut: 70,
+      durationIn: 150,
+      distance: 2,
     });
+  } else {
+    commit();
+    if (!firstRender && !reduceMotion) {
+      frame.animate(
+        [{ opacity: .82, transform: "translateY(2px)" }, { opacity: 1, transform: "none" }],
+        { duration: animate ? 220 : 160, easing: "cubic-bezier(.2,.8,.2,1)" }
+      );
+    }
   }
-  bindActs(side);
 }
 
-// 局部更新复用节点之后，after* 钩子里的监听必须幂等，否则每次推送叠一层：
-// 典型症状是「暂停」点一下等于点两下（切两次 = 看着没反应）。
-function bindOnce(el, type, fn) {
-  if (!el) return;
-  const flag = "__fc_" + type;
-  if (el[flag]) return;
-  el[flag] = true;
-  el.addEventListener(type, fn);
+function captureFocusState(root) {
+  const active = document.activeElement;
+  if (!active || active === document.body || !root.contains(active)) return null;
+  const attributes = [
+    "data-setting-toggle",
+    "data-engine-toggle",
+    "data-appearance",
+    "data-model-filter",
+    "data-page",
+    "data-action",
+    "id",
+  ];
+  for (const attribute of attributes) {
+    const value = active.getAttribute(attribute);
+    if (!value) continue;
+    return {
+      selector: `[${attribute}="${cssEscape(value)}"]`,
+      start: active.selectionStart,
+      end: active.selectionEnd,
+    };
+  }
+  return null;
 }
 
-function bindActs(root) {
-  root.querySelectorAll("[data-act], [data-menu]").forEach((el) => {
-    // Clickable DIV/SPAN controls predate the button cleanup. Keep them
-    // operable from the keyboard while preserving their existing layout contract.
-    const nativeControl = /^(BUTTON|A|INPUT|SELECT|TEXTAREA)$/.test(el.tagName);
-    if (!nativeControl) {
-      if (!el.hasAttribute("role")) el.setAttribute("role", "button");
-      if (!el.hasAttribute("tabindex")) el.tabIndex = 0;
-      if (!el.__fc_keyboard) {
-        el.__fc_keyboard = true;
-        el.addEventListener("keydown", (e) => {
-          if (e.key !== "Enter" && e.key !== " ") return;
-          e.preventDefault();
-          el.click();
-        });
-      }
+function restoreFocusState(focusState) {
+  if (!focusState) return;
+  requestAnimationFrame(() => {
+    const target = $(focusState.selector);
+    if (!target || target.disabled) return;
+    target.focus({ preventScroll: true });
+    if (
+      typeof focusState.start === "number" &&
+      typeof target.setSelectionRange === "function"
+    ) {
+      target.setSelectionRange(focusState.start, focusState.end);
     }
-    if (el.hasAttribute("data-menu") && !el.hasAttribute("aria-haspopup")) {
-      el.setAttribute("aria-haspopup", "menu");
-    }
-    if (el.__bound) return;
-    el.__bound = true;
-    el.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (el.dataset.act) handleAction(el.dataset.act, el.dataset.arg);
-    });
   });
-  // data-menu（⋯/模型切换）统一由 document 捕获阶段监听处理，这里不重复绑定。
 }
 
-// ---------- 概览 ----------
-// 采样只在生成时落点，两轮任务之间必然有断档。取最后一段「连续采样」作为
-// 上一轮生成的曲线：断档超过 8 秒即视为新一轮，从那里切到末尾。
-function tailRun(list) {
-  const all = list || [];
-  if (!all.length) return [];
-  let i = all.length - 1;
-  while (i > 0 && all[i].t - all[i - 1].t <= 8000) i -= 1;
-  return all.slice(i);
+function pageHeader(title, subtitle, actions = "") {
+  return `
+    <header class="page-header">
+      <div>
+        <h1 class="page-title">${esc(title)}</h1>
+        <p class="page-subtitle">${esc(subtitle)}</p>
+      </div>
+      <div class="page-actions">${actions}</div>
+    </header>`;
 }
 
-// 面积折线图：samples 为 [{t,v}]。
-// opts.id 决定渐变 id（同页多张图不能共用一个 id）；opts.max 固定纵轴上限（接受率传 1 = 100%）；
-// opts.guide 画一条虚线参考线；opts.empty 是空态文案。
-function sparkSVG(samples, opts) {
-  const o = opts || {};
-  const color = o.color || "#FF7A45";
-  const gid = "spark-fill-" + (o.id || "default");
-  if (!samples || samples.length < 2) {
-    return `<div class="spark-empty">${icon("activity", "spark-empty-icon", 18)}<span>${esc(o.empty || "启动并生成一次回复后，这里会显示吞吐曲线")}</span></div>`;
-  }
-  const W = 800, H = 88;
-  const max = o.max != null ? o.max : Math.max(...samples.map((s) => s.v), 10) * 1.15;
-  const t0 = samples[0].t, t1 = Math.max(samples[samples.length - 1].t, t0 + 1);
-  const y = (v) => H - (Math.min(Math.max(v, 0), max) / max) * (H - 6) - 3;
-  const pts = samples.map((s) => [((s.t - t0) / (t1 - t0)) * (W - 4), y(s.v)]);
-  const line = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
-  const area = `${line} L${pts[pts.length - 1][0].toFixed(1)},${H} L${pts[0][0].toFixed(1)},${H} Z`;
-  const last = pts[pts.length - 1];
-  const guide = o.guide != null
-    ? `<line x1="0" y1="${y(o.guide).toFixed(1)}" x2="${W}" y2="${y(o.guide).toFixed(1)}"
-        stroke="var(--w-line-strong)" stroke-width="1" stroke-dasharray="4 6"/>`
-    : "";
-  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="${color}" stop-opacity=".28"/><stop offset="1" stop-color="${color}" stop-opacity="0"/>
-    </linearGradient></defs>
-    ${guide}
-    <path class="spark-area" d="${area}" fill="url(#${gid})"/>
-    <path class="spark-line" d="${line}" pathLength="1" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>
-    <circle class="spark-end" cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="3.5" fill="${color}"/>
+function renderOverviewLegacy() {
+  const rate = state.engineRunning ? 104.0 + Math.sin(state.metricTick / 7) * 2.8 : 0;
+  return `
+    ${pageHeader("概览", "本地推理状态、性能与接口，在一个视图中保持同步。", `
+      <button class="button" type="button" data-action="refresh-overview">${icon("refresh", 14)}<span>刷新状态</span></button>
+      <button class="button" type="button" data-action="open-inspector">${icon("sliders", 14)}<span>运行参数</span></button>
+    `)}
+    <div class="overview-grid">
+      <section class="engine-hero">
+        <div class="engine-hero-main">
+          <div class="engine-kicker">
+            <span class="status-pill ${state.engineRunning ? "" : "stopped"}">
+              <i></i>${state.engineBusy ? "正在切换" : state.engineRunning ? "运行中" : "已停止"}
+            </span>
+            <span>${esc(state.engine)}</span>
+            <span class="engine-port">PORT :8000</span>
+          </div>
+          <div class="hero-model-row">
+            <button class="model-orb" type="button" data-action="model-menu" aria-label="切换模型">
+              ${icon("brain", 21)}
+            </button>
+            <div class="hero-model-copy">
+              <h2>${esc(shortModel(state.model))}</h2>
+              <p><b>${state.engineRunning ? "DFlash2 已加速" : "等待启动"}</b> · ${state.engineRunning ? "上下文 430 / 262K tokens" : "引擎未运行"}</p>
+            </div>
+          </div>
+          <div class="hero-actions">
+            <button class="button primary" type="button" data-action="model-menu">${icon("layers", 14)}<span>切换模型</span></button>
+            <button class="button ${state.engineRunning ? "danger" : ""}" type="button" data-action="toggle-engine">
+              ${icon(state.engineBusy ? "loader" : state.engineRunning ? "stop" : "play", 14)}
+              <span>${state.engineBusy ? "处理中" : state.engineRunning ? "停止引擎" : "启动引擎"}</span>
+            </button>
+            <div class="live-spark" data-live-spark aria-hidden="true">
+              ${Array.from({ length: 18 }, (_, i) => `<i style="height:${state.engineRunning ? 5 + ((i * 11) % 29) : 3}px; animation-delay:${i * 35}ms"></i>`).join("")}
+            </div>
+          </div>
+        </div>
+        <div class="engine-actions">
+          <div class="engine-actions-top">
+            <button class="glass-icon-btn" type="button" data-action="refresh-overview" aria-label="重启引擎" title="重启引擎">${icon("refresh", 15)}</button>
+            <button class="glass-icon-btn" type="button" data-action="engine-config" aria-label="引擎配置" title="引擎配置">${icon("sliders", 15)}</button>
+          </div>
+          <button class="engine-dial" type="button" data-action="toggle-engine" aria-label="${state.engineRunning ? "停止" : "启动"}引擎">
+            <span class="engine-dial-inner">
+              <strong>${state.engineRunning ? rate.toFixed(1) : "—"}</strong>
+              <span>TOK / SEC</span>
+            </span>
+          </button>
+        </div>
+      </section>
+
+      <div class="metrics-grid">
+        ${metricCard("gauge", "解码速度", "LIVE", state.engineRunning ? rate.toFixed(1) : "—", "tok/s", state.engineRunning ? "均值 98.7 tok/s · 最近 45 秒" : "启动引擎后显示")}
+        ${metricCard("timer", "首字延迟", "TTFT", state.engineRunning ? "131" : "—", "ms", "最近请求 · 正常")}
+        ${metricCard("arrowUp", "预填充", "PREFILL", state.engineRunning ? "1,370" : "—", "tok/s", "引擎采样值")}
+        ${metricCard("hardDrive", "内存压力", "MEM", state.engineRunning ? "51" : "—", "%", state.engineRunning ? "65.5 GB / 128 GB" : "空闲")}
+      </div>
+
+      <section class="panel throughput-card">
+        <header class="panel-head">
+          <div>
+            <div class="panel-title">Token 流</div>
+            <div class="panel-caption">5 条实时请求流 · 每颗粒子是一次解码</div>
+          </div>
+          <div class="spacer"></div>
+          <span class="flow-live-readout"><b id="flowLiveValue">${state.engineRunning ? rate.toFixed(1) : "—"}</b><small>tok/s</small></span>
+          <div class="segmented" data-chart-range>
+            <span class="segment-indicator"></span>
+            ${["45 秒", "5 分钟", "全部"].map((range) => `<button type="button" class="${state.chartRange === range ? "active" : ""}" data-range="${range}">${range}</button>`).join("")}
+          </div>
+        </header>
+        <div class="flow-stage" id="flowStage">
+          <canvas id="flowCanvas" aria-label="实时 Token 流可视化"></canvas>
+          <div class="flow-stage-label">
+            <span class="flow-live-dot"></span>
+            <span id="flowStateLabel">LIVE · ${state.engineRunning ? "DECODE" : "IDLE"}</span>
+          </div>
+          <button class="flow-freeze" type="button" data-flow-freeze title="冻结画面以检查瞬时值">
+            ${icon("pause", 11)}<span>冻结</span>
+          </button>
+          <div class="flow-cursor" id="flowCursor" aria-hidden="true"></div>
+          <div class="flow-tooltip" id="flowTooltip" aria-hidden="true">
+            <span>PROBE</span>
+            <strong>— tok/s</strong>
+            <small>— tokens</small>
+          </div>
+          <div class="flow-axis" aria-hidden="true">
+            <span>-45s</span><span>-30s</span><span>-15s</span><span>NOW</span>
+          </div>
+        </div>
+        <footer class="chart-foot">
+          <span>${state.engineRunning ? "流宽表示瞬时解码速度，亮度表示最近活动" : "启动引擎后，请求会从左侧涌入"}</span>
+          <span class="chart-legend"><span><i></i>Splash</span><span><i class="node"></i>外部网关</span></span>
+        </footer>
+      </section>
+
+      <section class="panel api-panel">
+        <header class="panel-head">
+          <div>
+            <div class="panel-title">API 网关</div>
+            <div class="panel-caption">固定地址 · 双协议同时提供</div>
+          </div>
+          <div class="spacer"></div>
+          <span class="status-pill" style="height:21px;padding:0 7px;font-size:8px"><i></i>ONLINE</span>
+        </header>
+        <div class="api-body">
+          ${endpoint("openai", "OpenAI", "http://127.0.0.1:9000/v1")}
+          ${endpoint("claude", "Claude", "http://127.0.0.1:9000")}
+          <p class="api-note">${icon("network", 14)}<span>客户端只需固定这个地址。切换引擎、修改端口都不会影响外部配置。</span></p>
+        </div>
+      </section>
+
+      <div class="request-strip">
+        ${requestPill("完成", "#1842 · OpenAI", "刚刚 · Qwen3.8 27B", "87.4")}
+        ${requestPill("解码", "#1843 · Claude", "0.8s · Qwen3.8 27B", "104.0")}
+        ${requestPill("完成", "#1841 · OpenAI", "32s · Qwen3.8 27B", "96.2")}
+      </div>
+    </div>`;
+}
+
+function renderOverview() {
+  const rate = state.engineRunning ? 104.0 + Math.sin(state.metricTick / 7) * 2.8 : 0;
+  return window.FCWidgets.overview(state, rate);
+}
+
+function metricCard(iconName, label, tag, value, unit, hint) {
+  const visual = label === "解码速度" ? speedMatrix() : miniLineSvg();
+  return `
+    <article class="metric-card">
+      <div class="metric-top">
+        <span class="metric-label"><span class="metric-icon">${icon(iconName, 13)}</span>${esc(label)}</span>
+        <span class="metric-tag">${esc(tag)}</span>
+      </div>
+      <div class="metric-value"><span data-count="${esc(value)}">${esc(value)}</span><small>${esc(unit)}</small></div>
+      <div class="metric-hint">${esc(hint)}</div>
+      <div class="${label === "解码速度" ? "speed-matrix" : "metric-mini-line"}" aria-hidden="true">${visual}</div>
+    </article>`;
+}
+
+function speedMatrix() {
+  return Array.from({ length: 96 }, (_, index) => {
+    const height = 20 + ((index * 37) % 68);
+    return `<i style="--h:${height}%;--d:${-((index % 17) * .11).toFixed(2)}s;--x:${(index % 8) * .015}s"></i>`;
+  }).join("");
+}
+
+function miniLineSvg() {
+  return `<svg viewBox="0 0 220 30" preserveAspectRatio="none">
+    <path d="M0 24 C18 22 25 15 43 18 S73 25 92 14 S124 20 143 11 S174 17 192 8 S208 7 220 5"
+      fill="none" stroke="var(--accent)" stroke-width="1.3"/>
+    <path d="M0 24 C18 22 25 15 43 18 S73 25 92 14 S124 20 143 11 S174 17 192 8 S208 7 220 5 L220 30 L0 30 Z"
+      fill="var(--accent)" opacity=".14"/>
   </svg>`;
 }
 
-function metricCard(iconName, label, tag, value, unit, hint, hero, loading) {
-  // 骨架和数字占同一个槽，切状态时交叉淡变；loading 时 hint 清空——
-  // 骨架旁边挂着上一轮的速度读数，是另一种“一闪”。
-  return `<div class="metric ${hero ? "hero-m" : ""}${loading ? " is-loading" : ""}">
-    <div class="lb"><span class="metric-label">${icon(iconName, "metric-icon", 14)}<span>${esc(label)}</span></span><span class="tag">${esc(tag)}</span></div>
-    <div class="mv">
-      <div class="val">${esc(value)}<small>${esc(unit)}</small></div>
-      <div class="skeleton"></div>
-    </div>
-    <div class="hint">${esc(loading ? "" : hint)}</div>
+function chartSvg() {
+  const points = Array.from({ length: 55 }, (_, i) => {
+    const y = 50
+      + Math.sin(i * .31) * 9
+      + Math.sin(i * .12 + .4) * 15
+      - i * .25;
+    return [i / 54 * 800, y];
+  });
+  const line = points.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  const area = `${line} L800,132 L0,132 Z`;
+  return `<svg viewBox="0 0 800 132" preserveAspectRatio="none" aria-label="解码吞吐图">
+    <defs>
+      <linearGradient id="chartStroke" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="var(--accent-3)"/>
+        <stop offset=".58" stop-color="var(--accent)"/>
+        <stop offset="1" stop-color="var(--accent-2)"/>
+      </linearGradient>
+      <linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="var(--accent)" stop-opacity=".22"/>
+        <stop offset="1" stop-color="var(--accent)" stop-opacity="0"/>
+      </linearGradient>
+      <linearGradient id="chartGlow" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="var(--accent)"/>
+        <stop offset="1" stop-color="var(--accent)" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <g class="chart-grid">
+      <line x1="0" y1="28" x2="800" y2="28"/>
+      <line x1="0" y1="65" x2="800" y2="65"/>
+      <line x1="0" y1="102" x2="800" y2="102"/>
+    </g>
+    <path class="chart-area" d="${area}"/>
+    <path class="chart-glow" d="${area}"/>
+    <path class="chart-line" d="${line}" pathLength="1"/>
+    <circle class="chart-dot" cx="800" cy="${points[points.length - 1][1].toFixed(1)}" r="3.5"/>
+  </svg>`;
+}
+
+function endpoint(kind, label, address) {
+  return `<div class="endpoint">
+    <span class="endpoint-type ${kind}">${esc(label)}</span>
+    <span class="endpoint-copy"><strong>BASE URL</strong><span>${esc(address)}</span></span>
+    <button class="copy-btn" type="button" data-copy="${esc(address)}" aria-label="复制 ${esc(label)} 地址">${icon("copy", 13)}</button>
   </div>`;
 }
 
-// 会话格子里的小曲线：一格 CPU 核心那种「这一路最近在吐多少 token」的侧影。
-// values 是网关按 250ms 打点的历史，一格一个 tok/s 采样值。
-function miniSpark(values) {
-  const pts = (values || []).map((v) => (v > 0 ? v : 0));
-  if (pts.length < 4 || !pts.some((v) => v > 0)) return `<div class="sess-spark idle"></div>`;
-  const W = 220, H = 34;
-  const max = Math.max(...pts, 1);
-  const step = W / (pts.length - 1);
-  const xy = pts.map((v, i) => [i * step, H - (v / max) * (H - 8) - 2]);
-  const line = xy.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
-  const area = `${line} L${W},${H} L0,${H} Z`;
-  return `<svg class="sess-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
-    <path d="${area}" fill="color-mix(in srgb, var(--w-accent) 16%, transparent)"/>
-    <path d="${line}" fill="none" stroke="var(--w-accent)" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
-}
-
-// 一格 = 一路请求。序号是网关自增的，从请求进来那一刻到结束都是同一个号。
-// 客户端重试会换号，所以同一个会话发两轮在格子里是两格——这是任务管理器
-// 那种「每个线程一行」的读法，不假装它是持久会话。
-// 上下文 = prompt + 已生成，分母是本次加载的窗口（S.context.total）。
-function sessionTile(s, total) {
-  const state = s.state || "decode";
-  const rate = state === "done"
-    ? (s.elapsed ? (s.completionTokens || 0) / s.elapsed : 0)
-    : (s.decodeRate || 0);
-  // 串行引擎上一个请求在解码时，其他请求虽然已经拿到首字、状态还是「解码」，
-  // 实际在排队等这一轮。速度掉到 0 就是排队的信号——别把它写成「解码 0.0」。
-  const sinceFirst = s.ttft != null ? Math.max(0, (s.elapsed || 0) - s.ttft / 1000) : 0;
-  const waiting = state === "decode" && rate < 0.5 && sinceFirst > 2;
-  const label = state === "failed" ? "失败"
-    : (state === "done" ? "完成"
-    : (state === "prefill" ? "预填充"
-    : (waiting ? "等待解码" : "解码")));
-  const dot = state === "failed" ? "err"
-    : (state === "done" ? ""
-    : (state === "prefill" ? "warn pulse"
-    : (waiting ? "warn" : "ok pulse")));
-  const ctx = s.ctxTokens || 0;
-  const pct = total ? Math.min(100, (ctx / total) * 100) : 0;
-  const tone = pct >= 90 ? "err" : (pct >= 70 ? "warn" : "ok");
-  const rateText = state === "prefill" ? "…" : (waiting ? "—" : rate.toFixed(1));
-  const ttft = s.ttft == null ? "—" : (s.ttft >= 1000 ? `${(s.ttft / 1000).toFixed(1)}s` : `${Math.round(s.ttft)}ms`);
-  // 输入 token 数：串行引擎上「预填充速度」其实是 prompt/首字时间，而首字时间里
-  // 混着排队，算出来的值会低到没意义（实测排队 5.7s 摊出 4 tok/s）。所以这里
-  // 只报事实——输入多少 token、首字多久——速度交给上面的解码读数。
-  const prompt = s.promptTokens ? `${s.promptTokens} tok` : "—";
-  return `<div class="sess ${state}">
-    <div class="sess-hd">
-      <span class="dot ${dot}"></span>
-      <span class="sess-id">#${esc(String(s.id))}</span>
-      <span class="sess-state">${esc(label)}</span>
-      <span class="sess-rate"><b>${esc(rateText)}</b><i>tok/s</i></span>
-    </div>
-    <div class="sess-model" title="${esc(s.model || "")}">${esc(shortModel(s.model) || "未知模型")}<span class="sess-fmt ${s.dialect === "claude" ? "c" : "o"}">${s.dialect === "claude" ? "Claude" : "OpenAI"}</span></div>
-    ${miniSpark(s.history)}
-    <div class="sess-ft">
-      <span>输入 ${esc(prompt)}</span><span>首字 ${esc(ttft)}</span>
-      <span class="sess-ctx">${esc(ctx ? fmtTokens(ctx) : "0")} / ${esc(total ? fmtTokens(total) : "—")}</span>
-    </div>
-    <div class="sess-bar"><i class="${tone}" style="width:${pct.toFixed(1)}%"></i></div>
+function requestPill(status, label, meta, rate) {
+  return `<div class="request-pill">
+    <span class="dot" style="${status === "解码" ? "background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 10%,transparent)" : ""}"></span>
+    <div><strong>${esc(label)}</strong><span>${esc(meta)}</span></div>
+    <b>${esc(rate)}</b>
   </div>`;
 }
 
-// 概览主卡：引擎状态 + 当前模型 + 启停控制。模型名本身是下拉触发器，点开复用分组模型菜单切换。
-// 把原来那条细状态条展开成控制台：模型信息一眼可读，切换和启停不用离页。
-function engineHero(st, stats, statusText, dotCls, stage, busy) {
-  const meta = engineMeta(st.id);
-  const isRun = running();
-  // 切换中留一个「取消等待」：真正干活的引擎不该被打断（权重搬到一半的进程
-  // 吃 SIGINT 要等 20 秒强杀），但界面不能只能死等。取消之后状态交回引擎自己
-  // 的启动阶段，进度和秒数继续走。
-  const actions = st.switching
-    ? `<button class="btn-p ghost" disabled><span class="mini-spinner"></span>${esc(statusText)}</button><button class="btn-p quiet" data-act="abortSwitch" title="不再等这次切换；引擎仍在后台加载"><span>取消等待</span></button>`
-    : busy
-    ? `<button class="btn-p ghost" disabled><span class="mini-spinner"></span>${esc(statusText)}</button>`
-    : (isRun
-      ? `<button class="btn-p ghost" data-act="restart" title="重启服务以重新加载当前模型">${icon("refresh")}<span>重启</span></button><button class="btn-p danger" data-act="stop">${icon("stop")}<span>停止</span></button>`
-      : `<button class="btn-p dl primary" data-act="start">${icon("play")}<span>启动引擎</span></button>`);
-  const metaBits = [`<span>ENGINE ${esc((st.id || "").toUpperCase())} ${esc(st.version || "")}</span>`, `<span>PORT :${esc(S.port)}</span>`];
-  // 启动中就把已等待的时间摆出来：预热阶段引擎可能几分钟不打一行日志。
-  if (st.state === "starting" || st.switching) {
-    metaBits.push(`<span>WAIT ${esc(fmtElapsed(st.startupSeconds))}</span>`);
-  }
-  if (isRun) {
-    metaBits.push(`<span id="uptime">UP ${esc(fmtUptime(stats && stats.startedAt))}</span>`);
-    if (stats && stats.instancePid) metaBits.push(`<span>PID ${stats.instancePid}</span>`);
-    // 设备 / 热状态 / 请求统计原先住在「运行详情」表格里。表格拆掉之后它们
-    // 并进这行 meta：都属于「这台引擎现在什么状态」，不该占一整块面板。
-    if (stats && stats.deviceName) {
-      metaBits.push(`<span>${esc(stats.deviceName)}${stats.gpuCores ? " · " + stats.gpuCores + "C" : ""}</span>`);
-    }
-    if (stats) {
-      metaBits.push(`<span${stats.requestsFailed ? ' style="color:var(--w-warn)"' : ""}>请求 ${stats.requestsCompleted} 完成 · ${stats.requestsFailed} 失败</span>`);
-    }
-    // 并发/排队：真有人在并跑（>1）才染信息色——那是「下面那张解码速度已经被
-    // 聚合」的信号。splash 报在跑条数、oMLX 报 active_requests、MTPLX 报 active。
-    const active = (stats && stats.activeRequests) || 0;
-    const queued = (stats && stats.queuedRequests) || 0;
-    if (active > 0 || queued > 0) {
-      metaBits.push(`<span${active > 1 ? ' style="color:var(--w-info)"' : ""}>并发 ${active}${queued ? ` · 排队 ${queued}` : ""}</span>`);
-    }
-    // 上下文一律给「已用 / 总量」：只报总量看不出这一轮还剩多少余量。
-    const ctxTotal = (S.context && S.context.total) || (stats && stats.maximumContextTokens) || 0;
-    const ctxUsed = (S.context && S.context.used) || 0;
-    if (ctxTotal || ctxUsed) {
-      const left = ctxUsed ? fmtTokens(ctxUsed) : "0";
-      metaBits.push(`<span>CTX ${esc(left)} / ${esc(ctxTotal ? fmtTokens(ctxTotal) : "—")} tok</span>`);
-    }
-    if (stats && stats.thermal && stats.thermal !== "nominal") metaBits.push(`<span style="color:var(--w-warn)">TEMP ${esc(stats.thermalText)}</span>`);
-  }
-  // 网关地址进模型卡：它就是「这台引擎怎么被外面调」，和模型、端口是同一件事。
-  // Claude 侧给根地址（Anthropic SDK 自己拼 /v1/messages）。
-  const claudeURL = S.gatewayClaudeURL || String(S.gatewayURL || "").replace(/\/v1$/, "");
+function renderChat() {
   return `
-    <div class="hero">
-      <div class="hero-top">
-        <div class="hero-status"><span class="dot ${dotCls}"></span><span class="hero-st">${esc(statusText)}</span>${stage ? `<span class="hero-stage">${esc(stage)}…</span>` : ""}</div>
-        <div class="hero-actions">${actions}</div>
+    <section class="chat-page">
+      <header class="chat-head">
+        <button class="chat-model" type="button" data-action="model-menu">
+          <span class="chat-model-orb">${icon("brain", 14)}</span>
+          <span class="chat-model-copy">
+            <strong>${esc(shortModel(state.model))}</strong>
+            <span>${state.engineRunning ? "本地推理 · 上下文 430 / 262K" : "引擎已停止"}</span>
+          </span>
+        </button>
+        <span class="spacer"></span>
+        <button class="button icon-only quiet" type="button" data-action="chat-more" aria-label="更多对话操作" title="更多对话操作">${icon("ellipsis", 15)}</button>
+        <button class="button" type="button" data-action="new-chat">${icon("messagePlus", 14)}<span>新对话</span></button>
+      </header>
+      <div class="chat-messages" id="chatMessages">
+        <div class="messages-inner" id="messagesInner">${chatMessagesHtml()}</div>
       </div>
-      <div class="hero-body">
-        <div class="hero-left">
-          <div class="hero-model switch" id="heroModelSwitcher" data-menu="modelSwitcher"
-               title="点击切换模型" role="button" tabindex="0" aria-haspopup="menu">
-            <span class="hm-eng" style="background:${meta.grad}">${esc(meta.name)}</span>
-            <span class="hm-name" title="${esc(S.selectedModel || "")}">${esc(shortModel(S.selectedModel) || "未选择模型")}</span>
-            <span class="hm-switch">
-              ${icon("chevronDown", "", 12)}
-              切换模型
-            </span>
+      <div class="chat-composer-wrap">
+        <div class="chat-composer">
+          <label class="visually-hidden" for="chatInput">消息</label>
+          <textarea id="chatInput" rows="1" placeholder="输入消息…  ⏎ 发送 · ⇧⏎ 换行"></textarea>
+          <div class="composer-row">
+            <button class="composer-chip" type="button" data-action="model-menu">${icon("layers", 12)}<span>${esc(shortModel(state.model))}</span></button>
+            <button class="composer-chip" type="button" data-action="open-inspector">${icon("sliders", 12)}<span>参数</span></button>
+            <button class="composer-chip" type="button" data-action="thinking-cycle">${icon("brain", 12)}<span>思考 · ${esc(state.params.thinking)}</span></button>
+            <span class="spacer"></span>
+            <button class="send-button" id="sendButton" type="button" data-action="send-chat" aria-label="发送消息">
+              ${icon(state.chatStreaming ? "stop" : "arrowUp", 14)}
+            </button>
           </div>
-          <div class="hero-meta">${metaBits.join("")}</div>
-        </div>
-        <div class="hero-api">
-          <div class="endpoint"><span class="fmt o">OpenAI</span><span class="url">${esc(S.gatewayURL)}</span><button class="copy" data-act="copyGateway" data-arg="openai" title="复制 OpenAI 地址">${icon("copy", "", 13)}<span>复制</span></button></div>
-          <div class="endpoint"><span class="fmt c">Claude</span><span class="url">${esc(claudeURL)}</span><button class="copy" data-act="copyGateway" data-arg="claude" title="复制 Claude 地址">${icon("copy", "", 13)}<span>复制</span></button></div>
         </div>
       </div>
+    </section>`;
+}
+
+function chatMessagesHtml() {
+  return state.chatMessages.map((message, index) => {
+    const id = esc(message.id || `m${index}`);
+    if (message.role === "user") {
+      return `<article class="message user is-new" data-msg-id="${id}">
+        <div class="message-body"><div class="user-bubble">${esc(message.content)}</div></div>
+      </article>`;
+    }
+    const thinking = window.FCChatStream ? window.FCChatStream.thinkingHTML(message) : "";
+    const answer = window.FCChatStream
+      ? window.FCChatStream.answerHTML(message)
+      : `<div class="md-body">${window.FCChatMarkdown.render(message.content || "")}</div>`;
+    return `<article class="message ai is-new${thinking ? " has-think" : ""}" data-msg-id="${id}">
+      <div class="avatar">${icon("message", 14)}</div>
+      <div class="message-body">
+        ${thinking}
+        <div class="assistant-card ${message.streaming ? "is-streaming" : ""}${!message.content ? " is-empty" : ""}" ${message.streaming ? 'id="streamingAnswer"' : ""}>
+          <div class="assistant-text">${answer}</div>
+        </div>
+        ${message.streaming ? "" : `<div class="message-meta">
+          <span>${esc(message.rate || "—")} tok/s</span>
+          <span>首字 ${esc(message.ttft || "—")} ms</span>
+          <span>${esc(message.tokens || "—")} tokens</span>
+          <button type="button" data-copy="${esc(message.content)}">复制</button>
+        </div>`}
+      </div>
+    </article>`;
+  }).join("");
+}
+
+function renderModels() {
+  const filtered = filteredModels();
+  return `
+    ${pageHeader("模型", "本机权重、引擎推荐与 Hugging Face 模型库。", `
+      <button class="button" type="button" data-action="search-hub">${icon("search", 14)}<span>模型广场</span></button>
+      <button class="button" type="button" data-action="downloads">${icon("download", 14)}<span>下载中心</span></button>
+    `)}
+    <div class="models-toolbar">
+      <div class="engine-tabs" aria-label="按引擎筛选">
+        ${["全部", "Splash", "oMLX", "MTPLX"].map((engine) => `<button type="button" class="${state.modelFilter === engine ? "active" : ""}" data-model-filter="${engine}">${engine}</button>`).join("")}
+      </div>
+      <label class="search-field">
+        ${icon("search", 14)}
+        <input id="modelSearch" type="search" placeholder="搜索模型…" value="${esc(state.modelSearch)}" autocomplete="off">
+      </label>
+      <span class="spacer"></span>
+      <button class="button icon-only" type="button" data-action="refresh-models" aria-label="刷新模型状态" title="刷新模型状态">${icon("refresh", 14)}</button>
+    </div>
+    <section class="featured-model">
+      <div class="featured-main">
+        <div class="featured-badges">
+          <span class="mini-badge hot">本机模型</span>
+          <span class="mini-badge">GGUF</span>
+          <span class="mini-badge">DFlash2 加速</span>
+          <span class="mini-badge">256K</span>
+        </div>
+        <h2>${esc(shortModel(state.model))}</h2>
+        <p>当前默认权重已加载到 Splash。视觉、思考与草稿加速同时启用，通过 API 网关对所有客户端可见。</p>
+        <div class="featured-actions">
+          <button class="button primary" type="button" data-action="use-model">${icon("play", 14)}<span>正在使用</span></button>
+          <button class="button" type="button" data-action="model-detail">${icon("fileText", 14)}<span>模型详情</span></button>
+          <button class="button icon-only quiet" type="button" data-action="model-more" aria-label="更多操作">${icon("ellipsis", 15)}</button>
+        </div>
+      </div>
+      <div class="featured-visual" aria-hidden="true">
+        <div class="model-stack">
+          <div class="model-layer"></div>
+          <div class="model-layer"></div>
+          <div class="model-layer"></div>
+        </div>
+      </div>
+    </section>
+    <div class="models-grid" id="modelsGrid">
+      ${filtered.length ? filtered.map(modelCard).join("") : `<div class="panel" style="grid-column:1/-1;padding:34px;text-align:center;color:var(--text-3);font-size:11px">没有匹配的模型</div>`}
     </div>`;
 }
 
-function pageOverview() {
-  const st = S.engine || {};
-  const stats = S.stats;
-  const loading = st.switching || st.state === "starting" || (st.ready && !stats);
-  const busyState = st.switching || st.state === "starting" || st.state === "stopping";
-  const stg = stageLabel(st);
-  // 切换中不要把引擎的真实阶段盖掉：跨引擎跳过去的那一步本身就是一次冷启动。
-  // 固定显示 switchStage 时，一个正在正常推进的加载看起来和卡死一模一样。
-  // failed/stopped 时 startupStage 已经是状态词（启动失败/已停止），不重复。
-  const engineStage = (st.state === "failed" || st.state === "stopped") ? "" : stg;
-  const stage = [st.switchStage || "", engineStage].filter(Boolean).join(" · ")
-    || (st.switching ? "等待引擎就绪" : "");
-  const statusText = st.switching ? "切换中"
-    : (st.state === "starting" ? "启动中"
-    : (st.state === "stopping" ? "停止中"
-    : (running() ? "运行中" : (st.state === "failed" ? "启动失败" : "已停止"))));
-  const dotCls = busyState ? "warn pulse" : (running() ? "ok" : (st.state === "failed" ? "err" : ""));
+function filteredModels() {
+  return window.FCModelWorkspace.filterModels(MODELS, state);
+}
 
-  const cut = UI.chartRange ? Date.now() - UI.chartRange * 1000 : 0;
-  // 后端只在生成时采样，空闲后窗口会自然排空。窗口空了就回落到「上一轮生成」
-  // 的曲线：图停在那轮结束的位置，均值也只反映有生成发生的那段时间，
-  // 不再被空闲时间稀释或拖着走。
-  const decodeWindow = (S.throughput || []).filter((s) => !cut || s.t >= cut);
-  const samples = decodeWindow.length ? decodeWindow : tailRun(S.throughput);
-  const idle = !decodeWindow.length && samples.length > 0;
-  // 会话网格的数据来自网关打点（Swift 侧 GatewayMeter），不是引擎自报：
-  // 引擎只给聚合值，而「这一路现在多少 tok/s」只有网关知道。
-  // 在跑的排前面（解码 → 预填充），跑完的垫底，同一类里按请求号。
-  const sessRank = (s) => (s.state === "decode" ? 0 : (s.state === "prefill" ? 1 : (s.state === "failed" ? 2 : 3)));
-  const sessions = (S.sessions || []).slice()
-    .sort((a, b) => sessRank(a) - sessRank(b) || a.id - b.id);
-  const runningCount = sessions.filter((s) => s.state === "prefill" || s.state === "decode").length;
-  // 生成期间的本地测速（Swift 侧按流式增量算出来的 tok/s），比引擎自报的
-  // 累计均值更真实——oMLX 的 avg_generation_tps 整个生成过程一动不动。
-  const liveRate = S.generating && stats && stats.liveDecodeRate != null ? stats.liveDecodeRate : null;
-  // 并发口径：只有一路在跑时「引擎自报值」和「这一个请求的速度」是一回事；
-  // 两路以上它已经是整台引擎的聚合吞吐（splash 的 decode_tokens_per_second 是
-  // 累计 output_tokens / 累计 decode 墙钟），这时候还标 LIVE 就是在骗人——
-  // 并发确实会让它变大，但每个请求都变慢了。
-  const active = (stats && stats.activeRequests) || 0;
-  const queued = (stats && stats.queuedRequests) || 0;
-  const sharedEngine = active > 1;
-  // 引擎自报的 TTFT 也是这样：splash 给的是全量 p50，MTPLX 给的是最近一条。
-  const engineTtft = !!(stats && stats.ttftMilliseconds != null);
-  // 引擎不报 TTFT（oMLX）时回落到应用内最近一次回复的本地测量值。
-  const lastTtft = (() => {
-    const msgs = (S.messages || []).filter((m) => m.role === "assistant" && m.ttft != null);
-    return msgs.length ? msgs[msgs.length - 1].ttft : null;
-  })();
-  const mem = stats && stats.memoryBytes && stats.physicalMemoryBytes;
-  // 每一格的「上下文大小」= prompt + 已生成，分母用本次加载的窗口
-  // （模型上限与引擎窗口取小，Swift 侧算好放在 S.context.total）。
-  const ctxTotal = (S.context && S.context.total) || (stats && stats.maximumContextTokens) || 0;
-  // 解码均值跟随图表区间（45 秒 / 5 分钟 / 全部）；空闲时回落到上一轮任务的均值。
-  const avgDecode = samples.length ? samples.reduce((a, s) => a + s.v, 0) / samples.length : null;
-  const currentDecode = samples.length ? samples[samples.length - 1].v : null;
-  const rangeLabel = UI.chartRange === 45 ? "45 秒" : (UI.chartRange === 300 ? "5 分钟" : "全部");
-  const decodeHint = avgDecode != null
-    ? (sharedEngine && liveRate == null
-      ? `全局聚合 · 均值 ${avgDecode.toFixed(1)} tok/s · ${idle ? "上一段流量" : rangeLabel}`
-      : `均值 ${avgDecode.toFixed(1)} tok/s · ${idle ? "上次任务" : rangeLabel}`)
-    : "等待生成请求";
-  const sessionBody = sessions.length
-    ? `<div class="sess-grid">${sessions.map((s) => sessionTile(s, ctxTotal)).join("")}</div>`
-    : `<div class="sess-empty">${icon("activity", "sess-empty-icon", 18)}<span>还没有请求经过网关。应用内对话和外部 API 调用（${esc(String(S.gatewayURL || "").replace(/\/v1$/, ""))}）都会实时出现在这里。</span></div>`;
-  const headNum = loading ? "" : (idle ? `均值 ${avgDecode != null ? avgDecode.toFixed(1) : "—"}` : (currentDecode != null ? `当前 ${currentDecode.toFixed(1)}` : ""));
-  const rangeBtn = (value, label) => `<button type="button" class="${UI.chartRange === value ? "on" : ""}" data-act="chartRange" data-arg="${value}">${label}</button>`;
+function modelCard(model) {
+  const busy = state.downloadsInFlight.has(model.name);
+  const done = state.downloaded.has(model.name);
+  return `<article class="model-card" data-model-name="${esc(model.name)}">
+    <div class="model-card-head">
+      <span class="model-type-icon">${icon("database", 14)}</span>
+      <div style="min-width:0;flex:1">
+        <h3>${esc(model.name)}</h3>
+        <div class="model-repo">${esc(model.repo)}</div>
+      </div>
+    </div>
+    <div class="model-flags">
+      <span class="model-flag">${esc(model.format)}</span>
+      ${model.flags.map((flag) => `<span class="model-flag">${esc(flag)}</span>`).join("")}
+    </div>
+    <div class="model-card-foot">
+      <span class="model-size">${esc(model.size)}</span>
+      <span class="model-flag">${esc(model.memory)}</span>
+      <span class="spacer"></span>
+      <button class="model-download ${busy ? "downloading" : ""}" type="button"
+              data-download-model="${esc(model.name)}" ${busy ? "disabled" : ""}>
+        ${icon(busy ? "loader" : done ? "check" : "download", 11)}
+        <span>${done ? "已下载" : busy ? "下载中" : "下载"}</span>
+      </button>
+    </div>
+  </article>`;
+}
 
+function renderEngines() {
   return `
-    <h2 class="pg">概览</h2>
-    ${st.failure ? `<div class="confirm-strip" style="border-color:color-mix(in srgb, var(--w-err) 40%,transparent);color:var(--w-err);background:color-mix(in srgb, var(--w-err) 9%,transparent)">${esc(st.failure)}</div>` : ""}
-    ${engineHero(st, stats, statusText, dotCls, stage, busyState)}
-    <div class="metrics">
-      ${metricCard("gauge", "解码速度", loading ? "SYNC" : (liveRate != null ? "LIVE" : (sharedEngine ? `聚合 ${active} 路` : "LIVE")), liveRate != null ? liveRate.toFixed(1) : (stats && stats.decodeTokensPerSecond ? stats.decodeTokensPerSecond.toFixed(1) : "—"), "tok/s", decodeHint, true, loading)}
-      ${metricCard("arrowUp", "预填充", sharedEngine ? "含并发" : "PREFILL", stats && stats.prefillTokensPerSecond ? Math.round(stats.prefillTokensPerSecond) : "—", "tok/s", "引擎 prefill 采样", false, loading)}
-      ${metricCard("timer", "首字延迟", sharedEngine && engineTtft ? "含并发" : "TTFT", stats && stats.ttftMilliseconds != null ? Math.round(stats.ttftMilliseconds) : (lastTtft != null ? Math.round(lastTtft * 1000) : "—"), "ms", sharedEngine && engineTtft ? `${active} 路并跑下的统计值` : "最近请求", false, loading)}
-      ${metricCard("hardDrive", "内存压力", "MEM", stats && mem ? Math.round(stats.memoryBytes / stats.physicalMemoryBytes * 100) : "—", "%",
-        mem ? `${stats.memoryPressureText && stats.memoryPressureText !== "正常" ? stats.memoryPressureText + " · " : ""}${fmtBytes(stats.memoryBytes)} / ${fmtBytes(stats.physicalMemoryBytes)}` : "引擎运行后显示", false, loading)}
-    </div>
-    <div class="chart-card wide">
-      <div class="hd">
-        <span class="t">解码吞吐 · ${esc(idle ? "上一段流量" : rangeLabel)}</span>
-        <span class="hd-right">
-          <span class="now">${esc(headNum)}${headNum ? " tok/s" : ""}</span>
-          <span class="seg">${rangeBtn(45, "45 秒")}${rangeBtn(300, "5 分钟")}${rangeBtn(0, "全部")}</span>
-        </span>
-      </div>
-      ${`<div class="chart-slot${loading ? " is-loading" : ""}">${sparkSVG(samples, { id: "decode" })}<div class="skeleton"></div></div>`}
-      <div class="chart-foot">${esc(decodeHint)}</div>
-    </div>
-    <div class="panel sessions">
-      <div class="sess-head">
-        <div class="t">会话</div>
-        <div class="sess-sub">${sessions.length ? `${runningCount} 路在跑 · 共 ${sessions.length} 路请求` : "网关实时打点"}</div>
-      </div>
-      ${sessionBody}
+    ${pageHeader("引擎", "三个运行时共享同一套控制面，但保留各自的端口与日志。", `
+      <button class="button" type="button" data-action="check-updates">${icon("refresh", 14)}<span>检查更新</span></button>
+    `)}
+    <div class="engines-list">
+      ${state.engines.map(engineCard).join("")}
     </div>`;
 }
 
-function running() { return S.engine && S.engine.running; }
-
-// ---------- 对话 ----------
-function pageChat() {
-  const msgs = S.messages || [];
-  const body = msgs.length ? msgs.map((m, i) => msgRow(m, i)).join("")
-    : `<div class="empty">
-        <div class="empty-mark">${icon("messagePlus", "", 22)}</div>
-        <div class="t">开始一次本地对话</div>
-        <div>所有推理都在这台设备上完成。没有账号，没有云端，也没有内容上传。</div>
-        <div class="suggestions">
-          <span class="cap click" data-say="帮我用一句话解释 GGUF 量化档位怎么选？">GGUF 量化档位怎么选？</span>
-          <span class="cap click" data-say="DFlash2 草稿模型是怎么加速解码的？">DFlash2 如何加速？</span>
-          <span class="cap click" data-say="64GB 内存的 Mac 跑 35B 模型该选什么量化？">64GB 跑 35B 选什么量化？</span>
-        </div>
-      </div>`;
-  const live = S.generating ? `<div class="livestrip"><span class="live-dot"></span><span id="liveStatus">${esc(S.generationStatus || "生成中")}</span>
-    <span class="chips"><span class="mchip" id="liveRate">— tok/s</span><span class="mchip" id="liveElapsed">0.0s</span></span></div>` : "";
-  return `
-    <div class="chat-head">
-      <span class="dot ${running() ? "ok" : ""}"></span>
-      <div class="mdl" id="modelSwitcher" data-menu="modelSwitcher">${esc(shortModel(S.selectedModel))}<small>点击切换模型</small></div>
-      <div class="right">
-        <button class="icon-btn" id="chatMore" data-menu="chatMore" title="更多对话操作" aria-label="更多对话操作">${icon("ellipsis")}</button>
-        <button class="cap on click" data-act="newChat">${icon("messagePlus")}<span>新对话</span></button>
+function engineCard(engine) {
+  const running = engine.state === "running";
+  const busy = engine.state === "starting";
+  return `<article class="engine-card ${running ? "active" : ""}" style="--engine-color:${engine.color}" data-engine-card="${esc(engine.id)}">
+    <div class="engine-logo">${esc(engine.glyph)}</div>
+    <div class="engine-info">
+      <div class="engine-name-row">
+        <span class="engine-name">${esc(engine.id)}</span>
+        <span class="engine-version">v${esc(engine.version)}</span>
       </div>
+      <div class="engine-description">${esc(engine.description)}</div>
     </div>
-    <div class="msgs" id="msgs"><div class="msgs-inner">${body}</div></div>
-    ${live}
-    <div class="inputbar"><div class="inputbox">
-      <textarea id="chatInput" rows="1" data-key="chatInput" placeholder="输入消息…（⏎ 发送 · ⇧⏎ 换行）${running() ? "" : " · 启动本地服务后可发送"}"></textarea>
-      <div class="row">
-        <span class="cap">${esc(shortModel(S.selectedModel))}</span>
-        <button class="cap click" data-act="chatParams" title="温度 / Top P / 最大 tokens / 系统提示词">${icon("sliders")}<span>参数</span></button>
-        <button class="cap click" id="thinkLevel" data-menu="thinkLevel" title="思考等级（列表来自推理引擎）">${icon("brain")}<span>思考 · ${esc(thinkChipLabel())}</span>${icon("chevronDown", "cap-caret", 12)}</button>
-        <button class="send ${S.generating ? "stop" : ""}" id="sendBtn" ${!S.generating && (!running() || !(UI.chatDraft || "").trim()) ? "disabled" : ""}>${icon(S.generating ? "stop" : "arrowUp")}<span>${S.generating ? "停止" : "发送"}</span></button>
-      </div>
-    </div></div>`;
-}
-
-function shortModel(id) {
-  if (!id) return "模型";
-  return id.split("/").pop();
-}
-
-function msgRow(m, index) {
-  const isUser = m.role === "user";
-  const av = isUser ? "" : `<div class="av">${icon("message", "", 13)}</div>`;
-  const open = UI.thinkOpen[m.id];
-  const thinking = m.streaming && !m.content;
-  const think = !isUser && m.reasoning ? `
-    <button type="button" class="think ${open ? "open" : ""} ${thinking ? "running" : ""}"
-            data-think="${esc(m.id)}" aria-expanded="${open ? "true" : "false"}">
-      <span class="th">
-        <span class="think-label">${icon("brain", "", 13)}<span>${thinking ? "正在思考" : "思考过程"}</span></span>
-        <span class="think-action">${thinking ? `<span class="think-wave"><i></i><i></i><i></i></span>` : ""}${icon("chevronDown", "think-caret", 12)}</span>
+    <div class="engine-facts">
+      <div class="engine-fact"><span>端口</span><strong>:${esc(engine.port)}</strong></div>
+      <div class="engine-fact"><span>运行时间</span><strong>${esc(engine.uptime)}</strong></div>
+      <div class="engine-fact"><span>进程</span><strong>${esc(engine.pid)}</strong></div>
+    </div>
+    <div class="engine-controls">
+      <span class="engine-state ${busy ? "starting" : running ? "running" : ""}">
+        ${busy ? `<span class="spin">${icon("loader", 10)}</span>` : "<i></i>"}
+        ${busy ? "启动中" : running ? "运行中" : "已停止"}
       </span>
-      ${open ? `<span class="tb">${esc(m.reasoning)}</span>` : ""}
-    </button>` : "";
-  const failed = m.content && m.content.startsWith("出错：");
-  const waiting = !m.content ? `<p class="stream-wait">${esc(S.generationStatus === "思考中" ? "正在思考" : "正在生成")}</p>` : "";
-  const bubble = failed
-    ? `<div class="bubble failed">${esc(m.content)}</div>`
-    : `<div class="bubble${m.streaming ? " is-streaming" : ""}">${m.content ? (m.streaming ? mdStream(m.content) : md(m.content)) : waiting}</div>`;
-  const meta = !isUser && !m.streaming && !failed && (m.rate || m.tokens) ? `
-    <div class="msg-meta">${m.rate ? `<span>${m.rate.toFixed ? m.rate.toFixed(1) : m.rate} tok/s</span>` : ""}${m.ttft ? `<span>首字 ${Math.round(m.ttft * 1000)}ms</span>` : ""}${m.tokens ? `<span>${m.tokens} tokens</span>` : ""}<span class="lnk" data-copy="${esc(m.id)}">复制</span></div>` : "";
-  // data-key：消息按 id 认领节点。没有它的时候局部更新只能按下标对齐，
-  // 新消息插入后整列都要改一遍（实测 300 条的对话一次推送多改 600 多个节点）。
-  return `<div class="msg ${isUser ? "user" : "ai"}" data-key="msg-${esc(m.id)}">${av}<div class="msg-body">${think}${bubble}${meta}</div></div>`;
+      <button class="button ${running ? "" : "primary"}" type="button" data-engine-toggle="${esc(engine.id)}" ${busy ? "disabled" : ""}>
+        ${icon(busy ? "loader" : running ? "stop" : "play", 13)}
+        <span>${busy ? "等待" : running ? "停止" : "启动"}</span>
+      </button>
+      <button class="button icon-only quiet" type="button" data-action="engine-config" aria-label="${esc(engine.id)} 配置">${icon("sliders", 14)}</button>
+    </div>
+  </article>`;
 }
 
-// 光标要跟在最后一段文字后面，而不是被块级段落挤到下一行。
-function mdStream(text) {
-  const html = md(text);
-  const caret = `<span class="stream-caret" aria-hidden="true"></span>`;
-  let at = -1;
-  for (const end of ["</p>", "</li>"]) {
-    const index = html.lastIndexOf(end);
-    if (index > at) at = index;
-  }
-  return at < 0 ? html + caret : html.slice(0, at) + caret + html.slice(at);
-}
-
-function stopChatFollow() {
-  if (UI.chatFollowFrame) cancelAnimationFrame(UI.chatFollowFrame);
-  UI.chatFollowFrame = 0;
-  UI.chatAutoScroll = false;
-  UI.chatFollowPending = false;
-}
-
-// 快照最多 10Hz 到达，直接赋 scrollTop 会变成每秒十次硬跳。把每次新增高度
-// 摊到一小段帧里追过去；下一批内容到达时从当前位置继续重定向。
-function followChatBottom(msgs, force) {
-  if (!msgs) return;
-  stopChatFollow();
-  const target = Math.max(0, msgs.scrollHeight - msgs.clientHeight);
-  if (force) {
-    if (document.body.classList.contains("side-anim")) UI.chatFollowPending = true;
-    msgs.scrollTop = target;
-    return;
-  }
-  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const start = msgs.scrollTop;
-  const delta = target - start;
-  if (reduceMotion || Math.abs(delta) < 1) {
-    msgs.scrollTop = target;
-    return;
-  }
-  const t0 = performance.now();
-  UI.chatAutoScroll = true;
-  const step = (now) => {
-    const p = Math.min(1, (now - t0) / 120);
-    const e = 1 - Math.pow(1 - p, 3);
-    msgs.scrollTop = start + delta * e;
-    if (p < 1) {
-      UI.chatFollowFrame = requestAnimationFrame(step);
-    } else {
-      UI.chatFollowFrame = 0;
-      UI.chatAutoScroll = false;
-    }
-  };
-  UI.chatFollowFrame = requestAnimationFrame(step);
-}
-
-function afterChatRender(pageChanged) {
-  const input = document.getElementById("chatInput");
-  const send = document.getElementById("sendBtn");
-  const msgs = document.getElementById("msgs");
-  if (input) {
-    input.value = UI.chatDraft || "";
-    bindOnce(input, "input", () => {
-      UI.chatDraft = input.value;
-      input.style.height = "auto";
-      input.style.height = Math.min(input.scrollHeight, 160) + "px";
-      const btn = document.getElementById("sendBtn");
-      if (btn && !S.generating) btn.disabled = !(UI.chatDraft || "").trim() || !running();
-    });
-    bindOnce(input, "keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (UI.chatDraft && UI.chatDraft.trim() && running() && !S.generating) doSend(); }
-    });
-  }
-  bindOnce(send, "click", () => { if (S.generating) cmd("stopGeneration"); else if (UI.chatDraft && UI.chatDraft.trim()) doSend(); });
-  document.querySelectorAll("[data-think]").forEach((el) => {
-    bindOnce(el, "click", () => {
-      const id = el.dataset.think;
-      UI.thinkOpen[id] = !UI.thinkOpen[id];
-      render();
-    });
-  });
-  document.querySelectorAll("[data-copy]").forEach((el) => {
-    bindOnce(el, "click", () => {
-      const m = (S.messages || []).find((x) => x.id === el.dataset.copy);
-      if (m) cmd("copyText", { text: m.content, label: "已复制消息" });
-    });
-  });
-  document.querySelectorAll("[data-say]").forEach((el) => {
-    bindOnce(el, "click", () => { UI.chatDraft = el.dataset.say; doSend(); });
-  });
-  // livestrip 实时值：速率优先用 Swift 侧流式测速（recordStreamDelta，思考流
-  // 也计入），其次消息自带的结束统计；耗时用本地锚点计时。此前只读
-  // cur.rate/cur.tokens，而这两者流式期间都还没值，chip 永远停在「— tok/s」。
-  // 再挂一个 250ms 本地时钟兜底推送空档（长 prefill、引擎无增量时秒表也照走）。
-  if (S.generating) {
-    updateLiveStrip();
-    if (!UI.liveStripTimer) UI.liveStripTimer = setInterval(() => {
-      if (!S || !S.generating || !document.querySelector(".livestrip")) {
-        clearInterval(UI.liveStripTimer);
-        UI.liveStripTimer = 0;
-        return;
-      }
-      updateLiveStrip();
-    }, 250);
-  } else {
-    if (UI.liveStripTimer) { clearInterval(UI.liveStripTimer); UI.liveStripTimer = 0; }
-    if (Object.keys(UI.streamStart).length) UI.streamStart = {};
-  }
-  // 跟随底部：切页强制吸底；同页重绘恢复到重绘前的滚动位——用户在流式输出
-  // 期间上翻阅读时不会被弹回顶部，本就在底部附近则继续跟随新内容。
-  // 注意：.msg 的 content-visibility 只在折叠动画窗口开（body.side-anim），
-  // 这里赋 scrollTop 时布局必须已完整，否则会被钳位回 0（详见 app.css）。
-  if (msgs) {
-    bindOnce(msgs, "wheel", stopChatFollow);
-    bindOnce(msgs, "touchstart", stopChatFollow);
-    bindOnce(msgs, "scroll", () => {
-      if (!UI.chatAutoScroll && UI.chatFollowFrame) stopChatFollow();
-    });
-    const saved = UI.chatScroll;
-    if (!pageChanged && saved) {
-      if (saved.nearBottom) followChatBottom(msgs);
-      else {
-        stopChatFollow();
-        msgs.scrollTop = saved.top;
-      }
-      UI.chatScroll = null;
-    } else {
-      followChatBottom(msgs, true);
-    }
-  }
-  if (input && UI.chatDraft) { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 160) + "px"; }
-}
-
-// 直播条就地刷新：不重建 DOM（保住 spinner 动画），只更新状态文本与两个 chip。
-function updateLiveStrip() {
-  const cur = (S.messages || []).filter((m) => m.streaming && m.role !== "user").pop();
-  const status = document.getElementById("liveStatus");
-  if (status) status.textContent = S.generationStatus || "生成中";
-  if (!cur) return;
-  if (!UI.streamStart[cur.id]) UI.streamStart[cur.id] = Date.now();
-  const rate = document.getElementById("liveRate");
-  const elapsed = document.getElementById("liveElapsed");
-  const liveRate = S.stats && S.stats.liveDecodeRate != null ? S.stats.liveDecodeRate : null;
-  if (rate) rate.textContent = liveRate != null ? liveRate.toFixed(1) + " tok/s"
-    : (cur.rate ? cur.rate.toFixed(1) + " tok/s"
-    : (cur.tokens ? cur.tokens + " tokens" : "— tok/s"));
-  if (elapsed) elapsed.textContent = ((Date.now() - UI.streamStart[cur.id]) / 1000).toFixed(1) + "s";
-}
-
-function doSend() {
-  const text = (UI.chatDraft || "").trim();
-  if (!text) return;
-  UI.chatDraft = "";
-  cmd("sendChat", { text });
-  render();
-}
-
-// 分组模型菜单：按已安装引擎列出各自的模型（对齐旧原生 ModelSwitcher）。
-// 选中跨引擎的模型时 useModel 会自动停旧引擎再加载（hop），无需额外确认。
-function groupedModelMenuItems() {
-  const groups = S.modelsMenu || [];
-  const items = [];
-  let any = false;
-  groups.forEach((g) => {
-    const models = g.models || [];
-    if (!models.length) return;
-    if (items.length) items.push("-");
-    any = true;
-    items.push({ label: esc(g.name), header: true });
-    models.forEach((id) => items.push({
-      label: esc(shortModel(id)), act: "useModel", arg: `${g.engine}|${id}`,
-      on: id === S.selectedModel && g.engine === S.engine.id,
-    }));
-  });
-  if (!any) items.push({ label: "还没有可切换的模型，去模型页下载", header: true });
-  items.push("-", { label: "在模型页浏览全部…", act: "nav", arg: "models" });
-  return items;
-}
-
-function modelSwitcherMenu() {
-  popover("modelSwitcher", groupedModelMenuItems());
-}
-
-function sidebarModelMenu() {
-  popover("sideModelSwitcher", groupedModelMenuItems());
-}
-
-function chatMoreMenu() {
-  const threads = (S.threads || []).map((t) => ({ label: esc(t.title) + " · " + relTime(t.updatedAt), act: "openThread", arg: t.id }));
-  popover("chatMore", threads.concat("-", [
-    { label: "对话参数…", act: "chatParams" },
-    { label: "复制整段对话", act: "copyConversation" },
-    { label: "清空当前对话…", act: "clearChat" },
-    "-", { label: "清空最近对话…", act: "clearThreads" },
-  ]));
-}
-
-// 思考等级 chip 的文案：开启时显示当前推理等级，否则显示思考模式（自动/关闭）。
-function thinkChipLabel() {
-  const s = S.settings || {};
-  return s.thinkingMode === "on" ? (s.reasoningEffortLabel || "中") : (s.thinkingModeLabel || "自动");
-}
-
-// 思考等级菜单：下拉列表来自推理引擎（快照 settings.reasoningEfforts，
-// Swift 侧已对未报告的引擎用内置档位兜底），点选即切换，不重启引擎。
-function thinkLevelMenu() {
-  const s = S.settings || {};
-  const options = s.reasoningEfforts || [];
-  const items = options.length
-    ? options.map((o) => ({ label: esc(o.label), act: "setEffort", arg: o.value, on: o.value === s.reasoningEffort }))
-    : [{ label: "引擎未报告思考等级", header: true }];
-  popover("thinkLevel", items);
-}
-
-// ---------- 对话参数弹层 ----------
-function chatParamsDraft() {
-  if (!UI.chatParamsDraft) {
-    const s = S.settings || {};
-    UI.chatParamsDraft = {
-      temperature: s.temperature != null ? s.temperature : 0.7,
-      topP: s.topP != null ? s.topP : 0.95,
-      maxTokens: s.maxTokens > 0 ? s.maxTokens : "",
-      systemPrompt: s.systemPrompt || "",
-    };
-  }
-  return UI.chatParamsDraft;
-}
-
-function chatParamsBody() {
-  const d = chatParamsDraft();
-  // 留空时真正发出去的上限由快照算好（模型自身上限，引擎生效窗口封顶），
-  // placeholder 直接显示它，不要再写一句无从核对的「默认」。
-  const cap = (S.settings && S.settings.effectiveMaxTokens) || 0;
-  const capText = cap > 0 ? (cap >= 1000 ? Math.round(cap / 1000) + "K tok" : cap + " tok") : "自动";
+function renderLogs() {
+  const lines = LOG_SEED.concat(generatedLogs());
   return `
-    <div class="modal-body">
-      <div class="set-row"><div class="lab"><b>温度</b><small>越高越有创造性，越低越确定</small></div>
-        <div class="ctl"><input type="range" min="0" max="2" step="0.05" value="${d.temperature}" data-cprange="temperature" style="width:150px">
-        <span class="field" style="min-width:52px" id="cpv-temperature">${Number(d.temperature).toFixed(2)}</span></div></div>
-      <div class="set-row"><div class="lab"><b>Top P</b><small>核采样概率质量上限</small></div>
-        <div class="ctl"><input type="range" min="0" max="1" step="0.05" value="${d.topP}" data-cprange="topP" style="width:150px">
-        <span class="field" style="min-width:52px" id="cpv-topP">${Number(d.topP).toFixed(2)}</span></div></div>
-      <div class="set-row"><div class="lab"><b>最大生成 tokens</b><small>留空 = 模型自身上限，按引擎生效窗口封顶；思考与正文共享该上限</small></div>
-        <div class="ctl"><input class="field" data-key="cpMaxTokens" data-cpnum="maxTokens" placeholder="默认（${capText}）" value="${esc(d.maxTokens)}"></div></div>
-      <div class="set-row" style="align-items:flex-start"><div class="lab"><b>系统提示词</b><small>对每次请求生效，留空则不发送</small></div>
-        <div class="ctl"><textarea class="cp-sys" data-key="cpSystem" data-cptext="systemPrompt" rows="4" placeholder="例如：你是一个简洁的本地助手。">${esc(d.systemPrompt)}</textarea></div></div>
-    </div>
-    <div class="modal-foot">
-      <button class="btn-quiet" data-act="resetChatParams">${icon("rotate")}<span>恢复默认</span></button>
-      <button class="btn-quiet" data-act="closeChatParams">${icon("x")}<span>取消</span></button>
-      <button class="btn-main" data-act="saveChatParams">${icon("check")}<span>应用</span></button>
-    </div>`;
-}
-
-// 只把草稿打回默认值，真正的提交仍走「应用」——一键改配置太容易误伤。
-function resetChatParams() {
-  UI.chatParamsDraft = { temperature: 0.7, topP: 0.95, maxTokens: "", systemPrompt: "" };
-  render();
-}
-
-function saveChatParams() {
-  const d = UI.chatParamsDraft;
-  if (!d) { UI.chatParamsOpen = false; render(); return; }
-  const maxTokensRaw = String(d.maxTokens == null ? "" : d.maxTokens).trim();
-  const maxTokens = maxTokensRaw === "" ? 0 : parseInt(maxTokensRaw, 10);
-  cmd("saveSettings", {
-    temperature: Math.min(Math.max(Number(d.temperature) || 0, 0), 2),
-    topP: Math.min(Math.max(Number(d.topP) || 0, 0), 1),
-    maxTokens: maxTokens >= 16 ? maxTokens : 0,
-    systemPrompt: d.systemPrompt || "",
-  });
-  UI.chatParamsOpen = false;
-  UI.chatParamsDraft = null;
-  render();
-}
-
-// ---------- 模型 ----------
-function filteredModelEntries() {
-  const lib = S.library || { engine: "splash", entries: [] };
-  const q = UI.modelsSearch.trim().toLowerCase();
-  return lib.entries.filter((e) => {
-    const passF = UI.modelsFilter === "all" || (UI.modelsFilter === "local" ? e.installed : !e.installed);
-    const passQ = !q || e.id.toLowerCase().includes(q) || (e.display || "").toLowerCase().includes(q);
-    return passF && passQ;
-  });
-}
-
-// 推荐区只放当前 Mac 内存能承载的档位；已装模型另有「本机模型」区，不重复。
-// Swift 给了 fit 就用它（还包含磁盘判断），旧快照没有 fit 时退回内存门槛。
-function modelFitsThisMac(e) {
-  if (e.fit) return e.fit === "good" || e.fit === "unknown";
-  const memory = Number((S.recommendation && S.recommendation.memoryGB) || 0);
-  return !e.minMemory || !memory || e.minMemory <= memory;
-}
-
-function modelSectionHTML(kind, title, subtitle, entries, emptyHTML) {
-  const id = `model-section-${kind}`;
-  return `<section class="model-section ${kind}" aria-labelledby="${id}">
-    <div class="model-section-head">
-      <span class="model-section-icon">${icon(kind === "recommended" ? "brain" : "hardDrive", "", 15)}</span>
-      <h3 id="${id}">${esc(title)}<span class="model-section-count">${entries.length}</span></h3>
-      <span class="model-section-sub">${esc(subtitle)}</span>
-    </div>
-    ${entries.length
-      ? `<div class="model-grid">${entries.map(modelCard).join("")}</div>`
-      : emptyHTML}
-  </section>`;
-}
-
-// 网格独立成块：搜索输入时只重绘这块，不碰搜索框本身（否则每敲一个字焦点就丢）。
-function modelsGridHTML() {
-  const entries = filteredModelEntries();
-  const q = UI.modelsSearch.trim();
-  const installed = entries
-    .filter((e) => e.installed)
-    .sort((a, b) => {
-      const aUse = a.engine === S.engine.id && a.id === S.selectedModel ? 1 : 0;
-      const bUse = b.engine === S.engine.id && b.id === S.selectedModel ? 1 : 0;
-      return bUse - aUse;
-    });
-  const candidates = entries.filter((e) => !e.installed);
-  const fitting = candidates.filter(modelFitsThisMac);
-  // 有正式三档时只给这三档；低内存档位（rank=0）只在没有正式档可跑时兜底，
-  // 免得 128 GB 机器同时看到 4B、9B 和 Flash-Next，推荐区反而失去重点。
-  const ranked = fitting.filter((e) => Number(e.rank) > 0);
-  const recommended = (ranked.length ? ranked : fitting)
-    .sort((a, b) => {
-      const aPick = a.recommendedTag ? 1 : 0;
-      const bPick = b.recommendedTag ? 1 : 0;
-      return bPick - aPick || (b.minMemory || 0) - (a.minMemory || 0);
-    });
-  const hiddenForFit = candidates.filter((e) => !modelFitsThisMac(e)).length;
-  const memory = Number((S.recommendation && S.recommendation.memoryGB) || 0);
-  const hub = hubResultCards();
-
-  const queryNote = q ? `没有匹配「${esc(q)}」的` : "";
-  const localEmpty = `<div class="model-section-empty"><span>${queryNote || "还没有"}已下载模型</span>
-    <button class="section-link" data-act="openHub">${icon("search")}<span>去 Hugging Face 找</span></button></div>`;
-  const installedPicks = (S.library.entries || []).filter((e) => e.installed && e.source === "recommended").length;
-  const recEmptyText = q
-    ? `没有匹配「${esc(q)}」的推荐`
-    : (hiddenForFit > 0
-      ? "当前配置下没有可下载的精选档位"
-      : (installedPicks > 0 ? "这一栏的精选模型已经在本机" : "当前引擎暂时没有精选推荐"));
-  const recEmpty = `<div class="model-section-empty"><span>${recEmptyText}</span>
-    ${hiddenForFit > 0 ? `<small>${hiddenForFit} 个档位超出当前内存或可用磁盘</small>` : ""}
-    <button class="section-link" data-act="openHub">${icon("arrowRight")}<span>浏览全部模型</span></button></div>`;
-
-  const blocks = [];
-  if (UI.modelsFilter !== "remote") {
-    blocks.push(modelSectionHTML("local", "本机模型", "已下载，可直接加载", installed, localEmpty));
-  }
-  if (UI.modelsFilter !== "local") {
-    const subtitle = memory
-      ? `${memory} GB Mac 可承载 · 下载后归入本机`
-      : "按当前 Mac 可承载的档位筛选 · 下载后归入本机";
-    blocks.push(modelSectionHTML("recommended", "FlashCat 推荐", subtitle, recommended, recEmpty));
-  }
-  return `<div class="model-sections">${blocks.join("")}</div>${hub}`;
-}
-
-// Hub 搜索的结果：会话内有效，回车才发请求（逐字请求会打满 Hub 的限流）。
-function hubResultCards() {
-  const hub = S.hubSearch;
-  if (!hub || !hub.query) return "";
-  const head = `<div class="hub-head"><span class="t">Hugging Face · ${esc(hub.query)}</span>
-    ${hub.state === "loading" ? `<span class="dim">搜索中…</span>` : ""}
-    ${hub.state === "failed" ? `<span class="dim">${esc(hub.error || "搜索失败")}</span>` : ""}
-    ${hub.state === "idle" && !hub.results.length ? `<span class="dim">这一栏没有匹配的仓库</span>` : ""}
-    ${hub.results.length && hub.state === "idle" ? `<span class="dim">${hub.results.length} 个仓库 · 结果只在本次会话有效</span>` : ""}</div>`;
-  if (UI.modelsFilter === "local") return head;
-  if (!hub.results.length) return head;
-  return head + `<div class="model-grid">${hub.results.map(hubCard).join("")}</div>`;
-}
-
-function hubCard(r) {
-  const chose = UI.quant[r.repo];
-  const options = r.options || [];
-  const option = options.find((o) => o.name === chose) || options.find((o) => o.name === "") || options[0] || {};
-  const tags = [];
-  tags.push(`<span class="mtag eng">${esc(engineMeta(r.engine).name)}</span>`);
-  if (r.io) tags.push(`<span class="mtag fact io">${esc(r.io)}</span>`);
-  const quantLabel = option.name || ({ gguf: "GGUF", mtplx: "MTP", mlx: "MLX", unmarked: "原版" })[r.kind] || "";
-  if (quantLabel) tags.push(`<span class="mtag fact quant">量化 ${esc(quantLabel)}</span>`);
-  if (option.bytes) tags.push(`<span class="mtag">${option.estimated === false ? "" : "≈"}${fmtBytes(option.bytes)}</span>`);
-  if (option.memory) tags.push(`<span class="mtag fact mem">内存 ${option.estimated ? "≈" : ""}${option.memory} GB</span>`);
-  (r.tags || []).filter((t) => t !== "GGUF").forEach((t) => tags.push(`<span class="mtag">${esc(t)}</span>`));
-  const quant = options.length > 1
-    ? `<select class="qsel" data-quant="${esc(r.repo)}">${options.map((o) =>
-        `<option value="${esc(o.name)}"${o.name === (chose || option.name) ? " selected" : ""}>${esc(o.label)}${o.bytes ? " · " + fmtBytes(o.bytes) : ""}</option>`).join("")}</select>`
-    : "";
-  const id = option.name ? r.repo + ":" + option.name : r.repo;
-  return `<div class="model-card hub">
-    <div class="nm" title="${esc(r.repo)}">${esc(r.display)}</div>
-    <div class="mtags">${tags.join("")}</div>
-    <div class="summary">${esc(r.summary || "")}</div>
-    <div class="ft"><span class="sz">${esc(r.repo)}</span>
-      ${quant}
-      <button class="btn-p dl primary" data-act="downloadModel" data-arg="${esc(r.engine)}|${esc(id)}">${icon("download")}<span>下载</span></button></div>
-  </div>`;
-}
-
-function pageModels() {
-  const lib = S.library || { engine: "splash", entries: [] };
-  return `
-    <h2 class="pg">模型</h2>
-    <div class="chipbar">
-      ${engineIDs().map((id) =>
-        `<span class="echip ${lib.engine === id ? "on" : ""}" data-act="browseEngine" data-arg="${esc(id)}">${esc(engineMeta(id).name)}</span>`).join(" ")}
-      <label class="search">${icon("search", "search-icon", 14)}<input data-key="modelsSearch" placeholder="搜索模型…" value="${esc(UI.modelsSearch)}" aria-label="搜索模型"></label>
-      ${[["all", "全部"], ["local", "本机"], ["remote", "可下载"]].map(([v, n]) =>
-        `<span class="filter ${UI.modelsFilter === v ? "on" : ""}" data-f="${v}">${n}</span>`).join("")}
-      <button class="filter" style="margin-left:auto" data-act="rescan" data-arg="${esc(lib.engine)}">${icon("refresh")}<span>刷新状态</span></button>
-      <button class="filter action" data-act="openHub">${icon("plus")}<span>下载模型</span></button>
-      <button class="filter" data-act="openDownloadCenter">${icon("download")}<span>下载中心${S.downloads && S.downloads.tasks.length ? " · " + S.downloads.tasks.length : ""}</span></button>
-    </div>
-    <div id="modelsGrid">${modelsGridHTML()}</div>`;
-}
-
-// 卡片自己的下载状态：active 是正在下的那一个，tasks 里是排队/暂停/失败的。
-// 以前卡片完全不看这两个字段，下载只在「下载中心」弹层里有回声。
-function downloadOf(engine, id) {
-  const d = S.downloads || {};
-  const a = d.active;
-  if (a && a.model === id && (!a.engine || a.engine === engine)) {
-    return { fraction: a.fraction || 0, speed: a.speed || 0, status: "downloading" };
-  }
-  const t = (d.tasks || []).find((x) => x.model === id && (!x.engine || x.engine === engine));
-  if (!t) return null;
-  return { fraction: t.fraction == null ? 0 : t.fraction, speed: 0, status: t.status || "queued" };
-}
-
-function modelCard(e) {
-  const inUse = e.installed && e.engine === S.engine.id && e.id === S.selectedModel;
-  const dl = e.installed ? null : downloadOf(e.engine, e.id);
-  const tags = [];
-  // 硬件推荐标签排在最前：它是这一档「为什么是它」的说明，不随后面换用什么模型消失。
-  if (e.recommendedTag) tags.push(`<span class="mtag rec">${icon("check", "tag-icon", 11)}${esc(e.recommendedTag)}</span>`);
-  // 本机卡说明来源；推荐卡已经处在独立区块里，只补「为什么适合这台 Mac」。
-  if (e.installed) {
-    tags.push(e.source === "personal"
-      ? `<span class="mtag">个人下载</span>`
-      : `<span class="mtag">目录收录</span>`);
-  } else if (!e.recommendedTag && (e.fit === "good" || e.fit === "unknown")) {
-    tags.push(`<span class="mtag ok">${icon("check", "tag-icon", 11)}适配本机</span>`);
-  }
-  if (inUse) tags.push(`<span class="mtag ok">使用中</span>`);
-  // 引擎标签：一款模型能挂多个引擎，卡片上先亮归属，免得在 Splash 栏看到
-  // 一款其实是 oMLX 专用的权重还以为它能直接起。
-  (e.engineLabels || []).forEach((name) => tags.push(`<span class="mtag eng">${esc(name)}</span>`));
-  if (e.uncatalogued) tags.push(`<span class="mtag warn">未收录</span>`);
-  if (e.shared) {
-    const names = (e.engines || []).map((k) => engineMeta(k).name);
-    tags.push(`<span class="mtag">共享目录${names.length ? " · " + esc(names.join(" / ")) : " · 未授权"}</span>`);
-  }
-  if (e.bytes) tags.push(`<span class="mtag">${fmtBytes(e.bytes)}</span>`);
-  // 未安装的卡片讲「这一份会带上什么」，已安装的讲「现在跑得怎样」。
-  if (e.draftTag) tags.push(`<span class="mtag">${e.installed ? 'DFlash2 加速' : '含 DFlash2'}</span>`);
-  (e.tags || []).forEach((t) => tags.push(`<span class="mtag">${esc(t)}</span>`));
-  if (e.minMemory) tags.push(`<span class="mtag">内存下限 ${e.minMemory} GB</span>`);
-  const actions = e.installed
-    ? (e.isDraft ? "" : `<button class="btn-p primary" data-act="useModel" data-arg="${esc(e.engine)}|${esc(e.id)}">${icon("play")}<span>使用</span></button>`)
-    : (dl
-      ? (dl.status === "paused" || dl.status === "failed"
-        ? `<button class="btn-p dl primary" data-act="resumeDownload" data-arg="${esc(e.engine)}|${esc(e.id)}">${icon("refresh")}<span>${dl.status === "failed" ? "重试" : "继续"}</span></button>`
-        : `<button class="btn-p ghost" data-act="pauseDownload" data-arg="${esc(e.engine)}|${esc(e.id)}">${icon("pause")}<span>暂停</span></button>`)
-      : `<button class="btn-p dl primary" data-act="downloadModel" data-arg="${esc(e.engine)}|${esc(e.id)}">${icon("download")}<span>下载</span></button>`);
-  // 「⋯」只在已安装时出现：未安装的卡片唯一可做的操作是下载，卡片上已有
-  // 「下载」按钮，菜单里再放一个属于重复入口。未安装时不渲染空的「⋯」。
-  // 样式用 btn-p ghost 胶囊，和「使用 / 下载」按钮同高同形，不再是方形小按钮。
-  const more = e.installed
-    ? `<button class="btn-p ghost more" data-act="modelMenu" data-arg="${esc(e.engine)}|${esc(e.id)}" title="更多操作" aria-label="更多操作">${icon("ellipsis")}</button>`
-    : "";
-  const cardClass = ["model-card", inUse ? "inuse" : "", !e.installed ? "recommended" : ""].filter(Boolean).join(" ");
-  return `<div class="${cardClass}">
-    <div class="nm" title="${esc(e.id)}">${esc(e.display || e.id)}</div>
-    <div class="mtags">${tags.join("")}</div>
-    ${!e.installed && e.summary ? `<div class="model-summary">${esc(e.summary)}</div>` : ""}
-    ${dl ? `<div class="mc-dl">
-      <div class="dl-meter"><div class="dl-fill${dl.status === "failed" ? " err" : ""}" style="width:${Math.round(dl.fraction * 100)}%"></div></div>
-      <span class="pct">${dl.status === "failed" ? "失败" : (dl.status === "paused" ? "已暂停 " : "") + Math.round(dl.fraction * 100) + "%"}${dl.speed ? " · " + esc(fmtRate(dl.speed)) : ""}</span>
-    </div>` : ""}
-    <div class="ft"><span class="sz">${esc(e.originText)}${e.repo ? " · " + esc(e.repo) : ""}</span>
-      ${actions}${more}</div>
-  </div>`;
-}
-
-function modelMenu(arg) {
-  const [engine, id] = arg.split("|");
-  const entry = (S.library.entries || []).find((x) => x.engine === engine && x.id === id);
-  // 未安装的模型没有菜单：下载入口只保留卡片上的那一个按钮，不在菜单里重复。
-  if (!entry || !entry.installed) return;
-  const items = [{ label: "在 Finder 中显示", act: "revealModel", arg }];
-  // 共享目录里的权重只有一份，菜单里给的是「给哪些引擎看见」，不是复制。
-  if (entry.shared) items.push({ label: "放到哪些引擎…", act: "shareEngines", arg });
-  items.push({ label: "删除模型…", act: "removeModel", arg });
-  popover("modelMenuBtn", items);
-}
-
-// ---------- 开放下载 / 共享授权 ----------
-// 下载目标固定是公共目录，勾选只决定装完给谁用；能不能被引擎加载由引擎
-// 自己判断，flashCat 不做格式或家族预检。
-function repoDlDraft() {
-  if (!UI.repoDl) {
-    // 默认只勾当前正在看的引擎：实际能跑哪个由引擎自己说了算，
-    // 不替用户把三个都预先勾上。
-    const browsed = (S.library && S.library.engine) || "splash";
-    const engines = Object.fromEntries(engineIDs().map((id) => [id, id === browsed]));
-    UI.repoDl = { repo: "", engines };
-  }
-  return UI.repoDl;
-}
-
-function enginePickChips(selected, act) {
-  return engineIDs().map((id) =>
-    `<span class="filter ${selected[id] ? "on" : ""}" data-act="${act}" data-arg="${id}">${esc(engineMeta(id).name)}</span>`).join(" ");
-}
-
-function openShareEngines(engine, id) {
-  const entry = (S.library.entries || []).find((x) => x.engine === engine && x.id === id);
-  const engines = {};
-  engineIDs().forEach((k) => { engines[k] = !!(entry && (entry.engines || []).includes(k)); });
-  UI.shareEdit = { id, engines };
-  render();
-}
-
-// ---------- 模型广场（Hugging Face 浏览）----------
-// 只做「看」：搜索、排序、模型卡（README / 文件 / 标签）。真正下载仍然走
-// 「勾引擎 → 下载器」那一条，所以这里的任何失败都不会影响已装模型。
-function hubDraft() {
-  if (!UI.hubDraft) UI.hubDraft = { query: "" };
-  return UI.hubDraft;
-}
-
-// 下载量/参数量都只用一档量级，不做千分位：表太窄，读的是一眼大小。
-function fmtCompact(n) {
-  if (!n || n <= 0) return "0";
-  if (n < 1000) return String(n);
-  if (n < 1e6) return `${(n / 1e3).toFixed(n < 1e4 ? 1 : 0)}k`;
-  if (n < 1e9) return `${(n / 1e6).toFixed(n < 1e7 ? 1 : 0)}M`;
-  return `${(n / 1e9).toFixed(1)}B`;
-}
-function fmtParams(n) {
-  if (!n || n <= 0) return "";
-  if (n >= 1e12) return `${(n / 1e12).toFixed(1)}T`;
-  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
-  if (n >= 1e6) return `${(n / 1e6).toFixed(0)}M`;
-  return fmtCompact(n);
-}
-// 图标本身是可信的 SVG 模板，只转义旁边来自 Hub 的文本，否则整段 SVG
-// 会被当成普通字符串显示出来。
-function metricHTML(iconName, text, fallback) {
-  if (text == null || text === "") return esc(fallback == null ? "—" : fallback);
-  return `${icon(iconName, "meta-icon", 12)} ${esc(text)}`;
-}
-// 公共目录/引擎目录里用的扁平名，用来判「已经在本机了」。
-function hubFlatId(id) {
-  return String(id || "").replace(/\//g, "--").replace(/:/g, "-");
-}
-function hubEngineHint(m) {
-  if (m.mtplx) return "带校准 MTP 头，给 MTPLX 最合适；oMLX 也能读";
-  if (m.gguf) return "GGUF：Splash 与 oMLX 能跑，MTPLX 不行";
-  if (m.mlx) return "MLX 量化：oMLX 能跑；Splash 只认它自己那几个家族";
-  return "原版权重：多数本地引擎跑不起来，建议找 MLX / GGUF 量化版";
-}
-// HF 的 README 里混着裸 HTML（居中 <div>、<img width=400px> 的 logo、表格）。
-// md() 只认 markdown，这些原样吐出来就是一堆源码，先清干净再渲染。
-function hubCardText(text) {
-  return String(text || "")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<img[^>]*>/gi, "")
-    .replace(/<[^>]{0,400}>/g, "");
-}
-// 预检卡里的 README 摘要：只留能读的文字。HF 的 README 开头常是 shields
-// 徽章和居中的 logo——`![](...)`、`[![arXiv](https://img.shields.io/...)](...)`
-// 这类原样吐出来就是一屏链接，比不显示还碍事。
-function probeCardText(text) {
-  return hubCardText(text)
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")      // 图片与 shields 徽章
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")   // 链接只留文字
-    .replace(/&middot;/g, "·").replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-    .replace(/^[>\s]*/gm, "")
-    .replace(/[#*`|]/g, "")
-    .split("\n").map((line) => line.trim())
-    .filter((line) => line && !/^[-=]{3,}$/.test(line))
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-function hubLocally(m) {
-  return repoLocal(m && m.id);
-}
-// 本机是否已经有这个仓库。快照里的 hub.local 是 Swift 判完的全量清单（公共
-// 目录 + 各引擎的模型目录），再叠一层当前引擎的库，兜住刚落地、还没重扫
-// 的那个窗口。judgement 在 Swift 侧，这里只是把结果画出来。
-function repoLocal(id) {
-  const canon = String(id || "").replace(/:.*$/, "").replace(/--/g, "/").trim();
-  if (!canon) return false;
-  const hub = S.hub || {};
-  if ((hub.local || []).includes(canon)) return true;
-  if ((hub.shared || []).includes(canon)) return true;
-  // 库里的条目要把「推荐但没下」的排掉：广场里的 mlx-community/... 卡片也是
-  // library 条目，但 installed 是 false，算进来就会把没下的模型显示成已下载。
-  return (S.library.entries || []).some((e) => e.installed
-    && (e.repo === canon || e.id === canon || e.id === hubFlatId(canon)));
-}
-
-// 手填仓库的预检：输入停下 450ms 才问 Swift 一次。边打边查会把
-// `Youssofal/`、`Youssofal/Qw` 这些中间态一并查出去，全是必然的 404。
-const PROBE_REPO = /^[^\s/]+\/[^\s/]+$/;
-let repoProbeTimer = null;
-function repoProbeSoon(repo) {
-  if (repoProbeTimer) clearTimeout(repoProbeTimer);
-  const value = String(repo || "").trim();
-  repoProbeTimer = setTimeout(() => {
-    repoProbeTimer = null;
-    // 先拿本地标记把「正在查…」显出来：Swift 那边查完才会推快照，中间这段
-    // 时间不给反馈就像点了没反应。
-    UI.probeBusyRepo = PROBE_REPO.test(value.replace(/--/g, "/")) ? value : null;
-    renderOverlays();
-    cmd("probeRepo", { repo: value });
-  }, 450);
-}
-function repoProbeStop() {
-  if (repoProbeTimer) clearTimeout(repoProbeTimer);
-  repoProbeTimer = null;
-  UI.probeBusyRepo = null;
-}
-
-// 预检面板三态：id 还没成形（不查）、查着、查到/出差。查到就把「下之前该
-// 看的」摊开——体积、文件、参数、README 摘要——别让人彽着一个 id 下十几 G。
-function repoProbePanel(d) {
-  const p = (S.hub || {}).probe || {};
-  const repo = String(d.repo || "").trim().replace(/--/g, "/");
-  if (!PROBE_REPO.test(repo)) {
-    return `<div class="probe"><div class="probe-empty">输入完整的 <span class="mono">owner/repo</span>，会自动查一次仓库信息。</div></div>`;
-  }
-  if (p.error && String(p.repo || "").toLowerCase() === repo.toLowerCase()) {
-    return `<div class="probe">
-      <div class="probe-strip warn">${esc(p.error)}</div>
-      <div class="probe-empty">仓库存在就能查到；私有/需授权的仓库得先在自己的机器上登录过 Hub。</div>
-    </div>`;
-  }
-  const m = p.detail;
-  // 用 Swift 告知的「结果属于哪个仓库」对齐，而不是靠 m.id：仓库被改名或大小写
-  // 不同时，按 id 对齐会把已经查到的卡当成别人的，卡在「查中」。
-  const probed = String(p.repo || "").toLowerCase();
-  const matched = !!m && (!probed || probed === repo.toLowerCase());
-  if (probed && probed === repo.toLowerCase()) UI.probeBusyRepo = null;
-  if (!matched) {
-    const busy = UI.probeBusyRepo && UI.probeBusyRepo.toLowerCase() === repo.toLowerCase();
-    return busy || p.loading
-      ? `<div class="probe"><div class="probe-empty">正在查 Hugging Face…</div></div>`
-      : `<div class="probe"><div class="probe-empty">输入完整的 <span class="mono">owner/repo</span> 后会自动查一次仓库信息。</div></div>`;
-  }
-  const files = m.files || [];
-  const biggest = files.reduce((a, f) => Math.max(a, f.size || 0), 0);
-  const local = repoLocal(m.id);
-  const cells = [
-    ["总体积", esc(m.size ? fmtBytes(m.size) : "未知")],
-    ["文件", esc(files.length ? `${files.length} 个${biggest ? ` · 最大 ${fmtBytes(biggest)}` : ""}` : "—")],
-    ["参数量", esc(m.parameters ? fmtParams(m.parameters) : "—")],
-    ["下载量", metricHTML("download", m.downloads ? fmtCompact(m.downloads) : "")],
-    ["点赞", metricHTML("heart", m.likes ? fmtCompact(m.likes) : "")],
-    ["更新", esc(String(m.updated || "").slice(0, 10) || "—")],
-    ["许可", esc(m.license || "—")],
-    ["任务", esc(m.pipeline || "—")],
-  ];
-  const tags = [];
-  if (m.mtplx) tags.push("MTPLX");
-  if (m.mlx) tags.push("MLX");
-  if (m.gguf) tags.push("GGUF");
-  (m.tags || []).slice(0, 6).forEach((t) => { if (!tags.includes(t)) tags.push(t); });
-  const card = probeCardText(m.modelCard || "").slice(0, 420);
-  const strip = local
-    ? `<div class="probe-strip ok">已经在这台机器上了（公共目录或某个引擎的模型目录），不用再下一遍。</div>`
-    : `<div class="probe-strip warn">${esc(hubEngineHint(m))}</div>`;
-  return `<div class="probe">
-    <div class="probe-head">
-      <span class="mono probe-id">${esc(m.id)}</span>
-      ${local ? `<span class="mtag ok">已在本机</span>` : ""}
-      ${m.gated ? `<span class="mtag warn">需授权</span>` : ""}
-    </div>
-    <div class="probe-grid">${cells.map(([k, v]) => `<div class="cell"><span class="k">${esc(k)}</span><span class="v">${v}</span></div>`).join("")}</div>
-    ${tags.length ? `<div class="mtags" style="margin-top:10px">${tags.map((t) => `<span class="mtag">${esc(t)}</span>`).join("")}</div>` : ""}
-    ${strip}
-    ${card ? `<div class="probe-card" style="margin-top:10px">${esc(card)}</div>` : ""}
-  </div>`;
-}
-
-function hubFactTags(m) {
-  const facts = [];
-  if (m.io) facts.push(`<span class="mtag fact io">${esc(m.io)}</span>`);
-  if (m.quantization) facts.push(`<span class="mtag fact quant">量化 ${esc(m.quantization)}</span>`);
-  if (m.memoryMin) {
-    const memory = m.memoryMax && m.memoryMax !== m.memoryMin
-      ? `${m.memoryMin}–${m.memoryMax}`
-      : `${m.memoryMin}`;
-    facts.push(`<span class="mtag fact mem">≈${memory} GB 内存</span>`);
-  }
-  if (m.engine) {
-    const none = m.engineID === "none";
-    facts.push(`<span class="mtag fact engine ${esc(m.engineID || "none")}">${none ? "无引擎推荐" : "推荐 " + esc(m.engine)}</span>`);
-  }
-  return facts;
-}
-
-function hubRow(m) {
-  const local = repoLocal(m.id);
-  const meta = [];
-  if (m.parameters) meta.push(esc(`${fmtParams(m.parameters)} 参数`));
-  if (m.size) meta.push(esc(fmtBytes(m.size)));
-  meta.push(metricHTML("download", fmtCompact(m.downloads)));
-  if (m.likes) meta.push(metricHTML("heart", fmtCompact(m.likes)));
-  const tags = [];
-  if (m.mlx) tags.push("MLX");
-  if (m.gguf) tags.push("GGUF");
-  if (m.mtplx) tags.push("MTPLX");
-  if (m.gated) tags.push("需授权");
-  if (m.license) tags.push(m.license);
-  const facts = hubFactTags(m);
-  return `<div class="hub-row${local ? " local" : ""}" data-act="hubOpenDetail" data-arg="${esc(m.id)}">
-    <div style="flex:1;min-width:0">
-      <div class="hub-name" title="${esc(m.id)}">${esc(m.id)}</div>
-      <div class="hub-sub">${meta.join("<span>·</span>")}</div>
-      ${facts.length ? `<div class="hub-facts">${facts.join("")}</div>` : ""}
-      ${tags.length ? `<div class="mtags" style="margin-top:4px">${tags.map((t) => `<span class="mtag">${esc(t)}</span>`).join("")}</div>` : ""}
-    </div>
-    <div style="display:flex;align-items:center;gap:8px;flex:none">
-      ${local ? `<span class="mtag ok">${icon("check", "tag-icon", 11)}已在本机</span>` : ""}
-      ${local ? `<button class="btn-p ghost" disabled>${icon("check")}<span>已下载</span></button>` : `<button class="btn-p dl primary" data-act="hubDownload" data-arg="${esc(m.id)}">${icon("download")}<span>下载</span></button>`}
-    </div>
-  </div>`;
-}
-
-function hubBody() {
-  const h = S.hub || {};
-  const d = hubDraft();
-  const items = h.results || [];
-  const sort = h.sort || "trending";
-  const filter = h.filter || "all";
-  const page = h.page || 0;
-  const head = `<div class="ctl" style="display:flex;gap:8px;align-items:center;margin:2px 0 10px">
-      <input class="field" data-key="hubq" data-hubq style="flex:1;min-width:0;text-align:left;padding:6px 10px" placeholder="搜 Hugging Face：qwen3.5、mlx、gguf…" value="${esc(d.query)}" spellcheck="false">
-      <button class="btn-p primary" data-act="hubSearch">${icon("search")}<span>搜索</span></button>
-    </div>
-    <div class="ctl" style="display:flex;gap:8px;align-items:center;margin-bottom:4px;flex-wrap:wrap">
-      <span class="filter ${sort === "trending" ? "on" : ""}" data-act="hubSort" data-arg="trending">推荐</span>
-      <span class="filter ${sort === "downloads" ? "on" : ""}" data-act="hubSort" data-arg="downloads">下载量</span>
-      <span style="width:1px;height:16px;background:var(--w-line);margin:0 2px"></span>
-      ${[['all', '全部'], ['mlx', 'MLX'], ['gguf', 'GGUF']].map(([k, label]) => `<span class="filter ${filter === k ? "on" : ""}" data-act="hubFilter" data-arg="${k}">${label}</span>`).join(" ")}
-      <span class="sz" style="margin-left:auto">${h.loading ? "加载中…" : `${items.length} 个仓库`}</span>
-    </div>`;
-  const pager = "";
-  let body = "";
-  if (h.error) body = `<div class="confirm-strip" style="margin:10px 0;border-color:color-mix(in srgb, var(--w-warn) 40%,transparent)">${esc(h.error)}</div>`;
-  else if (h.loading && !items.length) body = `<div class="hub-empty">正在从 Hugging Face 取列表…</div>`;
-  else if (!items.length) body = `<div class="hub-empty">${page > 0 ? "这一页没有更多仓库了。" : "没搜到仓库。换个关键词试试，或者手填仓库 id。"}</div>`;
-  else body = items.map(hubRow).join("");
-  return `${head}<div>${body}</div>${items.length ? pager : ""}`;
-}
-
-// 分页放在弹层底部而不是列表末尾：列表本身要滚动，翻页按钮跟着滚就没法用了。
-function hubPager() {
-  const h = S.hub || {};
-  const page = h.page || 0;
-  const busy = h.loading ? "disabled" : "";
-  return `<div class="hub-pager">
-      <button class="btn-quiet" data-act="hubPage" data-arg="prev" ${page > 0 && !h.loading ? "" : "disabled"}>${icon("arrowLeft")}<span>上一页</span></button>
-      <span class="sz">第 ${page + 1} 页</span>
-      <button class="btn-quiet" data-act="hubPage" data-arg="next" ${h.hasMore && !h.loading ? "" : busy || "disabled"}><span>下一页</span>${icon("arrowRight")}</button>
-    </div>`;
-}
-
-function hubDetailBody() {
-  const h = S.hub || {};
-  const m = h.detail;
-  if (!m) {
-    return `<div class="hub-empty">${h.detailLoading ? "正在取模型卡…" : (h.error || "选一个仓库看看")}</div>`;
-  }
-  const tab = UI.hubTab || "card";
-  const files = m.files || [];
-  let inner = "";
-  if (tab === "files") {
-    inner = files.length
-      ? files.map((f) => `<div class="hub-file"><span class="mono" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.name)}</span><span style="flex:none">${f.size ? fmtBytes(f.size) : "—"}</span></div>`).join("")
-      : `<div class="hub-empty">没有文件清单</div>`;
-  } else if (tab === "tags") {
-    inner = (m.tags || []).length
-      ? `<div class="mtags">${m.tags.map((t) => `<span class="mtag">${esc(t)}</span>`).join("")}</div>`
-      : `<div class="hub-empty">没有标签</div>`;
-  } else {
-    inner = m.modelCard ? `<div class="hub-card">${md(hubCardText(m.modelCard))}</div>` : `<div class="hub-empty">这个仓库没有模型卡（README）</div>`;
-  }
-  const meta = [];
-  if (m.size) meta.push(esc(fmtBytes(m.size)));
-  if (m.parameters) meta.push(esc(`${fmtParams(m.parameters)} 参数`));
-  meta.push(metricHTML("download", fmtCompact(m.downloads)));
-  if (m.likes) meta.push(metricHTML("heart", fmtCompact(m.likes)));
-  const facts = hubFactTags(m);
-  return `<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:8px">
-      <span class="mono" style="font-size:12px">${esc(m.id)}</span>
-      <span class="sz">${meta.join(" · ")}</span>
-      ${m.pipeline ? `<span class="mtag">${esc(m.pipeline)}</span>` : ""}
-    </div>
-    ${facts.length ? `<div class="hub-facts" style="margin-bottom:8px">${facts.join("")}</div>` : ""}
-    <div class="confirm-strip" style="margin:0 0 10px">${esc(hubEngineHint(m))}</div>
-    <div class="ctl" style="display:flex;gap:8px;margin-bottom:8px">
-      <span class="filter ${tab === "card" ? "on" : ""}" data-act="hubTab" data-arg="card">模型卡</span>
-      <span class="filter ${tab === "files" ? "on" : ""}" data-act="hubTab" data-arg="files">文件 ${files.length || ""}</span>
-      <span class="filter ${tab === "tags" ? "on" : ""}" data-act="hubTab" data-arg="tags">标签</span>
-    </div>
-    <div style="max-height:46vh;overflow-y:auto">${inner}</div>
-    <div class="modal-foot">
-      <button class="btn-quiet" data-act="hubOpenLink" data-arg="${esc(m.id)}">${icon("external")}<span>在 Hugging Face 打开</span></button>
-      ${repoLocal(m.id)
-        ? `<span class="sz" style="margin-left:auto">这台机器上已经有了</span><button class="btn-p ghost" disabled>${icon("check")}<span>已下载</span></button>`
-        : `<button class="btn-main" data-act="hubDownload" data-arg="${esc(m.id)}" style="margin-left:auto">${icon("download")}<span>下载</span></button>`}
-    </div>`;
-}
-
-// ---------- 引擎 ----------
-const ENGINE_META = {
-  splash: { name: "Splash", color: "#D26A20", grad: "linear-gradient(135deg,#FF9F0A,#FF375F)" },
-  omlx: { name: "oMLX", color: "#177F86", grad: "linear-gradient(135deg,#2AA8A0,#1F5FBF)" },
-  mtplx: { name: "MTPLX", color: "#5B57C9", grad: "linear-gradient(135deg,#5E5CE6,#7B2CBF)" },
-  "mlx-serve": { name: "MLX-Serve", color: "#0A84FF", grad: "linear-gradient(135deg,#0A84FF,#5E5CE6)" },
-  strata: { name: "Strata", color: "#0AB887", grad: "linear-gradient(135deg,#0AB887,#177F86)" },
-};
-const ENGINE_CAPS = {
-  splash: ["DFlash2 投机解码", "视觉多模态"],
-  omlx: ["多模型热切换", "热加载"],
-  mtplx: ["MTP 投机解码", "长上下文", "仅支持串行"],
-  "mlx-serve": ["多模型热切换", "原生 MLX / GGUF", "工具调用"],
-  strata: ["SSD 专家流式", "MTP 投机解码", "多硬件后端"],
-};
-const ENGINE_CAP_WARN = new Set(["仅支持串行"]);
-const ENGINE_BLURB = {
-  splash: "Apple Silicon 上的自管运行时，专注单模型：DFlash2 投机解码、KV 缓存与视觉多模态都在同一个包里。",
-  omlx: "多模型热切换：常驻多个模型，按请求路由，MTP / DFlash2 按模型开关。",
-  mtplx: "以 MTP 投机解码为主的引擎，量化与草稿参数通过命令行开关控制。注意它是串行调度的：同一时刻只处理一个请求，并发调用会排队等待，不会像前两个引擎那样合批并行。",
-  "mlx-serve": "原生 Apple Silicon MLX / GGUF 运行时，多模型热加载，自带 OpenAI、Anthropic 与 Ollama 兼容接口。",
-  strata: "面向超大 MoE 的流式推理运行时，按需从 SSD 读取专家权重，覆盖 Metal、CUDA、HIP 与 SYCL 后端。",
-};
-
-function engineIDs() {
-  const catalog = (S && Array.isArray(S.engineCatalog)) ? S.engineCatalog : [];
-  return catalog.length ? catalog.map((item) => item.id) : ["splash", "omlx", "mtplx"];
-}
-
-function engineMeta(id) {
-  const row = ((S && Array.isArray(S.engineCatalog)) ? S.engineCatalog : []).find((item) => item.id === id);
-  const fallback = ENGINE_META[id] || { name: String(id || "ENGINE").toUpperCase(), color: "#767676", grad: "linear-gradient(135deg,#8E8E93,#636366)" };
-  return {
-    ...fallback,
-    name: (row && row.name) || fallback.name,
-    color: (row && row.accent) || fallback.color,
-    grad: fallback.grad || `linear-gradient(135deg,${(row && row.accent) || fallback.color},#636366)`,
-  };
-}
-
-function engineCaps(id) {
-  const row = ((S && Array.isArray(S.engineCatalog)) ? S.engineCatalog : []).find((item) => item.id === id);
-  const labels = row && Array.isArray(row.capabilities) ? row.capabilities.map((cap) => cap.label).filter(Boolean) : [];
-  return labels.length ? labels : (ENGINE_CAPS[id] || []);
-}
-
-function engineBlurb(id) {
-  const row = ((S && Array.isArray(S.engineCatalog)) ? S.engineCatalog : []).find((item) => item.id === id);
-  return (row && row.summary) || ENGINE_BLURB[id] || "";
-}
-
-function pageEngines() {
-  const cards = engineIDs().map((id) => {
-    const meta = engineMeta(id);
-    const info = (S.enginesInstall && S.enginesInstall[id]) || {};
-    const versions = info.versions || [];
-    const installed = versions.length > 0;
-    const isActive = S.engine.id === id;
-    const isRun = isActive && running();
-    const busy = info.progress != null;
-    const dot = isRun ? "ok" : (info.phase === "failed" ? "err" : "");
-    const stTag = isRun ? `<span class="mtag ok">运行中</span>`
-      : (info.phase === "failed" ? `<span class="mtag" style="color:var(--w-err)">失败</span>`
-      : (installed ? `<span class="mtag">已停止</span>` : `<span class="mtag" style="color:var(--w-info)">未安装</span>`));
-    const kv = [`<span>端口 <b>:${info.port}</b></span>`];
-    if (installed) kv.push(`<span>已装 <b>${esc(versions[versions.length - 1])}</b></span>`);
-    else kv.push(`<span>运行时 <b>未安装</b></span>`);
-    const up = info.upstream;
-    if (up && up.status === "update") kv.push(`<span>上游 <b>${esc(up.version)}</b> <span class="upd">可更新${up.prerelease ? " · 预发布" : ""}</span></span>`);
-    else if (up && up.status === "current") kv.push(`<span>上游 <b>${esc(up.version)}</b> 一致</span>`);
-    else if (up && up.status === "unavailable") kv.push(`<span>上游 <b>未知</b></span>`);
-    if (info.params) kv.push(`<span>参数 <b>${esc(info.params)}</b></span>`);
-
-    let ft = "";
-    if (busy) {
-      ft = `<div class="ft"><span class="install-progress">${icon("loader", "spin-icon")}安装 ${Math.round((info.progress || 0) * 100)}%</span><span style="font-size:11px;color:var(--w-ink-3)">${esc(info.step || "")}</span></div>`;
-    } else {
-      const btns = [];
-      if (up && up.status === "update") btns.push(`<button class="btn-p ghost" data-act="installEngine" data-arg="${id}">${icon("cloudDownload")}<span>${installed ? "更新到 " + esc(up.version) : "安装 " + esc(up.version)}</span></button>`);
-      if (!installed) btns.push(`<button class="btn-p dl primary" data-act="installEngine" data-arg="${id}">${icon("download")}<span>安装运行时</span></button>`);
-      btns.push(`<button class="btn-p ghost" data-act="nav" data-arg="logs">${icon("scrollText")}<span>查看日志</span></button>`);
-      btns.push(`<button class="btn-p ghost" data-act="engineConfig" data-arg="${id}" ${installed ? "" : "disabled"}>${icon("sliders")}<span>配置</span></button>`);
-      btns.push(`<button class="icon-btn" data-menu="engineMenu" data-arg="${id}" title="更多操作" aria-label="更多操作">${icon("ellipsis")}</button>`);
-      ft = `<div class="ft">${btns.join("")}</div>`;
-    }
-    return `<div class="eng-card">
-      <div class="hd">
-        <span class="eng-ico" style="--engine-accent:${meta.color}">${icon("cpu", "", 19)}</span>
-        <div class="nm">${meta.name}</div>
-        <div class="right"><span class="dot ${dot}"></span>${stTag}</div>
+    ${pageHeader("日志", "当前引擎的实时输出，按级别过滤并保持可检索。", `
+      <button class="button" type="button" data-action="log-copy">${icon("copy", 14)}<span>复制可见日志</span></button>
+      <button class="button icon-only quiet" type="button" data-action="clear-logs" aria-label="清空日志">${icon("trash", 14)}</button>
+    `)}
+    <div class="log-toolbar">
+      <div class="filter-pills" id="logFilters">
+        ${["全部", "提示", "警告", "错误"].map((filter) => `<button class="filter-pill ${state.logFilter === filter ? "active" : ""}" type="button" data-log-filter="${filter}">${filter}<b>${logCount(filter, lines)}</b></button>`).join("")}
       </div>
-      <div class="kvrow">${kv.join("")}</div>
-      ${ft}
+      <label class="search-field" style="min-width:220px">
+        ${icon("search", 14)}
+        <input id="logSearch" type="search" placeholder="搜索关键词…" value="${esc(state.logSearch)}" autocomplete="off">
+      </label>
+      <span class="spacer"></span>
+      <button class="button" type="button" data-action="toggle-log-pause">${icon(state.logPaused ? "play" : "pause", 13)}<span>${state.logPaused ? "继续跟随" : "暂停滚动"}</span></button>
+    </div>
+    <section class="console">
+      <header class="console-head">
+        <span class="live-toggle"><i></i>${state.logPaused ? "PAUSED" : "LIVE FOLLOW"}</span>
+        <span>splash.log</span>
+        <span class="spacer"></span>
+        <span>${lines.length} lines</span>
+      </header>
+      <div class="console-body" id="consoleBody">${logLinesHtml(lines)}</div>
+    </section>`;
+}
+
+function generatedLogs() {
+  const lines = [];
+  for (let i = 0; i < logSequence; i++) {
+    const rate = (88 + Math.sin(i * 1.1) * 15).toFixed(1);
+    const messages = [
+      `Gateway stream completed · output 128 · ${rate} tok/s · finish_reason=stop`,
+      `Kernel scheduling pass ${12 + i} · 40 GPU cores · thermal nominal`,
+      `KV cache hit · 18432 tokens reused · resident window 262144`,
+      `Decode verify budget auto · accepted 3 of 5 draft tokens · ${rate} tok/s`,
+    ];
+    lines.push({
+      time: logTime(i),
+      level: i % 9 === 6 ? "WARN" : "INFO",
+      msg: messages[i % messages.length],
+    });
+  }
+  return lines;
+}
+
+function logTime(offset = 0) {
+  const now = new Date(Date.now() - (logSequence - offset) * 1600);
+  return now.toTimeString().slice(0, 8);
+}
+
+function logCount(filter, lines) {
+  if (filter === "全部") return lines.length;
+  const target = filter === "提示" ? "INFO" : filter === "警告" ? "WARN" : "ERROR";
+  return lines.filter((line) => line.level === target).length;
+}
+
+function logLinesHtml(lines) {
+  const filterLevel = state.logFilter === "提示" ? "INFO" : state.logFilter === "警告" ? "WARN" : state.logFilter === "错误" ? "ERROR" : "";
+  const query = state.logSearch.toLowerCase();
+  return lines.map((line, index) => {
+    const matchesFilter = !filterLevel || line.level === filterLevel;
+    const matchesSearch = !query || line.msg.toLowerCase().includes(query);
+    const hidden = !matchesFilter || !matchesSearch;
+    return `<div class="log-line ${hidden ? "hidden" : ""}" data-log-level="${line.level}" data-log-text="${esc(line.msg.toLowerCase())}">
+      <span class="time">${esc(line.time || logTime(index))}</span>
+      <span class="level ${line.level.toLowerCase()}">${esc(line.level)}</span>
+      <span class="msg">${esc(line.msg)}</span>
     </div>`;
   }).join("");
+}
+
+function renderSettings() {
   return `
-    <h2 class="pg">引擎</h2>
-    <div class="eng-list">${cards}</div>`;
-}
+    ${pageHeader("设置", "外观、服务与系统集成。更改即时生效。", `
+      <button class="button" type="button" data-action="reset-settings">${icon("refresh", 14)}<span>恢复默认</span></button>
+    `)}
+    <div class="settings-layout">
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <section class="settings-group">
+          <div class="settings-row">
+            <div class="settings-copy"><strong>外观</strong><span>跟随系统，或固定使用浅色 / 深色外观</span></div>
+            <div class="settings-segmented" data-appearance-choice>
+              ${["system", "light", "dark"].map((choice) => `<button type="button" class="${state.theme === choice ? "active" : ""}" data-appearance="${choice}">${choice === "system" ? "跟随系统" : choice === "light" ? "浅色" : "深色"}</button>`).join("")}
+            </div>
+          </div>
+          <div class="settings-row">
+            <div class="settings-copy"><strong>随 flashCat 启动引擎</strong><span>打开应用时自动把默认引擎拉起来</span></div>
+            <button class="toggle ${state.settings.launchEngine ? "on" : ""}" type="button" data-setting-toggle="launchEngine" role="switch" aria-checked="${state.settings.launchEngine}"></button>
+          </div>
+          <div class="settings-row">
+            <div class="settings-copy"><strong>登录时启动</strong><span>把 flashCat 加进 macOS 登录项</span></div>
+            <button class="toggle ${state.settings.login ? "on" : ""}" type="button" data-setting-toggle="login" role="switch" aria-checked="${state.settings.login}"></button>
+          </div>
+        </section>
 
-function engineMenu(id) {
-  popover("engineMenuBtn", [
-    { label: "配置…", act: "engineConfig", arg: id },
-    { label: "在 Finder 中显示引擎目录", act: "openFinder", arg: "engines" },
-    { label: "打开该引擎的模型目录", act: "openFinderEngine", arg: `engineModels|${id}` },
-    { label: "打开该引擎的日志", act: "openFinderEngine", arg: `engineLogs|${id}` },
-    "-", { label: "添加 / 安装新引擎…", act: "openLaunchPage" },
-  ]);
-}
+        <section class="settings-group">
+          <div class="settings-row">
+            <div class="settings-copy"><strong>API 网关</strong><span>OpenAI 与 Claude 双格式 · 统一入口</span></div>
+            <button class="toggle ${state.settings.gateway ? "on" : ""}" type="button" data-setting-toggle="gateway" role="switch" aria-checked="${state.settings.gateway}"></button>
+          </div>
+          <div class="settings-row">
+            <div class="settings-copy"><strong>引擎端口</strong><span>各引擎固定起始端口，互不抢占</span></div>
+            <div class="port-row">
+              <label class="port-input"><span>:</span><input value="8000" inputmode="numeric" aria-label="Splash 端口"></label>
+              <label class="port-input"><span>:</span><input value="8100" inputmode="numeric" aria-label="oMLX 端口"></label>
+              <label class="port-input"><span>:</span><input value="8200" inputmode="numeric" aria-label="MTPLX 端口"></label>
+            </div>
+          </div>
+        </section>
 
-// ---------- 引擎配置弹层 ----------
-function cfgModel() {
-  if (!UI.configDraft) {
-    const info = (S.enginesInstall && S.enginesInstall[UI.configEngine]) || {};
-    UI.configDraft = {
-      tuning: JSON.parse(JSON.stringify(info.tuning || {})),
-      port: String(info.port || ""),
-    };
-  }
-  return UI.configDraft;
-}
-function tget(key, dflt) {
-  const v = cfgModel().tuning[key];
-  return v == null ? dflt : v;
-}
-
-// 数值旋钮的 key：保存时以数字提交，避免 Swift 侧 Int 解码失败。
-const cfgNumericKeys = { mtpDepth: 1, mtpQuantBits: 1, thinkingBudget: 1 };
-
-function cfgToggle(label, small, key, dflt, disabled) {
-  const on = tget(key, dflt);
-  return `<div class="set-row"><div class="lab"><b>${label}</b><small>${small}</small></div>
-    <div class="ctl"><span class="tgl ${on ? "" : "off"} ${disabled ? "disabled" : ""}" data-cfgtgl="${key}" data-d="${dflt ? 1 : 0}"></span></div></div>`;
-}
-function cfgField(label, small, key, placeholder, width, disabled) {
-  const v = cfgModel().tuning[key];
-  return `<div class="set-row"><div class="lab"><b>${label}</b><small>${small}</small></div>
-    <div class="ctl"><input class="field" style="${width ? "width:" + width : ""}" ${disabled ? "disabled" : ""} data-cfg="${key}" placeholder="${esc(placeholder || "")}" value="${esc(v == null ? "" : v)}"></div></div>`;
-}
-
-function configBody() {
-  const id = UI.configEngine;
-  const info = (S.enginesInstall && S.enginesInstall[id]) || {};
-  const versions = info.versions || [];
-  const installed = versions.length > 0;
-  const isActive = S.engine.id === id;
-  const portDisabled = isActive && running();
-  const T = () => cfgModel().tuning;
-  const adapter = (((S.engineCatalog || []).find((item) => item.id === id) || {}).adapter) || id;
-  // 自定义思考截断的开关状态：显式存过以存值为准，否则由「是否填了数值」派生。
-  const thinkCustom = () => T().thinkingBudgetCustom ?? (T().thinkingBudget != null);
-  let engineCards = "";
-
-  if (adapter === "splash") {
-    engineCards = `
-      <div class="set-card">
-        <div class="card-hd">DFlash2 <small>投机解码 draft 模型与资源上限</small></div>
-        ${cfgToggle("启用 DFlash2", "用 draft 模型并行草稿，显著提升解码速度", "dflash", false)}
-        ${cfgField("draft 目录", "留空则自动选择与主模型匹配的 draft", "draftModel", "自动", "240px", T().dflash === false)}
-        ${cfgField("内存上限", "--max-memory，例如 24G；留空自动", "maxMemory", "自动", "96px")}
-        ${cfgField("上下文长度", "--max-context，留空使用模型默认", "maxContext", "默认", "96px")}
-        ${cfgToggle("仅语言模型", "跳过视觉与多模态部分，加载更快", "languageOnly", false)}
-        ${cfgToggle("空闲时保留权重", "关闭空闲释放，响应更快但常驻内存", "idleReleaseOff", false)}
-        ${cfgField("n-gram 表缓存", "--ple-memory，如 2G；off 整表载入；留空自动", "pleMemory", "自动", "96px")}
-        ${cfgToggle("n-gram 表固定放 SSD", T().pleMemory ? "已被上面的缓存大小覆盖" : "开启 = --ple-memory auto，关闭 = off（整表载入内存）", "pleSSDOffload", true, !!T().pleMemory)}
-        ${cfgToggle("自定义思考截断", "开启后手动设定思考 token 上限；关闭不限制", "thinkingBudgetCustom", thinkCustom())}
-        ${cfgField("思考截断大小", "--thinking-token-budget，思考超过 N 个 token 强制结束思考并开始回答", "thinkingBudget", "不限制", "96px", !thinkCustom())}
-      </div>`;
-  } else if (adapter === "mtplx") {
-    engineCards = `
-      <div class="set-card">
-        <div class="card-hd">MTP <small>多 token 预测</small></div>
-        ${cfgToggle("启用 MTP", "--mtp / --no-mtp；关闭时不做投机解码", "mtp", true)}
-        ${cfgToggle("启动即加载 MTP 权重", "--load-mtp，避免首个请求才付出加载开销", "loadMtp", true)}
-        ${cfgField("量化位数", "--mtp-quant-bits，留空使用引擎默认", "mtpQuantBits", "默认", "72px")}
-        ${cfgToggle("自定义思考截断", "开启后手动设定思考 token 上限；关闭不限制", "thinkingBudgetCustom", thinkCustom())}
-        ${cfgField("思考截断大小", "MTPLX_THINKING_BUDGET，思考超过 N 个 token 强制结束思考并开始回答", "thinkingBudget", "不限制", "96px", !thinkCustom())}
-      </div>`;
-  } else if (adapter === "omlx") {
-    engineCards = `
-      <div class="set-card">
-        <div class="card-hd">MTP / DFlash2 <small>按模型生效，两者互斥</small></div>
-        ${cfgToggle("启用 MTP", "开启后关闭 DFlash2（oMLX 不允许同时开）", "mtp", false)}
-        ${cfgField("MTP 深度", "留空为自适应；固定值优先", "mtpDepth", "自适应", "72px", T().mtp !== true)}
-        ${cfgToggle("启用 DFlash2", "开启后关闭 MTP", "dflash", false)}
-        ${cfgToggle("PLE n-gram 表卸载到 SSD", "n-gram 表留在 SSD 走 mmap；显存装不下时 oMLX 会自动开启，代价约 2.5× 解码变慢", "pleSSDOffload", true)}
-        ${cfgToggle("自定义思考截断", "开启后手动设定思考 token 上限；关闭不限制", "thinkingBudgetCustom", thinkCustom())}
-        ${cfgField("思考截断大小", "thinking_budget_tokens，按模型生效；思考超过 N 个 token 强制结束思考并开始回答", "thinkingBudget", "不限制", "96px", !thinkCustom())}
-        <div class="set-note">这些开关由 oMLX 的设置接口保存，对每个模型独立生效；保存后会重新加载当前模型，未加载的模型在下一次加载时应用。</div>
-      </div>`;
-  } else if (adapter === "mlx-serve") {
-    engineCards = `
-      <div class="set-card">
-        <div class="card-hd">热加载 <small>由 MLX-Serve 运行时管理</small></div>
-        <div class="set-note">模型加载、卸载和内存淘汰由引擎自身处理；flashCat 只通过公开控制接口切换模型。额外启动参数可在下面追加。</div>
-      </div>`;
-  } else if (adapter === "strata") {
-    engineCards = `
-      <div class="set-card">
-        <div class="card-hd">Strata 运行参数 <small>受管运行时</small></div>
-        <div class="set-note">Strata 会按本机硬件准备模型运行时。上下文、视觉和草稿策略由受管配置管理，额外启动参数可在下面追加。</div>
-      </div>`;
-  }
-
-  return `
-    <div class="modal-body">
-      <div class="set-card">
-        <div class="card-hd">基础 <small>端口与模型目录${installed ? " · 已装 v" + esc(versions[versions.length - 1]) : " · 未安装"}</small></div>
-        <div class="set-row"><div class="lab"><b>端口</b><small>默认 ${info.port || "—"}，可顺延</small></div>
-          <div class="ctl"><input class="field" style="width:96px" ${portDisabled ? "disabled" : ""} data-cfgport value="${esc(cfgModel().port)}"></div></div>
-        <div class="set-row"><div class="lab"><b>模型目录</b><small>${esc(info.modelsDir || "")}</small></div>
-          <div class="ctl"><button class="btn-quiet" data-finder="engineModels|${id}">${icon("folderOpen")}<span>打开</span></button></div></div>
-        <div class="set-row"><div class="lab"><b>引擎日志</b><small>启动命令行与引擎输出</small></div>
-          <div class="ctl"><button class="btn-quiet" data-finder="engineLogs|${id}">${icon("fileText")}<span>查看</span></button></div></div>
+        <section class="settings-group">
+          <div class="settings-row">
+            <div class="settings-copy"><strong>思考模式</strong><span>思考模型是否在回答前输出推理过程</span></div>
+            <div class="settings-segmented" data-thinking-choice>
+              ${["自动", "关闭", "开启"].map((choice) => `<button type="button" class="${state.settings.thinking === choice ? "active" : ""}" data-thinking="${choice}">${choice}</button>`).join("")}
+            </div>
+          </div>
+          <div class="settings-row">
+            <div class="settings-copy"><strong>默认模型</strong><span>${esc(shortModel(state.model))}</span></div>
+            <button class="button" type="button" data-action="model-menu">${icon("layers", 14)}<span>更改</span></button>
+          </div>
+        </section>
       </div>
-      ${engineCards}
-      <div class="set-card">
-        <div class="card-hd">高级 <small>原样追加的启动参数</small></div>
-        ${cfgField("额外参数", "仅对该引擎生效，按空格切分并支持引号分组", "extraArguments", "例如 --no-webui --queue-size 8", "100%")}
-        ${adapter === "omlx" ? "" : `<div class="set-note">启动参数在下次启动时生效；保存后如需立即应用，请在引擎页重启。</div>`}
-      </div>
-    </div>
-    <div class="modal-foot">
-      <button class="btn-quiet" data-act="closeConfig">${icon("x")}<span>取消</span></button>
-      <button class="btn-main" data-act="saveEngineConfig">${icon("check")}<span>保存</span></button>
+
+      <aside class="system-profile">
+        <div class="profile-head">
+          <div class="profile-icon">${icon("monitor", 19)}</div>
+          <div><strong>MacBook Pro</strong><span>Apple M5 Max · macOS 26.4</span></div>
+        </div>
+        <div class="profile-stats">
+          <div class="profile-stat"><span>统一内存</span><strong>128 GB</strong></div>
+          <div class="profile-stat"><span>GPU 核心</span><strong>40</strong></div>
+          <div class="profile-stat"><span>模型磁盘</span><strong>61 GB</strong></div>
+        </div>
+        <div class="profile-meter"><i></i></div>
+        <div class="profile-foot"><span>内存压力 51%</span><span>可用 62.5 GB</span></div>
+      </aside>
     </div>`;
+}
+
+function shortModel(model) {
+  return String(model || "未选择模型").split("/").pop();
+}
+
+function setTheme(theme) {
+  const previous = resolvedTheme();
+  state.theme = theme;
+  state.settings.appearance = theme;
+  localStorage.setItem("fc-preview-theme", theme);
+  const next = resolvedTheme();
+  document.documentElement.dataset.theme = next;
+  updateThemeIcon();
+  drawAmbient(performance.now());
+  if (state.page === "settings") {
+    $$("[data-appearance]").forEach((button) => button.classList.toggle("active", button.dataset.appearance === theme));
+    updateSlidingSegments();
+  }
+  if (previous !== next) showToast(next === "dark" ? "已切换到深色外观" : "已切换到浅色外观");
+}
+
+function toggleSidebar() {
+  state.sidebarCollapsed = !state.sidebarCollapsed;
+  document.body.classList.add("sidebar-animating");
+  clearTimeout(sidebarAnimTimer);
+  document.body.classList.toggle("sidebar-collapsed", state.sidebarCollapsed);
+  localStorage.setItem("fc-preview-sidebar", state.sidebarCollapsed ? "rail" : "full");
+  $("#sidebarToggle").setAttribute("aria-expanded", String(!state.sidebarCollapsed));
+  $("#sidebarToggle").setAttribute("aria-label", state.sidebarCollapsed ? "展开边栏" : "折叠边栏");
+  $("#sidebarToggle").title = `${state.sidebarCollapsed ? "展开" : "折叠"}边栏（⌘\\）`;
+  sidebarAnimTimer = setTimeout(() => {
+    document.body.classList.remove("sidebar-animating");
+    updateNavIndicator();
+  }, 360);
+}
+
+function toggleEngine(engineId = state.engine) {
+  if (engineId === state.engine && state.engineBusy) return;
+  if (engineId === state.engine) {
+    state.engineBusy = true;
+    const mainEngine = state.engines.find((engine) => engine.id === "Splash");
+    if (mainEngine) mainEngine.state = "starting";
+    updateEngineChrome();
+    renderPage(false);
+    setTimeout(() => {
+      state.engineRunning = !state.engineRunning;
+      state.engineBusy = false;
+      if (mainEngine) {
+        mainEngine.state = state.engineRunning ? "running" : "stopped";
+        mainEngine.uptime = state.engineRunning ? "00:54:18" : "—";
+        mainEngine.pid = state.engineRunning ? "95976" : "—";
+      }
+      if (!state.engineRunning) {
+        showToast("引擎已安全停止");
+      } else {
+        showToast("引擎已就绪 · Qwen3.8 已加载");
+      }
+      updateEngineChrome();
+      if (state.page === "overview" || state.page === "engines") renderPage(false);
+      pulseHaptic();
+    }, 1250);
+    return;
+  }
+  const target = state.engines.find((engine) => engine.id === engineId);
+  if (!target || target.state === "starting") return;
+  if (target.installed === false) {
+    showToast(`请先下载 ${engineId} 运行时`, "error");
+    return;
+  }
+  if (target.state === "running") {
+    target.state = "stopped";
+    target.uptime = "—";
+    target.pid = "—";
+    showToast(`${engineId} 已停止`);
+    renderPage(false);
+    return;
+  }
+  target.state = "starting";
+  target.uptime = "加载中";
+  target.pid = "—";
+  renderPage(true);
+  setTimeout(() => {
+    target.state = "running";
+    target.uptime = "00:00:01";
+    target.pid = String(100000 + Math.floor(Math.random() * 80000));
+    showToast(`${engineId} 已启动`);
+    renderPage(true);
+    pulseHaptic();
+  }, 1500);
+}
+
+function defaultEngineTuning(id) {
+  if (id === "Splash") return { dflash: true, pleSSDOffload: true };
+  if (id === "oMLX") return { mtp: true, dflash: false, pleSSDOffload: true };
+  if (id === "MTPLX") return { loadMtp: true, mtp: true };
+  return {};
+}
+
+// 引擎配置：面板从右侧推入，左栏同步收窄，两者共用一条时间线和一条曲线。
+// 不能用页面级 view transition —— 那会把「旧的宽卡片」和「新的窄卡片」叠成两层字。
+const ENGINE_SPLIT_MS = 360;
+const ENGINE_SPLIT_EASE = "cubic-bezier(.2, .82, .18, 1)";
+let engineSplitToken = 0;
+
+// 面板要让出的宽度：直接读变量，不用读当前 padding —— 动画跑到一半时
+// getComputedStyle 给的是插值中的值，拿它当目标会让关闭动画从半路起跳。
+function engineSplitWidth(ws) {
+  const cs = getComputedStyle(ws);
+  const width = parseFloat(cs.getPropertyValue("--fc-panel-width")) || 440;
+  const gap = parseFloat(cs.getPropertyValue("--fc-panel-gap")) || 12;
+  return width + gap;
+}
+
+function animateEngineSplit(open) {
+  const ws = $("[data-fc-engine-workspace]");
+  if (!ws) return null;
+  const panel = $(".fc-engine-panel", ws);
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return null;
+
+  const target = engineSplitWidth(ws);
+  const from = open ? 0 : (parseFloat(getComputedStyle(ws).paddingRight) || 0);
+  const to = open ? target : 0;
+  const duration = open ? ENGINE_SPLIT_MS : 280;
+  const token = ++engineSplitToken;
+
+  if (open) {
+    // 先把「关着」的几何量压回第 0 帧；和插入同一帧，首次绘制就是起点，不会先闪一下全展开。
+    ws.style.paddingRight = "0px";
+    if (panel) {
+      panel.style.transform = `translateX(${target}px)`;
+      panel.style.opacity = "0";
+    }
+  }
+
+  // 面板的位移始终等于「让位宽度 - 当前 padding」，任何一帧都不会盖到卡片上。
+  const split = ws.animate(
+    [{ paddingRight: `${from}px` }, { paddingRight: `${to}px` }],
+    { duration, easing: ENGINE_SPLIT_EASE, fill: "forwards" }
+  );
+
+  if (panel) {
+    panel.animate(
+      [
+        { transform: `translateX(${target - from}px)`, opacity: open ? 0 : 1 },
+        { transform: `translateX(${target - to}px)`, opacity: open ? 1 : 0 },
+      ],
+      { duration, easing: ENGINE_SPLIT_EASE, fill: "forwards" }
+    );
+  }
+
+  split.finished.catch(() => {}).then(() => {
+    // 动画结束后把内联值交还给 CSS：之后窗口缩放、换面板都不会被定格。
+    // 半路被打断（比如动画还没完就关掉）时不要清，交给最新那次动画收尾。
+    if (token !== engineSplitToken) return;
+    ws.style.paddingRight = "";
+    if (panel) {
+      panel.style.transform = "";
+      panel.style.opacity = "";
+    }
+  });
+  return split;
+}
+
+function openEngineConfig(id) {
+  const engine = state.engines.find((item) => item.id === id);
+  if (!engine || engine.installed === false) return;
+  const alreadyOpen = Boolean(state.engineConfigOpen);
+  state.activeEngineView = id;
+  state.engineConfigOpen = id;
+  state.engineConfigDraft = {
+    engine: id,
+    port: String(engine.port || ""),
+    tuning: Object.assign(defaultEngineTuning(id), engine.tuning || {}),
+  };
+  renderPage(true, { instant: true });
+  // 已经开着就只是换一个引擎的面板，不需要再演一遍「推开左栏」。
+  // 同步起动画：和插入同一帧，浏览器第一次绘制就已经是「关着」的起点，不会先闪一下全展开。
+  if (!alreadyOpen) animateEngineSplit(true);
+  pulseHaptic();
+}
+
+function closeEngineConfig() {
+  const panel = $(".fc-engine-panel");
+  const finish = () => {
+    state.engineConfigOpen = null;
+    state.engineConfigDraft = null;
+    // 收尾也用 instant：面板已经退干净了，再来一次页面淡入会像闪一下。
+    renderPage(true, { instant: true });
+  };
+  const animation = animateEngineSplit(false);
+  if (!panel || !animation) {
+    finish();
+    return;
+  }
+  // 等左栏收到位、面板退干净，再把 DOM 换掉；提前换会看到面板「啪」地消失。
+  animation.finished.then(finish).catch(finish);
 }
 
 function saveEngineConfig() {
-  if (!UI.configEngine || !UI.configDraft) { UI.configEngine = null; UI.configDraft = null; render(); return; }
-  cmd("saveEngineConfig", {
-    engine: UI.configEngine,
-    tuning: UI.configDraft.tuning,
-    port: UI.configDraft.port,
+  const id = state.engineConfigOpen;
+  if (!id || !state.engineConfigDraft) return;
+  const engine = state.engines.find((item) => item.id === id);
+  if (engine) {
+    engine.tuning = { ...(state.engineConfigDraft.tuning || {}) };
+    engine.port = String(state.engineConfigDraft.port || engine.port);
+  }
+  showToast(`${id} 配置已保存`);
+  closeEngineConfig();
+}
+
+function setEngineConfigToggle(key) {
+  if (!state.engineConfigDraft) return;
+  const id = state.engineConfigOpen;
+  const tuning = state.engineConfigDraft.tuning;
+  tuning[key] = !tuning[key];
+  if (id === "oMLX") {
+    if (key === "mtp" && tuning.mtp) tuning.dflash = false;
+    if (key === "dflash" && tuning.dflash) tuning.mtp = false;
+  }
+  if (id === "MTPLX" && key === "mtp" && !tuning.mtp) tuning.loadMtp = false;
+  syncEngineConfigControls();
+}
+
+function syncEngineConfigControls() {
+  const panel = $(".fc-engine-panel");
+  const draft = state.engineConfigDraft;
+  if (!panel || !draft) return;
+  const tuning = draft.tuning || {};
+  $$("[data-fc-engine-toggle]", panel).forEach((button) => {
+    const key = button.dataset.fcEngineToggle;
+    const on = Boolean(tuning[key]);
+    button.classList.toggle("fc-engine-switch-on", on);
+    button.setAttribute("aria-checked", String(on));
   });
-  UI.configEngine = null;
-  UI.configDraft = null;
-  render();
+  const setDisabled = (selector, disabled) => {
+    $$(selector, panel).forEach((element) => {
+      element.disabled = Boolean(disabled);
+      element.classList.toggle("fc-engine-switch-disabled", Boolean(disabled) && element.classList.contains("fc-engine-switch"));
+    });
+  };
+  if (state.engineConfigOpen === "Splash") {
+    setDisabled('[data-fc-engine-field="draftModel"]', tuning.dflash === false);
+    setDisabled('[data-fc-engine-toggle="pleSSDOffload"]', Boolean(tuning.pleMemory));
+  } else if (state.engineConfigOpen === "oMLX") {
+    setDisabled('[data-fc-engine-field="mtpDepth"]', !tuning.mtp);
+  } else if (state.engineConfigOpen === "MTPLX") {
+    setDisabled('[data-fc-engine-field="mtpQuantBits"]', !tuning.mtp);
+    setDisabled('[data-fc-engine-toggle="loadMtp"]', !tuning.mtp);
+  }
 }
 
-// ---------- 日志 ----------
-// console 区块独立成块：搜索输入时只重绘这块，不碰搜索框本身。
-// 展示为倒序（最新在最上），存储仍是正序追加；过滤后 slice().reverse() 再拼 HTML。
-// 日志控制台：增量渲染。
-// 旧做法是每秒把 800 行重新拼成 HTML 再解析成 DOM（实测 23~24ms，是唯一还会
-// 掉帧的地方）。实际上 1Hz 推送通常只多 1~5 行，所以这里只往头部插入新增行、
-// 超量从尾部裁掉；只有筛选/搜索/暂停变化或旧头部被-roll 掉时才整段重建。
-function logRows() {
-  const source = UI.logPaused && UI.logSnapshot ? UI.logSnapshot : (S.logs || []);
-  const needle = (UI.logSearch || "").trim().toLowerCase();
-  const rows = source.filter((l) => {
-    const passF = UI.logFilter === "all" || l.level === UI.logFilter;
-    const passQ = !needle || l.text.toLowerCase().includes(needle);
-    return passF && passQ;
-  }).reverse();  // 倒序：最新在最上面
-  return { rows: rows, needle: needle };
+function runEngineInstall(id, kind) {
+  const engine = state.engines.find((item) => item.id === id);
+  if (!engine) return;
+  engine.busy = true;
+  engine.progress = 12;
+  renderPage(false);
+  showToast(kind === "update" ? `正在更新 ${id}` : `正在下载 ${id}`);
+  setTimeout(() => {
+    engine.busy = false;
+    engine.progress = 100;
+    engine.installed = true;
+    engine.version = engine.latest || engine.version;
+    engine.state = engine.state === "not-installed" ? "stopped" : engine.state;
+    showToast(kind === "update" ? `${id} 已更新到 v${engine.version}` : `${id} 运行时已安装`);
+    renderPage(false);
+    pulseHaptic();
+  }, 1200);
 }
 
-function logRowHTML(l, needle) {
-  const open = !!UI.logOpen[l.id];
-  return `<div class="log-line ${l.level === "error" ? "err" : ""}${open ? " open" : ""}" data-log="${l.id}" title="${open ? "点击收起" : "点击展开完整详情"}"><span class="ts">${esc(l.time)}</span><span class="lv ${l.level[0]}">${l.level.toUpperCase()}</span><span class="body">${hl(esc(l.text), needle)}</span></div>`;
-}
-
-// 最新在顶部：跟随指示也放在顶部第一行，新日志到达时正好插在它下面。
-function logFollowHTML() {
-  return UI.logPaused
-    ? `<div class="follow">‖ 已暂停 · 显示快照</div>`
-    : `<div class="follow" id="followLine">█ 实时跟随中 · ${new Date().toTimeString().slice(0, 8)}</div>`;
-}
-
-function logsConsoleHTML() {
-  const r = logRows();
-  const lines = r.rows.map((l) => logRowHTML(l, r.needle)).join("");
-  return logFollowHTML() + (lines || '<div class="follow">暂无日志输出</div>');
-}
-
-function syncLogConsole(force) {
-  const host = document.getElementById("logConsole");
-  if (!host) return;
-  const r = logRows();
-  const rows = r.rows;
-  const sig = [UI.logFilter || "all", UI.logSearch || "", UI.logPaused ? 1 : 0].join("|");
-  const head = rows.length ? rows[0].id : "";
-  const prev = UI.logRendered;
-  const rebuild = !!force || !prev || prev.sig !== sig || !head || !prev.head || rows.length < prev.count;
-  if (rebuild) {
-    host.innerHTML = logsConsoleHTML();
-    UI.logRendered = { sig: sig, head: head, count: rows.length };
-    bindLogRows(host);
+function removeEngineRuntime(id) {
+  const engine = state.engines.find((item) => item.id === id);
+  if (!engine) return;
+  const running = id === "Splash" ? state.engineRunning : engine.state === "running";
+  if (running) {
+    showToast("请先停止引擎再删除运行时", "error");
     return;
   }
-  if (head !== prev.head) {
-    const n = rows.findIndex((x) => x.id === prev.head);
-    if (n < 0) {  // 旧头部已经被裁掉，拼接不可靠 -> 重建
-      host.innerHTML = logsConsoleHTML();
-      UI.logRendered = { sig: sig, head: head, count: rows.length };
+  engine.installed = false;
+  engine.state = "not-installed";
+  if (state.engineConfigOpen === id) {
+    state.engineConfigOpen = null;
+    state.engineConfigDraft = null;
+  }
+  showToast(`${id} 运行时已删除`);
+  renderPage(false);
+}
+
+function updateEngineChrome() {
+  const dot = $("#topEngineDot");
+  const label = $("#topEngineState");
+  const rate = $("#topEngineRate");
+  const action = $("#topEngineAction");
+  const control = $("#topEngineControl");
+  if (!dot || !label || !rate || !action || !control) return;
+  dot.classList.toggle("is-stopped", !state.engineRunning && !state.engineBusy);
+  dot.classList.toggle("is-busy", state.engineBusy);
+  label.textContent = state.engineBusy ? "切换中" : state.engineRunning ? "运行中" : "已停止";
+  rate.textContent = state.engineRunning ? `${(104 + Math.sin(state.metricTick / 7) * 2.8).toFixed(0)} tok/s` : "—";
+  action.innerHTML = icon(state.engineRunning ? "stop" : "play", 11);
+  control.setAttribute("aria-label", state.engineRunning ? "停止引擎" : "启动引擎");
+}
+
+function sendChat() {
+  if (state.chatStreaming) {
+    stopChatStream();
+    return;
+  }
+  const input = $("#chatInput");
+  if (!input || !input.value.trim() || !state.engineRunning) {
+    if (!state.engineRunning) showToast("请先启动推理引擎");
+    return;
+  }
+  const text = input.value.trim();
+  input.value = "";
+  state.chatStreaming = true;
+  state.chatMessages.push({ id: `u${Date.now()}`, role: "user", content: text });
+  const assistant = {
+    id: `stream-${Date.now()}`,
+    role: "assistant",
+    content: "",
+    reasoning: "",
+    streaming: true,
+    createdAt: Date.now(),
+  };
+  state.chatMessages.push(assistant);
+  renderPage(false);
+
+  const reasoning = [
+    "读者要的是「本地推理为什么值得用」，不是一份功能清单。",
+    "",
+    "- 先给结论：数据不出本机，离线可用。",
+    "- 再补一句成本：没有按 token 计费。",
+    "- 最后留一个可执行的动作：接上现有客户端。",
+    "",
+    "正文用 **三段** 收住，不要超过一屏。",
+  ].join("\n");
+
+  const full = [
+    "## 结论",
+    "",
+    "把推理留在本机，**隐私边界**会清楚很多：提示词、上下文和产物都不离开这台 Mac。",
+    "",
+    "### 三个实际变化",
+    "",
+    "1. **离线可用** — 断网时照样能问答，首字响应也更稳定。",
+    "2. **成本可预期** — 没有按 token 计费，高频使用不必先算预算。",
+    "3. **接得上现有工具** — 通过固定网关接入，客户端不用跟着换引擎改配置。",
+    "",
+    "```bash",
+    "curl http://127.0.0.1:8000/v1/chat/completions \\",
+    "  -H 'Content-Type: application/json' \\",
+    "  -d '{\"model\": \"local\", \"stream\": true}'",
+    "```",
+    "",
+    "| 维度 | 云端 | 本机 |",
+    "| :--- | :--- | ---: |",
+    "| 数据边界 | 离开设备 | 留在本机 |",
+    "| 计费 | 按 token | 一次性 |",
+    "| 弱网 | 依赖网络 | 可用 |",
+    "",
+    "> 需要提醒的是：本机推理的上限是显存与散热，长上下文要按模型窗口留余量。",
+    "",
+    "想开始的话，先在引擎页确认权重已加载，再用上面的请求试一次流式输出即可。",
+  ].join("\n");
+
+  let reasonIndex = 0;
+  let answerIndex = 0;
+
+  const node = () => document.querySelector(`.message[data-msg-id="${assistant.id}"]`);
+  const push = (options) => {
+    const article = node();
+    if (article && window.FCChatStream) window.FCChatStream.push(article, assistant, options);
+  };
+
+  const step = () => {
+    if (!state.chatStreaming) return;
+    if (reasonIndex < reasoning.length) {
+      reasonIndex = Math.min(reasoning.length, reasonIndex + 2 + Math.floor(Math.random() * 5));
+      assistant.reasoning = reasoning.slice(0, reasonIndex);
+      push();
+      chatTimer = setTimeout(step, 46 + Math.random() * 74);
       return;
     }
-    if (n > 0) {
-      const tpl = document.createElement("template");
-      tpl.innerHTML = rows.slice(0, n).map((l) => logRowHTML(l, r.needle)).join("");
-      const follow = host.firstElementChild && host.firstElementChild.classList.contains("follow") ? host.firstElementChild : null;
-      host.insertBefore(tpl.content, follow ? follow.nextSibling : host.firstChild);
+    if (answerIndex < full.length) {
+      answerIndex = Math.min(full.length, answerIndex + 1 + Math.floor(Math.random() * 4));
+      assistant.content = full.slice(0, answerIndex);
+      push();
+      chatTimer = setTimeout(step, 34 + Math.random() * 62);
+      return;
     }
-  }
-  // 尾部裁剪：保留 rows.length 行 + 顶部跟随行
-  const keep = rows.length + 1;
-  while (host.children.length > keep) host.removeChild(host.lastElementChild);
-  // 跟随行的时间戳要跟着走（快照没变时 tickLive 也会补）
-  const f = document.getElementById("followLine");
-  if (f) f.textContent = "█ 实时跟随中 · " + new Date().toTimeString().slice(0, 8);
-  UI.logRendered = { sig: sig, head: head, count: rows.length };
+    assistant.streaming = false;
+    assistant.rate = "103.8";
+    assistant.ttft = "208";
+    assistant.tokens = "412";
+    state.chatStreaming = false;
+    push({
+      onSettled: () => {
+        if (state.page === "chat") renderPage(false);
+      },
+    });
+  };
+
+  // A short first-token pause, like a real prefill.
+  chatTimer = setTimeout(step, 620);
 }
 
-function pageLogs() {
-  const source = UI.logPaused && UI.logSnapshot ? UI.logSnapshot : (S.logs || []);
-  const counts = { all: source.length, info: 0, warning: 0, error: 0 };
-  source.forEach((l) => { if (counts[l.level] != null) counts[l.level]++; });
-  return `
-    <h2 class="pg">日志</h2>
-    <div class="chipbar">
-      ${[["all", "全部"], ["info", "提示"], ["warning", "警告"], ["error", "错误"]].map(([v, n]) =>
-        `<span class="filter ${UI.logFilter === v ? "on" : ""}" data-lf="${v}">${n}${v !== "all" ? " " + counts[v] : ""}</span>`).join("")}
-      <label class="search">${icon("search", "search-icon", 14)}<input data-key="logSearch" placeholder="搜索关键词…" value="${esc(UI.logSearch)}" aria-label="搜索日志"></label>
-      <button class="filter ${UI.logPaused ? "on" : ""}" style="margin-left:auto" id="pauseBtn">${icon(UI.logPaused ? "play" : "pause")}<span>${UI.logPaused ? "继续" : "暂停滚动"}</span></button>
-      <button class="icon-btn" id="logMenuBtn" data-menu="logMenu" title="更多日志操作" aria-label="更多日志操作">${icon("ellipsis")}</button>
-    </div>
-    <div class="log-console" id="logConsole" data-managed></div>`;
-}
-
-function hl(text, needle) {
-  if (!needle) return text;
-  const lower = text.toLowerCase(), n = needle.toLowerCase();
-  let out = "", cursor = 0;
-  let hit = lower.indexOf(n, cursor);
-  while (hit !== -1) {
-    out += text.slice(cursor, hit) + `<mark style="background:color-mix(in srgb, var(--w-warn) 32%,transparent);color:var(--w-ink);border-radius:3px">${text.slice(hit, hit + needle.length)}</mark>`;
-    cursor = hit + needle.length;
-    hit = lower.indexOf(n, cursor);
-  }
-  return out + text.slice(cursor);
-}
-
-function afterLogsRender() {
-  const consoleEl = document.getElementById("logConsole");
-  if (consoleEl) {
-    bindLogRows(consoleEl);
-    // consoleEl 的内容由 syncLogConsole 自己维护（morph 不管它），这里只负责滚动位。
-    // 倒序后最新在顶部：「跟随」= 吸顶。有捕获则原地恢复；切进日志页直接吸顶。
-    // 插入新日志会让旧内容整体下移 delta = 新高度 - 旧高度，正在往下翻旧日志时
-    // scrollTop 需补上 delta 才不会跳行。
-    const saved = UI.logScroll;
-    syncLogConsole(false);
-    if (saved) {
-      consoleEl.scrollTop = saved.nearTop ? 0 : saved.top + Math.max(0, consoleEl.scrollHeight - saved.h);
-      UI.logScroll = null;
+function stopChatStream() {
+  clearTimeout(chatTimer);
+  state.chatStreaming = false;
+  const last = state.chatMessages[state.chatMessages.length - 1];
+  if (last && last.streaming) {
+    last.streaming = false;
+    last.content = last.content || "已停止生成。";
+    last.rate = "—";
+    last.ttft = "—";
+    last.tokens = "—";
+    const article = document.querySelector(`.message[data-msg-id="${last.id}"]`);
+    if (article && window.FCChatStream) {
+      window.FCChatStream.push(article, last, { onSettled: () => renderPage(false) });
     } else {
-      consoleEl.scrollTop = 0;
+      renderPage(false);
     }
+  } else {
+    renderPage(false);
   }
-  bindPageExtras();
+  showToast("已停止生成");
 }
 
-// 日志行默认单行省略，点击就地展开/收起；展开状态存在 UI.logOpen 上，
-// 秒级快照重绘后仍保留。只切这一行的 class，不重绘整块，避免滚动跳动。
-function bindLogRows(consoleEl) {
-  if (consoleEl.__logBound) return;
-  consoleEl.__logBound = true;
-  consoleEl.addEventListener("click", (ev) => {
-    if (String(window.getSelection() || "").trim()) return; // 正在选中复制时不切换
-    const row = ev.target.closest(".log-line");
-    if (!row || !row.dataset.log) return;
-    const id = row.dataset.log;
-    const open = !UI.logOpen[id];
-    if (open) UI.logOpen[id] = true; else delete UI.logOpen[id];
-    row.classList.toggle("open", open);
-    row.title = open ? "点击收起" : "点击展开完整详情";
-  });
+function scrollChatToBottom(smooth = true) {
+  const messages = $("#chatMessages");
+  if (!messages) return;
+  messages.scrollTo({ top: messages.scrollHeight, behavior: smooth ? "smooth" : "auto" });
 }
 
-// 模型页此前没有任何 after 钩子：bindPageExtras 只被日志页调用过，
-// 搜索框和 全部/本机/可下载 筛选在这一页从未绑上事件，点了没反应。
-function afterModelsRender() {
-  bindPageExtras();
+function cycleThinking() {
+  const choices = ["自动", "开启", "关闭"];
+  const next = choices[(choices.indexOf(state.params.thinking) + 1) % choices.length];
+  state.params.thinking = next;
+  state.settings.thinking = next;
+  showToast(`思考模式 · ${next}`);
+  if (state.page === "chat") renderPage(false);
+  if (state.page === "settings") renderPage(false);
 }
 
-function bindPageExtras() {
-  bindActs(document.getElementById("main"));  const pause = document.getElementById("pauseBtn");
-  bindOnce(pause, "click", () => {
-    if (!UI.logPaused) { UI.logPaused = true; UI.logSnapshot = (S.logs || []).slice(); }
-    else { UI.logPaused = false; UI.logSnapshot = null; }
-    render();
-  });
-  const search = document.querySelector('[data-key="logSearch"]');
-  bindOnce(search, "input", () => { UI.logSearch = search.value; renderLogConsoleOnly(); });
-  const msearch = document.querySelector('[data-key="modelsSearch"]');
-  bindOnce(msearch, "input", () => { UI.modelsSearch = msearch.value; renderModelsGridOnly(); });
-  // ⏎ 才去 Hub 搜：逐字搜索会打满限流，而且用户还在打字时结果没意义。
-  bindOnce(msearch, "keydown", (e) => {
-    if (e.key !== "Enter") return;
-    e.preventDefault();
-    const query = msearch.value.trim();
-    UI.modelsSearch = query;
-    if (!query) { cmd("searchHub", { query: "" }); return; }
-    UI.quant = {};
-    cmd("searchHub", { query });
-    render();
-  });
-  bindQuantSelects(document);
-  document.querySelectorAll("[data-lf]").forEach((el) => bindOnce(el, "click", () => { UI.logFilter = el.dataset.lf; render(); }));
-  document.querySelectorAll("[data-f]").forEach((el) => bindOnce(el, "click", () => { UI.modelsFilter = el.dataset.f; render(); }));
-  // 输入框失焦时补做挂起的重绘（快照推送在输入期间被挂起）。
-  document.querySelectorAll(".search input, .field").forEach((el) =>
-    bindOnce(el, "blur", flushPendingRender));
-}
-
-// 搜索过滤只更新对应区块（不滚屏、不动输入框），整页重绘留给换页/快照变化。
-function renderLogConsoleOnly() {
-  const consoleEl = document.getElementById("logConsole");
-  if (!consoleEl) { render(); return; }
-  syncLogConsole(true);
-  consoleEl.scrollTop = 0; // 过滤结果回到顶部：倒序后最新的匹配在最上面
-}
-function renderModelsGridOnly() {
-  const grid = document.getElementById("modelsGrid");
-  if (!grid) { render(); return; }
-  grid.innerHTML = modelsGridHTML();
-  bindActs(grid);
-  bindQuantSelects(grid);
-}
-
-// 网格重建后必须重绑：change 监听挂在被换掉的旧节点上，只重绑 click 会让
-// 下拉显示 Q8、UI.quant 还停在 Q4，下载就按 Q4 走。
-function bindQuantSelects(root) {
-  root.querySelectorAll("[data-quant]").forEach((el) => bindOnce(el, "change", () => {
-    UI.quant[el.dataset.quant] = el.value;
-    renderModelsGridOnly();
-  }));
-}
-
-function logMenu() {
-  popover("logMenuBtn", [
-    { label: "复制当前筛选结果", act: "copyLog" },
-    { label: "打开日志文件", act: "openFinder", arg: "logs" },
-    "-", { label: "清空日志…", act: "clearLogs" },
-  ]);
-}
-
-function copyVisibleLogText() {
-  const source = UI.logPaused && UI.logSnapshot ? UI.logSnapshot : (S.logs || []);
-  const needle = UI.logSearch.trim().toLowerCase();
-  const text = source
-    .filter((l) => (UI.logFilter === "all" || l.level === UI.logFilter)
-      && (!needle || l.text.toLowerCase().includes(needle)))
-    .map((l) => `${l.time} ${l.level.toUpperCase()} ${l.text}`)
-    .join("\n");
-  if (text) cmd("copyLogText", { text });
-}
-
-// ---------- 设置 ----------
-function settingsModel() {
-  if (!UI.settingsDraft) {
-    const s = S.settings;
-    UI.settingsDraft = JSON.parse(JSON.stringify(s));
-    // 端口在草稿里用字符串承载（输入框语义），比较时归一化。
-    for (const k of Object.keys(UI.settingsDraft.ports || {})) {
-      UI.settingsDraft.ports[k] = String(UI.settingsDraft.ports[k]);
+function startChatDownload(name) {
+  if (state.downloadsInFlight.has(name) || state.downloaded.has(name)) return;
+  state.downloadsInFlight.set(name, 0);
+  renderPage(false);
+  showToast(`开始下载 ${shortModel(name)}`);
+  let progress = 0;
+  const timer = setInterval(() => {
+    progress += 7 + Math.random() * 11;
+    if (progress >= 100) {
+      clearInterval(timer);
+      state.downloadsInFlight.delete(name);
+      state.downloaded.add(name);
+      showToast(`${shortModel(name)} 已下载完成`);
+      pulseHaptic();
+    } else {
+      state.downloadsInFlight.set(name, progress);
     }
+    if (state.page === "models") {
+      const card = $(`[data-model-name="${cssEscape(name)}"]`);
+      if (card) {
+        // The progress action is a download-center shortcut, not a second
+        // download trigger, so update the group button rather than looking
+        // for data-download-model.
+        const button = $(".fc-model-card-actions .fc-model-action", card);
+        const label = button ? button.querySelector("span") : null;
+        if (label) label.textContent = progress >= 100 ? "已下载" : `${Math.round(progress)}%`;
+      }
+    }
+  }, 380);
+}
+
+function cssEscape(value) {
+  if (window.CSS && CSS.escape) return CSS.escape(value);
+  return String(value).replace(/"/g, '\\"');
+}
+
+function toggleSetting(key) {
+  state.settings[key] = !state.settings[key];
+  const button = $(`[data-setting-toggle="${key}"]`);
+  if (button) {
+    button.classList.toggle("on", state.settings[key]);
+    button.setAttribute("aria-checked", String(state.settings[key]));
   }
-  return UI.settingsDraft;
+  showToast(key === "gateway" ? `API 网关已${state.settings.gateway ? "开启" : "关闭"}` : "设置已更新");
 }
 
-function settingsStored() {
-  const s = JSON.parse(JSON.stringify(S.settings));
-  for (const k of Object.keys(s.ports || {})) s.ports[k] = String(s.ports[k]);
-  return s;
+function openOverlay(kind) {
+  const layer = $("#overlayLayer");
+  overlayCloseToken += 1;
+  if (!state.currentOverlay) {
+    overlayTrigger = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+  }
+  const panel = overlayPanel(kind);
+  if (panel) {
+    panel.getAnimations().forEach((animation) => animation.cancel());
+  }
+  state.currentOverlay = kind;
+  layer.classList.remove("command-open", "inspector-open", "downloads-open", "model-open");
+  layer.classList.add("is-open", `${kind}-open`);
+  layer.setAttribute("aria-hidden", "false");
 }
 
-// 设置页只「拥有」下面这些字段，改动比较只看它们。不能拿整包快照比：
-// 快照里还带着聊天参数（temperature/topP/maxTokens/systemPrompt）等本页
-// 不展示的字段，它们一变，用户什么都没碰也会看到「有未保存的更改」。
-// 网关开关与网关端口即时生效（走各自的命令），天然不在名单里。
-const DRAFT_KEYS = ["ports", "thinkingMode", "reasoningEffort", "defaultModel",
-                    "autoStart", "launchAtLogin", "hfCache"];
-function comparableSettings(value) {
-  const source = value || {};
-  const copy = {};
-  DRAFT_KEYS.forEach((k) => { copy[k] = source[k] === undefined ? null : source[k]; });
-  // 端口在草稿里是字符串（输入框语义），快照里是数字，比较前归一化。
-  copy.ports = JSON.parse(JSON.stringify(copy.ports || {}));
-  for (const k of Object.keys(copy.ports)) copy.ports[k] = String(copy.ports[k]);
-  return JSON.stringify(copy);
+function overlayPanel(kind) {
+  return {
+    command: $("#commandPalette"),
+    inspector: $("#inspector"),
+    downloads: $("#downloadSheet"),
+    model: $("#modelPopover"),
+  }[kind] || null;
 }
 
-function savebarState(d) {
-  const engines = engineIDs();
-  const dirty = comparableSettings(d) !== comparableSettings(settingsStored());
-  // 草稿的端口是字符串、快照里是数字，两边都要 String 归一化，
-  // 否则恒不等，提示会被错误升级成「改动将重启引擎以生效」。
-  const activePortChanged = String(d.ports[S.engine.id]) !== String(S.settings.ports[S.engine.id]);
-  // 键名必须跟快照一致（thinkingMode / reasoningEffort / defaultModel）。
-  // 这里原先比的是 thinking / effort / model —— 两边都是 undefined，恒等，
-  // 于是这三项改动从来不会提示「要重启才生效」。
-  const otherChanged = ["thinkingMode", "reasoningEffort", "defaultModel",
-                        "autoStart", "launchAtLogin", "hfCache"]
-    .some((k) => JSON.stringify(d[k]) !== JSON.stringify(S.settings[k]));
-  const restartHint = dirty && (activePortChanged || otherChanged) && running();
-  const portInvalid = engines.some((e) => { const v = parseInt(d.ports[e], 10); return !v || v < 1024 || v > 65535; });
-  const headline = !dirty ? "所有改动已保存"
-    : restartHint ? `改动将重启 ${engineMeta(S.engine.id).name} 以生效`
-    : "有未保存的更改";
-  return { dirty, restartHint, portInvalid, headline };
+function closeOverlays(options = {}) {
+  const layer = $("#overlayLayer");
+  const kind = state.currentOverlay;
+  if (!layer || (!kind && !layer.classList.contains("is-open"))) return;
+  const panel = overlayPanel(kind);
+  const trigger = overlayTrigger;
+  const token = ++overlayCloseToken;
+  overlayTrigger = null;
+  // 模型菜单是锚在按钮上的浮层。以前这里在退出动画开始前就把 FCOverlayBounds
+  // 写下的 inline 几何量还了回去：left/top 一被移除，菜单第一帧就跳回 overlay
+  // 层的 (0,0)，再在那个角落淡出 —— 看上去就是「收起时闪一下」。
+  // 现在只冻结位置（摘掉跟随监听，不动 inline 样式和滚动条类），等真的
+  // 收起来以后再还原。
+  const popover = $("#modelPopover");
+  const freezePopover = Boolean(window.FCOverlayBounds && popover && kind === "model");
+  let releasePopover = null;
+  if (freezePopover) {
+    window.FCOverlayBounds.freeze(popover);
+    popover.classList.add("is-closing");
+    releasePopover = () => {
+      // 幂等：同一帧里重开/重关会换掉这份 release，旧的那次直接作废。
+      if (popover.__fcRelease !== releasePopover) return;
+      popover.__fcRelease = null;
+      popover.classList.remove("is-closing");
+      window.FCOverlayBounds.clear(popover);
+    };
+    popover.__fcRelease = releasePopover;
+  }
+  const finish = () => {
+    if (releasePopover) releasePopover();
+    if (token !== overlayCloseToken) return;
+    layer.classList.remove("is-open", "command-open", "inspector-open", "downloads-open", "model-open");
+    layer.setAttribute("aria-hidden", "true");
+    state.currentOverlay = "";
+    $("#inspector").setAttribute("aria-modal", "false");
+    $("#commandPalette").setAttribute("aria-modal", "false");
+    if (panel) panel.getAnimations().forEach((animation) => animation.cancel());
+    if (options.restoreFocus !== false && trigger?.isConnected) {
+      trigger.focus({ preventScroll: true });
+    } else if (state.chatStreaming && state.page === "chat") {
+      $("#chatInput")?.focus();
+    }
+  };
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (options.immediate || !panel || reduceMotion || typeof panel.animate !== "function") {
+    finish();
+    return;
+  }
+  const backdrop = $(".command-backdrop");
+  const exits = [panel];
+  if (kind === "command" && backdrop) exits.push(backdrop);
+  // 模型菜单比其它浮层多留 20ms：列表逐行退场要时间，面板同帧消失会显得
+  // 「被剪掉」。visibility 的延迟（.2s）也按这个时长留了余量。
+  const exitOptions = kind === "model"
+    ? { duration: 170, distance: 5 }
+    : { duration: 150, distance: 6 };
+  Promise.all(exits.map((element) => (
+    window.FCMotionGuard
+      ? window.FCMotionGuard.exit(element, exitOptions)
+      : Promise.resolve()
+  ))).then(finish, finish);
 }
 
-function savebarHTML(d) {
-  const st = savebarState(d);
-  return `<div class="savebar ${st.dirty ? "" : "quiet"}" id="savebar" data-sig="${esc(JSON.stringify(st))}">${icon(st.dirty ? "alert" : "circleCheck", "savebar-icon", 15)}<span>${esc(st.headline)}</span>
-    ${st.dirty ? `<button class="btn-quiet" id="discardBtn">${icon("x")}<span>放弃更改</span></button><button class="btn-main" id="saveBtn" ${st.portInvalid ? "disabled" : ""}>${icon(st.restartHint ? "refresh" : "check")}<span>${st.restartHint ? "保存并重启" : "保存"}</span></button>` : ""}
+function openCommand() {
+  closeOverlays({ immediate: true, restoreFocus: false });
+  openOverlay("command");
+  $("#commandPalette").setAttribute("aria-modal", "true");
+  const input = $("#commandInput");
+  input.value = "";
+  state.commandIndex = 0;
+  renderCommandResults("");
+  requestAnimationFrame(() => input.focus());
+}
+
+function commands() {
+  return [
+    ...NAV_ITEMS.map((item) => ({
+      label: `打开${item.label}`,
+      detail: item.hint,
+      icon: item.icon,
+      shortcut: `⌘${item.shortcut}`,
+      run: () => navigate(item.id),
+    })),
+    {
+      label: "切换外观",
+      detail: `当前：${resolvedTheme() === "dark" ? "深色" : "浅色"}`,
+      icon: resolvedTheme() === "dark" ? "sun" : "moon",
+      shortcut: "⌘⇧A",
+      run: () => setTheme(resolvedTheme() === "dark" ? "light" : "dark"),
+    },
+    {
+      label: state.engineRunning ? "停止推理引擎" : "启动推理引擎",
+      detail: `${state.engine} · 端口 8000`,
+      icon: state.engineRunning ? "stop" : "play",
+      shortcut: "",
+      run: () => toggleEngine(),
+    },
+    {
+      label: "打开生成参数",
+      detail: "温度、Top P 与最大输出",
+      icon: "sliders",
+      shortcut: "",
+      run: () => openInspector(),
+    },
+    {
+      label: "打开下载中心",
+      detail: "2 个下载任务",
+      icon: "download",
+      shortcut: "",
+      run: () => openDownloads(),
+    },
+    {
+      label: "折叠边栏",
+      detail: "切换图标导航模式",
+      icon: "panelLeft",
+      shortcut: "⌘\\",
+      run: () => toggleSidebar(),
+    },
+  ];
+}
+
+function renderCommandResults(query) {
+  const all = commands();
+  const q = query.trim().toLowerCase();
+  state.commandItems = all.filter((item) => !q || `${item.label} ${item.detail}`.toLowerCase().includes(q));
+  state.commandIndex = Math.min(state.commandIndex, Math.max(0, state.commandItems.length - 1));
+  const navResults = state.commandItems.slice(0, 6);
+  $("#commandResults").innerHTML = navResults.length ? `
+    ${navResults.map((item, index) => `
+      <button class="command-item ${index === state.commandIndex ? "selected" : ""}" type="button" data-command-index="${index}">
+        <span class="command-item-icon">${icon(item.icon, 13)}</span>
+        <span class="command-item-copy"><strong>${esc(item.label)}</strong></span>
+        ${item.shortcut ? `<kbd>${esc(item.shortcut)}</kbd>` : ""}
+      </button>`).join("")}
+  ` : `<div style="padding:34px;text-align:center;color:var(--text-3);font-size:10.5px">没有匹配的命令</div>`;
+  $("#commandHint").textContent = `${state.commandItems.length} 个命令`;
+}
+
+function runCommand(index) {
+  const item = state.commandItems[index];
+  if (!item) return;
+  closeOverlays();
+  setTimeout(() => item.run(), 80);
+}
+
+function openInspector() {
+  closeOverlays({ immediate: true, restoreFocus: false });
+  openOverlay("inspector");
+  const p = state.params;
+  $("#inspector").innerHTML = `
+    <div class="inspector-grabber" aria-hidden="true"></div>
+    <header class="inspector-head">
+      <div><span class="eyebrow">CHAT PARAMETERS</span><h2 id="inspectorTitle">生成参数</h2></div>
+      <button class="glass-icon-btn small" type="button" data-close-inspector aria-label="关闭参数面板">${icon("x", 14)}</button>
+    </header>
+    <div class="inspector-body">
+      ${rangeRow("temperature", "温度", p.temperature, 0, 1.5, .05, "精确", "发散")}
+      ${rangeRow("topP", "Top P", p.topP, 0, 1, .01, "聚焦", "多样")}
+      ${rangeRow("tokens", "最大输出", p.tokens, 512, 8192, 256, "512", "8192")}
+      <div class="param-row">
+        <div class="param-head"><span>思考模式</span><b>${esc(p.thinking)}</b></div>
+        <div class="settings-segmented think-segment" data-thinking-choice>
+          ${["自动", "关闭", "开启"].map((choice) => `<button type="button" class="${p.thinking === choice ? "active" : ""}" data-thinking="${choice}">${choice}</button>`).join("")}
+        </div>
+      </div>
+    </div>
+    <footer class="inspector-foot">
+      <button class="button" type="button" data-action="reset-params">重置</button>
+      <button class="button primary" type="button" data-action="save-params">应用</button>
+    </footer>`;
+  requestAnimationFrame(() => {
+    $$(".range-input", $("#inspector")).forEach(updateRangeVisual);
+  });
+}
+
+function rangeRow(key, label, value, min, max, step, low, high) {
+  return `<div class="param-row">
+    <div class="param-head"><span>${esc(label)}</span><b data-range-value="${key}">${esc(value)}</b></div>
+    <input class="range-input" type="range" min="${min}" max="${max}" step="${step}"
+           value="${value}" data-param="${key}" aria-label="${esc(label)}">
+    <div class="param-hint"><span>${esc(low)}</span><span>${esc(high)}</span></div>
   </div>`;
 }
 
-function pageSettings() {
-  const d = settingsModel();
-
-  const row = (label, small, ctl) => `<div class="set-row"><div class="lab"><b>${label}</b><small>${small}</small></div><div class="ctl">${ctl}</div></div>`;
-  const seg = (opts, current, act) => `<div class="seg">${opts.map(([v, n]) => `<span class="${current === v ? "on" : ""}" data-setseg="${act}" data-arg="${v}">${n}</span>`).join("")}</div>`;
-  const tgl = (on, act) => `<span class="tgl ${on ? "" : "off"}" data-settgl="${act}"></span>`;
-  const field = (key, value, wide, invalid) => `<input class="field ${wide ? "wide" : ""} ${invalid ? "invalid" : ""}" data-key="set_${key}" data-setfield="${key}" value="${esc(value)}" spellcheck="false">`;
-
-  return `
-    <h2 class="pg">设置</h2>
-    <div class="set-card">
-      ${row("外观", "跟随系统 / 浅色 / 深色，选中立即生效，无需保存",
-        seg([["system", `${icon("monitor")}<span>跟随系统</span>`], ["light", `${icon("sun")}<span>浅色</span>`], ["dark", `${icon("moon")}<span>深色</span>`]], S.appearance, "appearance"))}
-      ${row("随 flashCat 启动引擎", "打开应用时自动把默认引擎拉起来", tgl(d.autoStart, "autoStart"))}
-      ${row("登录时启动", "把 flashCat 加入 macOS 登录项", tgl(d.launchAtLogin, "launchAtLogin"))}
-    </div>
-    <div class="set-card">
-      ${row("API 网关", "OpenAI + Claude 双格式 · 统一入口 · 端口改完按回车生效",
-        tgl(S.settings.gatewayEnabled, "gateway") + field("gatewayPort", S.settings.gatewayPort, false))}
-      ${row("引擎端口", "各引擎固定段起始端口，互相不抢",
-        engines3().map((e) => field("port_" + e, d.ports[e], false, (() => { const v = parseInt(d.ports[e], 10); return v && !(v >= 1024 && v <= 65535); })())).join(""))}
-    </div>
-    <div class="set-card">
-      ${row("思考模式", "推理模型是否先输出思考过程",
-        seg([["automatic", "自动"], ["off", "关闭"], ["on", "开启"]], d.thinkingMode, "thinkingMode"))}
-      ${d.thinkingMode === "on" ? row("推理等级", "仅在思考模式为「开启」时生效",
-        seg([["minimal", "最小"], ["low", "低"], ["medium", "中"], ["high", "高"], ["xhigh", "超高"], ["max", "最大"]], d.reasoningEffort, "reasoningEffort")) : ""}
-      ${row("默认模型", "引擎启动时自动加载", field("defaultModel", d.defaultModel, true))}
-      ${row("下载缓存目录", "默认沿用 HF_HUB_CACHE", field("hfCache", d.hfCache, true))}
-    </div>
-    ${savebarHTML(d)}`;
+function updateRangeVisual(input) {
+  const min = Number(input.min || 0);
+  const max = Number(input.max || 100);
+  const value = Number(input.value);
+  input.style.setProperty("--v", `${((value - min) / (max - min)) * 100}%`);
+  const key = input.dataset.param;
+  const label = $(`[data-range-value="${key}"]`);
+  if (label) label.textContent = String(value);
 }
 
-function engines3() { return engineIDs(); }
-
-function refreshSettingsChrome() {
-  const d = UI.settingsDraft;
-  if (!d || S.page !== "settings") return;
-  const bar = document.getElementById("savebar");
-  // 只在提示条状态真的变了才换 DOM：每个键都 outerHTML 重建一次，
-  // 打字时那条提示会跟着一下一下地闪。
-  if (bar && bar.dataset.sig !== JSON.stringify(savebarState(d))) {
-    bar.outerHTML = savebarHTML(d);
-    bindSavebarButtons();
-  }
-  document.querySelectorAll('[data-setfield^="port_"]').forEach((el) => {
-    const v = parseInt(el.value, 10);
-    el.classList.toggle("invalid", !(v >= 1024 && v <= 65535));
-  });
-}
-
-function bindSavebarButtons() {
-  const discard = document.getElementById("discardBtn");
-  bindOnce(discard, "click", () => { UI.settingsDraft = null; render(); });
-  const save = document.getElementById("saveBtn");
-  bindOnce(save, "click", () => {
-    const d = UI.settingsDraft;
-    if (!d) return;
-    cmd("saveSettings", {
-      ports: d.ports, thinking: d.thinkingMode, effort: d.reasoningEffort,
-      model: (d.defaultModel || "").trim(), autoStart: !!d.autoStart,
-      launchAtLogin: !!d.launchAtLogin, hfCache: (d.hfCache || "").trim(),
-    });
-    UI.settingsDraft = null;
-  });
-}
-
-function afterSettingsRender() {
-  document.querySelectorAll("[data-setseg]").forEach((el) => bindOnce(el, "click", () => {
-    const act = el.dataset.setseg, arg = el.dataset.arg;
-    if (act === "appearance") { cmd("appearance", { mode: arg }); return; }
-    const d = settingsModel();
-    d[act] = arg;
-    render();
-  }));
-  document.querySelectorAll("[data-settgl]").forEach((el) => bindOnce(el, "click", () => {
-    const key = el.dataset.settgl;
-    if (key === "gateway") { cmd("setGatewayEnabled", { on: S.settings.gatewayEnabled ? false : true }); return; }
-    const d = settingsModel();
-    d[key] = !d[key];
-    render();
-  }));
-  document.querySelectorAll("[data-setfield]").forEach((el) => {
-    bindOnce(el, "click", (e) => e.stopPropagation());
-    bindOnce(el, "input", () => {
-      const key = el.dataset.setfield;
-      const d = settingsModel();
-      if (key.startsWith("port_")) d.ports[key.slice(5)] = el.value.replace(/[^0-9]/g, "").slice(0, 5);
-      else if (key === "gatewayPort") { /* 网关端口即时生效，回车提交 */ }
-      else d[key] = el.value;
-      refreshSettingsChrome();
-    });
-    bindOnce(el, "blur", flushPendingRender);
-  });
-  document.querySelectorAll('[data-setfield="gatewayPort"]').forEach((el) => bindOnce(el, "keydown", (e) => {
-    if (e.key === "Enter") { const v = parseInt(el.value, 10); if (v >= 1024 && v <= 65535) { cmd("setGatewayPort", { port: v }); toast("网关已切换到端口 " + v); } }
-  }));
-  bindSavebarButtons();
-}
-
-// ---------- 首次运行的硬件推荐页 ----------
-// 每个引擎一行：这一档是什么、为什么是它、以及「用这个引擎」。文案（理由）由
-// Swift 的 HardwareAdvisor.reason 统一给，网页只排版，不再自己编一套说法。
-function pageRecommend() {
-  const rec = S.recommendation || {};
-  const rows = rec.rows || [];
-  const allFit = rows.every((r) => r.fit === "good" || r.fit === "unknown");
-
-  const cards = rows.map((r) => {
-    const meta = engineMeta(r.engine);
-    const fits = r.fit === "good" || r.fit === "unknown";
-    const tags = [];
-    if (r.minMemory) tags.push(`<span class="mtag">内存下限 ${r.minMemory} GB</span>`);
-    if (r.sizeText) tags.push(`<span class="mtag">${esc(r.sizeText)}</span>`);
-    engineCaps(r.engine).forEach((t) => tags.push(`<span class="mtag${ENGINE_CAP_WARN.has(t) ? " warn" : ""}">${esc(t)}</span>`));
-    // 不够也推荐（最轻一档），但必须说清是「可能不够」而不是「适配」。
-    const caveat = r.fit === "tight"
-      ? `<p class="lc-serial">这台机器连最轻的一档都低于它的内存下限（${esc(String(r.minMemory || 0))} GB）。仍可安装，但可能跑不动或频繁换页。</p>`
-      : (r.fit === "diskShort"
-        ? `<p class="lc-serial">可用磁盘小于这一档的体积，安装可能在下载中途失败。</p>` : "");
-    return `<div class="launch-card">
-      <div class="lc-head">
-        <span class="eng-ico" style="--engine-accent:${meta.color}">${icon("cpu", "", 19)}</span>
-        <div class="lc-name"><b>${esc(meta.name)}</b>
-          <div class="lc-model" title="${esc(r.model)}">${esc(r.display || r.model)}</div>
-          <span class="mtags">${tags.join("")}</span></div>
-        <div class="lc-side">
-          <span class="lc-ver${fits ? "" : " warn"}">推荐 · ${esc(r.reason)}</span>
-          <button class="btn-p dl primary" data-act="recommendInstall" data-arg="${esc(r.engine)}">${icon("arrowRight")}<span>用这个引擎</span></button>
-        </div>
-      </div>
-      ${caveat}
-    </div>`;
-  }).join("");
-
-  const cfg = `<div class="rec-cfg"><span class="dot${allFit ? "" : " warn"}"></span>
-    <span><b>${esc(rec.chip || "未知芯片")}</b> · <b>${esc(String(rec.memoryGB || 0))} GB</b> 统一内存${rec.freeDiskText ? " · 可用 <b>" + esc(rec.freeDiskText) + "</b>" : ""}</span></div>`;
-
-  return `
-    <div class="launch-wrap">
-      <div class="brand" style="padding-left:0"><div class="logo">${LOGO_SVG}</div><div><div class="t">flashCat</div><div class="s">本地推理控制台</div></div></div>
-      <h2 class="launch-title">为你挑选好了</h2>
-      <p class="launch-sub">按这台机器的内存和可用磁盘算的：每个引擎给一档最能发挥它的模型。引擎装好后会自动下载这一档。</p>
-      ${cfg}
-      ${cards || `<div class="confirm-strip">没有找到可推荐的模型，自己挑一个吧。</div>`}
-      <div class="rec-skip"><button data-act="skipRecommendation">跳过，我自己选</button></div>
-      <p class="launch-note">推荐只算这一次。</p>
-      ${UI.recommendConfirm ? recommendConfirmHTML(UI.recommendConfirm) : ""}
+function openDownloads() {
+  closeOverlays({ immediate: true, restoreFocus: false });
+  openOverlay("downloads");
+  const sheet = $("#downloadSheet");
+  sheet.innerHTML = `
+    <header class="sheet-head">
+      <div><span class="eyebrow">MODEL DOWNLOADS</span><h2 id="downloadTitle">下载中心</h2></div>
+      <button class="glass-icon-btn small" type="button" data-close-downloads aria-label="关闭下载中心">${icon("x", 14)}</button>
+    </header>
+    <div class="download-list">
+      <article class="download-item">
+        <div class="download-type">MLX</div>
+        <div class="download-copy"><strong>Qwen3.8-27B-4bit</strong><span>13.8 / 20.2 GB · 48 MB/s</span><div class="progress-track"><i style="width:68%"></i></div></div>
+        <span class="download-percent">68%</span>
+      </article>
+      <article class="download-item">
+        <div class="download-type gguf">GGUF</div>
+        <div class="download-copy"><strong>Qwen3.5-4B-Q4_K_M</strong><span>1.7 / 2.6 GB · 等待中</span><div class="progress-track queued"><i style="width:64%"></i></div></div>
+        <span class="download-percent muted">暂停</span>
+      </article>
     </div>`;
 }
 
-// 确认弹层：先把「装什么引擎、多大、装完下哪个模型」说清，再动下载。
-function recommendConfirmHTML(engine) {
-  const rec = S.recommendation || {};
-  const row = (rec.rows || []).find((r) => r.engine === engine) || {};
-  const meta = engineMeta(engine);
-  const info = (S.enginesInstall && S.enginesInstall[engine]) || {};
-  const rel = info.latestRelease || null;
-  const known = !!(rel && rel.bytes);
-  const size = known ? `约 ${fmtBytes(rel.bytes)}` : "大小以发布索引为准";
-  // 「来自发布索引」只在真给了体积时才说：兜底文案自己已经讲了出处，
-  // 再拼一次会读成「大小以发布索引为准，来自发布索引」。
-  const source = known ? "，来自发布索引" : "";
-  // 模型体积（Product 要求写清装完下的是什么、多大）；目录里没写体积的档省略。
-  const model = (row.display || row.model || "") + (row.sizeText ? " " + row.sizeText : "");
-  return `<div class="mask" data-recommend="1"><div class="modal">
-    <div class="modal-title">安装 ${esc(meta.name)} 并下载推荐模型</div>
-    <div class="modal-text">先安装 <b>${esc(meta.name)}</b> 运行时（${esc(size)}${esc(source)}），装好后自动下载 <b>${esc(model)}</b>${row.reason ? `（${esc(row.reason)}）` : ""}。模型下载要等引擎装完才能开始，所以顺序不能反。<br><br>
-      两步都能停：装引擎时在启动页看进度，模型下载可以在「下载中心」里暂停或取消。</div>
-    <div class="modal-foot">
-      <button class="btn-quiet" data-act="closeRecommendConfirm">${icon("x")}<span>取消</span></button>
-      <button class="btn-main" data-act="confirmRecommendInstall">${icon("cloudDownload")}<span>安装并下载</span></button>
-    </div>
-  </div></div>`;
-}
-
-// 点遮罩关掉确认弹层（bindActs 只处理带 data-act 的按钮，遮罩自己要有监听）。
-function bindRecommendOverlay(root) {
-  const mask = root.querySelector(".mask[data-recommend]");
-  if (!mask || mask.__bound) return;
-  mask.__bound = true;
-  mask.addEventListener("click", (e) => {
-    if (e.target !== mask) return;
-    e.stopPropagation();
-    UI.recommendConfirm = null;
-    render();
-  });
-}
-
-// ---------- 启动页 ----------
-function pageLaunch() {
-  const idx = S.packIndex || {};
-  const rows = engineIDs().map((id) => {
-    const meta = engineMeta(id);
-    const info = (S.enginesInstall && S.enginesInstall[id]) || {};
-    const versions = info.versions || [];
-    const newestInstalled = versions.length ? versions[versions.length - 1] : null;
-    const rel = info.latestRelease;
-    const busy = info.progress != null;
-    const failed = info.phase === "failed";
-    let latestVersion = rel ? rel.version : (newestInstalled || null);
-    const latestInstalled = latestVersion ? versions.includes(latestVersion) : false;
-
-    let action = "";
-    if (busy) {
-      action = "";
-    } else if (latestVersion && !latestInstalled) {
-      action = `<button class="btn-p dl primary" data-act="installEngineLaunch" data-arg="${id}">${icon("download")}<span>安装</span></button>`;
-    } else if (latestVersion && latestInstalled) {
-      action = `<button class="btn-p ghost" disabled>${icon("check")}<span>已安装</span></button>`;
-    } else {
-      action = `<span class="mtag" style="color:var(--w-info)">暂无可用版本</span>`;
-    }
-
-    const progressLine = busy
-      ? `<div class="launch-progress">${ringSVG(info.progress || 0, 30)}<span>${esc(info.step || "准备安装")}</span></div>`
-      : (failed ? `<div class="launch-progress" style="color:var(--w-err)">上次安装失败，可重试</div>` : "");
-
-    return `<div class="launch-card">
-      <div class="lc-head">
-        <span class="eng-ico" style="--engine-accent:${meta.color}">${icon("cpu", "", 19)}</span>
-        <div class="lc-name"><b>${meta.name}</b>
-          <span class="mtags">${engineCaps(id).map((t) => `<span class="mtag${ENGINE_CAP_WARN.has(t) ? " warn" : ""}">${esc(t)}</span>`).join("")}
-          ${newestInstalled ? (S.engine.id === id ? `<span class="mtag ok">当前引擎</span>` : `<span class="mtag">已安装 v${esc(newestInstalled)}</span>`) : ""}</span></div>
-        <div class="lc-side">
-          ${latestVersion ? `<span class="lc-ver ${latestInstalled ? "dim" : ""}">最新 v${esc(latestVersion)}${rel && rel.bytes ? " · " + fmtBytes(rel.bytes) : ""}</span>` : ""}
-          ${action}
-        </div>
-      </div>
-      <div class="lc-blurb">${esc(engineBlurb(id))}</div>
-      ${engineCaps(id).includes("仅支持串行")
-        ? `<p class="lc-serial">串行引擎：并发请求只会排队，概览里的解码速度始终是单请求的速度。</p>` : ""}
-      ${progressLine}
-    </div>`;
-  }).join("");
-
-  const installedSummary = engineIDs()
-    .map((id) => ({ id, versions: (S.enginesInstall && S.enginesInstall[id] && S.enginesInstall[id].versions) || [] }))
-    .filter((x) => x.versions.length)
-    .map((x) => `${engineMeta(x.id).name} v${x.versions[x.versions.length - 1]}`)
-    .join(" · ");
-
-  return `
-    <div class="launch-wrap">
-      <div class="brand" style="padding-left:0"><div class="logo">${LOGO_SVG}</div><div><div class="t">flashCat</div><div class="s">本地推理控制台</div></div></div>
-      <h2 class="launch-title">选择你的推理引擎</h2>
-      <p class="launch-sub">引擎不再随应用打包，也不再有隐含的默认项。选一个下载安装，它就是你的默认引擎；之后可以随时从引擎页回到这里添加或切换到别的引擎。</p>
-      ${installedSummary ? `<p class="launch-found">检测到本机已安装：${esc(installedSummary)}</p>`
-        : (idx.loaded ? `<p class="launch-found dim">尚未检测到已安装的引擎，选择下面任意一个下载安装即可。</p>` : "")}
-      ${idx.error ? `<div class="confirm-strip" style="border-color:color-mix(in srgb, var(--w-warn) 40%,transparent)">无法读取发布索引：${esc(idx.error)}</div>` : ""}
-      ${rows}
-      <p class="launch-note">安装包来自发布索引（<span class="mono">FLASHCAT_PACK_INDEX_URL</span>，或应用内置的 pack-index.json）。已在本机构建好的安装包也会直接被识别：把它们放进 <span class="mono">~/Library/Application Support/flashCat/engines/&lt;引擎&gt;/&lt;版本&gt;</span> 即可。</p>
-      <div class="launch-start">
-        <button class="btn-p dl primary" data-act="finishLaunch" ${S.launchNeedsSetup ? "disabled" : ""}>${icon("arrowRight")}<span>开始使用</span></button>
-      </div>
-    </div>`;
-}
-
-// ---------- 弹层（确认 / 下载中心 / 引擎配置 / 对话参数） ----------
-function renderOverlays() {
-  const host = document.getElementById("overlays");
-  if (!host) return;
-  const parts = [];
-  // 待确认（使用模型 / 切换模型）
-  if (S.pending && !UI.configEngine && !UI.downloadsOpen) {
-    const p = S.pending;
-    if (p.kind === "use") {
-      parts.push(modal(`
-        <div class="modal-title">${p.needsDownload ? "下载并使用模型" : "切换模型"}</div>
-        <div class="modal-text">${p.needsDownload
-          ? `「${esc(shortModel(p.model))}」尚未下载（${esc(p.engine.toUpperCase())} 引擎），确认后将开始下载，完成后自动启用。`
-          : `切换到 ${esc(p.engine.toUpperCase())} 引擎的「${esc(shortModel(p.model))}」？`}</div>
-        <div class="modal-foot">
-          <button class="btn-quiet" data-act="cancelUse">${icon("x")}<span>取消</span></button>
-          <button class="btn-main" data-act="confirmUse">${icon(p.needsDownload ? "cloudDownload" : "check")}<span>${p.needsDownload ? "下载并使用" : "确认使用"}</span></button>
-        </div>`, "cancelUse"));
-    } else if (p.kind === "switch") {
-      parts.push(modal(`
-        <div class="modal-title">切换模型</div>
-        <div class="modal-text">切换到「${esc(shortModel(p.model))}」？正在运行的服务将重启以加载新模型。</div>
-        <div class="modal-foot">
-          <button class="btn-quiet" data-act="cancelSwitch">${icon("x")}<span>取消</span></button>
-          <button class="btn-main" data-act="confirmSwitch">${icon("check")}<span>确认切换</span></button>
-        </div>`, "cancelSwitch"));
-    }
-  }
-  // 引擎未安装确认（模型由未安装引擎驱动）
-  if (S.pendingInstall) {
-    const name = engineMeta(S.pendingInstall).name;
-    parts.push(modal(`
-      <div class="modal-title">${esc(name)} 还没安装</div>
-      <div class="modal-text">这个模型由 ${esc(name)} 引擎驱动，先安装 ${esc(name)} 才能切换到它。</div>
-      <div class="modal-foot">
-        <button class="btn-quiet" data-act="cancelInstall">${icon("x")}<span>取消</span></button>
-        <button class="btn-main" data-act="confirmInstall">${icon("download")}<span>去安装</span></button>
-      </div>`, "cancelInstall"));
-  }
-  // 对话参数
-  if (UI.chatParamsOpen) {
-    parts.push(modal(`
-      <div class="modal-title">对话参数</div>
-      ${chatParamsBody()}`, "closeChatParams"));
-  }
-  // 引擎配置
-  if (UI.configEngine) {
-    const name = engineMeta(UI.configEngine).name;
-    parts.push(modal(`
-      <div class="modal-title">${esc(name)} 配置</div>
-      ${configBody()}`, "closeConfig", true));
-  }
-  // 模型广场：搜 HF、看模型卡
-  if (UI.hubOpen) {
-    parts.push(modal(`
-      <div class="modal-title">下载模型 <small>搜到看清楚了再下，权重存公共目录</small></div>
-      <div class="hub-body">${hubBody()}</div>
-      <div class="modal-foot">
-        ${hubPager()}
-        <button class="btn-quiet" data-act="hubManual">${icon("plus")}<span>手填仓库 id</span></button>
-        <button class="btn-quiet" data-act="closeHub">${icon("x")}<span>关闭</span></button>
-      </div>`, "closeHub", true));
-  }
-  // 模型卡（盖在模型广场上面）
-  if (S.hub && (S.hub.detail || S.hub.detailLoading)) {
-    parts.push(modal(`
-      <div class="modal-title">模型卡 <small>README / 文件 / 标签</small></div>
-      <div class="modal-body" style="padding-top:0">${hubDetailBody()}</div>`, "hubCloseDetail", true));
-  }
-  // 从 Hub 下任意仓库到公共目录
-  if (UI.repoDlOpen) {
-    const d = repoDlDraft();
-    const local = repoLocal(d.repo);
-    parts.push(modal(`
-      <div class="modal-title">下载模型 <small>权重存公共目录，多个引擎共用一份</small></div>
-      <div class="modal-body">
-        <div class="modal-text" style="padding:0 0 10px">填 Hugging Face 仓库 id（<span class="mono">owner/repo</span>），输入停下会自动查一次仓库信息。下完再勾给哪些引擎用；能否被引擎加载由引擎自己判断。</div>
-        <input class="field" style="width:100%;min-width:0;text-align:left;padding:8px 12px" data-key="repoDlRepo" data-repo placeholder="例如 mlx-community/Qwen3.5-9B-4bit" value="${esc(d.repo)}" spellcheck="false">
-        ${d.error ? `<div class="confirm-strip" style="margin:10px 0 0;border-color:color-mix(in srgb, var(--w-warn) 40%,transparent)">${esc(d.error)}</div>` : ""}
-        ${repoProbePanel(d)}
-        ${local ? "" : `<div class="ctl" style="margin:16px 0 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="sz">装完给谁用：</span> ${enginePickChips(d.engines, "repoPick")}</div>`}
-      </div>
-      <div class="modal-foot">
-        <button class="btn-quiet" data-act="closeRepoDownload">${icon("x")}<span>${local ? "关闭" : "取消"}</span></button>
-        ${local
-          ? `<button class="btn-p ghost" style="margin-left:0" disabled>${icon("check")}<span>已下载</span></button>`
-          : `<button class="btn-main" data-act="confirmRepoDownload">${icon("download")}<span>开始下载</span></button>`}
-      </div>`, "closeRepoDownload", true));
-  }
-  // 共享模型的引擎授权
-  if (UI.shareEdit) {
-    const s = UI.shareEdit;
-    parts.push(modal(`
-      <div class="modal-title">${esc(shortModel(s.id))} 给哪些引擎用</div>
-      <div class="modal-text">公共目录里的权重只有一份。勾选的引擎会在自己的模型目录里看到它（符号链接，不占额外磁盘）；取消勾选只收回可见性，不删文件。</div>
-      <div class="ctl">${enginePickChips(s.engines, "sharePick")}</div>
-      <div class="modal-foot">
-        <button class="btn-quiet" data-act="closeShareEngines">${icon("x")}<span>取消</span></button>
-        <button class="btn-main" data-act="confirmShareEngines">${icon("check")}<span>保存</span></button>
-      </div>`, "closeShareEngines", true));
-  }
-  // 下载中心
-  if (UI.downloadsOpen) {
-    parts.push(modal(`
-      <div class="modal-title">下载中心 <small>同时只进行一个下载，其余任务可暂停后排队</small></div>
-      ${downloadsBody()}`, "closeDownloads", true));
-  }
-  const html = parts.join("");
-  // 引擎/下载状态变化会高频推快照，每次全量 render 都走到这里。HTML 没变就
-  // 别重建：.modal-body 是自己的滚动容器，重建一次 scrollTop 就被顶回 0——
-  // 「模型启动时开着引擎配置，页面一直弹回顶部」就是这么来的。
-  if (host.dataset.sig === html) return;
-  // 内容真的变化时也只合并节点，不重建整层：进度每 0.5s 更新一次，整块
-  // innerHTML 会让 mask/modal 的入场动画从 0% 重播，看起来就是弹窗持续闪烁；
-  // 同时 .modal-body 的滚动位和输入焦点也会被清掉。data-overlay 让同一个
-  // 弹层稳定复用，仅在确实换到另一个弹层时才插入带入场动画的新节点。
-  const tpl = document.createElement("template");
-  tpl.innerHTML = html;
-  // 换弹层时仍要把焦点交给新弹层的输入框（例如广场 → 手填仓库 id）。
-  const active = document.activeElement;
-  const focusKey = active && active.dataset ? active.dataset.key : null;
-  const caret = focusKey && typeof active.selectionStart === "number"
-    ? [active.selectionStart, active.selectionEnd]
-    : null;
-  morphChildren(host, tpl.content);
-  host.dataset.sig = html;
-  bindOverlays(host);
-  if (focusKey) {
-    const el = host.querySelector(`[data-key="${focusKey}"]`);
-    if (el && el.focus) {
-      el.focus();
-      if (caret && el.setSelectionRange) {
-        try { el.setSelectionRange(caret[0], caret[1]); } catch (e) { /* 非文本输入框 */ }
-      }
-    }
-  }
-}
-
-// wide 弹层信息量大，标题右侧统一给一个 ×：模型卡这种只靠点遮罩关闭的弹层
-// 「找不到出口」，是这批弹层被投诉最多的点。小确认弹窗本来就有取消按钮，不重复加。
-function modal(inner, cancelAct, wide) {
-  let body = inner;
-  if (wide && cancelAct) {
-    body = inner.replace(
-      /^(\s*)<div class="modal-title">([\s\S]*?)<\/div>/,
-      `$1<div class="modal-head"><div class="modal-title">$2</div><button class="modal-x" data-act="${esc(cancelAct)}" title="关闭" aria-label="关闭">${icon("x")}</button></div>`,
-    );
-  }
-  return `<div class="mask" data-overlay="${esc(cancelAct || "modal")}" data-cancel="${esc(cancelAct || "")}"><div class="modal ${wide ? "wide" : ""}">${body}</div></div>`;
-}
-
-// morph 会保留旧节点，也会插入新节点。绑定表记在节点自身，避免每次局部
-// 更新都给同一个控件叠加一份监听。
-const overlayBindings = new WeakMap();
-function bindOverlayOnce(el, kind, setup) {
-  let kinds = overlayBindings.get(el);
-  if (!kinds) {
-    kinds = new Set();
-    overlayBindings.set(el, kinds);
-  }
-  if (kinds.has(kind)) return;
-  kinds.add(kind);
-  setup();
-}
-function bindOverlays(host) {
-  host.querySelectorAll(".mask").forEach((mask) => {
-    bindOverlayOnce(mask, "cancel", () => {
-      mask.addEventListener("click", (e) => {
-        if (e.target === mask && mask.dataset.cancel) handleAction(mask.dataset.cancel);
-      });
-    });
-  });
-  host.querySelectorAll("[data-act]").forEach((el) => {
-    bindOverlayOnce(el, "action", () => {
-      el.addEventListener("click", (e) => { e.stopPropagation(); handleAction(el.dataset.act, el.dataset.arg); });
-    });
-  });
-  // 引擎配置草稿
-  host.querySelectorAll("[data-cfgtgl]").forEach((el) => {
-    bindOverlayOnce(el, "cfgtgl", () => {
-      el.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (el.classList.contains("disabled")) return;
-        const key = el.dataset.cfgtgl;
-        const t = cfgModel().tuning;
-        const value = !(t[key] != null ? t[key] : el.dataset.d === "1");
-        if (key === "thinkingBudgetCustom") {
-          // 开关只是自定义与默认 16384 之间的切换：开 = 补默认值可改，关 = 清空回落。
-          t.thinkingBudgetCustom = value;
-          if (value && t.thinkingBudget == null) t.thinkingBudget = 16384;
-          if (!value) t.thinkingBudget = null;
-        } else {
-          t[key] = value;
-        }
-        // oMLX 的 MTP 与 DFlash 互斥：开一个关另一个。
-        if (UI.configEngine === "omlx") {
-          if (key === "mtp" && value) t.dflash = false;
-          if (key === "dflash" && value) t.mtp = false;
-        }
-        renderOverlays();
-      });
-    });
-  });
-  host.querySelectorAll("[data-cfg]").forEach((el) => {
-    bindOverlayOnce(el, "cfg", () => {
-      el.addEventListener("input", () => {
-        const key = el.dataset.cfg;
-        const v = el.value.trim();
-        // 数值旋钮（mtpDepth/mtpQuantBits/thinkingBudget）必须以数字提交，
-        // 字符串会在 Swift 侧解码 EngineTuning 时失败。
-        const n = Number(v);
-        cfgModel().tuning[key] = v === "" ? null
-          : (cfgNumericKeys[key] && Number.isFinite(n) ? n : v);
-      });
-    });
-  });
-  host.querySelectorAll("[data-hubq]").forEach((el) => {
-    bindOverlayOnce(el, "hub-input", () => {
-      el.addEventListener("input", () => {
-        // 搜索框打字不重绘：快照每两秒推一次，重绘会把光标和 IME 打断。
-        hubDraft().query = el.value;
-      });
-    });
-    bindOverlayOnce(el, "hub-key", () => {
-      el.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") { e.preventDefault(); handleAction("hubSearch"); }
-      });
-    });
-  });
-  host.querySelectorAll("[data-repo]").forEach((el) => {
-    bindOverlayOnce(el, "repo", () => {
-      el.addEventListener("input", () => {
-        const d = repoDlDraft();
-        d.repo = el.value;
-        d.error = "";
-        repoProbeSoon(el.value);
-      });
-    });
-  });
-  host.querySelectorAll("[data-cfgport]").forEach((el) => {
-    bindOverlayOnce(el, "cfgport", () => {
-      el.addEventListener("input", () => {
-        el.value = el.value.replace(/[^0-9]/g, "").slice(0, 5);
-        cfgModel().port = el.value;
-      });
-    });
-  });
-  host.querySelectorAll("[data-finder]").forEach((el) => {
-    bindOverlayOnce(el, "finder", () => {
-      el.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const [kind, eng] = el.dataset.finder.split("|");
-        cmd("openFinder", { kind, engine: eng });
-      });
-    });
-  });
-  // 对话参数控件
-  host.querySelectorAll("[data-cprange]").forEach((el) => {
-    bindOverlayOnce(el, "cprange", () => {
-      el.addEventListener("input", () => {
-        const d = chatParamsDraft();
-        d[el.dataset.cprange] = Number(el.value);
-        const out = document.getElementById("cpv-" + el.dataset.cprange);
-        if (out) out.textContent = Number(el.value).toFixed(2);
-      });
-    });
-  });
-  host.querySelectorAll("[data-cpnum]").forEach((el) => {
-    bindOverlayOnce(el, "cpnum", () => {
-      el.addEventListener("input", () => {
-        chatParamsDraft()[el.dataset.cpnum] = el.value.replace(/[^0-9]/g, "");
-      });
-    });
-  });
-  host.querySelectorAll("[data-cptext]").forEach((el) => {
-    bindOverlayOnce(el, "cptext", () => {
-      el.addEventListener("input", () => {
-        chatParamsDraft()[el.dataset.cptext] = el.value;
-      });
-    });
-  });
-}
-
-function downloadsBody() {
-  const tasks = (S.downloads && S.downloads.tasks) || [];
-  const active = S.downloads && S.downloads.active;
-  if (!tasks.length) {
-    return `<div class="empty download-empty"><div class="empty-mark">${icon("download", "", 22)}</div><div class="t">没有下载任务</div><div>在模型卡片或「可下载」里点下载，进度会显示在这里</div></div>`;
-  }
-  const rows = tasks.map((t) => {
-    const isRun = active && active.engine === t.engine && active.model === t.model;
-    const fraction = isRun ? (active.fraction || 0) : (t.fraction || 0);
-    const total = t.totalBytes || 0;
-    const done = isRun ? Math.round(fraction * total) : (t.downloadedBytes || 0);
-    let status = "";
-    if (isRun) status = `<span class="mtag" style="color:var(--w-accent)">下载中</span>`;
-    else if (t.status === "paused") status = `<span class="mtag" style="color:var(--w-warn)">已暂停</span>`;
-    else if (t.status === "failed") status = `<span class="mtag" style="color:var(--w-err)">失败</span>`;
-    else status = `<span class="mtag">排队</span>`;
-    let detail;
-    if (total > 0) detail = `${fmtBytes(done)} / ${fmtBytes(total)}${isRun ? " · " + (fmtRate(active.speed) || "等待下载器报告进度…") : ""}`;
-    else detail = isRun ? "已启动，等待下载器报告进度…"
-      : (t.status === "paused" ? "已暂停，继续后从断点接着下"
-      : (t.status === "failed" ? "上次下载失败，可重试" : "等待当前下载结束"));
-    let btns = "";
-    if (isRun) {
-      btns = `<button class="btn-p ghost" data-act="pauseDownload" data-arg="${esc(t.engine)}|${esc(t.model)}">${icon("pause")}<span>暂停</span></button>
-              <button class="btn-p ghost" data-act="cancelDownload" data-arg="${esc(t.engine)}|${esc(t.model)}">${icon("x")}<span>取消</span></button>`;
-    } else if (t.status === "paused") {
-      btns = `<button class="btn-p ghost" data-act="resumeDownload" data-arg="${esc(t.engine)}|${esc(t.model)}">${icon("play")}<span>继续</span></button>
-              <button class="btn-p ghost" data-act="cancelDownload" data-arg="${esc(t.engine)}|${esc(t.model)}">${icon("trash")}<span>移除</span></button>`;
-    } else if (t.status === "failed") {
-      btns = `<button class="btn-p ghost" data-act="resumeDownload" data-arg="${esc(t.engine)}|${esc(t.model)}">${icon("refresh")}<span>重试</span></button>
-              <button class="btn-p ghost" data-act="removeTask" data-arg="${esc(t.engine)}|${esc(t.model)}">${icon("trash")}<span>移除</span></button>`;
-    }
-    return `<div class="dl-row">
-      <div class="dl-main">
-        <div class="dl-name">${esc(shortModel(t.model))}<span class="mtag">${esc(t.engine.toUpperCase())}</span>${status}</div>
-        ${total > 0 ? `<div class="dl-meter"><div class="dl-fill ${t.status === "failed" && !isRun ? "err" : ""}" style="width:${Math.round(fraction * 100)}%"></div></div>` : ""}
-        <div class="dl-detail">${esc(detail)}</div>
-      </div>
-      <div class="dl-btns">${btns}</div>
-    </div>`;
-  }).join("");
-  return `<div class="dl-list">${rows}</div>`;
-}
-
-// ---------- 顶层绑定 ----------
-// 菜单触发统一走 data-menu（document 级监听处理）
-
-// IME 组合输入期间挂起快照重绘（否则生成中打中文会被整页重绘打断），结束后补一次。
-document.addEventListener("compositionstart", () => { UI.composing = true; });
-document.addEventListener("compositionend", () => {
-  UI.composing = false;
-  flushPendingRender();
-});
-
-// 标题栏那一行现在铺在网页里（红绿灯浮在最上层），所以「按住空白处拖窗口」
-// 也得由网页转给 Swift。原生 titlebar 自己吞掉鼠标事件时这里根本不会触发，
-// 两条路都通，不会互相抢。
-document.addEventListener("mousedown", (e) => {
-  if (e.button !== 0 || e.clientY > 28) return;
-  if (e.target.closest(".side-toggle, .nav-item, button, a, input, textarea, [data-act]")) return;
-  cmd("dragWindow");
-});
-
-// 折叠手柄是静态节点（在 index.html 里，不参与侧栏/页面重绘）：
-// 开机给它填图标、接上动作。它必须留在 #side 外面——折叠后它停在 rail 右外侧，
-// 放在里面会被 overflow:hidden / contain:paint 裁掉。
-(function initSideToggle() {
-  const btn = document.querySelector(".side-toggle");
-  if (!btn) return;
-  btn.innerHTML = SIDE_ICON;
-  btn.addEventListener("click", (e) => { e.stopPropagation(); handleAction("toggleSidebar"); });
-})();
-
-window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && UI.menuOpen) {
-    e.preventDefault();
-    closeMenus();
+function openModelPopover(anchor) {
+  if ($("#overlayLayer").classList.contains("model-open")) {
+    closeOverlays();
     return;
   }
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "n") { e.preventDefault(); handleAction("newChat"); }
-  // 概览主卡的模型切换是 role=button 的 div：键盘 Enter / 空格也要能打开菜单。
-  if (e.key === "Enter" || e.key === " ") {
-    const sw = e.target.closest && e.target.closest(".hero-model.switch");
-    if (sw) { e.preventDefault(); sw.click(); }
+  closeOverlays({ immediate: true, restoreFocus: false });
+  openOverlay("model");
+  const popover = $("#modelPopover");
+  popover.innerHTML = MODELS.slice(0, 4).map((model, index) => `
+    <button class="model-option" style="--i:${index}" type="button" data-select-model="${esc(model.name)}">
+      ${window.FCModelBrand
+        ? window.FCModelBrand.tile(model.name, { size: 15, className: "model-option-icon fc-series-tile" })
+        : `<span class="model-option-icon">${icon("brain", 14)}</span>`}
+      <span class="model-option-copy"><strong>${esc(shortModel(model.name))}</strong><span>${esc(model.engine)} · ${esc(model.size)} · ${esc(model.format)}</span></span>
+      ${model.name === state.model ? `<span class="model-option-check">${icon("check", 14)}</span>` : ""}
+    </button>`).join("");
+  const rect = anchor.getBoundingClientRect();
+  const width = 318;
+  const left = Math.max(14, Math.min(window.innerWidth - width - 14, rect.left));
+  if (window.FCOverlayBounds) {
+    window.FCOverlayBounds.place(anchor, popover, {
+      boundary: ".window",
+      preferredSide: "bottom",
+      align: "start",
+      gap: 8,
+      padding: 14,
+      width,
+      maxHeight: 420,
+      scroll: true,
+      flip: true,
+      clamp: true,
+    });
+  } else {
+    popover.style.left = `${left}px`;
+    popover.style.top = `${rect.bottom + 8}px`;
   }
+}
+
+// ---------- model label morph ----------
+// 换模型只换一个名字，却会改变按钮宽度：直接写 textContent 的话，新名字是
+// 「凭空出现」的，右边的上下文/参数按钮还会在一帧里横跳一百多像素。
+// 这里把旧名字留成绝对定位的残影，让新旧两条文字交叉淡入淡出；同时按真实
+// 宽度补一段 width 动画 —— 同一行里的其它 flex 元素会跟着一起滑过去。
+const modelMorphTokens = new WeakMap();
+const modelMorphAnims = new WeakMap();
+
+function morphModelButton(button, next = {}) {
+  if (!button) return false;
+  const slot = button.querySelector("[data-model-label]");
+  if (!slot) return false;
+  const label = String(next.label == null ? "" : next.label);
+  const glyph = button.querySelector("[data-model-glyph]");
+  const glyphMarkup = next.glyph == null ? null : String(next.glyph);
+  const glyphChanged = Boolean(glyph && glyphMarkup != null && glyph.innerHTML !== glyphMarkup);
+  const current = slot.querySelector(".model-label-text");
+  const oldLabel = current ? current.textContent : slot.textContent;
+  if (oldLabel === label && !glyphChanged) {
+    if (glyphChanged && glyph) glyph.innerHTML = glyphMarkup;
+    return false;
+  }
+
+  // 先记下屏幕上的宽度，再取消上一次动画：中途再换一次时起点接着上一帧，
+  // 不会缩回上一次的终点再重来。
+  const startWidth = button.getBoundingClientRect().width;
+  const previous = modelMorphAnims.get(button);
+  if (previous) {
+    previous.forEach((animation) => animation.cancel());
+    modelMorphAnims.delete(button);
+  }
+  const token = (modelMorphTokens.get(button) || 0) + 1;
+  modelMorphTokens.set(button, token);
+
+  slot.querySelectorAll(".model-label-ghost").forEach((node) => node.remove());
+  const ghost = document.createElement("span");
+  ghost.className = "model-label-ghost";
+  ghost.setAttribute("aria-hidden", "true");
+  ghost.textContent = oldLabel;
+  const fresh = document.createElement("span");
+  fresh.className = "model-label-text";
+  fresh.textContent = label;
+  slot.textContent = "";
+  slot.append(ghost, fresh);
+  slot.dataset.label = label;
+  if (glyph && glyphMarkup != null) glyph.innerHTML = glyphMarkup;
+
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    || typeof button.animate !== "function";
+  if (reduceMotion) {
+    ghost.remove();
+    return true;
+  }
+
+  button.classList.add("is-morphing");
+  button.style.width = `${startWidth}px`;
+  // 让旧宽度先落一帧，再量目标宽度；两次写入在同一帧里会被合并，
+  // width 动画就会从一个已经变宽的布局起步。
+  button.getBoundingClientRect();
+  button.style.width = "auto";
+  const targetWidth = button.getBoundingClientRect().width;
+  button.style.width = `${startWidth}px`;
+  button.getBoundingClientRect();
+
+  const animations = [];
+  if (Math.abs(targetWidth - startWidth) >= 0.5) {
+    animations.push(button.animate(
+      [{ width: `${startWidth}px` }, { width: `${targetWidth}px` }],
+      { duration: 320, easing: "cubic-bezier(.2, .86, .18, 1)", fill: "both" }
+    ));
+  }
+  animations.push(ghost.animate(
+    [
+      { opacity: 1, translate: "0 0", filter: "blur(0)" },
+      { opacity: 0, translate: "0 -6px", filter: "blur(2px)" },
+    ],
+    { duration: 110, easing: "cubic-bezier(.4, 0, 1, 1)", fill: "both" }
+  ));
+  animations.push(fresh.animate(
+    [
+      { opacity: 0, translate: "0 6px", filter: "blur(2px)" },
+      { opacity: 1, translate: "0 0", filter: "blur(0)" },
+    ],
+    { duration: 250, delay: 115, easing: "cubic-bezier(.16, 1, .3, 1)", fill: "both" }
+  ));
+  if (glyphChanged && glyph) {
+    animations.push(glyph.animate(
+      [{ opacity: .3, scale: .8 }, { opacity: 1, scale: 1 }],
+      { duration: 280, delay: 40, easing: "cubic-bezier(.16, 1, .3, 1)", fill: "both" }
+    ));
+  }
+  modelMorphAnims.set(button, animations);
+
+  Promise.all(animations.map((animation) => animation.finished.catch(() => {}))).then(() => {
+    if (modelMorphTokens.get(button) !== token) return;
+    modelMorphTokens.delete(button);
+    modelMorphAnims.delete(button);
+    button.classList.remove("is-morphing");
+    button.style.width = "";
+    ghost.remove();
+  });
+  return true;
+}
+
+// 标题走 overview 的逐字翻滚：同一个动作在概览页已经存在，这里只负责在
+// 「模型真的变了」的时候触发它，而不是每来一张快照就重播。
+function rollModelTitle(title, label) {
+  if (!title) return;
+  title.innerHTML = Array.from(String(label)).map((char, index) =>
+    `<span class="model-char" style="--i:${index}">${char === " " ? "&nbsp;" : esc(char)}</span>`).join("");
+  title.classList.toggle("is-long", String(label).length > 28);
+  title.title = label;
+  title.classList.remove("is-switching");
+  void title.offsetWidth;
+  title.classList.add("is-switching");
+  clearTimeout(title.__rollTimer);
+  title.__rollTimer = setTimeout(() => title.classList.remove("is-switching"), 640 + String(label).length * 17);
+}
+
+// 换模型后只更新「写着模型名的地方」，不再重建整页。整页替换会让页面先淡出
+// 再淡入，读者看到的是闪一下，正在做的其它事情（滚动位置、菜单收起的动画）
+// 也会跟着断掉。
+function syncModelSurfaces() {
+  const label = shortModel(state.model);
+  const glyph = window.FCModelBrand ? window.FCModelBrand.inline(state.model, 12) : "";
+  const line = $(".chat-model-line");
+  if (line) {
+    line.dataset.modelKey = state.model;
+    line.title = state.model;
+    morphModelButton(line, { label, glyph });
+  }
+  const chip = $('.composer-chip[data-action="model-menu"]');
+  if (chip) {
+    chip.dataset.modelKey = state.model;
+    chip.title = state.model;
+    morphModelButton(chip, { label, glyph });
+  }
+  const title = $("[data-model-title]");
+  if (title) rollModelTitle(title, shortModel(state.model));
+  const settingsModel = $("[data-default-model]");
+  if (settingsModel) settingsModel.textContent = label;
+  const grid = $("#modelsGrid");
+  if (grid && window.FCModelWorkspace && typeof window.FCModelWorkspace.patchSelection === "function") {
+    window.FCModelWorkspace.patchSelection(grid, filteredModels(), state);
+  }
+  if (window.FCSegments) requestAnimationFrame(() => window.FCSegments.paintAll());
+}
+
+window.fcMorphModelButton = morphModelButton;
+
+function selectModel(name) {
+  if (state.model === name) {
+    closeOverlays();
+    return;
+  }
+  state.model = name;
+  closeOverlays();
+  showToast(`已切换到 ${shortModel(name)}`);
+  updateEngineChrome();
+  syncModelSurfaces();
+  pulseHaptic();
+}
+
+function showToast(message, tone = "ok") {
+  const stack = $("#toastStack");
+  const toast = document.createElement("div");
+  toast.className = "toast";
+  toast.innerHTML = `<span class="toast-icon">${icon(tone === "error" ? "alert" : "circleCheck", 14)}</span><span>${esc(message)}</span>`;
+  stack.appendChild(toast);
+  setTimeout(() => {
+    toast.classList.add("is-leaving");
+    setTimeout(() => toast.remove(), 260);
+  }, 2200);
+}
+
+function pulseHaptic() {
+  if (navigator.vibrate) navigator.vibrate(8);
+}
+
+function copyText(text) {
+  const value = String(text || "");
+  const done = () => showToast("已复制到剪贴板");
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(value).then(done).catch(() => fallbackCopy(value, done));
+  } else {
+    fallbackCopy(value, done);
+  }
+}
+
+function fallbackCopy(value, done) {
+  const area = document.createElement("textarea");
+  area.value = value;
+  area.style.cssText = "position:fixed;opacity:0";
+  document.body.appendChild(area);
+  area.select();
+  try { document.execCommand("copy"); done(); } catch { showToast("无法访问剪贴板", "error"); }
+  area.remove();
+}
+
+function inspectChartSegment() {
+  const segmented = $("[data-chart-range]");
+  if (segmented) window.FCSegments?.paint(segmented);
+}
+
+function startClock() {
+  // The app has no fake system menu bar (the real one is native), so the
+  // preview's clock element is absent. Skip instead of throwing during init:
+  // an exception here would abort bindGlobalEvents and leave every custom
+  // handler unbound.
+  const clock = $("#systemClock");
+  if (!clock) return;
+  const tick = () => {
+    const now = new Date();
+    clock.textContent = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  };
+  tick();
+  setInterval(tick, 30000);
+}
+
+function startLiveTelemetry() {
+  setInterval(() => {
+    if (!flowHistory.length) return;
+    flowHistory.shift();
+    const last = flowHistory[flowHistory.length - 1] || 100;
+    const next = state.engineRunning
+      ? Math.max(76, Math.min(124, last + (Math.random() - .48) * 10 + Math.sin(Date.now() / 3200) * 2.2))
+      : 0;
+    flowHistory.push(next);
+  }, 1000);
+
+  setInterval(() => {
+    state.metricTick += 1;
+    updateEngineChrome();
+    const spark = $("[data-live-spark]");
+    if (spark && state.engineRunning) {
+      $$("i", spark).forEach((bar, index) => {
+        if ((index + state.metricTick) % 4 === 0) {
+          bar.style.height = `${6 + Math.random() * 29}px`;
+        }
+      });
+    }
+    if (state.page === "logs" && !state.logPaused && state.engineRunning && logSequence < 20) {
+      logSequence += 1;
+      appendLiveLog();
+    }
+  }, 2300);
+
+  setInterval(() => {
+    if (state.page !== "models") return;
+    state.downloadsInFlight.forEach((progress, name) => {
+      const next = Math.min(99, progress + 2 + Math.random() * 4);
+      state.downloadsInFlight.set(name, next);
+      const card = $(`[data-model-name="${cssEscape(name)}"]`);
+      const button = card ? $(".fc-model-card-actions .fc-model-action", card) : null;
+      if (button) button.querySelector("span").textContent = `${Math.round(next)}%`;
+    });
+  }, 1800);
+}
+
+function initFlowHistory() {
+  flowHistory = Array.from({ length: 60 }, (_, index) =>
+    96 + Math.sin(index * .42) * 7 + Math.sin(index * .13 + .8) * 5 + (Math.random() - .5) * 3.5);
+}
+
+function appendLiveLog() {
+  const body = $("#consoleBody");
+  if (!body) return;
+  const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+  const line = document.createElement("div");
+  const isWarning = logSequence % 7 === 0;
+  line.className = "log-line";
+  line.dataset.logLevel = isWarning ? "WARN" : "INFO";
+  line.dataset.logText = "gateway stream activity";
+  line.innerHTML = `<span class="time">${logTime()}</span><span class="level ${isWarning ? "warn" : ""}">${isWarning ? "WARN" : "INFO"}</span><span class="msg">Gateway stream active · output ${128 + logSequence} · ${(94 + Math.random() * 13).toFixed(1)} tok/s · finish_reason=stop</span>`;
+  body.appendChild(line);
+  if (nearBottom) body.scrollTop = body.scrollHeight;
+}
+
+function startFlowVisualization() {
+  stopFlowVisualization();
+  const canvas = $("#flowCanvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const stage = $("#flowStage");
+  if (!ctx || !stage) return;
+  flowState = {
+    hoverX: null,
+    hoverY: null,
+    range: state.chartRange,
+    lastReadout: 0,
+  };
+  const resize = () => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const rect = stage.getBoundingClientRect();
+    canvas.width = Math.max(1, rect.width * dpr);
+    canvas.height = Math.max(1, rect.height * dpr);
+    canvas.style.width = `${rect.width}px`;
+    canvas.style.height = `${rect.height}px`;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  };
+  resize();
+  canvas.addEventListener("pointermove", (event) => {
+    const rect = canvas.getBoundingClientRect();
+    flowState.hoverX = event.clientX - rect.left;
+    flowState.hoverY = event.clientY - rect.top;
+    updateFlowProbe(rect.width, rect.height);
+  });
+  canvas.addEventListener("pointerleave", () => {
+    if (!flowState) return;
+    flowState.hoverX = null;
+    flowState.hoverY = null;
+    const cursor = $("#flowCursor");
+    const tooltip = $("#flowTooltip");
+    if (cursor) cursor.style.opacity = "0";
+    if (tooltip) tooltip.style.opacity = "0";
+  });
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const draw = (now) => {
+    if (!canvas.isConnected || state.page !== "overview") return;
+    const rect = stage.getBoundingClientRect();
+    if (document.body.classList.contains("sidebar-animating") ||
+        document.body.classList.contains("sidebar-resizing")) {
+      flowAnimation = requestAnimationFrame(draw);
+      return;
+    }
+    if (Math.abs(canvas.clientWidth - rect.width) > 1 || Math.abs(canvas.clientHeight - rect.height) > 1) resize();
+    drawFlowField(ctx, rect.width, rect.height, now);
+    if (!reduceMotion) flowAnimation = requestAnimationFrame(draw);
+  };
+  flowAnimation = requestAnimationFrame(draw);
+}
+
+function stopFlowVisualization() {
+  if (flowAnimation) cancelAnimationFrame(flowAnimation);
+  flowAnimation = 0;
+}
+
+function drawFlowFieldLegacy(ctx, width, height, time) {
+  const dark = resolvedTheme() === "dark";
+  const accent = computedColor("--accent");
+  const accent2 = computedColor("--accent-2");
+  const accent3 = computedColor("--accent-3");
+  const info = computedColor("--info");
+  const ok = computedColor("--ok");
+  const colors = [accent, info, accent3, accent2, ok];
+  const t = time / 1000;
+  const laneCount = 5;
+  const top = 34;
+  const bottom = height - 28;
+  const gap = (bottom - top) / (laneCount - 1);
+  const baseRates = [104, 88, 119, 76, 96];
+  ctx.clearRect(0, 0, width, height);
+  ctx.save();
+  ctx.globalCompositeOperation = dark ? "lighter" : "source-over";
+
+  const pulseX = ((t * 58) % (width + 180)) - 80;
+  const pulseGradient = ctx.createLinearGradient(pulseX - 90, 0, pulseX + 90, 0);
+  pulseGradient.addColorStop(0, colorWithAlpha(accent, 0));
+  pulseGradient.addColorStop(.5, colorWithAlpha(accent, dark ? .055 : .04));
+  pulseGradient.addColorStop(1, colorWithAlpha(accent, 0));
+  ctx.fillStyle = pulseGradient;
+  ctx.fillRect(pulseX - 90, 0, 180, height);
+
+  for (let lane = 0; lane < laneCount; lane++) {
+    const laneY = top + lane * gap;
+    const color = colors[lane % colors.length];
+    const activeRate = state.engineRunning ? baseRates[lane] : 0;
+    const wave = Math.min(6.5, 2.5 + activeRate / 34);
+    const laneGradient = ctx.createLinearGradient(0, 0, width, 0);
+    laneGradient.addColorStop(0, colorWithAlpha(color, 0));
+    laneGradient.addColorStop(.1, colorWithAlpha(color, dark ? .035 : .025));
+    laneGradient.addColorStop(.55, colorWithAlpha(color, dark ? .075 : .05));
+    laneGradient.addColorStop(.97, colorWithAlpha(color, 0));
+    ctx.fillStyle = laneGradient;
+    ctx.fillRect(0, laneY - 7, width, 14);
+
+    const hoveredLane = flowState.hoverY != null && Math.abs(flowState.hoverY - laneY) < gap * .36;
+    if (hoveredLane) {
+      ctx.fillStyle = colorWithAlpha(color, dark ? .075 : .05);
+      ctx.fillRect(0, laneY - 12, width, 24);
+    }
+
+    const lanePath = () => {
+      ctx.beginPath();
+      for (let x = -4; x <= width + 4; x += 5) {
+        const y = laneY
+          + Math.sin(x * .021 + t * (.7 + lane * .028) + lane * 1.13) * wave
+          + Math.sin(x * .008 - t * .23 + lane * .7) * 1.2;
+        if (x === -4) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+    };
+    const lineGradient = ctx.createLinearGradient(0, 0, width, 0);
+    lineGradient.addColorStop(0, colorWithAlpha(color, 0));
+    lineGradient.addColorStop(.08, colorWithAlpha(color, state.engineRunning ? .32 : .09));
+    lineGradient.addColorStop(.52, colorWithAlpha(color, state.engineRunning ? .54 : .13));
+    lineGradient.addColorStop(.93, colorWithAlpha(color, state.engineRunning ? .38 : .09));
+    lineGradient.addColorStop(1, colorWithAlpha(color, 0));
+    lanePath();
+    ctx.strokeStyle = lineGradient;
+    ctx.lineWidth = state.engineRunning ? 1.35 : .7;
+    ctx.stroke();
+
+    if (state.engineRunning) {
+      lanePath();
+      ctx.save();
+      ctx.setLineDash([8, 19]);
+      ctx.lineDashOffset = -(t * (17 + activeRate * .24) + lane * 11);
+      ctx.strokeStyle = colorWithAlpha(color, hoveredLane ? .94 : .72);
+      ctx.lineWidth = hoveredLane ? 2.1 : 1.45;
+      ctx.shadowColor = colorWithAlpha(color, .8);
+      ctx.shadowBlur = hoveredLane ? 12 : 7;
+      ctx.stroke();
+      ctx.restore();
+
+      const headX = ((t * activeRate * 1.28 + lane * 89) % (width + 20)) - 10;
+      const headY = laneY
+        + Math.sin(headX * .021 + t * (.7 + lane * .028) + lane * 1.13) * wave
+        + Math.sin(headX * .008 - t * .23 + lane * .7) * 1.2;
+      const headFade = Math.sin(Math.min(1, Math.max(0, headX / width)) * Math.PI);
+      ctx.save();
+      ctx.shadowColor = colorWithAlpha(color, .9);
+      ctx.shadowBlur = 12;
+      ctx.fillStyle = colorWithAlpha(color, .95 * Math.max(.08, headFade));
+      ctx.beginPath();
+      ctx.arc(headX, headY, hoveredLane ? 2.5 : 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    ctx.font = "7.5px SFMono-Regular, Menlo, monospace";
+    ctx.textAlign = "left";
+    ctx.fillStyle = colorWithAlpha(color, .72);
+    ctx.fillText(`R${lane + 1}`, 13, laneY - 7);
+    ctx.textAlign = "right";
+    ctx.fillStyle = colorWithAlpha(computedColor("--text-3"), .76);
+    ctx.fillText(state.engineRunning ? activeRate.toFixed(1) : "idle", width - 13, laneY - 7);
+  }
+
+  const events = [
+    { x: .33, label: "#1840" },
+    { x: .56, label: "#1841" },
+    { x: .77, label: "#1842" },
+  ];
+  events.forEach((event) => {
+    const x = width * event.x;
+    ctx.strokeStyle = colorWithAlpha(accent, .22);
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 5]);
+    ctx.beginPath();
+    ctx.moveTo(x, top - 9);
+    ctx.lineTo(x, bottom + 8);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = colorWithAlpha(accent, .68);
+    ctx.beginPath();
+    ctx.arc(x, bottom + 8, 1.7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.font = "7px SFMono-Regular, Menlo, monospace";
+    ctx.textAlign = "center";
+    ctx.fillStyle = colorWithAlpha(computedColor("--text-3"), .82);
+    ctx.fillText(event.label, x, height - 7);
+  });
+  ctx.restore();
+
+  if (!state.engineRunning) {
+    $("#flowStateLabel") && ($("#flowStateLabel").textContent = "IDLE · ENGINE STOPPED");
+  } else if ($("#flowStateLabel")) {
+    $("#flowStateLabel").textContent = "LIVE · DECODE";
+  }
+  if (time - flowState.lastReadout > 240) {
+    flowState.lastReadout = time;
+    const live = $("#flowLiveValue");
+    if (live) live.textContent = state.engineRunning ? (101 + Math.sin(t * 1.7) * 3.2).toFixed(1) : "—";
+  }
+}
+
+function drawFlowField(ctx, width, height, time) {
+  const dark = resolvedTheme() === "dark";
+  const accent = computedColor("--accent");
+  const accent2 = computedColor("--accent-2");
+  const accent3 = computedColor("--accent-3");
+  ctx.clearRect(0, 0, width, height);
+  ctx.save();
+  ctx.globalCompositeOperation = dark ? "lighter" : "source-over";
+
+  ctx.strokeStyle = dark ? "rgba(255, 255, 255, .035)" : "rgba(31, 41, 60, .045)";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 8]);
+  for (let ratio = .2; ratio < 1; ratio += .2) {
+    ctx.beginPath();
+    ctx.moveTo(width * ratio, 13);
+    ctx.lineTo(width * ratio, height - 13);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  const samples = flowHistory.length ? flowHistory.slice(-60) : Array(60).fill(0);
+  const padX = 16;
+  const top = 24;
+  const bottom = height - 18;
+  const valueFloor = 60;
+  const valueCeiling = 140;
+  const points = samples.map((value, index) => ({
+    x: padX + (index / (samples.length - 1)) * (width - padX * 2),
+    y: bottom - ((Math.max(valueFloor, Math.min(valueCeiling, value)) - valueFloor) / (valueCeiling - valueFloor)) * (bottom - top),
+  }));
+  const path = () => {
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let index = 1; index < points.length - 1; index++) {
+      const next = points[index + 1];
+      const midX = (points[index].x + next.x) / 2;
+      const midY = (points[index].y + next.y) / 2;
+      ctx.quadraticCurveTo(points[index].x, points[index].y, midX, midY);
+    }
+    ctx.lineTo(points[points.length - 1].x, points[points.length - 1].y);
+  };
+
+  const area = ctx.createLinearGradient(0, 0, 0, height);
+  area.addColorStop(0, colorWithAlpha(accent, dark ? .14 : .12));
+  area.addColorStop(.72, colorWithAlpha(accent3, dark ? .045 : .04));
+  area.addColorStop(1, colorWithAlpha(accent, 0));
+  path();
+  ctx.lineTo(points[points.length - 1].x, height);
+  ctx.lineTo(points[0].x, height);
+  ctx.closePath();
+  ctx.fillStyle = area;
+  ctx.fill();
+
+  const stroke = ctx.createLinearGradient(0, 0, width, 0);
+  stroke.addColorStop(0, colorWithAlpha(accent3, 0));
+  stroke.addColorStop(.12, colorWithAlpha(accent3, .7));
+  stroke.addColorStop(.5, colorWithAlpha(accent, .84));
+  stroke.addColorStop(.85, colorWithAlpha(accent2, .8));
+  stroke.addColorStop(1, colorWithAlpha(accent2, 0));
+
+  path();
+  ctx.save();
+  ctx.shadowColor = colorWithAlpha(accent, .28);
+  ctx.shadowBlur = 18;
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = state.engineRunning ? 2 : 1;
+  ctx.stroke();
+  ctx.restore();
+
+  const head = points[points.length - 1];
+  ctx.save();
+  ctx.shadowColor = colorWithAlpha(accent2, .9);
+  ctx.shadowBlur = 18;
+  ctx.fillStyle = colorWithAlpha(accent2, state.engineRunning ? .95 : .28);
+  ctx.beginPath();
+  ctx.arc(head.x, head.y, state.engineRunning ? 3.2 : 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  ctx.restore();
+
+  if (time - flowState.lastReadout > 240) {
+    flowState.lastReadout = time;
+    const live = $("#flowLiveValue");
+    if (live) live.textContent = state.engineRunning ? samples[samples.length - 1].toFixed(1) : "—";
+  }
+}
+
+function updateFlowProbe(width, height) {
+  if (!flowState || flowState.hoverX == null) return;
+  const cursor = $("#flowCursor");
+  const tooltip = $("#flowTooltip");
+  const x = Math.max(12, Math.min(width - 12, flowState.hoverX));
+  const progress = Math.max(0, Math.min(1, (x - 16) / Math.max(1, width - 32)));
+  const index = Math.max(0, Math.min(flowHistory.length - 1, Math.round(progress * (flowHistory.length - 1))));
+  const rate = flowHistory[index] || 0;
+  const tokens = Math.round(rate * (1.8 + progress * 2.2));
+  const secondsAgo = Math.round((1 - progress) * 60);
+  if (cursor) {
+    cursor.style.left = `${x}px`;
+    cursor.style.opacity = "1";
+  }
+  if (tooltip) {
+    tooltip.innerHTML = `<span>${secondsAgo === 0 ? "NOW" : `${secondsAgo} 秒前`}</span><strong>${state.engineRunning ? rate.toFixed(1) : "—"} tok/s</strong><small>${state.engineRunning ? `${tokens} tokens` : "等待解码"}</small>`;
+    const left = x > width - 130 ? x - 126 : x + 12;
+    const top = Math.max(36, Math.min(height - 87, (flowState.hoverY || 58) + 16));
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+    tooltip.style.opacity = "1";
+  }
+}
+
+function computedColor(variable) {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(variable).trim();
+  return value || "#d94d78";
+}
+
+function colorWithAlpha(color, alpha) {
+  const value = String(color).trim();
+  if (value.startsWith("#")) {
+    const hex = value.length === 4
+      ? value.slice(1).split("").map((char) => char + char).join("")
+      : value.slice(1);
+    const number = Number.parseInt(hex, 16);
+    if (Number.isFinite(number)) {
+      return `rgba(${(number >> 16) & 255}, ${(number >> 8) & 255}, ${number & 255}, ${alpha})`;
+    }
+  }
+  const rgb = value.match(/rgba?\(([^)]+)\)/);
+  if (rgb) {
+    const channels = rgb[1].split(",").slice(0, 3).map((part) => part.trim()).join(", ");
+    return `rgba(${channels}, ${alpha})`;
+  }
+  return `rgba(217, 77, 120, ${alpha})`;
+}
+
+function startAmbient() {
+  const canvas = $("#ambient");
+  const ctx = canvas.getContext("2d");
+  let width = 0;
+  let height = 0;
+  let dpr = 1;
+  const resize = () => {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  };
+  window.addEventListener("resize", resize, { passive: true });
+  resize();
+  const draw = (time) => {
+    drawAmbient(time);
+    ambientAnimation = requestAnimationFrame(draw);
+  };
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    ambientAnimation = requestAnimationFrame(draw);
+  } else {
+    drawAmbient(0);
+  }
+}
+
+function drawAmbient(time = 0) {
+  const canvas = $("#ambient");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  const light = resolvedTheme() === "light";
+  ctx.save();
+  ctx.setTransform(Math.min(window.devicePixelRatio || 1, 2), 0, 0, Math.min(window.devicePixelRatio || 1, 2), 0, 0);
+  ctx.clearRect(0, 0, width, height);
+  const bg = ctx.createLinearGradient(0, 0, width, height);
+  if (light) {
+    bg.addColorStop(0, "#eef6ff");
+    bg.addColorStop(.38, "#e4edfb");
+    bg.addColorStop(.7, "#f4eaf3");
+    bg.addColorStop(1, "#e8f5f0");
+  } else {
+    bg.addColorStop(0, "#090c13");
+    bg.addColorStop(.55, "#111523");
+    bg.addColorStop(1, "#14101a");
+  }
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, width, height);
+
+  const px = pointerX / width;
+  const py = pointerY / height;
+  ctx.globalCompositeOperation = light ? "source-over" : "screen";
+  const baseY = height * (.18 + py * .12);
+  const ribbonTints = light
+    ? ["116, 159, 245", "240, 128, 172", "109, 207, 184", "154, 131, 236", "244, 159, 111"]
+    : ["117, 162, 255", "255, 105, 164", "90, 222, 196", "154, 130, 255", "245, 153, 98"];
+  for (let i = 0; i < 10; i++) {
+    const depth = i / 9;
+    ctx.beginPath();
+    for (let x = -20; x <= width + 20; x += 12) {
+      const t = time * .000035;
+      const wave = Math.sin(x * .0022 + i * .51 + t * 1.4) * (32 + i * 2.8)
+        + Math.sin(x * .00092 - i * .18 - t) * (44 + i * 1.5);
+      const cursorPull = Math.exp(-Math.pow((x - pointerX) / (width * .4), 2)) * (py - .5) * 44;
+      const y = baseY + i * 48 + depth * height * .54 + wave + cursorPull;
+      if (x === -20) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    const tint = ribbonTints[i % ribbonTints.length];
+    ctx.strokeStyle = `rgba(${tint}, ${light ? .045 + depth * .025 : .02 + depth * .018})`;
+    ctx.lineWidth = 32 + i * 7;
+    ctx.stroke();
+  }
+
+  for (let i = 0; i < 16; i++) {
+    const depth = i / 15;
+    ctx.beginPath();
+    for (let x = -20; x <= width + 20; x += 14) {
+      const t = time * .000042;
+      const wave = Math.sin(x * .0031 + i * .38 + t * 1.6) * (16 + i * 1.8)
+        + Math.sin(x * .0012 - i * .17 - t) * (24 + i * 1.2);
+      const y = baseY + i * 36 + depth * height * .46 + wave + Math.exp(-Math.pow((x - pointerX) / (width * .34), 2)) * (py - .5) * 28;
+      if (x === -20) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = light
+      ? `rgba(70, 84, 110, ${.016 + depth * .01})`
+      : `rgba(176, 194, 232, ${.012 + depth * .012})`;
+    ctx.lineWidth = .72;
+    ctx.stroke();
+  }
+  ctx.globalCompositeOperation = "source-over";
+  ctx.restore();
+}
+
+function bindGlobalEvents() {
+  document.addEventListener("click", handleClick);
+  document.addEventListener("input", handleInput);
+  document.addEventListener("pointermove", handlePointerMove, { passive: true });
+  document.addEventListener("keydown", handleKeydown);
+  window.addEventListener("resize", () => {
+    updateNavIndicator();
+    inspectChartSegment();
+    if (state.currentOverlay === "model") closeOverlays();
+  }, { passive: true });
+
+  $("#sidebarToggle").addEventListener("click", toggleSidebar);
+  if ($("#commandTrigger")) $("#commandTrigger").addEventListener("click", openCommand);
+  $("#themeToggle").addEventListener("click", () => setTheme(resolvedTheme() === "dark" ? "light" : "dark"));
+  $("#downloadShortcut").addEventListener("click", openDownloads);
+  bindSidebarResize();
+  bindWindowControls();
+  const backdrop = $(".command-backdrop");
+  backdrop.addEventListener("click", closeOverlays);
+  $(".window").addEventListener("animationend", () => {
+    $(".window").style.animation = "";
+  }, { once: true });
+}
+
+function bindWindowControls() {
+  $$("[data-window-action]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const action = button.dataset.windowAction;
+      const win = $("#window");
+      if (action === "close") {
+        showToast("预览模式中，窗口会保持打开");
+        win.animate(
+          [{ transform: "translateX(0)" }, { transform: "translateX(-5px)" }, { transform: "translateX(5px)" }, { transform: "translateX(0)" }],
+          { duration: 180, easing: "ease-out" }
+        );
+      } else if (action === "minimize") {
+        win.classList.toggle("is-minimized");
+        if (win.classList.contains("is-minimized")) {
+          setTimeout(() => {
+            win.classList.remove("is-minimized");
+            showToast("窗口已恢复");
+          }, 900);
+        }
+      } else {
+        win.classList.toggle("is-maximized");
+        showToast(win.classList.contains("is-maximized") ? "窗口已缩放" : "窗口已还原");
+      }
+    });
+  });
+}
+
+function bindSidebarResize() {
+  const handle = $("#sidebarResize");
+  if (!handle) return;
+  let dragging = false;
+  let dragWidth = state.sidebarWidth;
+  let restoreWidth = state.sidebarWidth;
+
+  const applyWidth = (width, persist = false, remember = true) => {
+    const next = Math.round(Math.max(72, Math.min(320, width)));
+    if (remember) state.sidebarWidth = next;
+    document.documentElement.style.setProperty("--sidebar-width", `${next}px`);
+    handle.setAttribute("aria-valuenow", String(next));
+    if (persist) localStorage.setItem("fc-preview-sidebar-width", String(next));
+  };
+
+  handle.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    dragging = true;
+    document.body.classList.add("sidebar-resizing");
+    if (state.sidebarCollapsed) {
+      restoreWidth = state.sidebarWidth;
+      state.sidebarCollapsed = false;
+      document.body.classList.remove("sidebar-collapsed");
+      localStorage.setItem("fc-preview-sidebar", "full");
+      $("#sidebarToggle").setAttribute("aria-expanded", "true");
+      applyWidth(180, false, false);
+      dragWidth = 180;
+    } else {
+      restoreWidth = $("#sidebar").getBoundingClientRect().width;
+      dragWidth = restoreWidth;
+    }
+    handle.setPointerCapture?.(event.pointerId);
+  });
+
+  handle.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    const left = $("#sidebar").getBoundingClientRect().left;
+    dragWidth = Math.round(Math.max(72, Math.min(320, event.clientX - left)));
+    applyWidth(dragWidth, false, false);
+  });
+
+  const finish = () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.classList.remove("sidebar-resizing");
+    if (dragWidth <= 168) {
+      state.sidebarCollapsed = true;
+      document.body.classList.add("sidebar-collapsed");
+      localStorage.setItem("fc-preview-sidebar", "rail");
+      applyWidth(restoreWidth, true);
+      $("#sidebarToggle").setAttribute("aria-expanded", "false");
+    } else {
+      state.sidebarCollapsed = false;
+      document.body.classList.remove("sidebar-collapsed");
+      localStorage.setItem("fc-preview-sidebar", "full");
+      applyWidth(dragWidth, true);
+      $("#sidebarToggle").setAttribute("aria-expanded", "true");
+    }
+    updateNavIndicator();
+  };
+  handle.addEventListener("pointerup", finish);
+  handle.addEventListener("pointercancel", finish);
+
+  handle.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    if (state.sidebarCollapsed) {
+      state.sidebarCollapsed = false;
+      document.body.classList.remove("sidebar-collapsed");
+      localStorage.setItem("fc-preview-sidebar", "full");
+    }
+    applyWidth(state.sidebarWidth + (event.key === "ArrowRight" ? 8 : -8), true);
+    updateNavIndicator();
+  });
+
+  handle.addEventListener("dblclick", () => {
+    applyWidth(200, true);
+    updateNavIndicator();
+  });
+}
+
+function handleClick(event) {
+  const pageButton = event.target.closest("[data-page]");
+  if (pageButton) {
+    navigate(pageButton.dataset.page);
+    return;
+  }
+
+  const command = event.target.closest("[data-command-index]");
+  if (command) {
+    runCommand(Number(command.dataset.commandIndex));
+    return;
+  }
+
+  if (event.target.closest("[data-close-command], [data-close-inspector], [data-close-downloads]")) {
+    closeOverlays();
+    return;
+  }
+
+  const thinkingTrigger = event.target.closest("[data-fc-thinking-trigger]");
+  if (thinkingTrigger) {
+    if (window.FCChatThinking?.isOpen()) window.FCChatThinking.close();
+    else window.FCChatThinking?.open(thinkingTrigger, state, {
+      boundary: ".window",
+      align: "start",
+      gap: 9,
+      padding: 12,
+      width: 304,
+      maxHeight: 520,
+    });
+    return;
+  }
+
+  const thinkingChoice = event.target.closest("[data-fc-thinking-kind]");
+  if (thinkingChoice) {
+    const kind = thinkingChoice.dataset.fcThinkingKind;
+    const value = thinkingChoice.dataset.fcThinkingValue;
+    if (kind === "mode") {
+      state.settings.thinking = value === "automatic" ? "自动" : value === "off" ? "关闭" : "开启";
+      state.params.thinking = state.settings.thinking;
+      if (value === "on") {
+        state.settings.reasoningEffort = state.settings.reasoningEffort || "medium";
+      }
+    } else if (kind === "effort") {
+      state.settings.thinking = "开启";
+      state.params.thinking = "开启";
+      state.settings.reasoningEffort = value;
+      state.settings.reasoningEffortLabel = window.FCChatThinking.EFFORTS.find((item) => item.value === value)?.label || value;
+    }
+    if (kind === "mode" && value === "on") {
+      requestAnimationFrame(() => window.FCChatThinking?.update(state));
+    } else {
+      window.FCChatThinking?.update(state);
+      window.FCChatThinking?.close();
+    }
+    syncThinkingTriggerLabel();
+    return;
+  }
+
+  const copy = event.target.closest("[data-copy]");
+  if (copy) {
+    copyText(copy.dataset.copy);
+    copy.animate(
+      [{ transform: "scale(1)" }, { transform: "scale(.82)" }, { transform: "scale(1)" }],
+      { duration: 250, easing: "cubic-bezier(.2,.9,.2,1)" }
+    );
+    return;
+  }
+
+  const range = event.target.closest("[data-range]");
+  if (range) {
+    state.chartRange = range.dataset.range;
+    $$("[data-range]").forEach((item) => item.classList.toggle("active", item === range));
+    inspectChartSegment();
+    if (flowState) flowState.range = range.dataset.range;
+    const stage = $("#flowStage");
+    if (stage) stage.animate([{ opacity: .45 }, { opacity: 1 }], { duration: 380, easing: "ease-out" });
+    return;
+  }
+
+  const filter = event.target.closest("[data-model-filter]");
+  if (filter) {
+    setModelFilter(filter.dataset.modelFilter);
+    return;
+  }
+
+  const logFilter = event.target.closest("[data-log-filter]");
+  if (logFilter) {
+    state.logFilter = logFilter.dataset.logFilter;
+    $$("[data-log-filter]").forEach((button) => button.classList.toggle("active", button === logFilter));
+    updateSlidingSegment(logFilter.parentElement);
+    filterLogRows();
+    return;
+  }
+
+  const download = event.target.closest("[data-download-model]");
+  if (download) {
+    startChatDownload(download.dataset.downloadModel);
+    return;
+  }
+
+  const selectModelButton = event.target.closest("[data-select-model]");
+  if (selectModelButton) {
+    selectModel(selectModelButton.dataset.selectModel);
+    return;
+  }
+
+  const engineConfig = event.target.closest("[data-engine-config]");
+  if (engineConfig) {
+    openEngineConfig(engineConfig.dataset.engineConfig);
+    return;
+  }
+
+  if (event.target.closest("[data-engine-config-close], [data-act='closeConfig']")) {
+    closeEngineConfig();
+    return;
+  }
+
+  if (event.target.closest("[data-act='saveEngineConfig']")) {
+    saveEngineConfig();
+    return;
+  }
+
+  const engineConfigToggle = event.target.closest("[data-fc-engine-toggle]");
+  if (engineConfigToggle) {
+    setEngineConfigToggle(engineConfigToggle.dataset.fcEngineToggle);
+    return;
+  }
+
+  const engineDownload = event.target.closest("[data-engine-download]");
+  if (engineDownload) {
+    runEngineInstall(engineDownload.dataset.engineDownload, "download");
+    return;
+  }
+
+  const engineUpdate = event.target.closest("[data-engine-update]");
+  if (engineUpdate) {
+    runEngineInstall(engineUpdate.dataset.engineUpdate, "update");
+    return;
+  }
+
+  const engineRemove = event.target.closest("[data-engine-remove]");
+  if (engineRemove) {
+    removeEngineRuntime(engineRemove.dataset.engineRemove);
+    return;
+  }
+
+  const finder = event.target.closest("[data-finder]");
+  if (finder) {
+    showToast("已在 Finder 中定位");
+    return;
+  }
+
+  const engineView = event.target.closest("[data-engine-view]");
+  if (engineView) {
+    state.activeEngineView = engineView.dataset.engineView;
+    renderPage(false);
+    return;
+  }
+
+  const engineToggle = event.target.closest("[data-engine-toggle]");
+  if (engineToggle) {
+    toggleEngine(engineToggle.dataset.engineToggle);
+    return;
+  }
+
+  const toggle = event.target.closest("[data-setting-toggle]");
+  if (toggle) {
+    toggleSetting(toggle.dataset.settingToggle);
+    return;
+  }
+
+  const appearance = event.target.closest("[data-appearance]");
+  if (appearance) {
+    setTheme(appearance.dataset.appearance);
+    return;
+  }
+
+  const thinking = event.target.closest("[data-thinking]");
+  if (thinking) {
+    const value = thinking.dataset.thinking;
+    state.settings.thinking = value;
+    state.params.thinking = value;
+    if (state.currentOverlay === "inspector") {
+      $$("[data-thinking]", $("#inspector")).forEach((button) => button.classList.toggle("active", button === thinking));
+      updateSlidingSegment(thinking.parentElement);
+    } else {
+      $$("[data-thinking]", $("[data-thinking-choice]")).forEach((button) => button.classList.toggle("active", button.dataset.thinking === value));
+      const group = $("[data-thinking-choice]");
+      if (group) updateSlidingSegment(group);
+    }
+    showToast(`思考模式 · ${value}`);
+    return;
+  }
+
+  const actionElement = event.target.closest("[data-action]");
+  if (actionElement) {
+    handleAction(actionElement.dataset.action, actionElement);
+  }
+}
+
+function handleAction(action, element) {
+  switch (action) {
+    case "refresh-overview":
+      showToast("状态已刷新");
+      pulseHaptic();
+      break;
+    case "request-detail":
+      showToast("请求详情已在实时流中定位");
+      break;
+    case "toggle-engine":
+      toggleEngine();
+      break;
+    case "model-menu":
+      openModelPopover(element);
+      break;
+    case "open-inspector":
+      openInspector();
+      break;
+    case "engine-config":
+      showToast("引擎配置已打开");
+      break;
+    case "downloads":
+      openDownloads();
+      break;
+    case "send-chat":
+      // 实时壳（live.js）已经接管了这个动作。两边都执行的话，第一次发出
+      // sendChat，第二次读到的已是 chatStreaming=true，于是追加一条
+      // stopGeneration——刚发起的生成 1 毫秒后就被自己取消，界面上表现为
+      // 「提问发出去了，模型永远不回答」。预览页面没有 live 层，才由这里处理。
+      if (!window.FC_LIVE) sendChat();
+      break;
+    case "toggle-reasoning": {
+      const block = element.closest("[data-think]");
+      if (!block) break;
+      if (window.FCChatStream) window.FCChatStream.toggleThinking(block);
+      else {
+        const open = block.classList.toggle("is-open");
+        element.setAttribute("aria-expanded", String(open));
+      }
+      break;
+    }
+    case "chat-more":
+      showToast("对话已保存到本地");
+      break;
+    case "new-chat":
+      state.chatMessages = [];
+      state.chatStreaming = false;
+      renderPage(false);
+      showToast("已新建对话");
+      break;
+    case "recent-chat":
+      navigate("chat");
+      break;
+    case "thinking-cycle":
+      cycleThinking();
+      break;
+    case "search-hub":
+      closeOverlays();
+      showToast("模型广场已准备就绪");
+      break;
+    case "refresh-models":
+      showToast("模型状态已刷新");
+      break;
+    case "refresh-engines":
+      showToast("引擎状态已刷新");
+      break;
+    case "use-model":
+      showToast("当前权重已在使用");
+      break;
+    case "model-detail":
+    case "model-more":
+      showToast("模型详情已展开");
+      break;
+    case "check-updates":
+      showToast("三个引擎均为最新版本");
+      break;
+    case "toggle-log-pause":
+      state.logPaused = !state.logPaused;
+      renderPage(false);
+      showToast(state.logPaused ? "日志已暂停跟随" : "日志已恢复实时跟随");
+      break;
+    case "clear-logs":
+      logSequence = 0;
+      renderPage(false);
+      showToast("已清空当前视图日志");
+      break;
+    case "log-copy":
+      copyText($$(".log-line:not(.hidden) .msg").map((node) => node.textContent).join("\n"));
+      break;
+    case "reset-settings":
+      resetSettings();
+      break;
+    case "reset-params":
+      state.params = { temperature: .7, topP: .92, tokens: 4096, thinking: "自动" };
+      openInspector();
+      break;
+    case "save-params":
+      closeOverlays();
+      showToast("生成参数已应用");
+      break;
+  }
+}
+
+function resetSettings() {
+  state.settings = { launchEngine: true, login: true, gateway: true, thinking: "自动" };
+  state.theme = "system";
+  state.settings.appearance = "system";
+  localStorage.removeItem("fc-preview-theme");
+  document.documentElement.dataset.theme = resolvedTheme();
+  updateThemeIcon();
+  renderPage(false);
+  showToast("设置已恢复为默认值");
+}
+
+function handleInput(event) {
+  if (event.target.id === "modelSearch") {
+    state.modelSearch = event.target.value;
+    updateModelsGrid();
+  } else if (event.target.id === "logSearch") {
+    state.logSearch = event.target.value;
+    filterLogRows();
+  } else if (event.target.id === "chatInput") {
+    const button = $("#sendButton");
+    if (button) button.disabled = !event.target.value.trim() && !state.chatStreaming;
+    event.target.style.height = "46px";
+    event.target.style.height = `${Math.min(130, event.target.scrollHeight)}px`;
+  } else if (event.target.id === "commandInput") {
+    state.commandIndex = 0;
+    renderCommandResults(event.target.value);
+  } else if (event.target.matches("[data-param]")) {
+    const key = event.target.dataset.param;
+    state.params[key] = Number(event.target.value);
+    updateRangeVisual(event.target);
+  } else if (event.target.matches("[data-fc-engine-field]")) {
+    if (!state.engineConfigDraft) return;
+    const key = event.target.dataset.fcEngineField;
+    if (key === "port") state.engineConfigDraft.port = event.target.value;
+    else state.engineConfigDraft.tuning[key] = event.target.value;
+  }
+}
+
+function updateModelsGrid() {
+  const grid = $("#modelsGrid");
+  if (!grid) return;
+  modelListAnimationToken += 1;
+  const filtered = filteredModels();
+  const commit = () => {
+    grid.innerHTML = window.FCModelWorkspace.cards(filtered, state);
+  };
+  if (window.FCMotionGuard) {
+    window.FCMotionGuard.fadeSwap(grid, commit, {
+      durationOut: 70,
+      durationIn: 150,
+      distance: 3,
+    });
+  } else {
+    commit();
+  }
+}
+
+// 滑块的定位统一交给 FCSegments：它按真实按钮量位置，并自己监听 active 变化。
+// 下面几个旧入口保留名字，只是转发，免得调用点散落一地。
+function updateEngineTabIndicator() {
+  window.FCSegments?.paintAll();
+}
+
+function updateSlidingSegments() {
+  window.FCSegments?.paintAll();
+}
+
+function syncThinkingTriggerLabel() {
+  const trigger = $("[data-fc-thinking-trigger]");
+  if (!trigger) return;
+  const mode = state.settings.thinking;
+  const label = mode === "开启"
+    ? (state.settings.reasoningEffortLabel || "中")
+    : mode;
+  const value = $(".fc-thinking-trigger-value", trigger);
+  if (value) value.textContent = label;
+  trigger.dataset.fcThinkingMode = mode === "开启" ? "on" : mode === "关闭" ? "off" : "automatic";
+}
+
+function updateSlidingSegment(container) {
+  if (container) window.FCSegments?.paint(container);
+}
+
+function setModelFilter(filter) {
+  state.modelFilter = filter;
+  $$("[data-model-filter]").forEach((button) => {
+    const active = button.dataset.modelFilter === filter;
+    button.classList.toggle("active", active);
+    button.classList.toggle("fc-model-filter-button-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  updateEngineTabIndicator();
+  const grid = $("#modelsGrid");
+  if (!grid) return;
+  const token = ++modelListAnimationToken;
+  grid.classList.add("is-leaving");
+  setTimeout(() => {
+    if (token !== modelListAnimationToken) return;
+    const filtered = filteredModels();
+    grid.innerHTML = window.FCModelWorkspace.cards(filtered, state);
+    grid.classList.remove("is-leaving");
+    grid.classList.add("is-entering");
+    setTimeout(() => {
+      if (token === modelListAnimationToken) grid.classList.remove("is-entering");
+    }, 520);
+  }, 110);
+}
+
+function filterLogRows() {
+  const query = state.logSearch.toLowerCase();
+  const level = state.logFilter === "提示" ? "INFO" : state.logFilter === "警告" ? "WARN" : state.logFilter === "错误" ? "ERROR" : "";
+  $$(".log-line").forEach((line) => {
+    const matchesLevel = !level || line.dataset.logLevel === level;
+    const matchesSearch = !query || line.dataset.logText.includes(query);
+    const hidden = !matchesLevel || !matchesSearch;
+    if (hidden) {
+      if (!line.classList.contains("hidden")) {
+        line.classList.add("is-filtering-out");
+        setTimeout(() => {
+          if (line.classList.contains("is-filtering-out")) {
+            line.classList.add("hidden");
+            line.classList.remove("is-filtering-out");
+          }
+        }, 120);
+      }
+    } else {
+      line.classList.remove("hidden", "is-filtering-out");
+      line.animate(
+        [{ opacity: 0, transform: "translateY(-3px)" }, { opacity: 1, transform: "none" }],
+        { duration: 180, easing: "cubic-bezier(.16,1,.3,1)" }
+      );
+    }
+  });
+}
+
+function handlePointerMove(event) {
+  pointerX = event.clientX;
+  pointerY = event.clientY;
+  const win = $("#window");
+  if (win) {
+    win.style.setProperty("--pointer-x", `${event.clientX}px`);
+    win.style.setProperty("--pointer-y", `${event.clientY}px`);
+  }
+  const glass = event.target.closest(".glass-surface, .glass-sheet");
+  if (glass) {
+    const rect = glass.getBoundingClientRect();
+    glass.style.setProperty("--local-x", `${event.clientX - rect.left}px`);
+    glass.style.setProperty("--local-y", `${event.clientY - rect.top}px`);
+  }
+}
+
+function handleKeydown(event) {
+  const meta = event.metaKey || event.ctrlKey;
+  if (meta && event.key === "\\") {
+    event.preventDefault();
+    toggleSidebar();
+    return;
+  }
+  if (meta && /^[1-6]$/.test(event.key)) {
+    event.preventDefault();
+    navigate(NAV_ITEMS[Number(event.key) - 1].id);
+    return;
+  }
+  if (meta && event.shiftKey && event.key.toLowerCase() === "a") {
+    event.preventDefault();
+    setTheme(resolvedTheme() === "dark" ? "light" : "dark");
+    return;
+  }
+  if (event.key === "Escape") {
+    if (state.currentOverlay) closeOverlays();
+    return;
+  }
+  if (state.currentOverlay === "command") {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      state.commandIndex = Math.min(state.commandItems.length - 1, state.commandIndex + 1);
+      renderCommandResults($("#commandInput").value);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      state.commandIndex = Math.max(0, state.commandIndex - 1);
+      renderCommandResults($("#commandInput").value);
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      runCommand(state.commandIndex);
+    }
+    return;
+  }
+  // 同上：实时壳自己监听 Enter，这里再发一次就是「发送+立即停止」。
+  if (!window.FC_LIVE && state.page === "chat" && event.key === "Enter" && !event.shiftKey && event.target.id === "chatInput") {
+    event.preventDefault();
+    sendChat();
+  }
+  if (event.target.matches(".think-head") && (event.key === "Enter" || event.key === " ")) {
+    event.preventDefault();
+    event.target.click();
+  }
+}
+
+document.addEventListener("DOMContentLoaded", function () {
+  if (window.FC_LIVE) window.FC_LIVE.init();
+  else init();
+});
+window.addEventListener("beforeunload", () => {
+  if (ambientAnimation) cancelAnimationFrame(ambientAnimation);
 });

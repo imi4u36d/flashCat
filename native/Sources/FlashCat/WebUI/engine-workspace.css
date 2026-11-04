@@ -1,0 +1,1004 @@
+/* flashCat · engine workspace
+   Crisp Liquid Glass: opacity, edge highlights and motion. No blur filters. */
+
+.fc-engine-workspace {
+  --fc-engine-radius: 18px;
+  --fc-engine-ease: cubic-bezier(.2, .82, .18, 1);
+  --fc-panel-width: 440px;
+  --fc-panel-gap: 12px;
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  /* 面板改成右侧浮层，左栏用 padding 让位：padding 是能逐帧插值的，
+     网格列数变化（1 列 ↔ 2 列）不能，所以之前「配置」一按整页是硬切。 */
+  padding-right: 0;
+  color: var(--text, #18202c);
+}
+
+.fc-engine-workspace-panel-open {
+  padding-right: calc(var(--fc-panel-width) + var(--fc-panel-gap));
+}
+
+.fc-engine-main {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* 卡片的「密排 / 竖排」跟着这一栏的宽度走（@container fc-engine）。 */
+  container-type: inline-size;
+  container-name: fc-engine;
+}
+
+.fc-engine-summary {
+  flex: none;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 4px 0 8px;
+  color: var(--text-2, rgba(30, 37, 51, .65));
+  font-size: 11.5px;
+}
+
+.fc-engine-summary-title {
+  color: var(--text, #18202c);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.fc-engine-summary-count,
+.fc-engine-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.fc-engine-summary-count {
+  color: var(--ok, #26966a);
+}
+
+.fc-engine-summary-count i,
+.fc-engine-status i {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.fc-engine-summary-separator {
+  width: 1px;
+  height: 11px;
+  background: var(--line, rgba(28, 38, 58, .085));
+}
+
+.fc-engine-summary-meta {
+  color: var(--text-3, rgba(33, 41, 56, .42));
+  font-size: 10.5px;
+}
+
+.fc-engine-summary-refresh {
+  width: 27px;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  margin-left: auto;
+  border: 1px solid var(--line, rgba(28, 38, 58, .085));
+  border-radius: 8px;
+  color: var(--text-2, rgba(30, 37, 51, .65));
+  background: color-mix(in srgb, var(--content-raised, rgba(255, 255, 255, .79)) 88%, transparent);
+  transition:
+    color 160ms ease,
+    border-color 160ms ease,
+    transform 200ms var(--fc-engine-ease);
+}
+
+.fc-engine-summary-refresh:hover {
+  color: var(--text, #18202c);
+  border-color: var(--line-strong, rgba(28, 38, 58, .145));
+  transform: translateY(-1px);
+}
+
+.fc-engine-summary-refresh:active {
+  transform: scale(.92);
+}
+
+.fc-engine-card-stack {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  /* 行的下限是 min-content 而不是 0：三行 1fr 只会把每张卡压成「可用高度 ÷ 3」，
+     而卡片自己是 overflow:hidden，一旦被压到内容高度以下，被切掉的正好是底部的按钮组
+     （1160×820 时三行各 207px，卡片内容要 229~234px）。下限抬到卡片自身的内容高度后，
+     空间够就照旧三等分，空间不够就让这一列滚动，卡片始终是完整的。 */
+  grid-template-rows: repeat(3, minmax(min-content, 1fr));
+  gap: 11px;
+  /* 兜底滚动只留纵向：横向一旦也可滚，卡片投影和留白会被撑出一个横向滚动条。 */
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* 滚动条按页面里 content-shell 的细样式收敛，否则这一列会突然多出一条粗灰条。 */
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-3, rgba(33, 41, 56, .42)) 30%, transparent) transparent;
+}
+
+.fc-engine-card-stack::-webkit-scrollbar {
+  width: 8px;
+}
+
+.fc-engine-card-stack::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-3, rgba(33, 41, 56, .42)) 22%, transparent);
+  background-clip: padding-box;
+}
+
+/* 卡片的密排布局由「装载它的那一栏有多宽」决定，而不是由「面板开没开」决定：
+   面板推开的瞬间左栏还在收窄，用类名切换会在第 0 帧就把卡片改成竖排（内容位置一跳）；
+   换成容器查询后，只有收窄跨过 900px 时才重排，那一跳藏在滑动过程里。 */
+@container fc-engine (min-width: 900px) {
+  .fc-engine-main .fc-engine-card {
+    display: grid;
+    grid-template-columns: minmax(225px, .78fr) minmax(320px, 1.18fr) minmax(190px, auto);
+    grid-template-rows: auto auto minmax(20px, 1fr);
+    grid-template-areas:
+      "head meta foot"
+      "desc features foot"
+      "signal features foot";
+    column-gap: 34px;
+    row-gap: 12px;
+    padding: 22px 24px;
+  }
+
+  .fc-engine-main .fc-engine-card-head { grid-area: head; }
+
+  .fc-engine-main .fc-engine-description { grid-area: desc; margin-top: 0; }
+
+  .fc-engine-main .fc-engine-card-meta { grid-area: meta; margin-top: 0; }
+
+  .fc-engine-main .fc-engine-features { grid-area: features; align-content: start; margin-top: 0; }
+
+  .fc-engine-main .fc-engine-signal { grid-area: signal; margin-top: 0; }
+
+  .fc-engine-main .fc-engine-card-foot {
+    grid-area: foot;
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+    margin-top: 0;
+    padding-top: 0;
+  }
+
+  .fc-engine-main .fc-engine-actions { flex-wrap: wrap; justify-content: flex-end; }
+
+  .fc-engine-main .fc-engine-watermark { right: 155px; bottom: -52px; font-size: 205px; }
+}
+
+.fc-engine-card {
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  min-height: 174px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 17px;
+  border: .75px solid color-mix(in srgb, var(--glass-border, rgba(255, 255, 255, .8)) 72%, var(--line, rgba(28, 38, 58, .085)));
+  border-radius: var(--fc-engine-radius);
+  /* 中性表面：引擎色只落在小图标、描边和按钮上，卡片本身不铺色。 */
+  background:
+    linear-gradient(150deg,
+      color-mix(in srgb, var(--content-raised, rgba(255, 255, 255, .79)) 96%, white 4%),
+      color-mix(in srgb, var(--content, rgba(255, 255, 255, .6)) 94%, transparent));
+  box-shadow:
+    0 13px 34px color-mix(in srgb, var(--page-bg, #edf3fa) 44%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--glass-highlight, rgba(255, 255, 255, .95)) 80%, transparent);
+  /* 悬浮只轻微放大，不做其他任何效果。 */
+  transition: transform 200ms ease;
+}
+
+.fc-engine-card:hover {
+  transform: scale(1.02);
+}
+
+.fc-engine-card-selected {
+  border-color: color-mix(in srgb, var(--fc-engine-accent) 38%, var(--line-strong, rgba(28, 38, 58, .145)));
+}
+
+.fc-engine-card-light { display: none; }
+
+.fc-engine-watermark { display: none; }
+
+.fc-engine-card::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    linear-gradient(108deg,
+      color-mix(in srgb, white 14%, transparent),
+      transparent 23% 68%);
+  opacity: .5;
+}
+
+.fc-engine-card-missing {
+  border-style: dashed;
+}
+
+.fc-engine-card-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.fc-engine-mark {
+  width: 38px;
+  height: 38px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: .75px solid color-mix(in srgb, var(--fc-engine-accent) 20%, var(--line, rgba(28, 38, 58, .085)));
+  border-radius: 12px;
+  color: var(--fc-engine-accent);
+  background:
+    linear-gradient(145deg,
+      color-mix(in srgb, var(--fc-engine-accent) 11%, white 5%),
+      color-mix(in srgb, var(--fc-engine-accent) 5%, transparent));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 76%, transparent);
+  font: 720 12px/1 var(--mono, "SF Mono", monospace);
+}
+
+.fc-engine-card-title {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fc-engine-card-title strong {
+  color: var(--text, #18202c);
+  font-size: 19px;
+  line-height: 1;
+}
+
+.fc-engine-card-title small {
+  overflow: hidden;
+  color: var(--text-3, rgba(33, 41, 56, .42));
+  font: 10px/1.2 var(--mono, "SF Mono", monospace);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fc-engine-status {
+  height: 22px;
+  margin-left: auto;
+  padding: 0 8px;
+  border: 1px solid var(--line, rgba(28, 38, 58, .085));
+  border-radius: 999px;
+  color: var(--text-3, rgba(33, 41, 56, .42));
+  background: color-mix(in srgb, var(--control, rgba(36, 45, 64, .052)) 72%, transparent);
+  font-size: 10px;
+  font-weight: 620;
+}
+
+.fc-engine-status-running {
+  color: var(--ok, #26966a);
+  border-color: color-mix(in srgb, var(--ok, #26966a) 20%, transparent);
+  background: color-mix(in srgb, var(--ok, #26966a) 7%, transparent);
+}
+
+.fc-engine-status-running i {
+  animation: fc-engine-live-pulse 2.2s ease-in-out infinite;
+}
+
+.fc-engine-status-busy {
+  color: var(--warn, #a96b00);
+  border-color: color-mix(in srgb, var(--warn, #a96b00) 20%, transparent);
+  background: color-mix(in srgb, var(--warn, #a96b00) 7%, transparent);
+}
+
+.fc-engine-description {
+  margin: 15px 0 0;
+  color: var(--text-2, rgba(30, 37, 51, .65));
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.fc-engine-card-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(90px, .9fr) minmax(64px, auto);
+  gap: 12px;
+  margin-top: 13px;
+}
+
+.fc-engine-card-meta > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fc-engine-card-meta small {
+  color: var(--text-3, rgba(33, 41, 56, .42));
+  font-size: 10px;
+}
+
+.fc-engine-card-meta b {
+  overflow: hidden;
+  color: var(--text-2, rgba(30, 37, 51, .65));
+  font-size: 10.5px;
+  font-weight: 610;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fc-engine-features {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 13px;
+}
+
+.fc-engine-features span {
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--fc-engine-accent) 12%, var(--line, rgba(28, 38, 58, .085)));
+  border-radius: 6px;
+  color: var(--text-2, rgba(30, 37, 51, .65));
+  background: color-mix(in srgb, var(--fc-engine-accent) 4%, var(--control, rgba(36, 45, 64, .052)));
+  font: 10px var(--mono, "SF Mono", monospace);
+}
+
+.fc-engine-signal {
+  height: 18px;
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  margin-top: auto;
+  padding-top: 8px;
+  opacity: .75;
+}
+
+.fc-engine-signal i {
+  width: 2px;
+  height: 28%;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--fc-engine-accent) 72%, white 8%);
+  animation: fc-engine-signal 1.8s ease-in-out infinite;
+  animation-delay: calc(var(--fc-engine-bar) * -73ms);
+}
+
+.fc-engine-signal i:nth-child(3n) {
+  height: 62%;
+}
+
+.fc-engine-signal i:nth-child(4n) {
+  height: 86%;
+}
+
+.fc-engine-card-foot {
+  margin-top: auto;
+  padding-top: 13px;
+}
+
+.fc-engine-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+}
+
+.fc-engine-action,
+.fc-engine-more,
+.fc-engine-panel-close,
+.fc-engine-panel-cancel,
+.fc-engine-panel-save {
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 610;
+  transition:
+    transform 180ms var(--fc-engine-ease),
+    color 150ms ease,
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+.fc-engine-action {
+  padding: 0 10px;
+  border: 1px solid var(--line, rgba(28, 38, 58, .085));
+  color: var(--text-2, rgba(30, 37, 51, .65));
+  background: color-mix(in srgb, var(--control, rgba(36, 45, 64, .052)) 82%, transparent);
+}
+
+.fc-engine-action:hover {
+  color: var(--text, #18202c);
+  border-color: var(--line-strong, rgba(28, 38, 58, .145));
+  background: color-mix(in srgb, var(--control-hover, rgba(36, 45, 64, .082)) 90%, transparent);
+  transform: translateY(-1px);
+}
+
+.fc-engine-action:active,
+.fc-engine-more:active,
+.fc-engine-panel-cancel:active,
+.fc-engine-panel-save:active {
+  transform: scale(.96);
+}
+
+.fc-engine-action-primary,
+.fc-engine-panel-save {
+  color: white;
+  border-color: color-mix(in srgb, var(--fc-engine-accent, var(--accent, #dc4b76)) 84%, transparent);
+  background:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--fc-engine-accent, var(--accent, #dc4b76)) 88%, white 12%),
+      color-mix(in srgb, var(--fc-engine-accent, var(--accent, #dc4b76)) 78%, black 8%));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 36%, transparent),
+    0 5px 14px color-mix(in srgb, var(--fc-engine-accent, var(--accent, #dc4b76)) 18%, transparent);
+}
+
+.fc-engine-action-primary:hover {
+  color: white;
+  border-color: color-mix(in srgb, var(--fc-engine-accent, var(--accent, #dc4b76)) 88%, transparent);
+  background:
+    linear-gradient(135deg,
+      color-mix(in srgb, var(--fc-engine-accent, var(--accent, #dc4b76)) 94%, white 14%),
+      color-mix(in srgb, var(--fc-engine-accent, var(--accent, #dc4b76)) 82%, black 6%));
+}
+
+.fc-engine-action-danger {
+  color: var(--danger, #d84650);
+  border-color: color-mix(in srgb, var(--danger, #d84650) 20%, transparent);
+  background: color-mix(in srgb, var(--danger, #d84650) 7%, transparent);
+}
+
+.fc-engine-action-update {
+  color: var(--info, #4f8bd6);
+  border-color: color-mix(in srgb, var(--info, #4f8bd6) 20%, transparent);
+  background: color-mix(in srgb, var(--info, #4f8bd6) 7%, transparent);
+}
+
+.fc-engine-more {
+  width: 30px;
+  margin-left: auto;
+  border: 1px solid transparent;
+  color: var(--text-3, rgba(33, 41, 56, .42));
+}
+
+.fc-engine-more:hover {
+  color: var(--danger, #d84650);
+  border-color: color-mix(in srgb, var(--danger, #d84650) 18%, transparent);
+  background: color-mix(in srgb, var(--danger, #d84650) 6%, transparent);
+}
+
+.fc-engine-more:disabled {
+  pointer-events: none;
+  opacity: .32;
+}
+
+.fc-engine-progress {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text-3, rgba(33, 41, 56, .42));
+  font: 9px var(--mono, "SF Mono", monospace);
+}
+
+.fc-engine-progress > span {
+  flex: 1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--line, rgba(28, 38, 58, .085));
+}
+
+.fc-engine-progress > span i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent-3, #7568e9), var(--accent, #dc4b76));
+  transition: width 320ms var(--fc-engine-ease);
+}
+
+.fc-engine-progress b {
+  color: var(--text-2, rgba(30, 37, 51, .65));
+  font-weight: 650;
+}
+
+.fc-engine-icon {
+  flex: none;
+}
+
+.fc-engine-panel {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--fc-panel-width);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: .75px solid color-mix(in srgb, var(--glass-border, rgba(255, 255, 255, .8)) 72%, var(--line, rgba(28, 38, 58, .085)));
+  border-radius: var(--fc-engine-radius);
+  background:
+    linear-gradient(145deg,
+      color-mix(in srgb, var(--content-raised, rgba(255, 255, 255, .79)) 97%, white 3%),
+      color-mix(in srgb, var(--content, rgba(255, 255, 255, .6)) 96%, var(--accent-3, #7568e9) 1.5%));
+  box-shadow:
+    0 18px 45px color-mix(in srgb, var(--page-bg, #edf3fa) 50%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--glass-highlight, rgba(255, 255, 255, .95)) 86%, transparent);
+  /* 入场不再自己跑：和左栏收窄共用一条时间线，由 app.js 的 animateEngineSplit 驱动。 */
+}
+
+.fc-engine-panel::before {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  inset: 0;
+  background:
+    linear-gradient(112deg,
+      color-mix(in srgb, white 10%, transparent),
+      transparent 18% 76%,
+      color-mix(in srgb, var(--accent-3, #7568e9) 3%, transparent));
+  opacity: .5;
+}
+
+.fc-engine-panel-head {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 14px 15px;
+  border-bottom: 1px solid var(--line, rgba(28, 38, 58, .085));
+}
+
+.fc-engine-panel-title {
+  min-width: 0;
+}
+
+.fc-engine-panel-title small {
+  display: block;
+  color: var(--text-3, rgba(33, 41, 56, .42));
+  font: 8px/1 var(--mono, "SF Mono", monospace);
+  letter-spacing: .06em;
+}
+
+.fc-engine-panel-title h2 {
+  margin: 5px 0 0;
+  color: var(--text, #18202c);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.fc-engine-panel-head .fc-engine-status {
+  margin-left: auto;
+}
+
+.fc-engine-panel-close {
+  width: 30px;
+  flex: none;
+  color: var(--text-3, rgba(33, 41, 56, .42));
+}
+
+.fc-engine-panel-close:hover {
+  color: var(--text, #18202c);
+  background: var(--control-hover, rgba(36, 45, 64, .082));
+}
+
+.fc-engine-panel-scroll {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 13px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.fc-engine-config-group {
+  overflow: hidden;
+  border: 1px solid var(--line, rgba(28, 38, 58, .085));
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--content-raised, rgba(255, 255, 255, .79)) 72%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 46%, transparent);
+}
+
+.fc-engine-config-group + .fc-engine-config-group {
+  margin-top: 10px;
+}
+
+.fc-engine-config-group > header {
+  height: 38px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line, rgba(28, 38, 58, .085));
+}
+
+.fc-engine-config-group h3 {
+  margin: 0;
+  color: var(--text-2, rgba(30, 37, 51, .65));
+  font-size: 11.5px;
+  font-weight: 680;
+}
+
+.fc-engine-config-list {
+  padding: 0 12px;
+}
+
+.fc-engine-config-row {
+  min-height: 56px;
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(110px, auto);
+  align-items: center;
+  gap: 15px;
+  border-bottom: 1px solid var(--line, rgba(28, 38, 58, .085));
+}
+
+.fc-engine-config-row:last-child {
+  border-bottom: 0;
+}
+
+.fc-engine-config-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fc-engine-config-copy strong {
+  color: var(--text, #18202c);
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.fc-engine-config-copy small {
+  overflow: hidden;
+  color: var(--text-3, rgba(33, 41, 56, .42));
+  font-size: 10px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+}
+
+.fc-engine-input {
+  width: 112px;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--line, rgba(28, 38, 58, .085));
+  border-radius: 8px;
+  color: var(--text, #18202c);
+  background: color-mix(in srgb, var(--control, rgba(36, 45, 64, .052)) 82%, transparent);
+  font: 11px var(--mono, "SF Mono", monospace);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, #dc4b76) 0%, transparent);
+  transition:
+    border-color 200ms cubic-bezier(.2, .82, .18, 1),
+    background-color 200ms ease,
+    box-shadow 300ms cubic-bezier(.2, .82, .18, 1);
+}
+
+/* 焦点由边框 + 柔光表达（下面的 :focus 已经做了），再套一层 outline 就是双描边。 */
+.fc-engine-input:focus-visible {
+  outline: none;
+}
+
+.fc-engine-input-wide {
+  width: min(240px, 100%);
+}
+
+.fc-engine-input::placeholder {
+  color: var(--text-3, rgba(33, 41, 56, .42));
+}
+
+.fc-engine-input:focus {
+  border-color: color-mix(in srgb, var(--accent, #dc4b76) 52%, var(--line, rgba(28, 38, 58, .085)));
+  background: color-mix(in srgb, var(--content-raised, rgba(255, 255, 255, .79)) 92%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #dc4b76) 9%, transparent);
+}
+
+.fc-engine-input:disabled {
+  opacity: .45;
+}
+
+.fc-engine-switch {
+  position: relative;
+  width: 36px;
+  height: 21px;
+  justify-self: end;
+  border: 1px solid var(--line-strong, rgba(28, 38, 58, .145));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--control-active, rgba(36, 45, 64, .125)) 78%, transparent);
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease;
+}
+
+.fc-engine-switch i {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 2px 5px rgba(18, 27, 42, .2);
+  transition: transform 240ms var(--fc-engine-ease);
+}
+
+.fc-engine-switch-on {
+  border-color: color-mix(in srgb, var(--fc-engine-accent, var(--accent, #dc4b76)) 76%, transparent);
+  background: var(--fc-engine-accent, var(--accent, #dc4b76));
+}
+
+.fc-engine-switch-on i {
+  transform: translateX(15px);
+}
+
+.fc-engine-switch-disabled {
+  opacity: .38;
+}
+
+.fc-engine-directory-row {
+  min-height: 64px;
+}
+
+.fc-engine-directory {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fc-engine-directory code {
+  min-width: 0;
+  max-width: 190px;
+  overflow: hidden;
+  color: var(--text-2, rgba(30, 37, 51, .65));
+  font: 9.5px var(--mono, "SF Mono", monospace);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fc-engine-directory button {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line, rgba(28, 38, 58, .085));
+  border-radius: 7px;
+  color: var(--text-2, rgba(30, 37, 51, .65));
+  background: var(--control, rgba(36, 45, 64, .052));
+}
+
+.fc-engine-directory button:hover {
+  color: var(--text, #18202c);
+  border-color: var(--line-strong, rgba(28, 38, 58, .145));
+  background: var(--control-hover, rgba(36, 45, 64, .082));
+}
+
+.fc-engine-config-note {
+  margin: 0;
+  padding: 10px 12px 11px;
+  border-top: 1px solid var(--line, rgba(28, 38, 58, .085));
+  color: var(--text-3, rgba(33, 41, 56, .42));
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.fc-engine-config-list > .fc-engine-config-note {
+  border-top: 0;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.fc-engine-panel-foot {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  padding: 0 14px;
+  border-top: 1px solid var(--line, rgba(28, 38, 58, .085));
+  background: color-mix(in srgb, var(--content-raised, rgba(255, 255, 255, .79)) 76%, transparent);
+}
+
+.fc-engine-panel-cancel {
+  padding: 0 12px;
+  color: var(--text-2, rgba(30, 37, 51, .65));
+}
+
+.fc-engine-panel-cancel:hover {
+  color: var(--text, #18202c);
+  background: var(--control-hover, rgba(36, 45, 64, .082));
+}
+
+.fc-engine-panel-save {
+  padding: 0 13px;
+  --fc-engine-accent: var(--accent, #dc4b76);
+}
+
+.fc-engine-icon-fallback {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid currentColor;
+  border-radius: 4px;
+}
+
+@keyframes fc-engine-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fc-engine-live-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok, #26966a) 20%, transparent); }
+  50% { box-shadow: 0 0 0 4px transparent; }
+}
+
+@keyframes fc-engine-signal {
+  0%, 100% { transform: scaleY(.55); opacity: .45; }
+  50% { transform: scaleY(1); opacity: .9; }
+}
+
+@media (max-width: 1080px) {
+  .fc-engine-workspace-panel-open {
+    --fc-panel-width: 390px;
+  }
+
+  .fc-engine-workspace-panel-open .fc-engine-description {
+    display: none;
+  }
+
+  .fc-engine-workspace-panel-open .fc-engine-card {
+    padding: 14px;
+  }
+}
+
+@media (max-width: 860px) {
+  .fc-engine-workspace,
+  .fc-engine-workspace-panel-open {
+    height: auto;
+    min-height: 100%;
+    grid-template-columns: minmax(0, 1fr);
+    /* 窄屏不再左右分栏：面板回到文档流里，接在卡片下面。 */
+    padding-right: 0;
+  }
+
+  .fc-engine-panel {
+    position: static;
+    width: auto;
+    margin-top: 12px;
+  }
+
+  .fc-engine-card-stack,
+  .fc-engine-workspace-panel-open .fc-engine-card-stack {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+  }
+
+  .fc-engine-card {
+    display: flex;
+    padding: 17px;
+  }
+
+  .fc-engine-description {
+    margin-top: 15px;
+  }
+
+  .fc-engine-card-meta {
+    margin-top: 13px;
+  }
+
+  .fc-engine-features {
+    margin-top: 13px;
+  }
+
+  .fc-engine-card-foot {
+    margin-top: auto;
+    padding-top: 13px;
+  }
+
+  .fc-engine-watermark {
+    right: -7px;
+    bottom: -42px;
+    font-size: 178px;
+  }
+
+  .fc-engine-card {
+    min-height: 184px;
+  }
+
+  .fc-engine-panel {
+    min-height: 620px;
+  }
+}
+
+@media (max-width: 560px) {
+  .fc-engine-summary-meta,
+  .fc-engine-summary-separator {
+    display: none;
+  }
+
+  .fc-engine-card-meta {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fc-engine-card-meta > span:last-child {
+    display: none;
+  }
+
+  .fc-engine-card-head {
+    flex-wrap: wrap;
+  }
+
+  .fc-engine-status {
+    margin-left: 49px;
+  }
+
+  .fc-engine-config-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding: 11px 0;
+  }
+
+  .fc-engine-input,
+  .fc-engine-input-wide {
+    width: 100%;
+  }
+
+  .fc-engine-switch {
+    justify-self: start;
+  }
+
+  .fc-engine-directory code {
+    max-width: calc(100vw - 140px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fc-engine-card,
+  .fc-engine-panel,
+  .fc-engine-status-running i,
+  .fc-engine-signal i {
+    animation: none;
+  }
+
+  .fc-engine-card,
+  .fc-engine-action,
+  .fc-engine-more,
+  .fc-engine-switch i,
+  .fc-engine-progress > span i {
+    transition: none;
+  }
+}

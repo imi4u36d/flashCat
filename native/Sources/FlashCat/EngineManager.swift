@@ -113,12 +113,47 @@ final class EngineManager {
         }
     }
 
-    func activate(_ id: EngineID) {
-        guard id != activeID else { return }
-        guard let target = controller(id) else { return }
-        for controller in controllers where controller.id != id {
-            if controller.isRunning { controller.stop() }
+    /// Serialises engine handoffs: two selections in quick succession must not
+    /// each stop the engine the other one is about to start.
+    private var handoffInFlight = false
+
+    /// Make `id` the running engine and return only once every other engine has
+    /// really let go of its weights — process reaped and port released.
+    ///
+    /// `stop()` alone is fire-and-forget: the old python keeps its Metal buffers
+    /// for another beat (SIGINT grace, then SIGKILL). Starting the next engine
+    /// inside that window puts two models in unified memory at once, which is
+    /// exactly how a switch between two 27B checkpoints runs out of memory or
+    /// wedges the machine. Waiting here also means the caller can rely on
+    /// "nothing else is loaded" before it starts the new engine.
+    @discardableResult
+    func activate(_ id: EngineID) async -> Bool {
+        guard controller(id) != nil else { return false }
+
+        // A handoff already owns the stop; queue behind it instead of racing it.
+        // The check has to come before the id comparison: a handoff may be in
+        // the middle of stopping the engine that is still `activeID`, and
+        // returning "already active" there would let the caller start it again
+        // while it is being torn down.
+        while handoffInFlight {
+            if Task.isCancelled { return false }
+            try? await Task.sleep(nanoseconds: 50_000_000)
         }
+        // Another handoff may have landed on this engine while we waited.
+        guard id != activeID else { return true }
+        handoffInFlight = true
+        defer { handoffInFlight = false }
+
+        for controller in controllers where controller.id != id && controller.isRunning {
+            controller.logs.append("==> 切换引擎：等待 \(controller.id.displayName) 卸载模型并退出…",
+                                   level: .system)
+            let stopped = await controller.stopAndWait()
+            if !stopped {
+                controller.logs.append("==> \(controller.id.displayName) 未能在切换前退出，仍将继续切换",
+                                       level: .error)
+            }
+        }
+
         activeID = id
         EngineStore.shared.update(id) { $0.enabled = true }
         EngineStore.shared.rememberActive(id)
@@ -129,8 +164,8 @@ final class EngineManager {
         if let saved, !saved.isEmpty, saved != settings.model {
             settings.setModel(saved)
         }
-        _ = target
         onChange()
+        return true
     }
 
     /// Engines other than splash run with their own model names, so the global

@@ -2,8 +2,8 @@
 //  WebViewShell.swift
 //  flashCat
 //
-//  「精密仪器」WebUI 宿主：Swift 引擎管线保持不变，UI 层整体换成
-//  docs/ui/redesign-precision-instrument.html 的 1:1 网页实现。
+//  Liquid Glass WebUI 宿主：Swift 引擎管线保持不变，UI 层整体换成
+//  preview/liquid-glass 的网页实现（规范见 WebUI-SPEC.md）。
 //
 //  数据流：
 //    Swift → JS  全量状态快照（Combine 订阅 + 1s 心跳，去抖 0.1s 合并）
@@ -69,6 +69,9 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
     private var cancellables: Set<AnyCancellable> = []
     private var heartbeat: Timer?
     private var pushScheduled = false
+    /// Token events waiting for the next frame-sized IPC hop.
+    private var pendingStreamEvents: [[String: Any]] = []
+    private var streamFlushScheduled = false
 
     init(state: AppState) {
         self.state = state
@@ -78,12 +81,27 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
         configuration.userContentController.add(self, name: "bridge")
 
         if let index = Bundle.module.url(forResource: "index", withExtension: "html", subdirectory: "WebUI") {
-            webView.loadFileURL(index, allowingReadAccessTo: index.deletingLastPathComponent())
+            // The UI ships inside the bundle at a stable file:// URL, so WebKit's
+            // disk cache can outlive an app update and paint last version's CSS/JS.
+            // Drop only the cache types (not cookies/localStorage) and load after
+            // the store confirms, so this launch reads the files it shipped with.
+            let readAccess = index.deletingLastPathComponent()
+            let cacheTypes: Set<String> = [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache]
+            WKWebsiteDataStore.default().removeData(ofTypes: cacheTypes, modifiedSince: .distantPast) {
+                self.webView.loadFileURL(index, allowingReadAccessTo: readAccess)
+            }
         }
         webView.setValue(false, forKey: "drawsBackground") // 皮肤底色由页面接管
         // 外壳不是浏览器：捏合缩放会把整页版面放大到错位，双指返回也关掉。
         webView.allowsMagnification = false
         webView.allowsBackForwardNavigationGestures = false
+
+        // Real-time token pipe. One `evaluateJavaScript` per frame at most,
+        // batched into an array: a fast engine emits hundreds of tokens per
+        // second and every call is a cross-process hop.
+        state.streamEventSink = { [weak self] event in
+            self?.enqueueStreamEvent(event)
+        }
 
         // 任何 @Published 变化 → 去抖后推送快照。
         state.objectWillChange
@@ -167,7 +185,11 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
         case "startService": state.startService()
         case "stopService": state.stopService()
         case "restartService": state.restartService()
-        case "switchEngine": if let engine { state.switchEngine(engine) }
+        case "switchEngine":
+            if let engine {
+                // 换引擎要等旧进程真的退出（异步），命令回调保持同步。
+                Task { @MainActor in await state.switchEngine(engine) }
+            }
         case "browseEngine": if let engine { state.browseEngine(engine) }
         case "useModel":
             if let engine, let id = body["id"] as? String { state.useModel(id, engine: engine) }
@@ -256,6 +278,8 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
             if let engine {
                 installEngine(engine, adoptOnFirstInstall: (body["launch"] as? Bool) ?? state.needsEngineSetup)
             }
+        case "removeEngine":
+            if let engine { removeEngineRuntime(engine) }
         case "openLaunchPage": state.showsLaunchPage = true
         case "finishLaunch": state.showsLaunchPage = false
         // 首次启动的推荐页：确认就装那一档引擎，装完由 adoptEngine 接上下载。
@@ -304,6 +328,34 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
         default: break
         }
         schedulePush()
+    }
+
+    /// The engine page's delete button. Only user-installed packs are
+    /// removable; a running engine has to stop first so the pack is not in use.
+    private func removeEngineRuntime(_ engine: EngineID) {
+        if engine == state.activeEngine && state.isRunning {
+            state.toast("请先停止引擎再删除运行时")
+            return
+        }
+        let versions = EngineInstallations.removableVersions(engine)
+        guard !versions.isEmpty else {
+            state.toast("\(engine.displayName) 没有可删除的运行时")
+            return
+        }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "删除 \(engine.displayName) 运行时？"
+        alert.informativeText = "会删除 \(versions.sorted().joined(separator: "、")) 这些版本，模型与配置不受影响。"
+        alert.addButton(withTitle: "删除")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Task { @MainActor in
+            if await state.installs.removeRuntime(engine) {
+                state.toast("\(engine.displayName) 运行时已删除")
+            } else {
+                state.toast("没有可删除的运行时")
+            }
+        }
     }
 
     private func openFinder(_ body: [String: Any]) {
@@ -541,7 +593,31 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
         }
     }
 
+    private func enqueueStreamEvent(_ event: ChatStreamEvent) {
+        pendingStreamEvents.append(event.dictionary)
+        guard !streamFlushScheduled else { return }
+        streamFlushScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) { [weak self] in
+            self?.flushStreamEvents()
+        }
+    }
+
+    private func flushStreamEvents() {
+        streamFlushScheduled = false
+        guard !pendingStreamEvents.isEmpty else { return }
+        let batch = pendingStreamEvents
+        pendingStreamEvents.removeAll(keepingCapacity: true)
+        guard let data = try? JSONSerialization.data(withJSONObject: batch),
+              let json = String(data: data, encoding: .utf8) else { return }
+        let literal = WebSnapshot.jsStringLiteral(json)
+        webView.evaluateJavaScript(
+            "window.__fc__ && window.__fc__.stream && window.__fc__.stream(JSON.parse(\(literal)));",
+            completionHandler: nil)
+    }
+
     func pushSnapshot() {
+        // Keep token events ahead of the snapshot in the WebView's JS queue.
+        flushStreamEvents()
         // 侧栏动画进行中：序列化占 App 主线程（拖慢 CA 提交）、JSON.parse 占
         // WebContent 线程（直接吃动画帧）。整笔推迟到收口之后，数据晚 ~0.35s
         // 上屏无感；推迟后只补推一次，心跳/去抖的下一次推送自然接上。
@@ -732,51 +808,54 @@ enum WebSnapshot {
             ]
         }
 
+        // One entry shape for both the browsed engine's library and the
+        // all-engine list behind the model page's 全部 / engine filters.
+        let libraryItem: (ModelLibraryEntry) -> [String: Any] = { entry in
+            var item: [String: Any] = [
+                "id": entry.model.id,
+                "display": entry.model.id.replacingOccurrences(of: "--", with: "/"),
+                "engine": entry.engine.rawValue,
+                "installed": entry.installed,
+                "isDraft": entry.isDraft,
+                "bytes": entry.model.bytes,
+                "originText": entry.installed ? "本机" : "Hugging Face",
+                // 目录外的本机权重照样出现，标成「未收录」，
+                // 免得盘上有、界面里却找不到。
+                "uncatalogued": entry.uncatalogued,
+            ]
+            if let repo = entry.recommendation?.repo { item["repo"] = repo }
+            if let labels = entry.recommendation?.engineLabels, !labels.isEmpty {
+                item["engineLabels"] = labels
+            }
+            item["source"] = entry.source.rawValue
+            if ModelSharing.isShared(entry.model.id) {
+                item["shared"] = true
+                item["engines"] = EngineCatalog.allIDs
+                    .filter { ModelSharing.engines(for: entry.model.id).contains($0) }
+                    .map(\.rawValue)
+            }
+            if let tags = entry.recommendation?.tags, !tags.isEmpty { item["tags"] = tags }
+            if let recommendation = entry.recommendation {
+                item["summary"] = recommendation.summary
+                item["fit"] = fitName(device.fit(recommendation))
+                item["rank"] = recommendation.rank
+                if recommendation.minimumMemory > 0 {
+                    item["minMemory"] = recommendation.minimumMemory
+                }
+            }
+            // 草稿的下载目前只接在 Splash 上（oMLX 的 dflash_draft_model
+            // 还没接），别先给 oMLX 卡片挂一个下不到的标签。
+            if entry.draftRepository != nil && entry.engine.adapter == .splash { item["draftTag"] = true }
+            // ★ 标签只看配置推荐了哪一档，不看是否已装：换了模型之后标签
+            // 仍要留在原来那一档上，否则用户会以为推荐变了。
+            if let tag = state.recommendationTag(for: entry.model.id, engine: entry.engine) {
+                item["recommendedTag"] = tag
+            }
+            return item
+        }
         let library: [String: Any] = [
             "engine": state.libraryEngine.rawValue,
-            "entries": state.libraryEntries(for: state.libraryEngine).map { entry -> [String: Any] in
-                var item: [String: Any] = [
-                    "id": entry.model.id,
-                    "display": entry.model.id.replacingOccurrences(of: "--", with: "/"),
-                    "engine": entry.engine.rawValue,
-                    "installed": entry.installed,
-                    "isDraft": entry.isDraft,
-                    "bytes": entry.model.bytes,
-                    "originText": entry.installed ? "本机" : "Hugging Face",
-                    // 目录外的本机权重照样出现，标成「未收录」，
-                    // 免得盘上有、界面里却找不到。
-                    "uncatalogued": entry.uncatalogued,
-                ]
-                if let repo = entry.recommendation?.repo { item["repo"] = repo }
-                if let labels = entry.recommendation?.engineLabels, !labels.isEmpty {
-                    item["engineLabels"] = labels
-                }
-                item["source"] = entry.source.rawValue
-                if ModelSharing.isShared(entry.model.id) {
-                    item["shared"] = true
-                    item["engines"] = EngineCatalog.allIDs
-                        .filter { ModelSharing.engines(for: entry.model.id).contains($0) }
-                        .map(\.rawValue)
-                }
-                if let tags = entry.recommendation?.tags, !tags.isEmpty { item["tags"] = tags }
-                if let recommendation = entry.recommendation {
-                    item["summary"] = recommendation.summary
-                    item["fit"] = fitName(device.fit(recommendation))
-                    item["rank"] = recommendation.rank
-                    if recommendation.minimumMemory > 0 {
-                        item["minMemory"] = recommendation.minimumMemory
-                    }
-                }
-                // 草稿的下载目前只接在 Splash 上（oMLX 的 dflash_draft_model
-                // 还没接），别先给 oMLX 卡片挂一个下不到的标签。
-                if entry.draftRepository != nil && entry.engine.adapter == .splash { item["draftTag"] = true }
-                // ★ 标签只看配置推荐了哪一档，不看是否已装：换了模型之后标签
-                // 仍要留在原来那一档上，否则用户会以为推荐变了。
-                if let tag = state.recommendationTag(for: entry.model.id, engine: entry.engine) {
-                    item["recommendedTag"] = tag
-                }
-                return item
-            },
+            "entries": state.libraryEntries(for: state.libraryEngine).map(libraryItem),
         ]
 
         // 搜索只活在当前会话：没有 query 时整格传 null，网页据此隐藏结果区。
@@ -840,6 +919,7 @@ enum WebSnapshot {
             item["params"] = paramsSummary(for: id)
             item["modelsDir"] = EnginePaths.modelsDirectory(id)
             item["logFile"] = EnginePaths.logFile(id)
+            item["logsDir"] = EnginePaths.logsDirectory
             item["tuning"] = tuningJSON(EngineStore.shared.configuration(for: id).tuning ?? EngineTuning())
             item["tuningDefault"] = tuningJSON(EngineTuning.defaults(for: id))
             if let latest = state.installs.releases[id]?.max(by: { EngineVersionOrder.isNewer($1.version, than: $0.version) }) {
@@ -854,7 +934,10 @@ enum WebSnapshot {
             "tasks": state.downloadTasks.map { task in
                 ["engine": task.engine.rawValue, "model": task.model,
                  "status": task.status.rawValue, "fraction": task.fraction ?? NSNull(),
-                 "totalBytes": task.totalBytes, "downloadedBytes": task.downloadedBytes] as [String: Any]
+                 "totalBytes": task.totalBytes, "downloadedBytes": task.downloadedBytes,
+                 // 公共目录的一份权重供多个引擎使用：卡片按引擎匹配进度，
+                 // 需要知道这条任务还应该点亮哪些引擎的卡片。
+                 "shared": task.shared?.map(\.rawValue) ?? []] as [String: Any]
             },
         ]
         if let model = state.downloadingModel {
@@ -977,6 +1060,8 @@ enum WebSnapshot {
             // 网关侧的按请求打点：概览页的「会话」网格靠它拿到每一路请求的
             // 实时 decode / prefill / 上下文占用（引擎侧没有 per-session 指标）。
             "sessions": GatewayMeter.shared.snapshot(),
+            "threadID": state.currentThreadID,
+            "appVersion": (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "",
             "threads": state.threads.map { thread in
                 ["id": thread.id, "title": thread.title,
                  "updatedAt": thread.updatedAt.timeIntervalSince1970 * 1000] as [String: Any]
@@ -989,12 +1074,23 @@ enum WebSnapshot {
                     "streaming": message.streaming,
                 ]
                 if let reasoning = message.reasoning, !reasoning.isEmpty { item["reasoning"] = reasoning }
+                // 每条回答记住是哪个模型写的：对话头像用它的家族图标，切换模型后
+                // 旧回答不会跟着换头像。
+                if let model = message.model, !model.isEmpty { item["model"] = model }
                 if let rate = message.tokensPerSecond { item["rate"] = rate }
                 if message.tokenCount > 0 { item["tokens"] = message.tokenCount }
                 if let ttft = message.firstTokenSeconds { item["ttft"] = ttft }
+                if let thinking = message.thinkingSeconds { item["thinkingSeconds"] = thinking }
+                // 建消息的时刻：网页用它算思考计时，重开一个正在生成的会话时
+                // 计时也不会从 0 重新开始。
+                if let created = message.createdAt { item["createdAt"] = created.timeIntervalSince1970 * 1000 }
                 return item
             },
             "generating": state.generating,
+            // Highest token event already folded into the text above. The web
+            // view uses it as a watermark so a delta that raced the snapshot
+            // is never painted twice.
+            "streamSeq": state.currentStreamSeq,
             "generationStatus": state.generationStatus ?? "",
             // 模型切换菜单的数据源：按已安装引擎分组（旧原生 ModelSwitcher 的
             // 行为）。此前只推 catalog.machine（Splash 口径），oMLX/MTPLX 用户
@@ -1011,6 +1107,11 @@ enum WebSnapshot {
                          .map { $0.id }]
                 },
             "library": library,
+            // 模型页的引擎筛选要能看到所有引擎的档位；library 只带当前浏览的
+            // 那一栏，单独给一份平铺的全部条目。
+            "modelsAll": EngineCatalog.allIDs.flatMap { id in
+                state.libraryEntries(for: id).map(libraryItem)
+            },
             "hubSearch": hubSearchJSON,
             "downloads": downloads,
             "hub": [

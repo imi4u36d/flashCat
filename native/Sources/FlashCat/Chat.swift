@@ -1,5 +1,47 @@
 import Foundation
 
+/// A low-latency streaming event for the in-app WebUI.
+///
+/// `WebSnapshot` is still the authoritative state, but it is debounced by
+/// 100 ms and serialises the whole conversation on every change. These events
+/// carry just the new token, so the web view can paint it on arrival instead
+/// of replaying a growing string. `seq` is monotonic for the app's lifetime;
+/// the snapshot publishes its current value as a watermark, which lets the
+/// renderer discard any delta the snapshot already contains.
+struct ChatStreamEvent {
+    enum Kind: String {
+        case begin
+        case delta
+        case end
+    }
+
+    enum Channel: String {
+        case reasoning
+        case content
+    }
+
+    var kind: Kind
+    var id: String
+    var seq: Int
+    var at: Double
+    var channel: Channel? = nil
+    var text: String? = nil
+    var cancelled: Bool = false
+
+    var dictionary: [String: Any] {
+        var item: [String: Any] = [
+            "type": kind.rawValue,
+            "id": id,
+            "seq": seq,
+            "at": at,
+        ]
+        if let channel = channel { item["channel"] = channel.rawValue }
+        if let text = text { item["text"] = text }
+        if cancelled { item["cancelled"] = true }
+        return item
+    }
+}
+
 struct ChatTurn {
     let role: String
     let content: String
@@ -26,6 +68,9 @@ struct ChatMessage: Identifiable {
     var seconds: Double?
     var tokensPerSecond: Double?
     var firstTokenSeconds: Double?
+    /// 从发起请求到正文首字的时间。有 reasoning 时，这段就是「思考」的时长，
+    /// 随消息一起落盘，旧回答在折叠块里仍能显示「思考了 8.4 秒」。
+    var thinkingSeconds: Double?
     /// 思考模型的 reasoning 流，单独于正文展示（对话页的「思考过程」块）。
     var reasoning: String?
     var streaming = false
@@ -207,8 +252,13 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
                 text += content
                 onDelta(content)
             }
+            // 不同引擎对思考流的字段名不一致：OpenAI 兼容层常见
+            // `reasoning_content`，部分本地引擎用 `reasoning` 或 `thinking`，
+            // 也有的把片段包在 `reasoning_details` 数组里。
             let reasoningPiece = (chunk["reasoning_content"] as? String)
                 ?? (chunk["reasoning"] as? String)
+                ?? (chunk["thinking"] as? String)
+                ?? Self.reasoningDetails(chunk["reasoning_details"])
                 ?? ""
             if !reasoningPiece.isEmpty {
                 reasoned = true
@@ -226,6 +276,15 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
                 if reasoning > 0 { usage.reasoningTokens = reasoning }
             }
         }
+    }
+
+    /// 少数兼容层把思考片段放进 `reasoning_details: [{text: "…"}]`。
+    private static func reasoningDetails(_ value: Any?) -> String? {
+        guard let items = value as? [[String: Any]] else { return nil }
+        let text = items.compactMap { item in
+            (item["text"] as? String) ?? (item["content"] as? String) ?? (item["reasoning"] as? String)
+        }.joined()
+        return text.isEmpty ? nil : text
     }
 
     private static func intValue(_ value: Any?) -> Int {

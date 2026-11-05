@@ -13,6 +13,7 @@
 import SwiftUI
 import WebKit
 import Combine
+import Foundation
 import FlashCatKit
 
 struct WebViewShell: NSViewRepresentable {
@@ -28,6 +29,15 @@ struct WebViewShell: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         // 快照推送由 Combine 驱动，这里不需要逐帧同步。
+    }
+
+    /// SwiftUI recreates the representable on some window transitions. Without
+    /// this the old bridge keeps its script-message registration, its 1 s timer
+    /// and its Combine subscriptions alive, and because the bridge owns the
+    /// web view (`webView → configuration → userContentController → bridge →
+    /// webView`) nothing in that cycle is ever deallocated.
+    static func dismantleNSView(_ webView: WKWebView, coordinator: WebBridge) {
+        coordinator.tearDown()
     }
 }
 
@@ -72,6 +82,8 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
     /// Token events waiting for the next frame-sized IPC hop.
     private var pendingStreamEvents: [[String: Any]] = []
     private var streamFlushScheduled = false
+    /// Last JS exception forwarded to the 日志 page (deduped by message).
+    private var lastWebUIError: (message: String, at: Date)?
 
     init(state: AppState) {
         self.state = state
@@ -117,7 +129,7 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
             .removeDuplicates()
             .sink { [weak self] visible in
                 self?.webView.evaluateJavaScript(
-                    "window.__fc__.setSidebar(\(visible ? "true" : "false"));",
+                    "window.__fc__ && window.__fc__.setSidebar && window.__fc__.setSidebar(\(visible ? "true" : "false"));",
                     completionHandler: nil)
             }
             .store(in: &cancellables)
@@ -146,6 +158,7 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
 
         // 页面加载完成后立即推送首帧。
         webView.navigationDelegate = self
+        webView.uiDelegate = self
     }
 
     // MARK: JS → Swift
@@ -223,7 +236,13 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
         case "closeHubDetail":
             state.closeHubDetail()
         case "openURL":
-            if let raw = body["url"] as? String, let url = URL(string: raw) {
+            // The page is the app's only view layer, but it is still untrusted
+            // input: a markdown link or a Hub README can carry any scheme.
+            // `file://` here would hand a local file to the default handler and
+            // `x-apple.systempreferences:` would open System Settings; only the
+            // two web schemes are ever legitimate.
+            if let raw = body["url"] as? String, let url = URL(string: raw),
+               let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" {
                 NSWorkspace.shared.open(url)
             }
         case "removeModel":
@@ -324,6 +343,27 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
         case "confirmModelSwitch": state.confirmModelSwitch()
         case "cancelModelSwitch": state.cancelModelSwitchRequest()
         case "abortModelSwitch": state.abortModelSwitch()
+        case "jsError":
+            // The WebUI records JS exceptions through this command instead of
+            // painting a red banner. Keep one readable line per distinct error
+            // per minute in 日志, so a later report can actually be diagnosed.
+            guard let message = body["message"] as? String, !message.isEmpty else { break }
+            let stack = body["stack"] as? String ?? ""
+            let now = Date()
+            if let last = lastWebUIError, last.message == message,
+               now.timeIntervalSince(last.at) < 60 { break }
+            lastWebUIError = (message, now)
+            let frame = stack.split(separator: "\n").dropFirst().first
+                .map { String($0).trimmingCharacters(in: .whitespaces) } ?? ""
+            let line = "[WebUI] \(message)\(frame.isEmpty ? "" : " · \(frame)")"
+            if let store = state.controller?.logs {
+                store.append(line, level: .error)
+                state.refreshLogs()
+            } else {
+                state.logs.append(LogLine(id: (state.logs.last?.id ?? 0) + 1,
+                                          time: now, text: line, level: .error))
+            }
+            NSLog("flashCat WebUI JS error: %@\n%@", message, stack)
         case "toast": state.toast(body["message"] as? String ?? "")
         default: break
         }
@@ -635,19 +675,83 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
         // 就是一二十毫秒），侧栏折叠动画每帧都在重排，这一下正好把它顶掉几帧；
         // JSON.parse 走原生解析，代价小一个量级。字符串本身再用 JSON 转义包一层。
         let literal = WebSnapshot.jsStringLiteral(json)
-        webView.evaluateJavaScript("window.__fc__.push(JSON.parse(\(literal)));", completionHandler: nil)
+        // A heartbeat can arrive before live.js has published its bridge (the
+        // cache-clearing completion that starts the page load is asynchronous).
+        // Guard the call instead of letting an undefined lookup throw.
+        webView.evaluateJavaScript(
+            "window.__fc__ && window.__fc__.push && window.__fc__.push(JSON.parse(\(literal)));",
+            completionHandler: nil)
     }
 
     func pushToast(_ message: String) {
-        guard let data = try? JSONSerialization.data(withJSONObject: [message]),
-              let text = String(data: data, encoding: .utf8) else { return }
-        webView.evaluateJavaScript("window.__fcToast(\(text));", completionHandler: nil)
+        let literal = WebSnapshot.jsStringLiteral(message)
+        webView.evaluateJavaScript(
+            "window.__fcToast && window.__fcToast(\(literal));",
+            completionHandler: nil)
+    }
+
+    /// Break the retain cycle and stop everything this bridge started. Called
+    /// from `dismantleNSView`; safe to call more than once.
+    func tearDown() {
+        heartbeat?.invalidate()
+        heartbeat = nil
+        cancellables.removeAll()
+        state.streamEventSink = nil
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "bridge")
+        webView.navigationDelegate = nil
+        webView.uiDelegate = nil
     }
 }
 
 extension WebBridge: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         pushSnapshot()
+    }
+
+    /// The console is one local page; nothing may navigate it away. A markdown
+    /// link with a relative href (`/foo`) used to replace the whole SPA with a
+    /// blank document, recoverable only by relaunching the app.
+    ///
+    /// Async rather than the `decisionHandler:` form: the completion-handler
+    /// variant "nearly matches" the delegate requirement under Swift 6 (the
+    /// handler is `@MainActor`-isolated), and a near match is never called —
+    /// the policy would have been silently unenforced.
+    func webView(_ webView: WKWebView,
+                 decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
+        guard let url = navigationAction.request.url else { return .cancel }
+        if url.isFileURL {
+            // Only the bundled index is allowed to load; it is the window.
+            return url.lastPathComponent == "index.html" ? .allow : .cancel
+        }
+        // Anything else came from a link inside the page. Hand it to the user's
+        // browser instead of letting the console navigate to it — the bridge's
+        // message handler is still registered on whatever loads next.
+        if let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" {
+            NSWorkspace.shared.open(url)
+        }
+        return .cancel
+    }
+
+    /// WebContent runs out of process and can be killed under memory pressure.
+    /// Without this the window stays blank for the rest of the session.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        state.controller?.logs.append("==> 网页进程被系统终止，正在重新加载界面", level: .warning)
+        webView.reload()
+    }
+}
+
+extension WebBridge: WKUIDelegate {
+    /// `target="_blank"` never reaches `decidePolicyFor` without a UI delegate,
+    /// so every external link in a Hub README used to be silently dead.
+    func webView(_ webView: WKWebView,
+                 createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction,
+                 windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if let url = navigationAction.request.url,
+           let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" {
+            NSWorkspace.shared.open(url)
+        }
+        return nil
     }
 }
 
@@ -1148,10 +1252,40 @@ enum WebSnapshot {
             "toast": state.toastMessage ?? "",
             "notice": state.notice ?? "",
         ]
-        return try? JSONSerialization.data(withJSONObject: payload)
+        // JSON has no NaN or Infinity, and `JSONSerialization` throws on both.
+        // This used to be a bare `try?`: one non-finite sample anywhere in the
+        // payload (a rate divided by a zero interval, a memory ratio on an empty
+        // device report) blanked the *entire* snapshot, `pushSnapshot` returned
+        // early, and the UI froze on its last frame with nothing in the log.
+        do {
+            return try JSONSerialization.data(withJSONObject: finiteOnly(payload))
+        } catch {
+            state.controller?.logs.append("==> 快照序列化失败：\(error)", level: .error)
+            NSLog("flashCat: snapshot serialization failed: \(error)")
+            return nil
+        }
     }
 
-    private static func serverStateName(_ value: ServerState) -> String {        switch value {
+    /// Replace non-finite doubles with 0 so one bad sample cannot take the whole
+    /// frame down. Applied to the payload rather than at each division site:
+    /// the numbers are produced all over the view layer, and this is the single
+    /// boundary every one of them crosses. Internal rather than private so the
+    /// snapshot tests can pin the behaviour.
+    static func finiteOnly(_ value: Any) -> Any {
+        switch value {
+        // Keep the replacement a Double: JSON encodes `0` and `0.0` the same,
+        // but the payload is also consumed by tests and by anything that reads
+        // it before serialisation, and a type flip there is a silent surprise.
+        case let number as Double where !number.isFinite: return Double(0)
+        case let number as Float where !number.isFinite: return Double(0)
+        case let dictionary as [String: Any]: return dictionary.mapValues(finiteOnly)
+        case let array as [Any]: return array.map(finiteOnly)
+        default: return value
+        }
+    }
+
+    private static func serverStateName(_ value: ServerState) -> String {
+        switch value {
         case .stopped: return "stopped"
         case .starting: return "starting"
         case .ready: return "running"

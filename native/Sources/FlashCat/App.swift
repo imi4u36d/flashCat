@@ -153,9 +153,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // Nothing to do: the engines are reaped in `applicationShouldTerminate`
+        // while AppKit is still holding the process alive. Doing it here would
+        // be too late — by this point a `kill` may already have detached the
+        // children from us.
+    }
+
+    /// Quit is where "the app is gone but the engine is not" gets decided.
+    ///
+    /// The old code waited for the engine inside a `Thread.sleep` loop on the
+    /// main actor, so a 20 GB model load could freeze the quit for seconds. Users
+    /// respond to a frozen quit with Force Quit, which is exactly what leaves an
+    /// engine holding unified memory. `.terminateLater` keeps AppKit in the loop
+    /// while the engines are signalled and reaped asynchronously.
+    private var isTerminating = false
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !isTerminating else {
+            // A second ⌘Q while the first teardown is still in flight: refuse
+            // rather than quit early and strand the engines. The window is
+            // bounded (1.5 s grace), so this never feels stuck.
+            return .terminateCancel
+        }
+        isTerminating = true
         let state = AppState.shared
-        state.gateway.stop()
-        state.controller?.dispose()
+        Task { @MainActor in
+            // Gateway first (it answers requests), then every installed engine,
+            // then whatever ignored the first signal.
+            state.prepareForTermination()
+            await state.engines?.shutdownEngines()
+            state.finishTermination()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     @MainActor

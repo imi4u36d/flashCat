@@ -74,6 +74,12 @@ final class EngineController {
     private var pollInFlight = false
     private var isStopping = false
     private var lastError: String?
+    /// Moves `.starting` out of limbo when the engine neither binds its port nor
+    /// exits. Nothing else does: the poller only ever promotes to `.ready`.
+    private var startupWatchdog: Task<Void, Never>?
+    /// Process tree captured at quit time, kept so the SIGKILL escalation can
+    /// reach children that outlived their parent. See `ProcessTree`.
+    private var terminationTree: ProcessTree?
     /// Log id the current start began at: history from earlier sessions must
     /// not name this run's stage.
     private var stageBaseline = 0
@@ -262,6 +268,7 @@ final class EngineController {
             startReader(stdout, index: 0)
             startReader(stderr, index: 1)
             startPolling()
+            startStartupDeadline(for: task)
             onChange()
         } catch {
             logs.close()
@@ -429,13 +436,16 @@ final class EngineController {
         if let process, let pid = processPid(process) {
             // The pack python is only the trunk: the inference binary and pool
             // workers below it hold the weights, so the whole tree is signalled.
-            killTree(pid, SIGINT)
+            // The tree is captured once, while the root is still alive — the
+            // escalation below must reuse it, because 20 seconds later the root
+            // is gone and a fresh walk would come up empty.
+            let tree = snapshotProcessTree(pid)
+            tree.signal(SIGINT)
             let grace: TimeInterval = descriptor.adapter == .strata ? 75 : 20
-            DispatchQueue.main.asyncAfter(deadline: .now() + grace) {
-                if let current = self.process, processPid(current) == pid {
-                    self.logs.append("==> 服务未在 \(Int(grace)) 秒内退出，强制结束", level: .system)
-                    killTree(pid, SIGKILL)
-                }
+            DispatchQueue.main.asyncAfter(deadline: .now() + grace) { [weak self] in
+                guard let self, let current = self.process, processPid(current) == pid else { return }
+                self.logs.append("==> 服务未在 \(Int(grace)) 秒内退出，强制结束", level: .system)
+                tree.signal(SIGKILL)
             }
         }
     }
@@ -526,25 +536,53 @@ final class EngineController {
         if isRunning { stop() } else { Task { await start(localModel: localModel) } }
     }
 
-    /// Runs at app termination. `applicationShouldTerminateAfterLastWindowClosed`
-    /// and `applicationWillTerminate` both call it on the same quit, so the work
-    /// must be idempotent. The whole tree is killed, not just the direct child:
-    /// a quit while weights are still loading means the python is wedged inside
-    /// a Metal call and cannot act on SIGINT, and its children would otherwise
-    /// keep the model resident after the app is gone.
-    private var disposed = false
-    func dispose() {
-        guard !disposed else { return }
-        disposed = true
+    /// App-quit teardown, in two halves so nothing blocks the main actor.
+    ///
+    /// The old single `dispose()` sat in a `Thread.sleep` loop for up to eight
+    /// seconds waiting for the engine to exit. On `@MainActor` that froze the
+    /// quit — `processExited` could not even be delivered — and a frozen quit is
+    /// what makes readers force-kill the app, which is precisely what leaves
+    /// engines resident. Now the quit path is: signal, await a short grace
+    /// off the main actor, then kill whatever ignored the signal.
+    ///
+    /// Idempotent: both halves may run twice on one quit.
+    private var terminating = false
+
+    /// First half: snapshot the tree and ask it to stop.
+    ///
+    /// Returns whether anything was signalled. The quit path uses it to skip
+    /// the grace period when no engine is running — waiting 1.5 s for nothing
+    /// is exactly the kind of fixed delay that makes quitting feel broken.
+    @discardableResult
+    func prepareForTermination() -> Bool {
+        guard !terminating else { return false }
+        terminating = true
         pollTimer?.invalidate()
         pollTimer = nil
+        startupWatchdog?.cancel()
+        startupWatchdog = nil
+        var signalled = false
         if let process, let pid = processPid(process) {
-            killTree(pid, SIGINT)
-            let deadline = Date().addingTimeInterval(8)
-            while Date() < deadline && process.isRunning { Thread.sleep(forTimeInterval: 0.1) }
-            if process.isRunning { killTree(pid, SIGKILL) }
+            let tree = snapshotProcessTree(pid)
+            terminationTree = tree
+            tree.signal(SIGINT)
+            signalled = true
         }
         removePidFile()
+        return signalled
+    }
+
+    /// True while anything from the termination snapshot is still running.
+    var hasLiveEngineProcesses: Bool {
+        terminationTree?.anyAlive ?? false
+    }
+
+    /// Second half, after the grace period. Uses the snapshot from
+    /// `prepareForTermination`: by now the root has exited and its children
+    /// belong to launchd, so a fresh traversal would find nothing.
+    func finishTermination() {
+        terminationTree?.signal(SIGKILL)
+        terminationTree = nil
         logs.close()
     }
 
@@ -606,25 +644,35 @@ final class EngineController {
     app="$2"
     marker="$3"
 
+    # Snapshot the tree while the root is alive. Once it exits, its children are
+    # re-parented to launchd and `pgrep -P` can no longer tie them back to the
+    # engine — walking the tree at kill time (the old behaviour) therefore found
+    # nothing to signal exactly when it was needed.
+    collect() {
+      for child in $(/usr/bin/pgrep -P "$1" 2>/dev/null); do
+        printf '%s\n' "$child"
+        collect "$child"
+      done
+    }
+    victims="$(collect "$engine")"
+
     while kill -0 "$app" 2>/dev/null && kill -0 "$engine" 2>/dev/null; do
       sleep 1
     done
 
-    signal_tree() {
-      current="$1"
-      signal="$2"
-      for child in $(/usr/bin/pgrep -P "$current" 2>/dev/null); do
-        signal_tree "$child" "$signal"
+    signal_victims() {
+      signal="$1"
+      for pid in $victims "$engine"; do
+        path=$(/bin/ps -p "$pid" -o command= 2>/dev/null) || continue
+        case "$path" in
+          "$marker"/*) /bin/kill "-$signal" "$pid" 2>/dev/null || true ;;
+        esac
       done
-      path=$(/bin/ps -p "$current" -o command= 2>/dev/null)
-      case "$path" in
-        "$marker"/*) /bin/kill "-$signal" "$current" 2>/dev/null || true ;;
-      esac
     }
 
-    signal_tree "$engine" INT
+    signal_victims INT
     sleep 15
-    signal_tree "$engine" KILL
+    signal_victims KILL
     """#
 
     /// Runs as `python -u -c <script> <engine-pid> <app-pid> <pack-marker>`.
@@ -717,7 +765,14 @@ final class EngineController {
     // MARK: process plumbing
 
     private func processExited(_ finished: Process) {
-        if process == nil { return }
+        // A restart installs a new `process` while the old one's
+        // terminationHandler is still queued. Trusting any callback would let
+        // the old engine's exit tear down the new one: pollTimer invalidated,
+        // `process` cleared, state forced to `.failed` — and no handle left to
+        // stop the engine that is actually holding the weights.
+        guard finished === process else { return }
+        startupWatchdog?.cancel()
+        startupWatchdog = nil
         removePidFile()
         pollTimer?.invalidate()
         pollTimer = nil
@@ -790,9 +845,12 @@ final class EngineController {
     }
 
     private func note(_ line: String) {
-        logs.openFile()
+        // Never open/close the sink here: `openFile()` reloads history from
+        // disk and `close()` drops the handle, so a note written while the
+        // engine was running used to stop every later line from reaching the
+        // log file — which is the one place a reader looks when something
+        // breaks. `append` already writes through the sink when one is open.
         logs.append(line, level: .system)
-        logs.close()
     }
 
     // MARK: polling
@@ -801,6 +859,27 @@ final class EngineController {
         pollTimer?.invalidate()
         pollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
             Task { await self.poll() }
+        }
+        // Default run-loop mode stops while a modal alert is up. The app opens
+        // alerts from the engine page, so the poller used to freeze exactly when
+        // the reader was staring at the stalled engine.
+        if let pollTimer { RunLoop.main.add(pollTimer, forMode: .common) }
+    }
+
+    /// Give the launch a budget. `descriptor.startupTimeout` already encodes
+    /// how slow each engine is (oMLX 180 s, splash 300 s, strata 1800 s), so
+    /// reusing it keeps the promise the engine page makes about wait times.
+    private func startStartupDeadline(for task: Process) {
+        startupWatchdog?.cancel()
+        let budget = descriptor.startupTimeout
+        startupWatchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(budget * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            // Only the launch this deadline was armed for, and only if the
+            // poller has not already promoted it to `.ready`.
+            guard self.process === task, self.state == .starting else { return }
+            self.logs.append("==> 启动超时：\(Int(budget)) 秒内未就绪", level: .error)
+            self.fail("启动超时：\(Int(budget)) 秒内没有就绪。看日志页最后几行——多半是端口被占或模型放不进内存。")
         }
     }
 

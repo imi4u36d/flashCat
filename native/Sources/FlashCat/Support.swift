@@ -226,6 +226,43 @@ func killTree(_ pid: Int32, _ signal: Int32) {
     }
 }
 
+/// A process tree captured at one moment.
+///
+/// Escalating SIGINT → SIGKILL has to signal from a snapshot taken while the
+/// root is still alive. Re-snapshotting at escalation time (the previous
+/// behaviour) found nothing exactly when it mattered: 20 seconds after SIGINT
+/// the root has usually exited, its children have been re-parented to launchd,
+/// and `pgrep`/`descendantPids` can no longer tie them to the engine.
+struct ProcessTree {
+    let root: Int32
+    let descendants: [Int32]
+
+    var pids: [Int32] { [root] + descendants }
+
+    init(root: Int32, descendants: [Int32]) {
+        self.root = root
+        self.descendants = descendants
+    }
+
+    func signal(_ signal: Int32) {
+        for pid in pids where pid > 1 {
+            kill(pid, signal)
+        }
+    }
+
+    /// Whether any snapshotted member is still running. `kill(pid, 0)` only
+    /// probes for existence, so this asks the kernel without disturbing the
+    /// process. Used to end the quit grace period as soon as the tree is gone
+    /// instead of always burning the full budget.
+    var anyAlive: Bool {
+        pids.contains { $0 > 1 && kill($0, 0) == 0 }
+    }
+}
+
+func snapshotProcessTree(_ pid: Int32) -> ProcessTree {
+    ProcessTree(root: pid, descendants: descendantPids(of: pid, table: allProcesses()))
+}
+
 /// Foundation does not expose NSTask's pid; the child's pid is what the port
 /// reclaim logic needs, so it comes from the process's own bookkeeping.
 func processPid(_ process: Process) -> Int32? {

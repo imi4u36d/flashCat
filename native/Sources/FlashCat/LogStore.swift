@@ -143,8 +143,13 @@ final class LogStore {
         return lines
     }
 
+    /// Reverse tail for the stage line, which the snapshot reads once a second.
+    /// Slicing inside the lock avoids copying the whole 20k-line buffer just to
+    /// throw all but a handful away.
     func tail(_ count: Int) -> [LogLine] {
-        snapshot().suffix(count).reversed()
+        lock.lock()
+        defer { lock.unlock() }
+        return Array(lines.suffix(count).reversed())
     }
 
     func clear() {

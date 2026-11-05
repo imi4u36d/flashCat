@@ -5,7 +5,7 @@
 #
 # Environment:
 #   PREFIX=/Applications     install destination
-#   VERSION=1.0.0            recorded in the backup name
+#   VERSION=1.0.0            recorded in the backup name (defaults to VERSION file)
 #   LAUNCH=1                 open the installed app after installing
 #   STOP_SERVER=1            also stop leftover inference servers (port 8000)
 set -euo pipefail
@@ -13,7 +13,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PREFIX="${PREFIX:-/Applications}"
 TARGET="$PREFIX/flashCat.app"
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-$("$ROOT/scripts/version.sh")}"
 
 EXE_NAME="flashCat"
 
@@ -69,17 +69,33 @@ if [ "${STOP_SERVER:-0}" = "1" ]; then
     fi
 fi
 
-# 3. Keep the previous install as a backup, but only the latest one.
+# 3. Park the previous install as a backup so a failed copy can be rolled back.
+#    Pruning older backups is deferred to the end: it is bookkeeping, and a
+#    failure there (permissions, a locked bundle, an interrupted process) used
+#    to abort the script *after* the old app was moved aside but *before* the
+#    new one landed — leaving the prefix with no flashCat.app at all.
+BACKUP=""
 if [ -e "$TARGET" ]; then
     BACKUP="$PREFIX/.flashCat-previous-$(date +%Y%m%d-%H%M%S).app"
     mv "$TARGET" "$BACKUP"
     echo "==> Previous install moved to $BACKUP"
-    for old in "$PREFIX"/.flashCat-previous-*.app; do
-        [ -e "$old" ] || continue
-        [ "$old" = "$BACKUP" ] && continue
-        rm -rf "$old"
-    done
 fi
+
+INSTALL_OK=0
+restore_on_exit() {
+    status=$?
+    if [ "$INSTALL_OK" = "1" ] || [ -z "$BACKUP" ] || [ ! -e "$BACKUP" ]; then
+        return $status
+    fi
+    rm -rf "$TARGET" 2>/dev/null || true
+    if mv "$BACKUP" "$TARGET"; then
+        echo "error: install failed; the previous bundle was put back" >&2
+    else
+        echo "error: install failed and the previous bundle is at $BACKUP" >&2
+    fi
+    return $status
+}
+trap restore_on_exit EXIT
 
 # 4. Install.
 echo "==> Install $APP -> $TARGET"
@@ -101,6 +117,18 @@ fi
 INSTALLED_VERSION="$(plutil -extract CFBundleShortVersionString raw "$TARGET/Contents/Info.plist" 2>/dev/null || echo unknown)"
 SIZE="$(du -sh "$TARGET" | cut -f1)"
 echo "==> Installed flashCat $INSTALLED_VERSION to $TARGET ($SIZE)"
+INSTALL_OK=1
+
+# 6b. Bookkeeping only, now that the new bundle is in place: drop older
+#     backups. Never fatal — a leftover backup costs disk, a missing app costs
+#     the install.
+if [ -n "$BACKUP" ]; then
+    for old in "$PREFIX"/.flashCat-previous-*.app; do
+        [ -e "$old" ] || continue
+        [ "$old" = "$BACKUP" ] && continue
+        rm -rf "$old" 2>/dev/null || echo "note: could not remove old backup $old"
+    done
+fi
 
 if [ "${LAUNCH:-0}" = "1" ]; then
     open "$TARGET"

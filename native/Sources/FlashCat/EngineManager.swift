@@ -175,8 +175,27 @@ final class EngineManager {
         if engine == activeID { settings.setModel(id) }
     }
 
-    func dispose() {
-        for controller in controllers { controller.dispose() }
+    /// App-quit teardown for every engine, not just the active one. A reader who
+    /// installed three engines and switched between them has three processes to
+    /// reap; disposing only `active` left the rest holding their weights after
+    /// the app was gone.
+    ///
+    /// Signals first, waits off the main actor, then kills what is left. The
+    /// bounded grace keeps a wedged engine from turning "quit" into a hang.
+    func shutdownEngines(grace: TimeInterval = 1.5) async {
+        let all = controllers
+        let signalled = all.map { $0.prepareForTermination() }.contains(true)
+        if grace > 0 && signalled {
+            // Poll rather than sleeping the whole budget: a healthy engine
+            // exits in tens of milliseconds, and the grace only exists for the
+            // wedged case. `Task.sleep` yields the main actor; `Thread.sleep`
+            // here is what used to freeze the quit for up to eight seconds.
+            let deadline = Date().addingTimeInterval(grace)
+            while Date() < deadline && all.contains(where: { $0.hasLiveEngineProcesses }) {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
+        for controller in all { controller.finishTermination() }
     }
 
     /// Runs once at launch, before this session starts anything: reaps engine

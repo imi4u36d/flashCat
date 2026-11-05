@@ -10,8 +10,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${VERSION:-1.0.0}"
-BUILD_NUMBER="${BUILD_NUMBER:-1}"
+# Never default to a hardcoded number: the root VERSION file is the only place
+# the release version is edited (see scripts/version.sh for why).
+VERSION="${VERSION:-$("$ROOT/scripts/version.sh")}"
+BUILD_NUMBER="${BUILD_NUMBER:-$("$ROOT/scripts/version.sh" --build)}"
 INSTALL="${INSTALL:-1}"
 IDENTIFIER="${IDENTIFIER:-com.zhuo.flashCat}"
 # macOS 26.4 is the floor splash's native engine enforces.

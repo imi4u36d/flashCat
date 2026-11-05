@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import AppKit
+import Darwin
 import FlashCatKit
 
 enum Page: String, CaseIterable, Identifiable {
@@ -125,9 +126,15 @@ final class AppState: ObservableObject {
     /// 时跳一格）。生成期间概览卡与曲线统一改用这个本地口径，空闲时回落到
     /// 引擎自报的读数。
     @Published private(set) var liveDecodeRate: Double?
-    /// 流式测速的滑动窗口：窗口内的 token 估算数与窗口起点。
-    private var streamWindowTokens = 0
-    private var streamWindowStart: Date?
+    /// 生成期间的连续时间低通速率估计。不再用「攒够 0.9 秒就清零」的窗口：
+    /// 那种非重叠窗口让相邻读数互不相关，SSE 分片一抖数字就跟着跳。
+    private var decodeMeter = DecodeRateMeter()
+    /// 曲线/快照的落点节奏，与估计器本身的更新频率解耦。
+    private var lastRateSampleAt: Date?
+    /// 回答结束后保留一小段平滑读数，避免 LIVE 数字在收尾瞬间台阶式回落。
+    private var generationEndedAt: Date?
+    /// 引擎自报读数的低通值（生成期间不用它，空闲时概览卡才回落到这里）。
+    private var engineRateEMA: Double?
     @Published var downloadingModel: String?
     /// Which engine the running download is for: two engines can hold models
     /// with the same id, and only the one being written shows the progress bar.
@@ -482,15 +489,39 @@ final class AppState: ObservableObject {
         // avg_generation_tps 是累计均值，整个生成过程一动不动，一次回复只会在
         // 结束时落 1 个点，曲线永远凑不满两个点（表现就是「回复都结束了图还是
         // 空的」）。外部 API 请求不经过这里，仍走引擎自报的读数。
-        let freshRate = stats?.decodeTokensPerSecond.map { rate in
-            rate > 0 && (throughput.last.map { abs($0.value - rate) > 0.0001 } ?? true)
-        } ?? false
-
-        if !generating, freshRate, let rate = stats?.decodeTokensPerSecond {
-            if throughput.last.map({ now.timeIntervalSince($0.at) >= 0.9 }) ?? true {
-                throughput.append(ThroughputSample(at: now, value: rate))
+        if generating {
+            // pollTimer 每秒仍会走到这里。生成中即使某个瞬间没有 delta 也照常
+            // 落点，低通估计器会自己按停顿时长衰减，读数不会僵在旧值上。
+            if lastRateSampleAt.map({ now.timeIntervalSince($0) >= 0.5 }) ?? true {
+                lastRateSampleAt = now
+                publishDecodeRate(at: now)
+            }
+        } else if generationEndedAt == nil, let reported = stats?.decodeTokensPerSecond, reported > 0 {
+            // 各引擎口径天差地别（splash 实时值 / oMLX 累计均值 / MTPLX 滚动
+            // 均值），再统一过一层低通，逐秒轮询的采样噪声不会直接变成跳变。
+            let smoothed = engineRateEMA.map { $0 * 0.6 + reported * 0.4 } ?? reported
+            engineRateEMA = smoothed
+            let changed = throughput.last.map { abs($0.value - smoothed) > 0.15 } ?? true
+            let due = throughput.last.map { now.timeIntervalSince($0.at) >= 0.9 } ?? true
+            // 引擎空闲时会一直重复最后一格读数；变化小于阈值就不落点，曲线
+            // 不会凭空续出一段平线、均值也不会被空闲时间拖着走。
+            if changed, due {
+                throughput.append(ThroughputSample(at: now, value: smoothed))
                 throughput.removeAll { $0.at < cutoff }
             }
+        }
+
+        // 回答结束后先保留最后一次平滑读数，5 秒后才回落到引擎自报值，
+        // 免得收尾瞬间 LIVE 数字从 100 台阶式跳回累计均值。
+        if !generating, let ended = generationEndedAt, now.timeIntervalSince(ended) >= 5 {
+            generationEndedAt = nil
+            // 让引擎自报读数从最后一次平滑值起步，回落时不再出现台阶。
+            engineRateEMA = liveDecodeRate
+            liveDecodeRate = nil
+        }
+        // 取消 / 出错的回复没有「结束保留期」，空闲后立刻撤掉旧读数。
+        if !generating, generationEndedAt == nil, liveDecodeRate != nil {
+            liveDecodeRate = nil
         }
 
         // 接受率与吞吐同频采样。引擎给的是会话累计值：空闲时它不变，生成时才爬。
@@ -499,7 +530,10 @@ final class AppState: ObservableObject {
         if let latest = stats?.draftAcceptance {
             let due = acceptance.last.map { now.timeIntervalSince($0.at) >= 0.9 } ?? true
             let changed = acceptance.last.map { abs($0.value - latest) > 0.0001 } ?? true
-            if due, changed || freshRate {
+            let rateMoving = stats?.decodeTokensPerSecond.map { reported in
+                throughput.last.map { abs($0.value - reported) > 0.15 } ?? true
+            } ?? false
+            if due, changed || rateMoving {
                 acceptance.append(ThroughputSample(at: now, value: latest))
                 acceptance.removeAll { $0.at < cutoff }
             }
@@ -508,25 +542,28 @@ final class AppState: ObservableObject {
         if switchingModel != nil { syncSwitchStage() }
     }
 
-    /// 流式回复的本地测速：每个增量累计 token 估算数，窗口攒满 ~0.9 秒算一次
-    /// 瞬时速率，与引擎轮询采样同样的节奏落点。所有引擎共用这一个口径，
-    /// 曲线在生成期间就是真实在动的。
+    /// 流式回复的本地测速：每个增量按小数权重喂进连续时间低通估计器，
+    /// 再以固定节奏把平滑后的速率落成一个样本。
+    ///
+    /// 旧实现的三个问题都在这里消掉：整数 `other / 4` 把只有一两个字符的
+    /// SSE 分片估成 0 后整片丢弃；0.9 秒非重叠窗口每次清零，相邻读数互不
+    /// 相关；窗口实际长度取决于最后一个 delta 何时到，分母自己也在抖。
+    /// 现在计数与分片边界无关，速率也只随真实解码节奏缓慢变化。
     private func recordStreamDelta(_ piece: String) {
-        let tokens = Self.estimateTokens(piece)
+        let tokens = TokenEstimator.fractional(piece)
         guard tokens > 0 else { return }
         let now = Date()
-        guard let start = streamWindowStart else {
-            streamWindowStart = now
-            streamWindowTokens = tokens
-            return
-        }
-        streamWindowTokens += tokens
-        let interval = now.timeIntervalSince(start)
-        guard interval >= 0.9, streamWindowTokens > 0 else { return }
-        let rate = Double(streamWindowTokens) / interval
-        streamWindowTokens = 0
-        streamWindowStart = now
-        liveDecodeRate = rate
+        decodeMeter.add(tokens: tokens, at: now)
+        guard lastRateSampleAt.map({ now.timeIntervalSince($0) >= 0.5 }) ?? true else { return }
+        lastRateSampleAt = now
+        publishDecodeRate(at: now)
+    }
+
+    /// 让大数字、曲线、菜单栏读的都是同一个平滑速率，不再各算各的。
+    private func publishDecodeRate(at now: Date) {
+        let rate = decodeMeter.rate(at: now)
+        liveDecodeRate = rate > 0 ? rate : nil
+        guard rate > 0 else { return }
         let cutoff = now.addingTimeInterval(-1800)
         throughput.append(ThroughputSample(at: now, value: rate))
         throughput.removeAll { $0.at < cutoff }
@@ -1431,6 +1468,22 @@ final class AppState: ObservableObject {
                              cancelled: cancelled))
     }
 
+    /// Mutate the assistant message this generation owns, located by id.
+    ///
+    /// The stream used to hold an array index from the moment `send` started.
+    /// `messages` is replaced wholesale by `newConversation` / `openThread`, so
+    /// by the time a token arrived that index could still be in bounds while
+    /// pointing at a different conversation — the reply was silently appended to
+    /// somebody else's message. Ids survive the replacement; indices do not.
+    @discardableResult
+    private func updateStreamingMessage(_ body: (inout ChatMessage) -> Void) -> Bool {
+        guard !streamMessageID.isEmpty,
+              let index = messages.firstIndex(where: { $0.id.uuidString == streamMessageID })
+        else { return false }
+        body(&messages[index])
+        return true
+    }
+
     func send(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty || generating { return }
@@ -1443,15 +1496,16 @@ final class AppState: ObservableObject {
         turns.append(ChatTurn(role: "user", content: trimmed))
 
         messages.append(ChatMessage(role: "user", content: trimmed, model: selectedModel, createdAt: Date()))
-        let assistantIndex = messages.count
         messages.append(ChatMessage(role: "assistant", content: "", model: selectedModel, createdAt: Date(), streaming: true))
-        streamMessageID = messages[assistantIndex].id.uuidString
+        streamMessageID = messages[messages.count - 1].id.uuidString
         emitStream(.begin)
         generating = true
         generationStatus = "生成中"
         liveDecodeRate = nil
-        streamWindowTokens = 0
-        streamWindowStart = nil
+        generationEndedAt = nil
+        decodeMeter.reset()
+        lastRateSampleAt = nil
+        engineRateEMA = nil
 
         // 最大生成 tokens：思考与正文共享的总输出上限。留空时取模型自身上限
         // 并按引擎生效窗口封顶（见 effectiveMaxTokens），4096 那种小默认会让
@@ -1473,27 +1527,31 @@ final class AppState: ObservableObject {
             let result = await chatClient.send(port: endpointPort, model: model, turns: turns, options: options,
                 onDelta: { piece in
                     Task { @MainActor in
-                        guard assistantIndex < self.messages.count else { return }
-                        if self.messages[assistantIndex].firstTokenSeconds == nil {
-                            let ttft = Date().timeIntervalSince(started)
-                            self.messages[assistantIndex].firstTokenSeconds = ttft
-                            // 正文首字之前的这段时间就是思考阶段；记下来，回答结束后
-                            // 折叠的思考块仍能给出真实时长。
-                            self.messages[assistantIndex].thinkingSeconds = ttft
+                        let found = self.updateStreamingMessage { message in
+                            if message.firstTokenSeconds == nil {
+                                let ttft = Date().timeIntervalSince(started)
+                                message.firstTokenSeconds = ttft
+                                // 正文首字之前的这段时间就是思考阶段；记下来，回答结束后
+                                // 折叠的思考块仍能给出真实时长。
+                                message.thinkingSeconds = ttft
+                            }
+                            message.content += piece
                         }
-                        self.messages[assistantIndex].content += piece
+                        guard found else { return }
                         self.emitStream(.delta, channel: .content, text: piece)
                         self.recordStreamDelta(piece)
                     }
                 },
                 onReasoning: { piece in
                     Task { @MainActor in
-                        guard assistantIndex < self.messages.count else { return }
-                        self.messages[assistantIndex].reasoning = (self.messages[assistantIndex].reasoning ?? "") + piece
-                        self.emitStream(.delta, channel: .reasoning, text: piece)
-                        if self.messages[assistantIndex].content.isEmpty {
-                            self.generationStatus = "思考中"
+                        let found = self.updateStreamingMessage { message in
+                            message.reasoning = (message.reasoning ?? "") + piece
+                            if message.content.isEmpty {
+                                self.generationStatus = "思考中"
+                            }
                         }
+                        guard found else { return }
+                        self.emitStream(.delta, channel: .reasoning, text: piece)
                         // 思考流同样计入本地测速：思考模型的输出大头在 reasoning，
                         // 不计的话思考阶段 liveDecodeRate 一直是 nil，对话页直播条
                         // 只能显示「— tok/s」。
@@ -1502,8 +1560,7 @@ final class AppState: ObservableObject {
                 },
                 onUsage: { usage in
                     Task { @MainActor in
-                        guard assistantIndex < self.messages.count else { return }
-                        self.messages[assistantIndex].usage = usage
+                        guard self.updateStreamingMessage({ $0.usage = usage }) else { return }
                         // 思考截断可见性：引擎按预算收束思考时，reasoning_tokens
                         // 正好落在预算上，用「≥ 预算」判定这次思考被截断。
                         if let budget = options.thinkingBudget,
@@ -1532,31 +1589,40 @@ final class AppState: ObservableObject {
             let elapsed = Date().timeIntervalSince(started)
             switch result {
             case .success(let text):
-                if assistantIndex < messages.count {
-                    messages[assistantIndex].content = text
-                    messages[assistantIndex].seconds = elapsed
-                    var tokens = messages[assistantIndex].usage?.completionTokens ?? 0
+                self.updateStreamingMessage { message in
+                    message.content = text
+                    message.seconds = elapsed
+                    var tokens = message.usage?.completionTokens ?? 0
                     if tokens == 0 {
-                        // Streaming responses often omit usage; estimate so the
-                        // message still shows a token count and rate.
-                        tokens = Self.estimateTokens(text)
+                        // Streaming responses often omit usage; fall back to the
+                        // accumulated fraction-weighted estimate so the message
+                        // still shows a token count and rate.
+                        tokens = Int(decodeMeter.totalTokens.rounded())
                         if tokens > 0 {
-                            messages[assistantIndex].usage = ChatUsage(promptTokens: 0, completionTokens: tokens)
+                            message.usage = ChatUsage(promptTokens: 0, completionTokens: tokens)
                         }
                     }
-                    if tokens > 0, elapsed > 0 {
-                        messages[assistantIndex].tokensPerSecond = Double(tokens) / elapsed
+                    // 分母取「首分片 → 末分片」，不再把 TTFT / prefill 混进
+                    // decode 时长：旧口径让消息下方的总平均天生比直播条低一大截，
+                    // 两个数字看起来像彼此矛盾。
+                    if tokens > 0, decodeMeter.decodingSeconds > 0 {
+                        message.tokensPerSecond = Double(tokens) / decodeMeter.decodingSeconds
+                    }
+                    // 收尾时把 LIVE 读数落在最终平均上，而不是瞬间清空。
+                    if let finalRate = message.tokensPerSecond, finalRate > 0 {
+                        liveDecodeRate = finalRate
+                        generationEndedAt = Date()
                     }
                 }
             case .failure(let error):
-                if assistantIndex < messages.count, messages[assistantIndex].content.isEmpty {
-                    messages[assistantIndex].content = "出错：\(error.message)"
+                self.updateStreamingMessage { message in
+                    if message.content.isEmpty {
+                        message.content = "出错：\(error.message)"
+                    }
                 }
                 if !isCancellation(error) { notice = error.message }
             }
-            if assistantIndex < messages.count {
-                messages[assistantIndex].streaming = false
-            }
+            updateStreamingMessage { $0.streaming = false }
             generating = false
             emitStream(.end)
             conversation.save(messages)
@@ -1565,18 +1631,9 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// 与网关共用 Kit 里的同一套估算，避免两个页面对同一段文本给出不同 token 数。
     static func estimateTokens(_ text: String) -> Int {
-        var cjk = 0
-        var other = 0
-        for scalar in text.unicodeScalars {
-            switch scalar.value {
-            case 0x3000...0x30FF, 0x3400...0x9FFF, 0xAC00...0xD7AF, 0xF900...0xFAFF:
-                cjk += 1
-            default:
-                other += 1
-            }
-        }
-        return cjk + other / 4
+        TokenEstimator.estimate(text)
     }
 
     private func isCancellation(_ error: ChatError) -> Bool {
@@ -2165,6 +2222,30 @@ final class AppState: ObservableObject {
             return
         }
         downloadModel(task.model, engine: task.engine)
+    }
+
+    // MARK: termination
+
+    private var terminatingDownloadPid: Int32?
+
+    /// Quit-time cleanup that is not engine lifecycle. The downloader is a child
+    /// process too, and an orphaned one keeps pulling gigabytes to disk with no
+    /// window left to stop it from.
+    func prepareForTermination() {
+        gateway.stop()
+        guard let process = downloadProcess, process.isRunning else { return }
+        terminatingDownloadPid = processPid(process)
+        append(log: "==> 退出应用，终止正在进行的下载", engine: downloadingEngine ?? activeEngine)
+        process.terminate()
+    }
+
+    /// SIGTERM was ignored, or the child is blocked inside a network read.
+    /// Partial files stay on disk, so the next launch resumes the transfer
+    /// instead of starting over.
+    func finishTermination() {
+        guard let pid = terminatingDownloadPid else { return }
+        terminatingDownloadPid = nil
+        kill(pid, SIGKILL)
     }
 
     /// Drop a task from the center. For a running transfer that means

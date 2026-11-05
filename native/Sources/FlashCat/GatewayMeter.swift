@@ -11,7 +11,7 @@ import FlashCatKit
 ///
 /// 线程模型：网关转发跑在非主 actor 上，打点密度又是每 250ms 一格，所以这是个
 /// 用 NSLock 保护的普通类，不是 @MainActor 的 ObservableObject。读侧
-/// （`WebViewShell.data(state:)` 打 payload）只做一次快照，不做增量订阅。
+/// （概览页的会话网格）只做一次取数，不做增量订阅。
 final class GatewayMeter: @unchecked Sendable {
     static let shared = GatewayMeter()
 

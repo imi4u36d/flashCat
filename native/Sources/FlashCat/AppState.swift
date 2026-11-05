@@ -92,7 +92,7 @@ final class AppState: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "chat.threadID") }
     }
 
-    /// 网页侧「最近对话」用它高亮当前线程；threadID 本身只用于落盘。
+    /// 侧栏「最近对话」用它高亮当前线程；threadID 本身只用于落盘。
     var currentThreadID: String { threadID }
 
     static func newThreadID() -> String {
@@ -101,20 +101,13 @@ final class AppState: ObservableObject {
     @Published var generating = false
     @Published var generationStatus: String?
 
-    /// Low-latency token pipe into the WebUI. WebBridge installs the sink; the
-    /// debounced full snapshot still carries the authoritative text, so losing
-    /// an event can never leave the conversation in a wrong state.
-    var streamEventSink: ((ChatStreamEvent) -> Void)?
-    /// Monotonic across generations — never reset. The snapshot publishes this
-    /// value as a watermark so the web view can ignore deltas it already has.
-    private var streamSeq = 0
+    /// The assistant message this generation owns, located by id.
     private var streamMessageID = ""
-    var currentStreamSeq: Int { streamSeq }
     /// Persistent banner for errors that need the reader's attention.
     @Published var notice: String?
     /// Transient bottom toast.
     @Published var toastMessage: String?
-    /// 侧边栏是否展开。折叠后网页侧留一条图标 rail，导航不消失；
+    /// 侧边栏是否展开。折叠后留一条图标 rail，导航不消失；
     /// 状态落盘到 UserDefaults 的 `sidebarVisible`，重启后沿用上次的样子。
     @Published var showsSidebar: Bool
     @Published var throughput: [ThroughputSample] = []
@@ -129,7 +122,7 @@ final class AppState: ObservableObject {
     /// 生成期间的连续时间低通速率估计。不再用「攒够 0.9 秒就清零」的窗口：
     /// 那种非重叠窗口让相邻读数互不相关，SSE 分片一抖数字就跟着跳。
     private var decodeMeter = DecodeRateMeter()
-    /// 曲线/快照的落点节奏，与估计器本身的更新频率解耦。
+    /// 曲线的落点节奏，与估计器本身的更新频率解耦。
     private var lastRateSampleAt: Date?
     /// 回答结束后保留一小段平滑读数，避免 LIVE 数字在收尾瞬间台阶式回落。
     private var generationEndedAt: Date?
@@ -154,7 +147,7 @@ final class AppState: ObservableObject {
     /// 本机已有的全部仓库：公共目录加各引擎自己的模型目录。比 `sharedRepos`
     /// 宽——引擎目录里手放的、或从引擎推荐里下的权重同样算「已经有了」，下载
     /// 弹窗据此把下载按钮换成「已下载」。跟着 `reloadModels` 走，不进两秒一次的
-    /// 快照热路径。
+    /// 每帧都会读的热路径。
     @Published private(set) var localModelRepos: [String] = []
     /// 手填仓库 id 的预检结果：输入停下后查一次 Hub，弹窗里显示体积/参数量/
     /// 文件清单/README 摘要，看清了再按下「开始下载」。和模型广场的 `hubDetail`
@@ -162,7 +155,7 @@ final class AppState: ObservableObject {
     @Published private(set) var repoProbe: HubModel?
     @Published private(set) var repoProbeLoading = false
     @Published private(set) var repoProbeError: String?
-    /// 当前这份预检结果属于哪个仓库。网页拿它对输入框：用户还在改 id 时，
+    /// 当前这份预检结果属于哪个仓库。界面拿它对输入框：用户还在改 id 时，
     /// 旧结果不能被当成新仓库的结果显示出来。
     @Published private(set) var repoProbeRepo = ""
     private var repoProbeTask: Task<Void, Never>?
@@ -296,7 +289,7 @@ final class AppState: ObservableObject {
 
     var selectedModelInfo: ModelInfo? { catalog.machineModel(selectedModel) }
 
-    /// 窗口是快照每一帧都要问的值，而取它要么重扫模型目录、要么读 config.json，
+    /// 窗口是界面每一帧都要问的值，而取它要么重扫模型目录、要么读 config.json，
     /// 这里跟 EngineModelStore.meta 用同一档 20s 缓存，避免把扫描塞进推送热路径。
     private var contextWindowCache: (key: String, value: Int?, at: Date)?
 
@@ -526,7 +519,7 @@ final class AppState: ObservableObject {
 
         // 接受率与吞吐同频采样。引擎给的是会话累计值：空闲时它不变，生成时才爬。
         // 因此只在「数值真的变了」或「解码读数正在动」的时候落点——否则每秒都会多
-        // 一个样本，快照 JSON 每秒都不同，概览页会被迫整页重绘。
+        // 一个样本，概览页的曲线与读数会无谓刷新。
         if let latest = stats?.draftAcceptance {
             let due = acceptance.last.map { now.timeIntervalSince($0.at) >= 0.9 } ?? true
             let changed = acceptance.last.map { abs($0.value - latest) > 0.0001 } ?? true
@@ -733,7 +726,7 @@ final class AppState: ObservableObject {
         // 授权表是真相，磁盘上的链接跟着它走：启动、下载完成、授权变更都从这里过。
         ModelSharing.synchronize()
         // 公共目录里已经有哪些仓库：模型广场用它标「已在本机」。跟着
-        // reloadModels 走（不进每两秒的快照），磁盘不会被反复扫。
+        // reloadModels 走（不挂在每两秒的指标轮询里），磁盘不会被反复扫。
         sharedRepos = ModelSharing.scan().map { $0.id }
         refreshLocalRepos()
         catalog = ModelCatalogService().load()
@@ -1453,21 +1446,6 @@ final class AppState: ObservableObject {
 
     // MARK: chat
 
-    private func emitStream(_ kind: ChatStreamEvent.Kind,
-                            channel: ChatStreamEvent.Channel? = nil,
-                            text: String? = nil,
-                            cancelled: Bool = false) {
-        guard let sink = streamEventSink, !streamMessageID.isEmpty else { return }
-        streamSeq += 1
-        sink(ChatStreamEvent(kind: kind,
-                             id: streamMessageID,
-                             seq: streamSeq,
-                             at: Date().timeIntervalSince1970 * 1000,
-                             channel: channel,
-                             text: text,
-                             cancelled: cancelled))
-    }
-
     /// Mutate the assistant message this generation owns, located by id.
     ///
     /// The stream used to hold an array index from the moment `send` started.
@@ -1498,7 +1476,6 @@ final class AppState: ObservableObject {
         messages.append(ChatMessage(role: "user", content: trimmed, model: selectedModel, createdAt: Date()))
         messages.append(ChatMessage(role: "assistant", content: "", model: selectedModel, createdAt: Date(), streaming: true))
         streamMessageID = messages[messages.count - 1].id.uuidString
-        emitStream(.begin)
         generating = true
         generationStatus = "生成中"
         liveDecodeRate = nil
@@ -1538,7 +1515,6 @@ final class AppState: ObservableObject {
                             message.content += piece
                         }
                         guard found else { return }
-                        self.emitStream(.delta, channel: .content, text: piece)
                         self.recordStreamDelta(piece)
                     }
                 },
@@ -1551,7 +1527,6 @@ final class AppState: ObservableObject {
                             }
                         }
                         guard found else { return }
-                        self.emitStream(.delta, channel: .reasoning, text: piece)
                         // 思考流同样计入本地测速：思考模型的输出大头在 reasoning，
                         // 不计的话思考阶段 liveDecodeRate 一直是 nil，对话页直播条
                         // 只能显示「— tok/s」。
@@ -1624,7 +1599,6 @@ final class AppState: ObservableObject {
             }
             updateStreamingMessage { $0.streaming = false }
             generating = false
-            emitStream(.end)
             conversation.save(messages)
             history.save(messages: messages, threadID: threadID)
             threads = history.load()
@@ -1642,9 +1616,7 @@ final class AppState: ObservableObject {
     }
 
     func cancelGeneration() {
-        let wasGenerating = generating
         chatClient.cancel()
-        if wasGenerating { emitStream(.end, cancelled: true) }
         generating = false
         generationStatus = "已取消"
         if let index = messages.lastIndex(where: { $0.streaming }) {
@@ -1950,7 +1922,7 @@ final class AppState: ObservableObject {
     }
 
     /// 这个仓库是不是已经在本机了（公共目录或任一引擎的模型目录）。
-    /// 判定放在这里而不是网页：置灰只是表现，真正的门在这儿。
+    /// 判定放在这里而不是视图：置灰只是表现，真正的门在这儿。
     func repoIsLocal(_ repo: String) -> Bool {
         localModelRepos.contains(ModelSharing.canonical(repo))
     }
@@ -2509,14 +2481,13 @@ final class AppState: ObservableObject {
 
     // MARK: sidebar
 
-    /// 侧栏折叠/展开动画的截止时刻。动画每帧都在重排与合成，期间任何快照推送
-    /// （Swift 序列化占用 App 主线程 → 拖慢 CA 提交；JSON.parse 占用 WebContent
-    /// 线程 → 直接吃掉动画帧）都要推迟到收口之后。不进 objectWillChange：
-    /// 它只是调度信息，触发推送就本末倒置了。
+    /// 侧栏折叠/展开动画的截止时刻。动画每帧都在重排与合成，期间任何整表刷新
+    /// （模型目录扫描、日志重排）都要推迟到收口之后，否则会吃掉 CA 提交的帧。
+    /// 不进 objectWillChange：它只是调度信息。
     var sidebarAnimUntil = Date.distantPast
 
     func toggleSidebar() {
-        // UI 整体在网页里：这里只翻状态，快照推给 WebUI 由它做 218px ↔ 84px
+        // 这里只翻状态，侧栏视图按它切换 216px 展开 / 76px 图标档
         // 的宽度过渡，Swift 侧不再需要驱动任何布局动画。
         showsSidebar.toggle()
         sidebarAnimUntil = Date().addingTimeInterval(0.35)

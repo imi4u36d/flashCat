@@ -8,18 +8,12 @@ SPLASH_VERSION ?= 1.4.0
 
 INSTALLED_APP := /Applications/flashCat.app
 
-.PHONY: all app install pkg dmg verify run uninstall splash-pack pack-index clean test webui-check webui-build
+.PHONY: all app install pkg dmg verify run uninstall splash-pack pack-index clean test
 
 all: app
 
-## Bundle the WebUI ES modules into a single classic script (esbuild, ~100ms).
-## file:// 下的 WebKit 拒绝外链 ES module（CORS），所以产物必须是经典脚本；
-## bundle.js 是提交进仓库的构建产物，CI 校验它与源码同步。
-webui-build:
-	npm run --silent build:webui
-
 ## Build the native SwiftUI macOS app, make the installers, and install into /Applications.
-app: webui-build
+app:
 	VERSION=$(VERSION) BUILD_NUMBER=$(BUILD_NUMBER) INSTALL=$(INSTALL) ./scripts/build-native-app.sh
 
 ## (Re)install an already built bundle into /Applications.
@@ -63,11 +57,6 @@ pack-index:
 ## Swift unit tests (kit + app shell). Fast, no UI.
 test:
 	cd native && swift test
-
-## Render every WebUI page in a real WKWebView and assert it paints.
-## Catches a blank page, a missing script and a stale snapshot fixture.
-webui-check: webui-build
-	cd native && swift run webui-render-check --webui Sources/FlashCat/WebUI
 
 ## Remove build output (the installed app and the installers are kept).
 clean:

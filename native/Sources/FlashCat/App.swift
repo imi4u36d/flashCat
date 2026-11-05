@@ -15,8 +15,8 @@ struct FlashCatApp: App {
 
     var body: some Scene {
         Window("flashCat", id: "main") {
-            // SwiftUI 只当壳：窗口内容（含启动页）全部是 WebUI 网页。
-            webConsole
+            // 窗口内容全部是 SwiftUI 原生视图（含启动页），没有网页层。
+            console
         }
         .defaultSize(width: MainWindowGeometry.defaultSize.width,
                      height: MainWindowGeometry.defaultSize.height)
@@ -62,15 +62,15 @@ struct FlashCatApp: App {
 
     }
 
-    /// WebUI 控制台壳：启动页、下载中心、引擎配置、确认弹窗都在网页里渲染，
-    /// 窗口内不再挂任何原生 sheet / alert。
-    private var webConsole: some View {
-        WebViewShell(state: state)
+    /// 原生控制台：六个页面、启动页、下载中心、引擎配置与确认弹窗都是
+    /// SwiftUI / AppKit 视图。
+    private var console: some View {
+        ConsoleView(state: state)
             .frame(minWidth: MainWindowGeometry.minimumSize.width,
                    minHeight: MainWindowGeometry.minimumSize.height)
             .overlay(MainWindow.bridge())
-            // 网页自己画标题栏那一行（红绿灯 + 侧栏折叠手柄）：不忽略安全区，
-            // WebView 会被压到 28pt 的原生 titlebar 下面，网页永远没法跟红绿灯对齐。
+            // 原生视图自己排标题栏那一行（红绿灯留白 + 侧栏折叠手柄），
+            // 因此要吃掉安全区，让内容从窗口最顶端开始画。
             .ignoresSafeArea()
     }
 }
@@ -118,7 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Both the canvas colour and the appearance follow the selected skin so
         // the strip above the sidebar matches instead of flashing dark.
         AppState.shared.theme.apply(to: target)
-        // The WebUI has a compact layout down to this point. Below it the
+        // The console has a compact layout down to this point. Below it the
         // navigation rail and one-column content no longer have a stable
         // readable width, so stop the window instead of letting it collapse
         // into a stack of clipped cards.

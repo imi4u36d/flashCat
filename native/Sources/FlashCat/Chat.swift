@@ -1,47 +1,5 @@
 import Foundation
 
-/// A low-latency streaming event for the in-app WebUI.
-///
-/// `WebSnapshot` is still the authoritative state, but it is debounced by
-/// 100 ms and serialises the whole conversation on every change. These events
-/// carry just the new token, so the web view can paint it on arrival instead
-/// of replaying a growing string. `seq` is monotonic for the app's lifetime;
-/// the snapshot publishes its current value as a watermark, which lets the
-/// renderer discard any delta the snapshot already contains.
-struct ChatStreamEvent {
-    enum Kind: String {
-        case begin
-        case delta
-        case end
-    }
-
-    enum Channel: String {
-        case reasoning
-        case content
-    }
-
-    var kind: Kind
-    var id: String
-    var seq: Int
-    var at: Double
-    var channel: Channel? = nil
-    var text: String? = nil
-    var cancelled: Bool = false
-
-    var dictionary: [String: Any] {
-        var item: [String: Any] = [
-            "type": kind.rawValue,
-            "id": id,
-            "seq": seq,
-            "at": at,
-        ]
-        if let channel = channel { item["channel"] = channel.rawValue }
-        if let text = text { item["text"] = text }
-        if cancelled { item["cancelled"] = true }
-        return item
-    }
-}
-
 struct ChatTurn {
     let role: String
     let content: String

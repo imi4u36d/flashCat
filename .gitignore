@@ -7,7 +7,6 @@ native/.build/
 xcuserdata/
 *.xcuserstate
 *.log
-node_modules/
 
 # Local-only data
 __pycache__/

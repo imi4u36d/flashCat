@@ -9,14 +9,13 @@ tags: [macos, swift, packaging]
 
 # flashCat 架构
 
-一个 SwiftPM 工作区 + 一组构建脚本。应用本体只有两层：可测试的无界面引擎核心（`FlashCatKit`）和包着它的 macOS 壳（`FlashCat`）。表现层是壳里的一张网页。
+一个 SwiftPM 工作区 + 一组构建脚本。应用本体只有两层：可测试的无界面引擎核心（`FlashCatKit`）和包着它的 macOS 壳（`FlashCat`）。表现层是壳里的六个 SwiftUI 页面，没有网页层。
 
 ## 拓扑
 
 ```mermaid
 graph TD
-  App["FlashCat（可执行壳）<br/>SwiftUI/AppKit + 状态"]
-  Web["WebUI（HTML/CSS/JS）<br/>六个页面"]
+  App["FlashCat（可执行壳）<br/>SwiftUI/AppKit + 状态 + 六个页面"]
   Kit["FlashCatKit（库）<br/>引擎核心，无 UI"]
   GW["Gateway<br/>双方言本地 API"]
   Packs["scripts/engines<br/>pack 构建与发布"]
@@ -25,7 +24,6 @@ graph TD
 
   App --> Kit
   Kit --> GW
-  App -. bridge 协议 .-> Web
   App --> Contract
   Packs --> Contract
   Contract --> Engine
@@ -34,14 +32,14 @@ graph TD
 
 | 模块 | 职责 | spec |
 | --- | --- | --- |
-| `FlashCat` | macOS 壳：全部可变状态、进程启停、模型库、对话、菜单栏、网页宿主 | [flashcat-app](native/Sources/FlashCat/SPEC.md) |
-| `WebUI` | 六个页面的表现层，以及与 Swift 之间的桥协议 | [flashcat-webui](native/Sources/FlashCat/WebUI-SPEC.md) |
+| `FlashCat` | macOS 壳：全部可变状态、进程启停、模型库、对话、菜单栏、六个原生页面 | [flashcat-app](native/Sources/FlashCat/SPEC.md) |
+| `UI` | 六个 SwiftUI 页面与控制台壳 | [flashcat-ui](native/Sources/FlashCat/UI-SPEC.md) |
 | `FlashCatKit` | 引擎身份/端口/能力、清单解码、状态解析、路由、包安装、启动阶段判定 | [flashcat-kit](native/Sources/FlashCatKit/SPEC.md) |
 | `FlashCatKit/Gateway` | 只监听本机的双方言 HTTP 网关 | [flashcat-gateway](native/Sources/FlashCatKit/Gateway/SPEC.md) |
 | `scripts/engines` | 把上游产物打成自包含运行时 pack，并生成发布索引 | [flashcat-engine-packs](scripts/engines/SPEC.md) |
 | `manifest.json` 契约 | pack 与应用之间唯一的接口 | [flashcat-manifest-contract](scripts/engines/manifest-template.md) |
 
-依赖边只有三条是真的：应用依赖 Kit（14 个文件 `import FlashCatKit`）；Kit 依赖系统框架，从不反向引用应用符号；网页与 Swift 之间只有那条序列化桥，没有其他耦合。
+依赖边只有两条是真的：应用依赖 Kit（多个文件 `import FlashCatKit`）；Kit 依赖系统框架，从不反向引用应用符号。界面与状态在同一进程里，不再有跨语言桥。
 
 ## 不变量
 
@@ -59,7 +57,7 @@ graph TD
 
 ## 决策
 
-**表现层是网页，SwiftUI 只当壳。** 视觉源就是 `native/Sources/FlashCat/WebUI/` 本身（Liquid Glass 方向），玻璃质感、浮层与动效在原生视图里难以 1:1 还原；早期的独立预览稿与同步脚本已移除。因此状态管线留在 Swift（Combine 全量快照推给网页），表现层整体是 `WebUI/` 里的 HTML/CSS/JS，通过 `WKWebView` 承载。代价是多一层跨语言桥，收益是视觉稿能被精确实现。详见 [flashcat-webui](native/Sources/FlashCat/WebUI-SPEC.md)。
+**表现层回到原生。** 1.3.0 曾把六页界面换成 `WKWebView` + HTML/CSS/JS，用一条 JSON 快照桥把 Swift 状态推给网页。代价是三套语言（Swift / JS / CSS）、一份必须与源码同步的打包产物、以及 snapshot 与流式增量两套文本管线。原生重写把这层删掉：页面直接订阅 `AppState`，动作直接调用方法，视觉统一在 `Design.swift` 的 token 与组件上。视觉方向是「仪器化」的 macOS 原生语言——纯色画布、描边分层、等宽读数——而不是网页玻璃拟态。详见 [flashcat-ui](native/Sources/FlashCat/UI-SPEC.md)。
 
 **引擎运行时永不随应用打包。** 三个原因共同决定：pack 是 GB 级（oMLX 一个就 590 MB，全塞进来应用会从 15 MB 变成数 GB，签名与分发一起变复杂）；引擎有自己的上游发布节奏，做成 pack 才能让引擎页比对上游、单独更新而不发新版应用；引擎是上游项目的成果，重分发二进制存在许可与合规顾虑，所以仓库只发构建脚本、让用户机器自己装。
 
@@ -80,5 +78,5 @@ graph TD
 
 ## 已知限制
 
-- **应用层的测试仍然偏薄。** 187 个用例在 `FlashCatKit`，`FlashCatTests` 只覆盖从壳层沉淀出来的纯函数（`LogStore` 的尾部切片、快照的数值清洗、进程树的存活探测）。`AppState` 本身（状态机、引擎启停、桥的分发逻辑）没有单元测试，拆分它的原因之一就是让它可测，见 `CONTRIBUTING.md`。
-- **`WebUI/` 的保障靠渲染检查，不是单元测试。** `native/Tools/WebUIRenderCheck` 用真 `WKWebView` 加载 `index.html`、推一份快照，断言六个页面在「引擎运行中」和「引擎停止」两种状态下都能画出来，且控制台无报错、浮层开合不留白屏。它抓得住「页面空白」「脚本漏打包」「fixture 与 `WebSnapshot.swift` 脱节」，抓不住像素级错位；逐帧动画类的断言需要可见窗口（锁屏 / 无人值守的 CI 会标为 skip 并说明原因）。
+- **应用层的测试仍然偏薄。** 187 个用例在 `FlashCatKit`，`FlashCatTests` 只覆盖从壳层沉淀出来的纯函数（`LogStore` 的尾部切片、快照的数值清洗、进程树的存活探测）。`AppState` 本身（状态机、引擎启停、页面的动作分发）没有单元测试，拆分它的原因之一就是让它可测，见 `CONTRIBUTING.md`。
+- **界面没有自动化测试。** 六个页面、弹窗与快捷键只能手工回归；`FlashCatTests` 覆盖的是壳层沉淀出来的纯函数。真要自动化，需要补一个能在无头环境里驱动 SwiftUI 的宿主，这不在当前范围内。

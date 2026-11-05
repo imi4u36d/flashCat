@@ -3,8 +3,8 @@ import AppKit
 import FlashCatKit
 
 /// Drives pack installs: loads the release index once, then runs one install at
-/// a time (they write into the same folder tree). Consumed by the WebUI bridge
-/// (WebViewShell) for the launch page and the engine page install buttons.
+/// a time (they write into the same folder tree). Driven by the engines page
+/// (LaunchPage and EnginesPage) for the first-run and update buttons.
 @MainActor
 final class EngineInstallCenter: ObservableObject {
     @Published private(set) var releases: [EngineID: [EnginePackRelease]] = [:]

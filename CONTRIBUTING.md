@@ -8,28 +8,20 @@ flashCat 把「装引擎、下模型、聊天、对外提供本地接口」收�
 | --- | --- |
 | macOS | 26.4+（splash 原生引擎的硬性下限，不是可兼容项） |
 | Xcode / Swift | 6.x 工具链 |
-| Node.js | 22+（仅用于 WebUI 打包工具链 esbuild；运行时零 npm 依赖） |
 | SwiftLint / swift-format | 可选，`brew install swiftlint swift-format` |
 
 ## 本地验证（提交前请全过）
 
 ```bash
-npm ci                            # 首次或 package-lock 更新后
 cd native && swift build          # 0 warning，CI 以 -warnings-as-errors 跑
 cd native && swift test           # 应用层 + Kit 用例，约 1 秒
-make webui-check                  # 重新打包 WebUI 并用真 WebKit 渲染全部六个页面
+make app                          # 组装 /Applications 里的 .app（或 INSTALL=0 只出 dist）
 ```
 
-改了 `native/Sources/FlashCat/WebUI/` 下的 JS 后必须重新 `make webui-build`（或直接 `make webui-check`，它会先打包）：`bundle.js` 是提交进仓库的构建产物，CI 会重建并 `git diff --exit-code` 校验新鲜度。
+界面全部在 `Sources/FlashCat/UI/`，直接跑 `swift run flashCat` 就能看；没有打包步骤，
+改了 Swift 文件重新编译即可。
 
 严格并发是一道**棘轮**，不是"零告警"：仓库当前带 33 条，`native/.strict-concurrency-baseline` 记着这个数，CI 只在数字变大时失败。修掉一条就把基线调小一条，这样它才会一路降到零而不会在第一天就红。
-
-改 WebUI 后额外跑：
-
-```bash
-node --check native/Sources/FlashCat/WebUI/app.js
-node scripts/check-chat-markdown.mjs
-```
 
 ## 架构规矩（评审会直接打回的那种）
 
@@ -55,7 +47,8 @@ node scripts/check-chat-markdown.mjs
 - 纯逻辑进 `FlashCatKit` 并配单元测试。**判据：能在没有窗口、没有引擎进程的情况下断言的行为，就不该写在 `AppState` 里。**
 - 修 bug 请带一条能复现它的用例。解析类问题尤其如此——`StatusParserTests` 里每个用例都对应过一次线上错误。
 - 涉及真实归档的安装流程用 `PackInstallIntegrationTests` 的跳过机制，不要在 CI 里拉 GB 级文件。
-- **改 `WebUI/` 必须跑 `make webui-check`。** 它在真 WebKit 里渲染六个页面并断言：页面非空、脚本齐全、没有控制台报错、浮层开合不留白屏。改了 `WebSnapshot.swift` 的字段，同一个提交里要更新 `native/Tools/WebUIRenderCheck/Fixtures/snapshot.json`——检查项 `fixture/covers read fields` 会告诉你漏了哪个。细节见该目录的 README。
+- **界面改动先读 `native/Sources/FlashCat/UI-SPEC.md`。** 六个页面只读 `AppState`、只调它的方法；视图里不直接发网络请求、不读写文件、不绕过 `AppState` 改 `EngineStore`。新增页面沿用 `Design.swift` 的 `Native` token 与组件，不引入第二套色板或圆角。
+- **不许把网页层加回来。** 没有 `WKWebView`、没有内嵌 HTML/JS、没有跨语言快照桥。需要富文本就用 `MarkdownView`，需要图表就用 Swift Charts。
 
 ## 提交
 

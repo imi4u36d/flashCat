@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+### 变更
+- **界面回到纯原生。** 六个页面、启动页、下载中心、模型广场、引擎配置与对话参数全部改为 SwiftUI / AppKit 视图（`Sources/FlashCat/UI/`），直接读写 `AppState`：没有 `WKWebView`、没有快照桥、没有 token 级 IPC。删除了 `WebViewShell.swift`（1350 行）、整个 `WebUI/`（14 个 ES module + 8 份 CSS + `bundle.js`，约 2.8 万行）、esbuild 工具链（`package.json` / `package-lock.json` / `node_modules`）、`webui-render-check` 测试台与 CI 的 webui job。
+- 视觉方向改为 macOS 原生「仪器化」语言：纯色画布 + 1px 描边分层、等宽读数、系统控件；设计 token 与组件全部来自 `Design.swift` / `Theme.swift`。
+- 新增 `native/Sources/FlashCat/UI-SPEC.md`，替换 `WebUI-SPEC.md`；`architecture.md`、`SPEC.md`、`CONTRIBUTING.md`、`README.md` 同步改写。
+- 安装脚本不再把上一版留在 `/Applications`：备份移到 `~/Library/Application Support/flashCat/backups`，并注销 staging/备份的 LaunchServices 记录，避免同 bundle id 的旧构建被 Spotlight / Dock 打开。
+
 ### 新增
 - WebUI 打包管线：14 个经典脚本改为 ES module（`main.js` 显式入口），esbuild 打包为单文件 `bundle.js`（`make webui-build`，CI 校验产物新鲜度）；JS 请求 14 → 1
 - `esc.js`：全局唯一的 HTML 转义实现（统一前 8 份副本语义不一，统一版补齐 `'` 转义）

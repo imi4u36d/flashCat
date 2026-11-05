@@ -48,28 +48,6 @@ jobs:
       - name: Test
         run: swift test
 
-  # The WebUI is the whole product surface and has no unit tests. This renders
-  # every page in a real WKWebView from a captured snapshot and fails on a blank
-  # page, a missing script, a console error or a fixture that drifted from
-  # WebSnapshot.swift. See native/Tools/WebUIRenderCheck/README.md.
-  webui:
-    runs-on: macos-26
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - name: bundle.js is committed and fresh
-        # bundle.js 是提交进仓库的构建产物（SwiftPM .copy 直接打包它），
-        # 源码改了却忘记重新打包会在这里被拦下。
-        run: |
-          npm ci
-          npm run --silent build:webui
-          git diff --exit-code -- native/Sources/FlashCat/WebUI/bundle.js
-      - name: Render every page
-        run: swift run webui-render-check --webui Sources/FlashCat/WebUI
-
   version-consistency:
     # The release that ships must agree with the tag that names it.
     runs-on: ubuntu-latest
@@ -94,7 +72,7 @@ jobs:
           fi
 
   # Advisory for now. Phase 2 of the roadmap turns these into hard gates once
-  # the baseline files exist and the WebUI has been bundled.
+  # the lint baseline files exist.
   lint:
     runs-on: macos-26
     continue-on-error: true

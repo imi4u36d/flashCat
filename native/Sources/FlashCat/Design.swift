@@ -4,7 +4,7 @@ import AppKit
 // MARK: - Palette
 //
 // 原生侧设计 token（菜单栏面板、原生浮层与 AppKit 控件）。
-// 主界面的视觉规范以 WebUI-SPEC.md 与 preview/liquid-glass 为准。
+// 主界面（UI-SPEC.md）的唯一视觉源；没有网页层，也没有第二套样式。
 // 画布退后，数据向前，状态即视觉 —— 页面底色是暖纸白（日）/ 暖石墨（夜），
 // 卡片是纯色面板 + 1px 毛发描边，数字是等宽大读数，状态色是页面里
 // 饱和度最高的颜色。品牌日出渐变只允许出现在三处（App 图标与侧栏 Logo、
@@ -71,10 +71,8 @@ enum Native {
     static let teal = Color.adaptive(dark: 0x40C8E0, light: 0x0E7490)
     static let gray = Color.adaptive(dark: 0x8A8175, light: 0x86868D)
 
-    // 面板填充：日间纯白、夜间暖石墨，玻璃渐变已废弃；
-    // glassTop/glassBottom 仅剩 ChatView 的两处旧调用点，取同一值即为纯色。
-    static let glassTop = Color.adaptive(dark: 0x1E1A15, light: 0xFFFFFF)
-    static let glassBottom = Color.adaptive(dark: 0x1E1A15, light: 0xFFFFFF)
+    // 面板填充：日间纯白、夜间暖石墨，玻璃渐变已废弃。
+    // glassTop/glassBottom 保留为兼容别名，取同一值即为纯色。
     static let glassEdgeTop = Color.adaptive(dark: 0x322B22, light: 0xE8E8EC)
     static let glassEdgeBottom = Color.adaptive(dark: 0x322B22, light: 0xE8E8EC)
     static let panelShadow = Color.adaptive(dark: 0x000000, light: 0x000000,

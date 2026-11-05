@@ -1,4 +1,5 @@
 import Foundation
+import FlashCatKit
 
 /// 网关侧的按请求打点。
 ///
@@ -14,7 +15,8 @@ import Foundation
 final class GatewayMeter: @unchecked Sendable {
     static let shared = GatewayMeter()
 
-    /// 采样桶宽度：250ms 一格，够算「最近 2 秒」的瞬时速率，也够画曲线。
+    /// 曲线桶宽度：250ms 一格。速率本身不再由这些桶计算（改用连续时间
+    /// 低通），桶只留给前端画历史曲线。
     private static let bucketWidth: TimeInterval = 0.25
     /// 每路保留 120 秒（480 格），45 秒曲线和 5 分钟曲线都够用。
     private static let ringSize = 480
@@ -29,11 +31,14 @@ final class GatewayMeter: @unchecked Sendable {
         let dialect: String
         let startedAt: Date
         var promptTokens: Int
-        var completionTokens: Int
+        /// 小数累计，避免逐片四舍五入把短分片抹掉；末帧 usage 会覆盖它。
+        var completionTokens: Double
         var firstTokenAt: Date?
         var finishedAt: Date?
         var failed: Bool
-        /// (绝对桶序号, 该桶生成的 token 数)，末尾元素是当前桶。
+        /// 连续时间低通速率估计，与应用内对话共用同一个实现。
+        var meter: DecodeRateMeter
+        /// (绝对桶序号, 该桶生成的 token 数)，只用于历史曲线。
         var ticks: [(index: Int, count: Double)]
     }
 
@@ -60,6 +65,7 @@ final class GatewayMeter: @unchecked Sendable {
                                 firstTokenAt: nil,
                                 finishedAt: nil,
                                 failed: false,
+                                meter: DecodeRateMeter(),
                                 ticks: []))
         if sessions.count > Self.sessionLimit {
             sessions.removeAll { $0.finishedAt != nil }
@@ -80,29 +86,24 @@ final class GatewayMeter: @unchecked Sendable {
         if failed { sessions[index].failed = true }
     }
 
-    /// 记下第一批 token 到达的时刻——预填充速度就是 `promptTokens / ttft`。
-    func markFirstToken(_ id: Int) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let index = sessions.firstIndex(where: { $0.id == id }),
-              sessions[index].firstTokenAt == nil else { return }
-        sessions[index].firstTokenAt = Date()
-    }
-
-    func addTokens(_ id: Int, _ count: Int) {
+    /// 喂一个流式分片。`count` 是小数权重的 token 估算（见
+    /// `TokenEstimator.fractional`），一两个字符的分片也会留下贡献，
+    /// 计数不再由 SSE 切分方式决定。首 token 时刻在这里顺带记下，
+    /// 预填充速度就是 `promptTokens / ttft`。
+    func addTokens(_ id: Int, _ count: Double, at now: Date = Date()) {
         guard count > 0 else { return }
-        let now = Date()
         lock.lock()
         defer { lock.unlock() }
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
         if sessions[index].firstTokenAt == nil { sessions[index].firstTokenAt = now }
         sessions[index].completionTokens += count
+        sessions[index].meter.add(tokens: count, at: now)
         let slot = Int(now.timeIntervalSinceReferenceDate / Self.bucketWidth)
         if var last = sessions[index].ticks.last, last.index == slot {
-            last.count += Double(count)
+            last.count += count
             sessions[index].ticks[sessions[index].ticks.count - 1] = last
         } else {
-            sessions[index].ticks.append((slot, Double(count)))
+            sessions[index].ticks.append((slot, count))
             if sessions[index].ticks.count > Self.ringSize {
                 sessions[index].ticks.removeFirst(sessions[index].ticks.count - Self.ringSize)
             }
@@ -122,7 +123,7 @@ final class GatewayMeter: @unchecked Sendable {
                     if let value = delta[key] as? String { text += value }
                 }
                 if !text.isEmpty {
-                    addTokens(id, TokenEstimator.estimate(text))
+                    addTokens(id, TokenEstimator.fractional(text))
                 }
             }
         }
@@ -142,7 +143,7 @@ final class GatewayMeter: @unchecked Sendable {
                 if let value = message[key] as? String { text += value }
             }
         }
-        let tokens = TokenEstimator.estimate(text)
+        let tokens = TokenEstimator.fractional(text)
         if tokens > 0 { addTokens(id, tokens) }
         if let usage = object["usage"] as? [String: Any] { applyUsage(id, usage) }
         finish(id)
@@ -156,16 +157,12 @@ final class GatewayMeter: @unchecked Sendable {
         defer { lock.unlock() }
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
         if prompt > 0 { sessions[index].promptTokens = prompt }
-        // 引擎报的 completion_tokens 含思考 token，比流式估算更准；
-        // 只往上校正，避免最后一片把曲线拽回去。
-        if completion > sessions[index].completionTokens {
-            let extra = completion - sessions[index].completionTokens
-            let slot = Int(Date().timeIntervalSinceReferenceDate / Self.bucketWidth)
-            sessions[index].completionTokens = completion
-            if var last = sessions[index].ticks.last, last.index == slot {
-                last.count += Double(extra)
-                sessions[index].ticks[sessions[index].ticks.count - 1] = last
-            }
+        // 引擎报的 completion_tokens 含思考 token，比流式估算更准，所以用来
+        // 校正「一共吐了多少字」。但它绝不能回灌到速率估计或历史曲线里：
+        // 旧实现把差额一次性塞进当前 250ms 桶，末帧必然炸出一个尖峰，
+        // 而且只许往上校正，估算偏高时永远拉不回来。
+        if Double(completion) > sessions[index].completionTokens {
+            sessions[index].completionTokens = Double(completion)
         }
     }
 
@@ -184,17 +181,33 @@ final class GatewayMeter: @unchecked Sendable {
         return sessions.map { session in
             let elapsed = now.timeIntervalSince(session.startedAt)
             let ttft = session.firstTokenAt.map { $0.timeIntervalSince(session.startedAt) }
-            let rate = Self.rate(ticks: session.ticks, nowSlot: nowSlot, elapsed: elapsed)
+            // 活动请求读低通后的瞬时速率；已结束的请求改报全程平均，
+            // 否则 linger 的 6 秒里读数会一路衰减到 0，看起来像引擎卡死。
+            let rate = session.finishedAt == nil
+                ? session.meter.rate(at: now)
+                : session.meter.averageRate()
             let prefillRate: Double = {
                 guard let ttft, ttft > 0.05, session.promptTokens > 0 else { return 0 }
                 return Double(session.promptTokens) / ttft
             }()
             var bySlot: [Int: Double] = [:]
             for tick in session.ticks { bySlot[tick.index] = tick.count }
-            // 每格换算成 tok/s（250ms 的桶 ×4），前端直接按数值画曲线。
+            // 历史曲线：以每格为中心的 5 格三角加权，再换算成 tok/s。
+            // 原来直接 `count * 4`，一格 1 token 就是 4 tok/s 的硬台阶；
+            // 加权后相邻格共享样本，曲线不会因分片落在不同桶而锯齿化。
+            let weights: [Double] = [1, 2, 3, 2, 1]
             let history: [Double] = (0..<historyPoints).map { offset in
                 let slot = nowSlot - (historyPoints - 1 - offset)
-                return ((bySlot[slot] ?? 0) * 4 * 10).rounded() / 10
+                var numerator = 0.0
+                var denominator = 0.0
+                for (index, weight) in weights.enumerated() {
+                    let key = slot + index - 2
+                    guard key <= nowSlot else { continue }
+                    numerator += (bySlot[key] ?? 0) * weight
+                    denominator += weight
+                }
+                let value = denominator > 0 ? numerator / denominator * 4 : 0
+                return (value * 10).rounded() / 10
             }
             let state: String
             if session.finishedAt != nil {
@@ -212,55 +225,13 @@ final class GatewayMeter: @unchecked Sendable {
                 "elapsed": elapsed,
                 "ttft": ttft.map { $0 * 1000 } ?? NSNull(),
                 "promptTokens": session.promptTokens,
-                "completionTokens": session.completionTokens,
+                "completionTokens": Int(session.completionTokens.rounded()),
                 "decodeRate": rate,
                 "prefillRate": prefillRate,
-                "ctxTokens": session.promptTokens + session.completionTokens,
+                "ctxTokens": session.promptTokens + Int(session.completionTokens.rounded()),
                 "history": history,
             ] as [String: Any]
         }
     }
 
-    private static func rate(ticks: [(index: Int, count: Double)], nowSlot: Int, elapsed: TimeInterval) -> Double {
-        let window = min(2.0, max(elapsed, Self.bucketWidth))
-        let from = nowSlot - Int((window / Self.bucketWidth).rounded()) + 1
-        let sum = ticks.reduce(0.0) { $0 + ($1.index >= from ? $1.count : 0) }
-        return sum / window
-    }
-}
-
-/// 粗粒度 token 估算：中日韩字符按 1 token/字，其余按 4 字符/token。
-/// 只用于「还没拿到 usage 的那几秒」把曲线画出来，末帧的 usage 会覆盖它。
-enum TokenEstimator {
-    static func estimate(_ text: String) -> Int {
-        guard !text.isEmpty else { return 0 }
-        var cjk = 0
-        var other = 0
-        for scalar in text.unicodeScalars {
-            switch scalar.value {
-            case 0x2E80...0x9FFF, 0xF900...0xFAFF, 0x3000...0x303F, 0xFF00...0xFFEF:
-                cjk += 1
-            default:
-                other += 1
-            }
-        }
-        return cjk + (other + 3) / 4
-    }
-
-    /// 从 OpenAI 的 `messages` 里估出输入侧长度（含 system 和工具描述的量级）。
-    static func promptTokens(messages: Any?) -> Int {
-        guard let list = messages as? [[String: Any]] else { return 0 }
-        var total = 0
-        for message in list {
-            if let text = message["content"] as? String {
-                total += estimate(text)
-            } else if let parts = message["content"] as? [[String: Any]] {
-                for part in parts where (part["type"] as? String) == "text" {
-                    if let text = part["text"] as? String { total += estimate(text) }
-                }
-            }
-        }
-        // 每条消息的角色/分隔开销，量级参考 OpenAI 的 4 token/条。
-        return total + list.count * 4
-    }
 }

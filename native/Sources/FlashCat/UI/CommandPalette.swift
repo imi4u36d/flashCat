@@ -11,6 +11,7 @@ struct CommandPalette: View {
 
     @State private var query = ""
     @State private var selection = 0
+    @State private var keyMonitor: Any?
     @FocusState private var focused: Bool
 
     private var items: [CommandItem] {
@@ -47,9 +48,28 @@ struct CommandPalette: View {
             .frame(maxHeight: .infinity, alignment: .top)
         }
         .onExitCommand { dismiss() }
+        .background {
+            Button("") { dismiss() }
+                .keyboardShortcut(.cancelAction)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+        }
         .onAppear {
             focused = true
             selection = 0
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                if event.keyCode == 53 {
+                    dismiss()
+                    return nil
+                }
+                return event
+            }
+        }
+        .onDisappear {
+            if let keyMonitor {
+                NSEvent.removeMonitor(keyMonitor)
+            }
+            keyMonitor = nil
         }
         .onChange(of: query) { _, _ in selection = 0 }
     }

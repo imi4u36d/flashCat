@@ -2,6 +2,37 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本号的唯一来源是仓库根的 `VERSION` 文件。
 
+## [1.5.1] - 2026-11-05
+
+界面开始说两种语言，模型卡开始标量化。
+
+### 新增
+
+- **中英双语界面。** 全部界面文案收敛到 `Localizable.xcstrings`（435 条，简体中文为源语言、英文全覆盖），
+  跟随系统语言切换；菜单、弹窗、灵动岛、模型卡、引擎页、日志、toast 都走同一套 `L10n`。
+  `Info.plist` 声明 `zh-Hans` / `en`，构建时把 SwiftPM 资源包里的 `.lproj` 一并镜像进 app 的 `Resources`，
+  打包版与 `swift run` 都能取到词条。
+- **模型量化标识。** 模型卡新增 `QUANT` 一行：从文件名、仓库 id、assembly 的 `files` 与权重 `config.json`
+  识别 GGUF（`Q4_K_M` / `IQ3_S` / `Q2_0`）、MLX（`oQ4e` / `3 bpw`）、`8-bit`、`BF16` / `FP16`，
+  公共目录里的共享权重同样标出。量化不用再从仓库名里猜。
+- 模型卡标签去掉与 `QUANT` 重复的量词，避免同一个标签印两遍。
+
+### 修复
+
+- 灵动岛的通知分级改为在本地化之前按源文案判断，英文界面下 “failed / switching” 一类消息
+  也会归到错误 / 警告，而不是一律信息。
+- 格式化文案改用 `L10n.format`，插值后的字符串不再绕过翻译。
+
+### 工程
+
+- 新增 `LocalizationTests`（两种语言都随包发出、核心词条有英文、中文回退到源文案）
+  与 `ModelQuantizationTests`（GGUF / MLX / bit / 无量化名）。
+- `CFBundleDevelopmentRegion` 由 `zh_CN` 改为 `zh-Hans`，补 `CFBundleLocalizations`。
+
+### 文档
+
+- README 重写「亮点」与宗旨（优雅 · 流畅 · 高能），补上 1.5.1 介绍视频（无旁白版）。
+
 ## [1.5.0] - 2026-11-05
 
 首个纯原生界面的版本：界面从 WebView 换成 SwiftUI / AppKit，视觉改为 macOS 26 Liquid Glass，

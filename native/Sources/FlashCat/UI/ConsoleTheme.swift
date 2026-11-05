@@ -196,6 +196,41 @@ struct EngineColorButton: ButtonStyle {
     }
 }
 
+/// macOS 26 原生分段按钮组（Liquid Glass）。按钮组类控件统一走系统样式，
+/// 不再自绘胶囊，避免每个页面各有一套「选中态」。
+struct NativeSegmented<Value: Hashable>: View {
+    @Binding var selection: Value
+    var options: [Value]
+    var labels: [String]
+    var width: CGFloat? = nil
+
+    init(selection: Binding<Value>, options: [Value], labels: [String], width: CGFloat? = nil) {
+        self._selection = selection
+        self.options = options
+        self.labels = labels
+        self.width = width
+    }
+
+    init(selection: Binding<Value>, options: [(value: Value, label: String)], width: CGFloat? = nil) {
+        self._selection = selection
+        self.options = options.map(\.value)
+        self.labels = options.map(\.label)
+        self.width = width
+    }
+
+    var body: some View {
+        Picker("", selection: $selection) {
+            ForEach(Array(zip(options, labels)), id: \.0) { value, label in
+                Text(label).tag(value)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.regular)
+        .frame(width: width)
+    }
+}
+
 // MARK: - Small parts
 
 struct IconTile: View {

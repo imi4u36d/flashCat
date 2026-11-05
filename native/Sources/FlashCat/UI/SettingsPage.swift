@@ -48,9 +48,11 @@ struct SettingsPage: View {
     private var appearanceCard: some View {
         SettingsCard {
             SettingsRow(title: "外观", detail: "跟随系统或固定外观") {
-                segControl(options: AppAppearance.allCases.map { ($0.label, $0 == state.theme.mode) }) { index in
-                    state.theme.set(AppAppearance.allCases[index])
-                }
+                NativeSegmented(selection: Binding(
+                    get: { state.theme.mode },
+                    set: { state.theme.set($0) }),
+                    options: AppAppearance.allCases.map { ($0, $0.label) },
+                    width: 240)
             }
         }
     }
@@ -226,9 +228,11 @@ struct SettingsPage: View {
     private var thinkingCard: some View {
         SettingsCard {
             SettingsRow(title: "思考模式", detail: "回答前是否输出推理过程") {
-                segControl(options: ThinkingMode.allCases.map { ($0.label, $0 == state.settings.thinkingMode) }) { index in
-                    state.settings.setThinkingMode(ThinkingMode.allCases[index])
-                }
+                NativeSegmented(selection: Binding(
+                    get: { state.settings.thinkingMode },
+                    set: { state.settings.setThinkingMode($0) }),
+                    options: ThinkingMode.allCases.map { ($0, $0.label) },
+                    width: 210)
             }
             Divider().overlay(Console.insetStroke)
             SettingsRow(title: "默认模型", detail: state.selectedModel.isEmpty ? "未选择" : state.selectedModel) {
@@ -262,10 +266,12 @@ struct SettingsPage: View {
             }
             Divider().overlay(Console.insetStroke)
             SettingsRow(title: "思考等级", detail: "等级由当前引擎提供") {
-                segControl(options: ReasoningEffort.allCases.map { ($0.label, $0 == state.settings.reasoningEffort) }) { index in
-                    state.settings.setReasoningEffort(ReasoningEffort.allCases[index])
-                }
-                .disabled(state.settings.thinkingMode != .on)
+                NativeSegmented(selection: Binding(
+                    get: { state.settings.reasoningEffort },
+                    set: { state.settings.setReasoningEffort($0) }),
+                    options: ReasoningEffort.allCases.map { ($0, $0.label) },
+                    width: 330)
+                    .disabled(state.settings.thinkingMode != .on)
             }
         }
     }
@@ -328,32 +334,6 @@ struct SettingsPage: View {
 
     // MARK: Parts
 
-    private func segControl(options: [(String, Bool)], onSelect: @escaping (Int) -> Void) -> some View {
-        HStack(spacing: 2) {
-            ForEach(Array(options.enumerated()), id: \.offset) { index, option in
-                Button {
-                    withAnimation(Motion.quick) { onSelect(index) }
-                } label: {
-                    Text(option.0)
-                        .font(.system(size: 11.5, weight: option.1 ? .semibold : .regular))
-                        .foregroundStyle(option.1 ? Console.text : Console.secondary)
-                        .padding(.horizontal, 11)
-                        .frame(height: 26)
-                        .background {
-                            if option.1 {
-                                RoundedRectangle(cornerRadius: 7).fill(Console.cardStrong)
-                                    .shadow(color: Console.shadow.opacity(0.5), radius: 6, y: 1)
-                            }
-                        }
-                        .contentShape(RoundedRectangle(cornerRadius: 7))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(3)
-        .background(Capsule().fill(Console.inset))
-        .clipShape(Capsule())
-    }
 }
 
 // MARK: - Settings chrome

@@ -9,17 +9,18 @@ struct ModelsPage: View {
     @Binding var showingHub: Bool
     @Binding var showingDownloads: Bool
 
-    @State private var scope: EngineID?
+    @State private var scope: ModelScope = .all
     @State private var query = ""
     @State private var removeTarget: ModelLibraryEntry?
     @State private var device = DeviceProfile.current()
 
     private var entries: [ModelLibraryEntry] {
         let base: [ModelLibraryEntry]
-        if let scope {
-            base = state.libraryEntries(for: scope)
-        } else {
+        switch scope {
+        case .all:
             base = EngineCatalog.allIDs.flatMap { state.libraryEntries(for: $0) }
+        case .engine(let id):
+            base = state.libraryEntries(for: id)
         }
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !text.isEmpty else { return base }
@@ -56,7 +57,7 @@ struct ModelsPage: View {
             .padding(.bottom, 26)
         }
         .scrollIndicators(.never)
-        .sheet(isPresented: $showingHub) { HubSheet(state: state, engine: scope ?? engine) }
+        .sheet(isPresented: $showingHub) { HubSheet(state: state, engine: scope.engine ?? engine) }
         .sheet(isPresented: $showingDownloads) { DownloadCenterSheet(state: state) }
         .alert("删除 \(removeTarget?.model.shortName ?? "")？",
                isPresented: Binding(get: { removeTarget != nil },
@@ -75,13 +76,9 @@ struct ModelsPage: View {
 
     private var topBar: some View {
         HStack(spacing: 14) {
-            HStack(spacing: 2) {
-                scopeTab(nil, title: "全部")
-                ForEach(EngineCatalog.allIDs, id: \.self) { id in
-                    scopeTab(id, title: id.displayName)
-                }
-            }
-            .padding(4)
+            NativeSegmented(selection: $scope, options: [ModelScope.all] + EngineCatalog.allIDs.map { ModelScope.engine($0) },
+                            labels: ["全部"] + EngineCatalog.allIDs.map(\.displayName))
+                .frame(maxWidth: 560)
             .background(Capsule().fill(Console.card.opacity(0.72)))
             .overlay(Capsule().strokeBorder(Console.cardStroke, lineWidth: 0.8))
 
@@ -120,10 +117,11 @@ struct ModelsPage: View {
             .buttonStyle(.consoleSecondary)
 
             Button {
-                _ = EngineModelStore.adoptExistingWeights(scope ?? engine)
+                let target = scope.engine ?? engine
+                _ = EngineModelStore.adoptExistingWeights(target)
                 state.reloadModels()
                 Task { @MainActor in
-                    await state.engines?.controller(scope ?? engine)?.rescanModels()
+                    await state.engines?.controller(target)?.rescanModels()
                     state.reloadModels()
                 }
             } label: {
@@ -137,27 +135,6 @@ struct ModelsPage: View {
             .buttonStyle(.plain)
             .help("重新扫描")
         }
-    }
-
-    private func scopeTab(_ id: EngineID?, title: String) -> some View {
-        let active = scope == id
-        return Button {
-            withAnimation(Motion.quick) { scope = id }
-        } label: {
-            Text(title)
-                .font(.system(size: 12.5, weight: active ? .semibold : .regular))
-                .foregroundStyle(active ? Console.text : Console.secondary)
-                .padding(.horizontal, 14)
-                .frame(height: 28)
-                .background {
-                    if active {
-                        Capsule().fill(Console.cardStrong)
-                            .shadow(color: Console.shadow.opacity(0.6), radius: 8, y: 2)
-                    }
-                }
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
     }
 
     private func isSelected(_ entry: ModelLibraryEntry) -> Bool {
@@ -402,5 +379,16 @@ private struct ModelCard: View {
             .buttonStyle(.consoleSecondary)
             .disabled(state.downloadingModel != nil)
         }
+    }
+}
+
+
+enum ModelScope: Hashable {
+    case all
+    case engine(EngineID)
+
+    var engine: EngineID? {
+        if case .engine(let id) = self { return id }
+        return nil
     }
 }

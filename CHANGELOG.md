@@ -23,6 +23,9 @@
 - 动效统一到 `Motion`（140/220ms + 轻弹簧），并服从 reduce-motion；持久化的深色外观在启动时即时生效。
 
 ### 变更
+- 按钮组改用 macOS 26 原生分段控件（Liquid Glass）：模型页引擎切换、日志级别过滤、
+  设置页的外观 / 思考模式 / 思考等级；新增 `NativeSegmented` 统一封装。
+
 - **界面回到纯原生。** 六个页面、启动页、下载中心、模型广场、引擎配置与对话参数全部改为 SwiftUI / AppKit 视图（`Sources/FlashCat/UI/`），直接读写 `AppState`：没有 `WKWebView`、没有快照桥、没有 token 级 IPC。删除了 `WebViewShell.swift`（1350 行）、整个 `WebUI/`（14 个 ES module + 8 份 CSS + `bundle.js`，约 2.8 万行）、esbuild 工具链（`package.json` / `package-lock.json` / `node_modules`）、`webui-render-check` 测试台与 CI 的 webui job。
 - 视觉方向改为 macOS 原生「仪器化」语言：纯色画布 + 1px 描边分层、等宽读数、系统控件；设计 token 与组件全部来自 `Design.swift` / `Theme.swift`。
 - 新增 `native/Sources/FlashCat/UI-SPEC.md`，替换 `WebUI-SPEC.md`；`architecture.md`、`SPEC.md`、`CONTRIBUTING.md`、`README.md` 同步改写。

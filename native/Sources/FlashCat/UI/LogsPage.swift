@@ -31,13 +31,10 @@ struct LogsPage: View {
 
     private var topBar: some View {
         HStack(spacing: 14) {
-            HStack(spacing: 2) {
-                filterTab(.all)
-                filterTab(.info)
-                filterTab(.warning)
-                filterTab(.error)
-            }
-            .padding(4)
+            NativeSegmented(selection: $level, options: LogsFilter.allCases.map { item in
+                (item, "\(item.label) \((paused ? frozen : state.logs).filter { item.matches($0.level) }.count)")
+            })
+            .frame(width: 330)
             .background(Capsule().fill(Console.card.opacity(0.72)))
             .overlay(Capsule().strokeBorder(Console.cardStroke, lineWidth: 0.8))
 
@@ -122,33 +119,6 @@ struct LogsPage: View {
             .buttonStyle(.plain)
             .help("清空日志")
         }
-    }
-
-    private func filterTab(_ item: LogsFilter) -> some View {
-        let active = level == item
-        let count = (paused ? frozen : state.logs).filter { item.matches($0.level) }.count
-        return Button {
-            withAnimation(Motion.quick) { level = item }
-        } label: {
-            HStack(spacing: 5) {
-                Text(item.label)
-                    .font(.system(size: 12, weight: active ? .semibold : .regular))
-                Text(verbatim: "\(count)")
-                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Console.tertiary)
-            }
-            .foregroundStyle(active ? Console.text : Console.secondary)
-            .padding(.horizontal, 12)
-            .frame(height: 28)
-            .background {
-                if active {
-                    Capsule().fill(Console.cardStrong)
-                        .shadow(color: Console.shadow.opacity(0.6), radius: 8, y: 2)
-                }
-            }
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
     }
 
     private var console: some View {

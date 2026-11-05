@@ -46,6 +46,12 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 - **动效。** `Motion.quick` 140ms 用于 hover/press，`Motion.standard` 220ms 用于页面与卡片状态，
   `Motion.entrance` 轻弹簧用于消息与 toast；`accessibilityReduceMotion` 下关闭位移动画。
 
+## 控件
+
+- 互斥按钮组（引擎切换、日志级别、外观、思考模式与等级）统一使用 macOS 26 原生
+  `Picker(.segmented)`（`NativeSegmented`），由系统绘制 Liquid Glass 选中态；
+  其余主/次按钮仍用 `ConsolePillStyle` 以贴合 WebUI 的胶囊形。
+
 ## 快捷键
 
 | 键 | 动作 |

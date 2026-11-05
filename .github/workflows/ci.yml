@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: native
+
+jobs:
+  # Hard gate. These three must stay green from now on.
+  build-and-test:
+    # Must be >= the floor in native/Package.swift (`platforms: [.macOS("26.4")]`).
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: swift --version
+
+      - name: Build (warnings are errors)
+        run: swift build -Xswiftc -warnings-as-errors
+
+      # A ratchet, not a zero-tolerance check: the codebase carries 33
+      # concurrency warnings today, so asserting "no warnings" would make this
+      # job red on its first run and teach everyone to ignore CI. It fails only
+      # when the count goes *up*; lowering the baseline as they are fixed is how
+      # this reaches zero.
+      - name: Strict concurrency must not regress
+        run: |
+          set -o pipefail
+          swift build -Xswiftc -strict-concurrency=complete 2>&1 \
+            | sed -E 's/\x1b\[[0-9;]*m//g' | tee /tmp/concurrency.log
+          baseline="$(cat .strict-concurrency-baseline)"
+          count="$(grep -oE '\.swift:[0-9]+:[0-9]+: warning:' /tmp/concurrency.log | sort -u | wc -l | tr -d ' ')"
+          echo "strict-concurrency warnings: $count (baseline $baseline)"
+          if [ "$count" -gt "$baseline" ]; then
+            echo "::error::strict-concurrency warnings rose to $count (baseline $baseline)"
+            exit 1
+          fi
+
+      - name: Test
+        run: swift test
+
+  # The WebUI is the whole product surface and has no unit tests. This renders
+  # every page in a real WKWebView from a captured snapshot and fails on a blank
+  # page, a missing script, a console error or a fixture that drifted from
+  # WebSnapshot.swift. See native/Tools/WebUIRenderCheck/README.md.
+  webui:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: bundle.js is committed and fresh
+        # bundle.js 是提交进仓库的构建产物（SwiftPM .copy 直接打包它），
+        # 源码改了却忘记重新打包会在这里被拦下。
+        run: |
+          npm ci
+          npm run --silent build:webui
+          git diff --exit-code -- native/Sources/FlashCat/WebUI/bundle.js
+      - name: Render every page
+        run: swift run webui-render-check --webui Sources/FlashCat/WebUI
+
+  version-consistency:
+    # The release that ships must agree with the tag that names it.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: VERSION matches the tag
+        run: |
+          file_version="$(./scripts/version.sh)"
+          echo "VERSION=$file_version"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag_version="${GITHUB_REF#refs/tags/v}"
+            if [[ "$file_version" != "$tag_version" ]]; then
+              echo "::error::VERSION ($file_version) != tag ($tag_version)"
+              exit 1
+            fi
+          fi
+
+  # Advisory for now. Phase 2 of the roadmap turns these into hard gates once
+  # the baseline files exist and the WebUI has been bundled.
+  lint:
+    runs-on: macos-26
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install swiftlint
+      - name: SwiftLint
+        working-directory: native
+        run: |
+          if [ -f .swiftlint.baseline.json ]; then
+            swiftlint --baseline .swiftlint.baseline.json
+          else
+            swiftlint
+          fi
+
+  format:
+    runs-on: macos-26
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install swift-format
+      - name: swift-format
+        working-directory: native
+        run: swift-format lint --recursive Sources Tests

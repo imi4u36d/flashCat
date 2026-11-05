@@ -1,0 +1,97 @@
+# SwiftLint baseline for flashCat.
+#
+# Adoption policy: this config starts as a *baseline*, not a ceiling. Run
+#
+#     swiftlint --write-baseline .swiftlint.baseline.json
+#
+# once, commit the baseline, and let CI gate only newly introduced violations.
+# Then shrink the baseline month by month. Demanding 21k lines to be clean on
+# day one is how lint gets switched off.
+#
+# Thresholds below are set to what the code can realistically reach, not to
+# what it is now: AppState.swift is 2,511 lines and would fail every size rule,
+# which is recorded in docs/reviews/2026-11-04-architecture-review.md as P0-2.
+
+included:
+  - Sources
+  - Tests
+
+excluded:
+  - .build
+  - Sources/FlashCat/WebUI
+
+opt_in_rules:
+  - empty_count
+  - empty_string
+  - explicit_init
+  - first_where
+  - flatmap_over_map_reduce
+  - implicitly_unwrapped_optional
+  - last_where
+  - literal_expression_end_of_predicate
+  - modifier_order
+  - overridden_super_call
+  - redundant_nil_coalescing
+  - toggle_bool
+  - unneeded_parentheses_in_closure_argument
+  - yoda_condition
+
+disabled_rules:
+  - todo
+  - trailing_comma
+  - opening_brace
+
+line_length:
+  warning: 140
+  error: 200
+  ignores_comments: true
+  ignores_urls: true
+
+file_length:
+  warning: 600
+  error: 900
+  ignore_comment_only_lines: true
+
+type_body_length:
+  warning: 400
+  error: 700
+
+function_body_length:
+  warning: 60
+  error: 120
+
+cyclomatic_complexity:
+  warning: 15
+  error: 25
+
+function_parameter_count:
+  warning: 8
+  error: 12
+
+nesting:
+  type_level:
+    warning: 2
+  function_level:
+    warning: 3
+
+identifier_name:
+  min_length:
+    warning: 2
+  excluded:
+    - id
+    - x
+    - y
+
+type_name:
+  min_length: 3
+  max_length:
+    warning: 50
+    error: 60
+
+custom_rules:
+  no_window_assignment:
+    name: "No ad-hoc global injection"
+    regex: "window\\.[A-Za-z_$][A-Za-z0-9_$]*\\s*=(?!=)"
+    message: "禁止用 window.X = 注入全局；模块间通过显式 API 通信（见 P0-1）。"
+    severity: warning
+    included: "Sources/FlashCat/WebUI/.*\\.js"

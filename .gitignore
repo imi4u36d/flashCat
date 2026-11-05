@@ -7,6 +7,7 @@ native/.build/
 xcuserdata/
 *.xcuserstate
 *.log
+node_modules/
 
 # Local-only data
 __pycache__/
@@ -21,8 +22,10 @@ __pycache__/
 # Editor workspace settings
 .vscode/
 
-# Internal docs (visual spec, implementation notes, screenshots)
-docs/
+# Internal scratch (screenshots, one-off notes). Design docs under docs/reviews
+# and docs/specs ARE tracked: an open-source project's specs are an asset.
+docs/scratch/
+*.screenshot.png
 
 # Engine runtime packs (GB-scale build output; install via scripts/engines)
 vendor/engines/

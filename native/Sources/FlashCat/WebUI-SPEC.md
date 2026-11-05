@@ -80,6 +80,7 @@ parent: flashcat-app
 - **长回答的逐帧成本是 O(1)。** `FCChatMarkdown.sync()` 对「仅追加普通文字」的流直接把新增字符 `appendData` 到尾段落的文本节点；只有出现换行、围栏、强调、表格等结构字符才重新分块并重画尾块。光标作为尾段落最后一个元素被跳过，不会让快路径失效。
 - **高速流用「渐现」而不是限速来调和观感。** 每个块/行带稳定的 `data-md-line` 键（段落按行拆 `.md-line`、列表项、表格行、标题、围栏各占一行）；`sync()` 只给新键加 `is-revealing`，按 38ms/行错峰、最多 10 行。一帧塞进来的长行再切成最多 4 片、42ms/片，总延迟封顶 260ms。文字**当下就已经在 DOM 里并占据最终位置**，动画只改 opacity 与几像素位移，因此既没有积压，也不会在生成停止后继续播动画；短 delta（<6 字）直接落地不建 span。`animationend` 负责即时清理包装 span，900ms 兜底定时器与结束时的 `settleReveals()` 保证即使动画被吞掉文字也不会停在透明态。静态历史消息不带 `is-revealing`，打开旧会话不会整屏淡入；`prefers-reduced-motion` 下完全跳过。
 - **file:// 的 WebKit 缓存会跨版本存活。** WebUI 在包内的 URL 固定，旧磁盘缓存会让升级后仍跑上一版 CSS/JS。`WebBridge.init` 在加载 `index.html` 前清掉 disk/memory cache，完成后再 `loadFileURL`；只清缓存类型，不碰 cookie 与 localStorage（侧栏宽度、外观偏好继续保留）。
+- **file:// 会把脚本异常脱敏成 `Script error.`。** 每个外部脚本在 WKWebView 里都是独立的 opaque origin，未捕获异常经 `window.onerror` 只剩 `Script error.` + 空 filename + `:0:0`（Swift 的 `evaluateJavaScript` 注入同样没有源 URL），把它画成红色横幅既无信息又会盖住正常界面。因此 `live.js` 的错误层：脱敏错误只写 `window.__fcErrors` / `__fcErrorDetails` 与 console，页面上不弹任何东西；`__fc__.push/stream/setSidebar`、`__fcToast` 以及 live 自己注册的 DOM 回调用 `guardEntry()` 包住，异常在源头带真实 `Error.stack` 被记录，按签名限流后经 `jsError` 命令写成日志页的 `[WebUI]` ERROR 行（Swift 侧同样 60 秒去重，并 `NSLog`）。红色横幅只在首次渲染都失败、窗口可能白屏时保留。Swift 侧所有 `evaluateJavaScript` 先检查桥对象是否存在，避免页面加载竞态里出现 `window.__fc__ undefined` 异常。
 
 ## 已知限制
 

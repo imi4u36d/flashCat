@@ -2,6 +2,16 @@
 <html lang="zh-CN" data-theme="light">
 <head>
 <meta charset="utf-8">
+<!--
+  The console is a local, fully bundled page: it loads no remote resource and
+  makes no network request (Swift owns every fetch). Locking that down means an
+  injected snippet has no exfiltration path, and `connect-src 'none'` makes the
+  guarantee machine-checked rather than a convention.
+  `file:` is listed explicitly because WebKit treats each file:// document as
+  its own origin, so `'self'` alone does not cover the sibling assets.
+-->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'self' file: data:; script-src 'self' file:; style-src 'self' file: 'unsafe-inline'; img-src 'self' file: data:; font-src 'self' file: data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>flashCat</title>
@@ -132,19 +142,9 @@
              aria-label="选择模型"></section>
   </div>
 
-  <script src="icons.js"></script>
-  <script src="overview-components.js"></script>
-  <script src="page-components.js"></script>
-  <script src="model-brand.js"></script>
-  <script src="model-workspace.js"></script>
-  <script src="engine-workspace.js"></script>
-  <script src="chat-thinking.js"></script>
-  <script src="overlay-bounds.js"></script>
-  <script src="motion-guard.js"></script>
-  <script src="chat-markdown.js"></script>
-  <script src="chat-stream.js"></script>
-  <script src="segments.js"></script>
-  <script src="app.js"></script>
-  <script src="live.js"></script>
+  <!-- 构建产物：14 个 ES module 由 `make webui-build`（esbuild）打包成单文件。
+       不能改回多个 <script type="module">：file:// 下 WebKit 会因 CORS 拒绝
+       外链 module 脚本（已用 WKWebView 探针实证），必须打包成经典脚本。 -->
+  <script src="bundle.js"></script>
 </body>
 </html>

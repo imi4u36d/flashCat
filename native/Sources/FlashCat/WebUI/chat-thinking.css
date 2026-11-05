@@ -165,7 +165,7 @@
   z-index: 2;
   border-radius: 17px;
   pointer-events: none;
-  border-top: .75px solid rgba(255, 255, 255, .12);
+  border-top: .75px solid var(--line);
   mask: linear-gradient(#000, transparent 34%);
 }
 

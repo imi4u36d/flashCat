@@ -14,8 +14,8 @@
 }
 
 html[data-theme="light"] {
-  --fc-solid-card: #fdfeff;
-  --fc-solid-card-hover: #ffffff;
+  --fc-solid-card: #ffffff;
+  --fc-solid-card-hover: #f3f7fd;
   --fc-solid-sheet: #ffffff;
 }
 

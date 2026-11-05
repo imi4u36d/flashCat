@@ -1,15 +1,22 @@
-"use strict";
+import { esc } from "./esc.js";
+import { FCIcons } from "./icons.js";
+import { FCModelWorkspace } from "./model-workspace.js";
+import { FCSegments } from "./segments.js";
+import { FCOverlayBounds } from "./overlay-bounds.js";
+import { FCMotionGuard } from "./motion-guard.js";
+import { FCChatThinking } from "./chat-thinking.js";
+import {
+  FC_LIVE, closeOverlays, openOverlay, openCommand, copyText, drawFlowField, handleAction,
+  navigate, openDownloads, renderCommandResults, renderPage, runEngineInstall,
+  removeEngineRuntime, saveEngineConfig,
+  selectModel, sendChat, setTheme, startChatDownload, toggleEngine, toggleSetting, toggleSidebar,
+  updateFlowProbe,
+} from "./live.js";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
-const icon = (name, size = 16, cls = "") => window.FCIcons.svg(name, cls, size);
-const esc = (value) => String(value == null ? "" : value)
-  .replace(/&/g, "&amp;")
-  .replace(/</g, "&lt;")
-  .replace(/>/g, "&gt;")
-  .replace(/"/g, "&quot;");
-
-const NAV_ITEMS = [
+export const icon = (name, size = 16, cls = "") => FCIcons.svg(name, cls, size);
+export const NAV_ITEMS = [
   { id: "overview", label: "概览", hint: "状态与性能", icon: "dashboard", shortcut: "1" },
   { id: "chat", label: "对话", hint: "本地推理会话", icon: "message", shortcut: "2" },
   { id: "models", label: "模型", hint: "模型库与推荐", icon: "layers", shortcut: "3", badge: "3" },
@@ -18,7 +25,7 @@ const NAV_ITEMS = [
   { id: "settings", label: "设置", hint: "系统与外观", icon: "settings", shortcut: "6" },
 ];
 
-const MODELS = [
+export const MODELS = [
   {
     name: "Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
     repo: "ISTA-DASLab / Qwen3.8-Flash-Next",
@@ -156,7 +163,7 @@ const INITIAL_MESSAGES = [
   },
 ];
 
-const state = {
+export const state = {
   page: "overview",
   theme: localStorage.getItem("fc-preview-theme") || "light",
   sidebarCollapsed: localStorage.getItem("fc-preview-sidebar") === "rail",
@@ -212,18 +219,13 @@ let ambientAnimation = 0;
 let pointerX = window.innerWidth * 0.5;
 let pointerY = window.innerHeight * 0.28;
 let logSequence = 0;
-let chatTimer = 0;
-let chartRangeTimer = 0;
 let flowAnimation = 0;
-let flowState = null;
-let flowHistory = [];
-let sidebarAnimTimer = 0;
+export let flowState = null;
 let modelListAnimationToken = 0;
-let hasRenderedPage = false;
 let overlayCloseToken = 0;
 let overlayTrigger = null;
 
-const LOG_SEED = [
+export const LOG_SEED = [
   { level: "INFO", msg: "Ready · ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF · context 262K · http://127.0.0.1:8000" },
   { level: "INFO", msg: "Long requests keep their KV on the SSD cache: 262144 tokens of context (bound: model; window 262144, resident 262144)." },
   { level: "INFO", msg: "Kernel policy for GPU family 10 with 40 cores." },
@@ -241,45 +243,25 @@ const LOG_SEED = [
   { level: "INFO", msg: "Chat template patched to render later system messages in place." },
 ];
 
-function init() {
-  const hashPage = location.hash.replace(/^#/, "");
-  if (NAV_ITEMS.some((item) => item.id === hashPage)) state.page = hashPage;
-  document.documentElement.dataset.theme = resolvedTheme();
-  document.documentElement.style.setProperty("--sidebar-width", `${state.sidebarWidth}px`);
-  document.body.classList.toggle("sidebar-collapsed", state.sidebarCollapsed);
-  renderToolbarIcons();
-  renderNav();
-  renderPage(false);
-  updateEngineChrome();
-  bindGlobalEvents();
-  startClock();
-  startAmbient();
-  initFlowHistory();
-  startLiveTelemetry();
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    document.documentElement.classList.add("reduce-motion");
-  }
-}
-
-function resolvedTheme() {
+export function resolvedTheme() {
   if (state.theme === "system") {
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   }
   return state.theme;
 }
 
-function renderToolbarIcons() {
+export function renderToolbarIcons() {
   $("#downloadIcon").innerHTML = icon("download", 15);
   $("#commandIcon").innerHTML = icon("search", 18);
   updateThemeIcon();
 }
 
-function updateThemeIcon() {
+export function updateThemeIcon() {
   $("#themeIcon").innerHTML = icon(resolvedTheme() === "dark" ? "sun" : "moon", 15);
   $("#themeToggle").setAttribute("aria-label", resolvedTheme() === "dark" ? "切换到浅色外观" : "切换到深色外观");
 }
 
-function renderNav() {
+export function renderNav() {
   const nav = $("#primaryNav");
   nav.innerHTML = `<span class="nav-indicator" aria-hidden="true"></span>${NAV_ITEMS.map((item) => `
     <button type="button" class="nav-item ${state.page === item.id ? "active" : ""}"
@@ -292,7 +274,7 @@ function renderNav() {
   requestAnimationFrame(updateNavIndicator);
 }
 
-function updateNavIndicator() {
+export function updateNavIndicator() {
   const indicator = $(".nav-indicator");
   const active = $(".nav-item.active");
   if (!indicator || !active) return;
@@ -301,21 +283,8 @@ function updateNavIndicator() {
   indicator.style.height = `${active.offsetHeight}px`;
 }
 
-function navigate(page, options = {}) {
-  if (!NAV_ITEMS.some((item) => item.id === page)) return;
-  if (!options.force && state.page === page) {
-    $("#mainContent").scrollTo({ top: 0, behavior: "smooth" });
-    return;
-  }
-  closeOverlays();
-  state.page = page;
-  syncNavActive();
-  $("#mainContent").scrollTop = 0;
-  renderPage(!options.immediate);
-  history.replaceState(null, "", `#${page}`);
-}
 
-function syncNavActive() {
+export function syncNavActive() {
   $$(".nav-item").forEach((item) => {
     const active = item.dataset.page === state.page;
     item.classList.toggle("active", active);
@@ -324,750 +293,45 @@ function syncNavActive() {
   requestAnimationFrame(updateNavIndicator);
 }
 
-function renderPage(animate = true, options = {}) {
-  const frame = $("#pageFrame");
-  if (!frame) return;
-  const firstRender = !hasRenderedPage;
-  const previousView = frame.dataset.view;
-  const scrollTop = $("#mainContent").scrollTop;
-  const focusState = captureFocusState(frame);
-  const commit = () => {
-    if (window.FCChatThinking) window.FCChatThinking.close({ restoreFocus: false });
-    stopFlowVisualization();
-    frame.classList.remove("is-leaving");
-    frame.dataset.view = state.page;
-    $("#mainContent").dataset.view = state.page;
-    const renderers = {
-      overview: renderOverview,
-      chat: () => window.FCPages.chat(state),
-      models: () => window.FCModelWorkspace.render(state, MODELS),
-      engines: () => window.FCEngineWorkspace.render(state),
-      logs: () => {
-        const lines = LOG_SEED.concat(generatedLogs());
-        const counts = Object.fromEntries(["全部", "提示", "警告", "错误"].map((filter) => [filter, logCount(filter, lines)]));
-        return window.FCPages.logs(state, logLinesHtml(lines), counts);
-      },
-      settings: () => window.FCPages.settings(state),
-    };
-    frame.innerHTML = (renderers[state.page] || renderOverview)();
-    if (state.page === "chat") scrollChatToBottom(false);
-    if (state.page === "overview") {
-      requestAnimationFrame(() => {
-        inspectChartSegment();
-        startFlowVisualization();
-      });
-    }
-    if (state.page === "models") {
-      requestAnimationFrame(updateEngineTabIndicator);
-    }
-    requestAnimationFrame(updateSlidingSegments);
-    if (previousView === state.page) {
-      $("#mainContent").scrollTop = scrollTop;
-    }
-    restoreFocusState(focusState);
-    hasRenderedPage = true;
-  };
-  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  // instant：立刻换 DOM，不要页面级过渡 —— 引擎配置面板要自己演左栏收窄，
-  // 套一层 view transition 会变成新旧两套布局的叠影。
-  if (options.instant) {
-    commit();
-  } else if (animate && !reduceMotion && document.startViewTransition) {
-    document.startViewTransition(commit);
-  } else if (!animate && !firstRender && !reduceMotion && window.FCMotionGuard) {
-    window.FCMotionGuard.fadeSwap(frame, commit, {
-      durationOut: 70,
-      durationIn: 150,
-      distance: 2,
-    });
-  } else {
-    commit();
-    if (!firstRender && !reduceMotion) {
-      frame.animate(
-        [{ opacity: .82, transform: "translateY(2px)" }, { opacity: 1, transform: "none" }],
-        { duration: animate ? 220 : 160, easing: "cubic-bezier(.2,.8,.2,1)" }
-      );
-    }
-  }
-}
-
-function captureFocusState(root) {
-  const active = document.activeElement;
-  if (!active || active === document.body || !root.contains(active)) return null;
-  const attributes = [
-    "data-setting-toggle",
-    "data-engine-toggle",
-    "data-appearance",
-    "data-model-filter",
-    "data-page",
-    "data-action",
-    "id",
-  ];
-  for (const attribute of attributes) {
-    const value = active.getAttribute(attribute);
-    if (!value) continue;
-    return {
-      selector: `[${attribute}="${cssEscape(value)}"]`,
-      start: active.selectionStart,
-      end: active.selectionEnd,
-    };
-  }
-  return null;
-}
-
-function restoreFocusState(focusState) {
-  if (!focusState) return;
-  requestAnimationFrame(() => {
-    const target = $(focusState.selector);
-    if (!target || target.disabled) return;
-    target.focus({ preventScroll: true });
-    if (
-      typeof focusState.start === "number" &&
-      typeof target.setSelectionRange === "function"
-    ) {
-      target.setSelectionRange(focusState.start, focusState.end);
-    }
-  });
-}
-
-function pageHeader(title, subtitle, actions = "") {
-  return `
-    <header class="page-header">
-      <div>
-        <h1 class="page-title">${esc(title)}</h1>
-        <p class="page-subtitle">${esc(subtitle)}</p>
-      </div>
-      <div class="page-actions">${actions}</div>
-    </header>`;
-}
-
-function renderOverviewLegacy() {
-  const rate = state.engineRunning ? 104.0 + Math.sin(state.metricTick / 7) * 2.8 : 0;
-  return `
-    ${pageHeader("概览", "本地推理状态、性能与接口，在一个视图中保持同步。", `
-      <button class="button" type="button" data-action="refresh-overview">${icon("refresh", 14)}<span>刷新状态</span></button>
-      <button class="button" type="button" data-action="open-inspector">${icon("sliders", 14)}<span>运行参数</span></button>
-    `)}
-    <div class="overview-grid">
-      <section class="engine-hero">
-        <div class="engine-hero-main">
-          <div class="engine-kicker">
-            <span class="status-pill ${state.engineRunning ? "" : "stopped"}">
-              <i></i>${state.engineBusy ? "正在切换" : state.engineRunning ? "运行中" : "已停止"}
-            </span>
-            <span>${esc(state.engine)}</span>
-            <span class="engine-port">PORT :8000</span>
-          </div>
-          <div class="hero-model-row">
-            <button class="model-orb" type="button" data-action="model-menu" aria-label="切换模型">
-              ${icon("brain", 21)}
-            </button>
-            <div class="hero-model-copy">
-              <h2>${esc(shortModel(state.model))}</h2>
-              <p><b>${state.engineRunning ? "DFlash2 已加速" : "等待启动"}</b> · ${state.engineRunning ? "上下文 430 / 262K tokens" : "引擎未运行"}</p>
-            </div>
-          </div>
-          <div class="hero-actions">
-            <button class="button primary" type="button" data-action="model-menu">${icon("layers", 14)}<span>切换模型</span></button>
-            <button class="button ${state.engineRunning ? "danger" : ""}" type="button" data-action="toggle-engine">
-              ${icon(state.engineBusy ? "loader" : state.engineRunning ? "stop" : "play", 14)}
-              <span>${state.engineBusy ? "处理中" : state.engineRunning ? "停止引擎" : "启动引擎"}</span>
-            </button>
-            <div class="live-spark" data-live-spark aria-hidden="true">
-              ${Array.from({ length: 18 }, (_, i) => `<i style="height:${state.engineRunning ? 5 + ((i * 11) % 29) : 3}px; animation-delay:${i * 35}ms"></i>`).join("")}
-            </div>
-          </div>
-        </div>
-        <div class="engine-actions">
-          <div class="engine-actions-top">
-            <button class="glass-icon-btn" type="button" data-action="refresh-overview" aria-label="重启引擎" title="重启引擎">${icon("refresh", 15)}</button>
-            <button class="glass-icon-btn" type="button" data-action="engine-config" aria-label="引擎配置" title="引擎配置">${icon("sliders", 15)}</button>
-          </div>
-          <button class="engine-dial" type="button" data-action="toggle-engine" aria-label="${state.engineRunning ? "停止" : "启动"}引擎">
-            <span class="engine-dial-inner">
-              <strong>${state.engineRunning ? rate.toFixed(1) : "—"}</strong>
-              <span>TOK / SEC</span>
-            </span>
-          </button>
-        </div>
-      </section>
-
-      <div class="metrics-grid">
-        ${metricCard("gauge", "解码速度", "LIVE", state.engineRunning ? rate.toFixed(1) : "—", "tok/s", state.engineRunning ? "均值 98.7 tok/s · 最近 45 秒" : "启动引擎后显示")}
-        ${metricCard("timer", "首字延迟", "TTFT", state.engineRunning ? "131" : "—", "ms", "最近请求 · 正常")}
-        ${metricCard("arrowUp", "预填充", "PREFILL", state.engineRunning ? "1,370" : "—", "tok/s", "引擎采样值")}
-        ${metricCard("hardDrive", "内存压力", "MEM", state.engineRunning ? "51" : "—", "%", state.engineRunning ? "65.5 GB / 128 GB" : "空闲")}
-      </div>
-
-      <section class="panel throughput-card">
-        <header class="panel-head">
-          <div>
-            <div class="panel-title">Token 流</div>
-            <div class="panel-caption">5 条实时请求流 · 每颗粒子是一次解码</div>
-          </div>
-          <div class="spacer"></div>
-          <span class="flow-live-readout"><b id="flowLiveValue">${state.engineRunning ? rate.toFixed(1) : "—"}</b><small>tok/s</small></span>
-          <div class="segmented" data-chart-range>
-            <span class="segment-indicator"></span>
-            ${["45 秒", "5 分钟", "全部"].map((range) => `<button type="button" class="${state.chartRange === range ? "active" : ""}" data-range="${range}">${range}</button>`).join("")}
-          </div>
-        </header>
-        <div class="flow-stage" id="flowStage">
-          <canvas id="flowCanvas" aria-label="实时 Token 流可视化"></canvas>
-          <div class="flow-stage-label">
-            <span class="flow-live-dot"></span>
-            <span id="flowStateLabel">LIVE · ${state.engineRunning ? "DECODE" : "IDLE"}</span>
-          </div>
-          <button class="flow-freeze" type="button" data-flow-freeze title="冻结画面以检查瞬时值">
-            ${icon("pause", 11)}<span>冻结</span>
-          </button>
-          <div class="flow-cursor" id="flowCursor" aria-hidden="true"></div>
-          <div class="flow-tooltip" id="flowTooltip" aria-hidden="true">
-            <span>PROBE</span>
-            <strong>— tok/s</strong>
-            <small>— tokens</small>
-          </div>
-          <div class="flow-axis" aria-hidden="true">
-            <span>-45s</span><span>-30s</span><span>-15s</span><span>NOW</span>
-          </div>
-        </div>
-        <footer class="chart-foot">
-          <span>${state.engineRunning ? "流宽表示瞬时解码速度，亮度表示最近活动" : "启动引擎后，请求会从左侧涌入"}</span>
-          <span class="chart-legend"><span><i></i>Splash</span><span><i class="node"></i>外部网关</span></span>
-        </footer>
-      </section>
-
-      <section class="panel api-panel">
-        <header class="panel-head">
-          <div>
-            <div class="panel-title">API 网关</div>
-            <div class="panel-caption">固定地址 · 双协议同时提供</div>
-          </div>
-          <div class="spacer"></div>
-          <span class="status-pill" style="height:21px;padding:0 7px;font-size:8px"><i></i>ONLINE</span>
-        </header>
-        <div class="api-body">
-          ${endpoint("openai", "OpenAI", "http://127.0.0.1:9000/v1")}
-          ${endpoint("claude", "Claude", "http://127.0.0.1:9000")}
-          <p class="api-note">${icon("network", 14)}<span>客户端只需固定这个地址。切换引擎、修改端口都不会影响外部配置。</span></p>
-        </div>
-      </section>
-
-      <div class="request-strip">
-        ${requestPill("完成", "#1842 · OpenAI", "刚刚 · Qwen3.8 27B", "87.4")}
-        ${requestPill("解码", "#1843 · Claude", "0.8s · Qwen3.8 27B", "104.0")}
-        ${requestPill("完成", "#1841 · OpenAI", "32s · Qwen3.8 27B", "96.2")}
-      </div>
-    </div>`;
-}
-
-function renderOverview() {
-  const rate = state.engineRunning ? 104.0 + Math.sin(state.metricTick / 7) * 2.8 : 0;
-  return window.FCWidgets.overview(state, rate);
-}
-
-function metricCard(iconName, label, tag, value, unit, hint) {
-  const visual = label === "解码速度" ? speedMatrix() : miniLineSvg();
-  return `
-    <article class="metric-card">
-      <div class="metric-top">
-        <span class="metric-label"><span class="metric-icon">${icon(iconName, 13)}</span>${esc(label)}</span>
-        <span class="metric-tag">${esc(tag)}</span>
-      </div>
-      <div class="metric-value"><span data-count="${esc(value)}">${esc(value)}</span><small>${esc(unit)}</small></div>
-      <div class="metric-hint">${esc(hint)}</div>
-      <div class="${label === "解码速度" ? "speed-matrix" : "metric-mini-line"}" aria-hidden="true">${visual}</div>
-    </article>`;
-}
-
-function speedMatrix() {
-  return Array.from({ length: 96 }, (_, index) => {
-    const height = 20 + ((index * 37) % 68);
-    return `<i style="--h:${height}%;--d:${-((index % 17) * .11).toFixed(2)}s;--x:${(index % 8) * .015}s"></i>`;
-  }).join("");
-}
-
-function miniLineSvg() {
-  return `<svg viewBox="0 0 220 30" preserveAspectRatio="none">
-    <path d="M0 24 C18 22 25 15 43 18 S73 25 92 14 S124 20 143 11 S174 17 192 8 S208 7 220 5"
-      fill="none" stroke="var(--accent)" stroke-width="1.3"/>
-    <path d="M0 24 C18 22 25 15 43 18 S73 25 92 14 S124 20 143 11 S174 17 192 8 S208 7 220 5 L220 30 L0 30 Z"
-      fill="var(--accent)" opacity=".14"/>
-  </svg>`;
-}
-
-function chartSvg() {
-  const points = Array.from({ length: 55 }, (_, i) => {
-    const y = 50
-      + Math.sin(i * .31) * 9
-      + Math.sin(i * .12 + .4) * 15
-      - i * .25;
-    return [i / 54 * 800, y];
-  });
-  const line = points.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
-  const area = `${line} L800,132 L0,132 Z`;
-  return `<svg viewBox="0 0 800 132" preserveAspectRatio="none" aria-label="解码吞吐图">
-    <defs>
-      <linearGradient id="chartStroke" x1="0" y1="0" x2="1" y2="0">
-        <stop offset="0" stop-color="var(--accent-3)"/>
-        <stop offset=".58" stop-color="var(--accent)"/>
-        <stop offset="1" stop-color="var(--accent-2)"/>
-      </linearGradient>
-      <linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="var(--accent)" stop-opacity=".22"/>
-        <stop offset="1" stop-color="var(--accent)" stop-opacity="0"/>
-      </linearGradient>
-      <linearGradient id="chartGlow" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="var(--accent)"/>
-        <stop offset="1" stop-color="var(--accent)" stop-opacity="0"/>
-      </linearGradient>
-    </defs>
-    <g class="chart-grid">
-      <line x1="0" y1="28" x2="800" y2="28"/>
-      <line x1="0" y1="65" x2="800" y2="65"/>
-      <line x1="0" y1="102" x2="800" y2="102"/>
-    </g>
-    <path class="chart-area" d="${area}"/>
-    <path class="chart-glow" d="${area}"/>
-    <path class="chart-line" d="${line}" pathLength="1"/>
-    <circle class="chart-dot" cx="800" cy="${points[points.length - 1][1].toFixed(1)}" r="3.5"/>
-  </svg>`;
-}
-
-function endpoint(kind, label, address) {
-  return `<div class="endpoint">
-    <span class="endpoint-type ${kind}">${esc(label)}</span>
-    <span class="endpoint-copy"><strong>BASE URL</strong><span>${esc(address)}</span></span>
-    <button class="copy-btn" type="button" data-copy="${esc(address)}" aria-label="复制 ${esc(label)} 地址">${icon("copy", 13)}</button>
-  </div>`;
-}
-
-function requestPill(status, label, meta, rate) {
-  return `<div class="request-pill">
-    <span class="dot" style="${status === "解码" ? "background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 10%,transparent)" : ""}"></span>
-    <div><strong>${esc(label)}</strong><span>${esc(meta)}</span></div>
-    <b>${esc(rate)}</b>
-  </div>`;
-}
-
-function renderChat() {
-  return `
-    <section class="chat-page">
-      <header class="chat-head">
-        <button class="chat-model" type="button" data-action="model-menu">
-          <span class="chat-model-orb">${icon("brain", 14)}</span>
-          <span class="chat-model-copy">
-            <strong>${esc(shortModel(state.model))}</strong>
-            <span>${state.engineRunning ? "本地推理 · 上下文 430 / 262K" : "引擎已停止"}</span>
-          </span>
-        </button>
-        <span class="spacer"></span>
-        <button class="button icon-only quiet" type="button" data-action="chat-more" aria-label="更多对话操作" title="更多对话操作">${icon("ellipsis", 15)}</button>
-        <button class="button" type="button" data-action="new-chat">${icon("messagePlus", 14)}<span>新对话</span></button>
-      </header>
-      <div class="chat-messages" id="chatMessages">
-        <div class="messages-inner" id="messagesInner">${chatMessagesHtml()}</div>
-      </div>
-      <div class="chat-composer-wrap">
-        <div class="chat-composer">
-          <label class="visually-hidden" for="chatInput">消息</label>
-          <textarea id="chatInput" rows="1" placeholder="输入消息…  ⏎ 发送 · ⇧⏎ 换行"></textarea>
-          <div class="composer-row">
-            <button class="composer-chip" type="button" data-action="model-menu">${icon("layers", 12)}<span>${esc(shortModel(state.model))}</span></button>
-            <button class="composer-chip" type="button" data-action="open-inspector">${icon("sliders", 12)}<span>参数</span></button>
-            <button class="composer-chip" type="button" data-action="thinking-cycle">${icon("brain", 12)}<span>思考 · ${esc(state.params.thinking)}</span></button>
-            <span class="spacer"></span>
-            <button class="send-button" id="sendButton" type="button" data-action="send-chat" aria-label="发送消息">
-              ${icon(state.chatStreaming ? "stop" : "arrowUp", 14)}
-            </button>
-          </div>
-        </div>
-      </div>
-    </section>`;
-}
-
-function chatMessagesHtml() {
-  return state.chatMessages.map((message, index) => {
-    const id = esc(message.id || `m${index}`);
-    if (message.role === "user") {
-      return `<article class="message user is-new" data-msg-id="${id}">
-        <div class="message-body"><div class="user-bubble">${esc(message.content)}</div></div>
-      </article>`;
-    }
-    const thinking = window.FCChatStream ? window.FCChatStream.thinkingHTML(message) : "";
-    const answer = window.FCChatStream
-      ? window.FCChatStream.answerHTML(message)
-      : `<div class="md-body">${window.FCChatMarkdown.render(message.content || "")}</div>`;
-    return `<article class="message ai is-new${thinking ? " has-think" : ""}" data-msg-id="${id}">
-      <div class="avatar">${icon("message", 14)}</div>
-      <div class="message-body">
-        ${thinking}
-        <div class="assistant-card ${message.streaming ? "is-streaming" : ""}${!message.content ? " is-empty" : ""}" ${message.streaming ? 'id="streamingAnswer"' : ""}>
-          <div class="assistant-text">${answer}</div>
-        </div>
-        ${message.streaming ? "" : `<div class="message-meta">
-          <span>${esc(message.rate || "—")} tok/s</span>
-          <span>首字 ${esc(message.ttft || "—")} ms</span>
-          <span>${esc(message.tokens || "—")} tokens</span>
-          <button type="button" data-copy="${esc(message.content)}">复制</button>
-        </div>`}
-      </div>
-    </article>`;
-  }).join("");
-}
-
-function renderModels() {
-  const filtered = filteredModels();
-  return `
-    ${pageHeader("模型", "本机权重、引擎推荐与 Hugging Face 模型库。", `
-      <button class="button" type="button" data-action="search-hub">${icon("search", 14)}<span>模型广场</span></button>
-      <button class="button" type="button" data-action="downloads">${icon("download", 14)}<span>下载中心</span></button>
-    `)}
-    <div class="models-toolbar">
-      <div class="engine-tabs" aria-label="按引擎筛选">
-        ${["全部", "Splash", "oMLX", "MTPLX"].map((engine) => `<button type="button" class="${state.modelFilter === engine ? "active" : ""}" data-model-filter="${engine}">${engine}</button>`).join("")}
-      </div>
-      <label class="search-field">
-        ${icon("search", 14)}
-        <input id="modelSearch" type="search" placeholder="搜索模型…" value="${esc(state.modelSearch)}" autocomplete="off">
-      </label>
-      <span class="spacer"></span>
-      <button class="button icon-only" type="button" data-action="refresh-models" aria-label="刷新模型状态" title="刷新模型状态">${icon("refresh", 14)}</button>
-    </div>
-    <section class="featured-model">
-      <div class="featured-main">
-        <div class="featured-badges">
-          <span class="mini-badge hot">本机模型</span>
-          <span class="mini-badge">GGUF</span>
-          <span class="mini-badge">DFlash2 加速</span>
-          <span class="mini-badge">256K</span>
-        </div>
-        <h2>${esc(shortModel(state.model))}</h2>
-        <p>当前默认权重已加载到 Splash。视觉、思考与草稿加速同时启用，通过 API 网关对所有客户端可见。</p>
-        <div class="featured-actions">
-          <button class="button primary" type="button" data-action="use-model">${icon("play", 14)}<span>正在使用</span></button>
-          <button class="button" type="button" data-action="model-detail">${icon("fileText", 14)}<span>模型详情</span></button>
-          <button class="button icon-only quiet" type="button" data-action="model-more" aria-label="更多操作">${icon("ellipsis", 15)}</button>
-        </div>
-      </div>
-      <div class="featured-visual" aria-hidden="true">
-        <div class="model-stack">
-          <div class="model-layer"></div>
-          <div class="model-layer"></div>
-          <div class="model-layer"></div>
-        </div>
-      </div>
-    </section>
-    <div class="models-grid" id="modelsGrid">
-      ${filtered.length ? filtered.map(modelCard).join("") : `<div class="panel" style="grid-column:1/-1;padding:34px;text-align:center;color:var(--text-3);font-size:11px">没有匹配的模型</div>`}
-    </div>`;
-}
 
 function filteredModels() {
-  return window.FCModelWorkspace.filterModels(MODELS, state);
+  return FCModelWorkspace.filterModels(MODELS, state);
 }
 
-function modelCard(model) {
-  const busy = state.downloadsInFlight.has(model.name);
-  const done = state.downloaded.has(model.name);
-  return `<article class="model-card" data-model-name="${esc(model.name)}">
-    <div class="model-card-head">
-      <span class="model-type-icon">${icon("database", 14)}</span>
-      <div style="min-width:0;flex:1">
-        <h3>${esc(model.name)}</h3>
-        <div class="model-repo">${esc(model.repo)}</div>
-      </div>
-    </div>
-    <div class="model-flags">
-      <span class="model-flag">${esc(model.format)}</span>
-      ${model.flags.map((flag) => `<span class="model-flag">${esc(flag)}</span>`).join("")}
-    </div>
-    <div class="model-card-foot">
-      <span class="model-size">${esc(model.size)}</span>
-      <span class="model-flag">${esc(model.memory)}</span>
-      <span class="spacer"></span>
-      <button class="model-download ${busy ? "downloading" : ""}" type="button"
-              data-download-model="${esc(model.name)}" ${busy ? "disabled" : ""}>
-        ${icon(busy ? "loader" : done ? "check" : "download", 11)}
-        <span>${done ? "已下载" : busy ? "下载中" : "下载"}</span>
-      </button>
-    </div>
-  </article>`;
-}
-
-function renderEngines() {
-  return `
-    ${pageHeader("引擎", "三个运行时共享同一套控制面，但保留各自的端口与日志。", `
-      <button class="button" type="button" data-action="check-updates">${icon("refresh", 14)}<span>检查更新</span></button>
-    `)}
-    <div class="engines-list">
-      ${state.engines.map(engineCard).join("")}
-    </div>`;
-}
-
-function engineCard(engine) {
-  const running = engine.state === "running";
-  const busy = engine.state === "starting";
-  return `<article class="engine-card ${running ? "active" : ""}" style="--engine-color:${engine.color}" data-engine-card="${esc(engine.id)}">
-    <div class="engine-logo">${esc(engine.glyph)}</div>
-    <div class="engine-info">
-      <div class="engine-name-row">
-        <span class="engine-name">${esc(engine.id)}</span>
-        <span class="engine-version">v${esc(engine.version)}</span>
-      </div>
-      <div class="engine-description">${esc(engine.description)}</div>
-    </div>
-    <div class="engine-facts">
-      <div class="engine-fact"><span>端口</span><strong>:${esc(engine.port)}</strong></div>
-      <div class="engine-fact"><span>运行时间</span><strong>${esc(engine.uptime)}</strong></div>
-      <div class="engine-fact"><span>进程</span><strong>${esc(engine.pid)}</strong></div>
-    </div>
-    <div class="engine-controls">
-      <span class="engine-state ${busy ? "starting" : running ? "running" : ""}">
-        ${busy ? `<span class="spin">${icon("loader", 10)}</span>` : "<i></i>"}
-        ${busy ? "启动中" : running ? "运行中" : "已停止"}
-      </span>
-      <button class="button ${running ? "" : "primary"}" type="button" data-engine-toggle="${esc(engine.id)}" ${busy ? "disabled" : ""}>
-        ${icon(busy ? "loader" : running ? "stop" : "play", 13)}
-        <span>${busy ? "等待" : running ? "停止" : "启动"}</span>
-      </button>
-      <button class="button icon-only quiet" type="button" data-action="engine-config" aria-label="${esc(engine.id)} 配置">${icon("sliders", 14)}</button>
-    </div>
-  </article>`;
-}
-
-function renderLogs() {
-  const lines = LOG_SEED.concat(generatedLogs());
-  return `
-    ${pageHeader("日志", "当前引擎的实时输出，按级别过滤并保持可检索。", `
-      <button class="button" type="button" data-action="log-copy">${icon("copy", 14)}<span>复制可见日志</span></button>
-      <button class="button icon-only quiet" type="button" data-action="clear-logs" aria-label="清空日志">${icon("trash", 14)}</button>
-    `)}
-    <div class="log-toolbar">
-      <div class="filter-pills" id="logFilters">
-        ${["全部", "提示", "警告", "错误"].map((filter) => `<button class="filter-pill ${state.logFilter === filter ? "active" : ""}" type="button" data-log-filter="${filter}">${filter}<b>${logCount(filter, lines)}</b></button>`).join("")}
-      </div>
-      <label class="search-field" style="min-width:220px">
-        ${icon("search", 14)}
-        <input id="logSearch" type="search" placeholder="搜索关键词…" value="${esc(state.logSearch)}" autocomplete="off">
-      </label>
-      <span class="spacer"></span>
-      <button class="button" type="button" data-action="toggle-log-pause">${icon(state.logPaused ? "play" : "pause", 13)}<span>${state.logPaused ? "继续跟随" : "暂停滚动"}</span></button>
-    </div>
-    <section class="console">
-      <header class="console-head">
-        <span class="live-toggle"><i></i>${state.logPaused ? "PAUSED" : "LIVE FOLLOW"}</span>
-        <span>splash.log</span>
-        <span class="spacer"></span>
-        <span>${lines.length} lines</span>
-      </header>
-      <div class="console-body" id="consoleBody">${logLinesHtml(lines)}</div>
-    </section>`;
-}
-
-function generatedLogs() {
-  const lines = [];
-  for (let i = 0; i < logSequence; i++) {
-    const rate = (88 + Math.sin(i * 1.1) * 15).toFixed(1);
-    const messages = [
-      `Gateway stream completed · output 128 · ${rate} tok/s · finish_reason=stop`,
-      `Kernel scheduling pass ${12 + i} · 40 GPU cores · thermal nominal`,
-      `KV cache hit · 18432 tokens reused · resident window 262144`,
-      `Decode verify budget auto · accepted 3 of 5 draft tokens · ${rate} tok/s`,
-    ];
-    lines.push({
-      time: logTime(i),
-      level: i % 9 === 6 ? "WARN" : "INFO",
-      msg: messages[i % messages.length],
-    });
-  }
-  return lines;
-}
 
 function logTime(offset = 0) {
   const now = new Date(Date.now() - (logSequence - offset) * 1600);
   return now.toTimeString().slice(0, 8);
 }
 
-function logCount(filter, lines) {
+export function logCount(filter, lines) {
   if (filter === "全部") return lines.length;
   const target = filter === "提示" ? "INFO" : filter === "警告" ? "WARN" : "ERROR";
   return lines.filter((line) => line.level === target).length;
 }
 
-function logLinesHtml(lines) {
+export function logLinesHtml(lines) {
   const filterLevel = state.logFilter === "提示" ? "INFO" : state.logFilter === "警告" ? "WARN" : state.logFilter === "错误" ? "ERROR" : "";
-  const query = state.logSearch.toLowerCase();
-  return lines.map((line, index) => {
-    const matchesFilter = !filterLevel || line.level === filterLevel;
-    const matchesSearch = !query || line.msg.toLowerCase().includes(query);
+  // A snapshot can arrive while the engine is switching and a field can be
+  // missing for one frame. Log rows are display-only: render a blank instead
+  // of letting the whole logs page throw (which used to surface as an opaque
+  // "Script error." under file://).
+  const query = String(state.logSearch || "").toLowerCase();
+  return (lines || []).map((line, index) => {
+    const level = String((line && line.level) || "INFO").toUpperCase();
+    const msg = line && line.msg != null ? String(line.msg) : "";
+    const time = (line && line.time) || logTime(index);
+    const matchesFilter = !filterLevel || level === filterLevel;
+    const matchesSearch = !query || msg.toLowerCase().includes(query);
     const hidden = !matchesFilter || !matchesSearch;
-    return `<div class="log-line ${hidden ? "hidden" : ""}" data-log-level="${line.level}" data-log-text="${esc(line.msg.toLowerCase())}">
-      <span class="time">${esc(line.time || logTime(index))}</span>
-      <span class="level ${line.level.toLowerCase()}">${esc(line.level)}</span>
-      <span class="msg">${esc(line.msg)}</span>
+    return `<div class="log-line ${hidden ? "hidden" : ""}" data-log-level="${level}" data-log-text="${esc(msg.toLowerCase())}">
+      <span class="time">${esc(time)}</span>
+      <span class="level ${level.toLowerCase()}">${esc(level)}</span>
+      <span class="msg">${esc(msg)}</span>
     </div>`;
   }).join("");
 }
 
-function renderSettings() {
-  return `
-    ${pageHeader("设置", "外观、服务与系统集成。更改即时生效。", `
-      <button class="button" type="button" data-action="reset-settings">${icon("refresh", 14)}<span>恢复默认</span></button>
-    `)}
-    <div class="settings-layout">
-      <div style="display:flex;flex-direction:column;gap:14px">
-        <section class="settings-group">
-          <div class="settings-row">
-            <div class="settings-copy"><strong>外观</strong><span>跟随系统，或固定使用浅色 / 深色外观</span></div>
-            <div class="settings-segmented" data-appearance-choice>
-              ${["system", "light", "dark"].map((choice) => `<button type="button" class="${state.theme === choice ? "active" : ""}" data-appearance="${choice}">${choice === "system" ? "跟随系统" : choice === "light" ? "浅色" : "深色"}</button>`).join("")}
-            </div>
-          </div>
-          <div class="settings-row">
-            <div class="settings-copy"><strong>随 flashCat 启动引擎</strong><span>打开应用时自动把默认引擎拉起来</span></div>
-            <button class="toggle ${state.settings.launchEngine ? "on" : ""}" type="button" data-setting-toggle="launchEngine" role="switch" aria-checked="${state.settings.launchEngine}"></button>
-          </div>
-          <div class="settings-row">
-            <div class="settings-copy"><strong>登录时启动</strong><span>把 flashCat 加进 macOS 登录项</span></div>
-            <button class="toggle ${state.settings.login ? "on" : ""}" type="button" data-setting-toggle="login" role="switch" aria-checked="${state.settings.login}"></button>
-          </div>
-        </section>
-
-        <section class="settings-group">
-          <div class="settings-row">
-            <div class="settings-copy"><strong>API 网关</strong><span>OpenAI 与 Claude 双格式 · 统一入口</span></div>
-            <button class="toggle ${state.settings.gateway ? "on" : ""}" type="button" data-setting-toggle="gateway" role="switch" aria-checked="${state.settings.gateway}"></button>
-          </div>
-          <div class="settings-row">
-            <div class="settings-copy"><strong>引擎端口</strong><span>各引擎固定起始端口，互不抢占</span></div>
-            <div class="port-row">
-              <label class="port-input"><span>:</span><input value="8000" inputmode="numeric" aria-label="Splash 端口"></label>
-              <label class="port-input"><span>:</span><input value="8100" inputmode="numeric" aria-label="oMLX 端口"></label>
-              <label class="port-input"><span>:</span><input value="8200" inputmode="numeric" aria-label="MTPLX 端口"></label>
-            </div>
-          </div>
-        </section>
-
-        <section class="settings-group">
-          <div class="settings-row">
-            <div class="settings-copy"><strong>思考模式</strong><span>思考模型是否在回答前输出推理过程</span></div>
-            <div class="settings-segmented" data-thinking-choice>
-              ${["自动", "关闭", "开启"].map((choice) => `<button type="button" class="${state.settings.thinking === choice ? "active" : ""}" data-thinking="${choice}">${choice}</button>`).join("")}
-            </div>
-          </div>
-          <div class="settings-row">
-            <div class="settings-copy"><strong>默认模型</strong><span>${esc(shortModel(state.model))}</span></div>
-            <button class="button" type="button" data-action="model-menu">${icon("layers", 14)}<span>更改</span></button>
-          </div>
-        </section>
-      </div>
-
-      <aside class="system-profile">
-        <div class="profile-head">
-          <div class="profile-icon">${icon("monitor", 19)}</div>
-          <div><strong>MacBook Pro</strong><span>Apple M5 Max · macOS 26.4</span></div>
-        </div>
-        <div class="profile-stats">
-          <div class="profile-stat"><span>统一内存</span><strong>128 GB</strong></div>
-          <div class="profile-stat"><span>GPU 核心</span><strong>40</strong></div>
-          <div class="profile-stat"><span>模型磁盘</span><strong>61 GB</strong></div>
-        </div>
-        <div class="profile-meter"><i></i></div>
-        <div class="profile-foot"><span>内存压力 51%</span><span>可用 62.5 GB</span></div>
-      </aside>
-    </div>`;
-}
-
-function shortModel(model) {
-  return String(model || "未选择模型").split("/").pop();
-}
-
-function setTheme(theme) {
-  const previous = resolvedTheme();
-  state.theme = theme;
-  state.settings.appearance = theme;
-  localStorage.setItem("fc-preview-theme", theme);
-  const next = resolvedTheme();
-  document.documentElement.dataset.theme = next;
-  updateThemeIcon();
-  drawAmbient(performance.now());
-  if (state.page === "settings") {
-    $$("[data-appearance]").forEach((button) => button.classList.toggle("active", button.dataset.appearance === theme));
-    updateSlidingSegments();
-  }
-  if (previous !== next) showToast(next === "dark" ? "已切换到深色外观" : "已切换到浅色外观");
-}
-
-function toggleSidebar() {
-  state.sidebarCollapsed = !state.sidebarCollapsed;
-  document.body.classList.add("sidebar-animating");
-  clearTimeout(sidebarAnimTimer);
-  document.body.classList.toggle("sidebar-collapsed", state.sidebarCollapsed);
-  localStorage.setItem("fc-preview-sidebar", state.sidebarCollapsed ? "rail" : "full");
-  $("#sidebarToggle").setAttribute("aria-expanded", String(!state.sidebarCollapsed));
-  $("#sidebarToggle").setAttribute("aria-label", state.sidebarCollapsed ? "展开边栏" : "折叠边栏");
-  $("#sidebarToggle").title = `${state.sidebarCollapsed ? "展开" : "折叠"}边栏（⌘\\）`;
-  sidebarAnimTimer = setTimeout(() => {
-    document.body.classList.remove("sidebar-animating");
-    updateNavIndicator();
-  }, 360);
-}
-
-function toggleEngine(engineId = state.engine) {
-  if (engineId === state.engine && state.engineBusy) return;
-  if (engineId === state.engine) {
-    state.engineBusy = true;
-    const mainEngine = state.engines.find((engine) => engine.id === "Splash");
-    if (mainEngine) mainEngine.state = "starting";
-    updateEngineChrome();
-    renderPage(false);
-    setTimeout(() => {
-      state.engineRunning = !state.engineRunning;
-      state.engineBusy = false;
-      if (mainEngine) {
-        mainEngine.state = state.engineRunning ? "running" : "stopped";
-        mainEngine.uptime = state.engineRunning ? "00:54:18" : "—";
-        mainEngine.pid = state.engineRunning ? "95976" : "—";
-      }
-      if (!state.engineRunning) {
-        showToast("引擎已安全停止");
-      } else {
-        showToast("引擎已就绪 · Qwen3.8 已加载");
-      }
-      updateEngineChrome();
-      if (state.page === "overview" || state.page === "engines") renderPage(false);
-      pulseHaptic();
-    }, 1250);
-    return;
-  }
-  const target = state.engines.find((engine) => engine.id === engineId);
-  if (!target || target.state === "starting") return;
-  if (target.installed === false) {
-    showToast(`请先下载 ${engineId} 运行时`, "error");
-    return;
-  }
-  if (target.state === "running") {
-    target.state = "stopped";
-    target.uptime = "—";
-    target.pid = "—";
-    showToast(`${engineId} 已停止`);
-    renderPage(false);
-    return;
-  }
-  target.state = "starting";
-  target.uptime = "加载中";
-  target.pid = "—";
-  renderPage(true);
-  setTimeout(() => {
-    target.state = "running";
-    target.uptime = "00:00:01";
-    target.pid = String(100000 + Math.floor(Math.random() * 80000));
-    showToast(`${engineId} 已启动`);
-    renderPage(true);
-    pulseHaptic();
-  }, 1500);
-}
 
 function defaultEngineTuning(id) {
   if (id === "Splash") return { dflash: true, pleSSDOffload: true };
@@ -1141,7 +405,7 @@ function animateEngineSplit(open) {
   return split;
 }
 
-function openEngineConfig(id) {
+export function openEngineConfig(id) {
   const engine = state.engines.find((item) => item.id === id);
   if (!engine || engine.installed === false) return;
   const alreadyOpen = Boolean(state.engineConfigOpen);
@@ -1159,7 +423,7 @@ function openEngineConfig(id) {
   pulseHaptic();
 }
 
-function closeEngineConfig() {
+export function closeEngineConfig() {
   const panel = $(".fc-engine-panel");
   const finish = () => {
     state.engineConfigOpen = null;
@@ -1176,17 +440,6 @@ function closeEngineConfig() {
   animation.finished.then(finish).catch(finish);
 }
 
-function saveEngineConfig() {
-  const id = state.engineConfigOpen;
-  if (!id || !state.engineConfigDraft) return;
-  const engine = state.engines.find((item) => item.id === id);
-  if (engine) {
-    engine.tuning = { ...(state.engineConfigDraft.tuning || {}) };
-    engine.port = String(state.engineConfigDraft.port || engine.port);
-  }
-  showToast(`${id} 配置已保存`);
-  closeEngineConfig();
-}
 
 function setEngineConfigToggle(key) {
   if (!state.engineConfigDraft) return;
@@ -1201,7 +454,7 @@ function setEngineConfigToggle(key) {
   syncEngineConfigControls();
 }
 
-function syncEngineConfigControls() {
+export function syncEngineConfigControls() {
   const panel = $(".fc-engine-panel");
   const draft = state.engineConfigDraft;
   if (!panel || !draft) return;
@@ -1229,247 +482,8 @@ function syncEngineConfigControls() {
   }
 }
 
-function runEngineInstall(id, kind) {
-  const engine = state.engines.find((item) => item.id === id);
-  if (!engine) return;
-  engine.busy = true;
-  engine.progress = 12;
-  renderPage(false);
-  showToast(kind === "update" ? `正在更新 ${id}` : `正在下载 ${id}`);
-  setTimeout(() => {
-    engine.busy = false;
-    engine.progress = 100;
-    engine.installed = true;
-    engine.version = engine.latest || engine.version;
-    engine.state = engine.state === "not-installed" ? "stopped" : engine.state;
-    showToast(kind === "update" ? `${id} 已更新到 v${engine.version}` : `${id} 运行时已安装`);
-    renderPage(false);
-    pulseHaptic();
-  }, 1200);
-}
 
-function removeEngineRuntime(id) {
-  const engine = state.engines.find((item) => item.id === id);
-  if (!engine) return;
-  const running = id === "Splash" ? state.engineRunning : engine.state === "running";
-  if (running) {
-    showToast("请先停止引擎再删除运行时", "error");
-    return;
-  }
-  engine.installed = false;
-  engine.state = "not-installed";
-  if (state.engineConfigOpen === id) {
-    state.engineConfigOpen = null;
-    state.engineConfigDraft = null;
-  }
-  showToast(`${id} 运行时已删除`);
-  renderPage(false);
-}
-
-function updateEngineChrome() {
-  const dot = $("#topEngineDot");
-  const label = $("#topEngineState");
-  const rate = $("#topEngineRate");
-  const action = $("#topEngineAction");
-  const control = $("#topEngineControl");
-  if (!dot || !label || !rate || !action || !control) return;
-  dot.classList.toggle("is-stopped", !state.engineRunning && !state.engineBusy);
-  dot.classList.toggle("is-busy", state.engineBusy);
-  label.textContent = state.engineBusy ? "切换中" : state.engineRunning ? "运行中" : "已停止";
-  rate.textContent = state.engineRunning ? `${(104 + Math.sin(state.metricTick / 7) * 2.8).toFixed(0)} tok/s` : "—";
-  action.innerHTML = icon(state.engineRunning ? "stop" : "play", 11);
-  control.setAttribute("aria-label", state.engineRunning ? "停止引擎" : "启动引擎");
-}
-
-function sendChat() {
-  if (state.chatStreaming) {
-    stopChatStream();
-    return;
-  }
-  const input = $("#chatInput");
-  if (!input || !input.value.trim() || !state.engineRunning) {
-    if (!state.engineRunning) showToast("请先启动推理引擎");
-    return;
-  }
-  const text = input.value.trim();
-  input.value = "";
-  state.chatStreaming = true;
-  state.chatMessages.push({ id: `u${Date.now()}`, role: "user", content: text });
-  const assistant = {
-    id: `stream-${Date.now()}`,
-    role: "assistant",
-    content: "",
-    reasoning: "",
-    streaming: true,
-    createdAt: Date.now(),
-  };
-  state.chatMessages.push(assistant);
-  renderPage(false);
-
-  const reasoning = [
-    "读者要的是「本地推理为什么值得用」，不是一份功能清单。",
-    "",
-    "- 先给结论：数据不出本机，离线可用。",
-    "- 再补一句成本：没有按 token 计费。",
-    "- 最后留一个可执行的动作：接上现有客户端。",
-    "",
-    "正文用 **三段** 收住，不要超过一屏。",
-  ].join("\n");
-
-  const full = [
-    "## 结论",
-    "",
-    "把推理留在本机，**隐私边界**会清楚很多：提示词、上下文和产物都不离开这台 Mac。",
-    "",
-    "### 三个实际变化",
-    "",
-    "1. **离线可用** — 断网时照样能问答，首字响应也更稳定。",
-    "2. **成本可预期** — 没有按 token 计费，高频使用不必先算预算。",
-    "3. **接得上现有工具** — 通过固定网关接入，客户端不用跟着换引擎改配置。",
-    "",
-    "```bash",
-    "curl http://127.0.0.1:8000/v1/chat/completions \\",
-    "  -H 'Content-Type: application/json' \\",
-    "  -d '{\"model\": \"local\", \"stream\": true}'",
-    "```",
-    "",
-    "| 维度 | 云端 | 本机 |",
-    "| :--- | :--- | ---: |",
-    "| 数据边界 | 离开设备 | 留在本机 |",
-    "| 计费 | 按 token | 一次性 |",
-    "| 弱网 | 依赖网络 | 可用 |",
-    "",
-    "> 需要提醒的是：本机推理的上限是显存与散热，长上下文要按模型窗口留余量。",
-    "",
-    "想开始的话，先在引擎页确认权重已加载，再用上面的请求试一次流式输出即可。",
-  ].join("\n");
-
-  let reasonIndex = 0;
-  let answerIndex = 0;
-
-  const node = () => document.querySelector(`.message[data-msg-id="${assistant.id}"]`);
-  const push = (options) => {
-    const article = node();
-    if (article && window.FCChatStream) window.FCChatStream.push(article, assistant, options);
-  };
-
-  const step = () => {
-    if (!state.chatStreaming) return;
-    if (reasonIndex < reasoning.length) {
-      reasonIndex = Math.min(reasoning.length, reasonIndex + 2 + Math.floor(Math.random() * 5));
-      assistant.reasoning = reasoning.slice(0, reasonIndex);
-      push();
-      chatTimer = setTimeout(step, 46 + Math.random() * 74);
-      return;
-    }
-    if (answerIndex < full.length) {
-      answerIndex = Math.min(full.length, answerIndex + 1 + Math.floor(Math.random() * 4));
-      assistant.content = full.slice(0, answerIndex);
-      push();
-      chatTimer = setTimeout(step, 34 + Math.random() * 62);
-      return;
-    }
-    assistant.streaming = false;
-    assistant.rate = "103.8";
-    assistant.ttft = "208";
-    assistant.tokens = "412";
-    state.chatStreaming = false;
-    push({
-      onSettled: () => {
-        if (state.page === "chat") renderPage(false);
-      },
-    });
-  };
-
-  // A short first-token pause, like a real prefill.
-  chatTimer = setTimeout(step, 620);
-}
-
-function stopChatStream() {
-  clearTimeout(chatTimer);
-  state.chatStreaming = false;
-  const last = state.chatMessages[state.chatMessages.length - 1];
-  if (last && last.streaming) {
-    last.streaming = false;
-    last.content = last.content || "已停止生成。";
-    last.rate = "—";
-    last.ttft = "—";
-    last.tokens = "—";
-    const article = document.querySelector(`.message[data-msg-id="${last.id}"]`);
-    if (article && window.FCChatStream) {
-      window.FCChatStream.push(article, last, { onSettled: () => renderPage(false) });
-    } else {
-      renderPage(false);
-    }
-  } else {
-    renderPage(false);
-  }
-  showToast("已停止生成");
-}
-
-function scrollChatToBottom(smooth = true) {
-  const messages = $("#chatMessages");
-  if (!messages) return;
-  messages.scrollTo({ top: messages.scrollHeight, behavior: smooth ? "smooth" : "auto" });
-}
-
-function cycleThinking() {
-  const choices = ["自动", "开启", "关闭"];
-  const next = choices[(choices.indexOf(state.params.thinking) + 1) % choices.length];
-  state.params.thinking = next;
-  state.settings.thinking = next;
-  showToast(`思考模式 · ${next}`);
-  if (state.page === "chat") renderPage(false);
-  if (state.page === "settings") renderPage(false);
-}
-
-function startChatDownload(name) {
-  if (state.downloadsInFlight.has(name) || state.downloaded.has(name)) return;
-  state.downloadsInFlight.set(name, 0);
-  renderPage(false);
-  showToast(`开始下载 ${shortModel(name)}`);
-  let progress = 0;
-  const timer = setInterval(() => {
-    progress += 7 + Math.random() * 11;
-    if (progress >= 100) {
-      clearInterval(timer);
-      state.downloadsInFlight.delete(name);
-      state.downloaded.add(name);
-      showToast(`${shortModel(name)} 已下载完成`);
-      pulseHaptic();
-    } else {
-      state.downloadsInFlight.set(name, progress);
-    }
-    if (state.page === "models") {
-      const card = $(`[data-model-name="${cssEscape(name)}"]`);
-      if (card) {
-        // The progress action is a download-center shortcut, not a second
-        // download trigger, so update the group button rather than looking
-        // for data-download-model.
-        const button = $(".fc-model-card-actions .fc-model-action", card);
-        const label = button ? button.querySelector("span") : null;
-        if (label) label.textContent = progress >= 100 ? "已下载" : `${Math.round(progress)}%`;
-      }
-    }
-  }, 380);
-}
-
-function cssEscape(value) {
-  if (window.CSS && CSS.escape) return CSS.escape(value);
-  return String(value).replace(/"/g, '\\"');
-}
-
-function toggleSetting(key) {
-  state.settings[key] = !state.settings[key];
-  const button = $(`[data-setting-toggle="${key}"]`);
-  if (button) {
-    button.classList.toggle("on", state.settings[key]);
-    button.setAttribute("aria-checked", String(state.settings[key]));
-  }
-  showToast(key === "gateway" ? `API 网关已${state.settings.gateway ? "开启" : "关闭"}` : "设置已更新");
-}
-
-function openOverlay(kind) {
+export function openOverlayBase(kind) {
   const layer = $("#overlayLayer");
   overlayCloseToken += 1;
   if (!state.currentOverlay) {
@@ -1496,7 +510,7 @@ function overlayPanel(kind) {
   }[kind] || null;
 }
 
-function closeOverlays(options = {}) {
+export function closeOverlaysBase(options = {}) {
   const layer = $("#overlayLayer");
   const kind = state.currentOverlay;
   if (!layer || (!kind && !layer.classList.contains("is-open"))) return;
@@ -1510,17 +524,17 @@ function closeOverlays(options = {}) {
   // 现在只冻结位置（摘掉跟随监听，不动 inline 样式和滚动条类），等真的
   // 收起来以后再还原。
   const popover = $("#modelPopover");
-  const freezePopover = Boolean(window.FCOverlayBounds && popover && kind === "model");
+  const freezePopover = Boolean(FCOverlayBounds && popover && kind === "model");
   let releasePopover = null;
   if (freezePopover) {
-    window.FCOverlayBounds.freeze(popover);
+    FCOverlayBounds.freeze(popover);
     popover.classList.add("is-closing");
     releasePopover = () => {
       // 幂等：同一帧里重开/重关会换掉这份 release，旧的那次直接作废。
       if (popover.__fcRelease !== releasePopover) return;
       popover.__fcRelease = null;
       popover.classList.remove("is-closing");
-      window.FCOverlayBounds.clear(popover);
+      FCOverlayBounds.clear(popover);
     };
     popover.__fcRelease = releasePopover;
   }
@@ -1553,13 +567,13 @@ function closeOverlays(options = {}) {
     ? { duration: 170, distance: 5 }
     : { duration: 150, distance: 6 };
   Promise.all(exits.map((element) => (
-    window.FCMotionGuard
-      ? window.FCMotionGuard.exit(element, exitOptions)
+    FCMotionGuard
+      ? FCMotionGuard.exit(element, exitOptions)
       : Promise.resolve()
   ))).then(finish, finish);
 }
 
-function openCommand() {
+export function openCommandBase() {
   closeOverlays({ immediate: true, restoreFocus: false });
   openOverlay("command");
   $("#commandPalette").setAttribute("aria-modal", "true");
@@ -1570,69 +584,6 @@ function openCommand() {
   requestAnimationFrame(() => input.focus());
 }
 
-function commands() {
-  return [
-    ...NAV_ITEMS.map((item) => ({
-      label: `打开${item.label}`,
-      detail: item.hint,
-      icon: item.icon,
-      shortcut: `⌘${item.shortcut}`,
-      run: () => navigate(item.id),
-    })),
-    {
-      label: "切换外观",
-      detail: `当前：${resolvedTheme() === "dark" ? "深色" : "浅色"}`,
-      icon: resolvedTheme() === "dark" ? "sun" : "moon",
-      shortcut: "⌘⇧A",
-      run: () => setTheme(resolvedTheme() === "dark" ? "light" : "dark"),
-    },
-    {
-      label: state.engineRunning ? "停止推理引擎" : "启动推理引擎",
-      detail: `${state.engine} · 端口 8000`,
-      icon: state.engineRunning ? "stop" : "play",
-      shortcut: "",
-      run: () => toggleEngine(),
-    },
-    {
-      label: "打开生成参数",
-      detail: "温度、Top P 与最大输出",
-      icon: "sliders",
-      shortcut: "",
-      run: () => openInspector(),
-    },
-    {
-      label: "打开下载中心",
-      detail: "2 个下载任务",
-      icon: "download",
-      shortcut: "",
-      run: () => openDownloads(),
-    },
-    {
-      label: "折叠边栏",
-      detail: "切换图标导航模式",
-      icon: "panelLeft",
-      shortcut: "⌘\\",
-      run: () => toggleSidebar(),
-    },
-  ];
-}
-
-function renderCommandResults(query) {
-  const all = commands();
-  const q = query.trim().toLowerCase();
-  state.commandItems = all.filter((item) => !q || `${item.label} ${item.detail}`.toLowerCase().includes(q));
-  state.commandIndex = Math.min(state.commandIndex, Math.max(0, state.commandItems.length - 1));
-  const navResults = state.commandItems.slice(0, 6);
-  $("#commandResults").innerHTML = navResults.length ? `
-    ${navResults.map((item, index) => `
-      <button class="command-item ${index === state.commandIndex ? "selected" : ""}" type="button" data-command-index="${index}">
-        <span class="command-item-icon">${icon(item.icon, 13)}</span>
-        <span class="command-item-copy"><strong>${esc(item.label)}</strong></span>
-        ${item.shortcut ? `<kbd>${esc(item.shortcut)}</kbd>` : ""}
-      </button>`).join("")}
-  ` : `<div style="padding:34px;text-align:center;color:var(--text-3);font-size:10.5px">没有匹配的命令</div>`;
-  $("#commandHint").textContent = `${state.commandItems.length} 个命令`;
-}
 
 function runCommand(index) {
   const item = state.commandItems[index];
@@ -1641,37 +592,8 @@ function runCommand(index) {
   setTimeout(() => item.run(), 80);
 }
 
-function openInspector() {
-  closeOverlays({ immediate: true, restoreFocus: false });
-  openOverlay("inspector");
-  const p = state.params;
-  $("#inspector").innerHTML = `
-    <div class="inspector-grabber" aria-hidden="true"></div>
-    <header class="inspector-head">
-      <div><span class="eyebrow">CHAT PARAMETERS</span><h2 id="inspectorTitle">生成参数</h2></div>
-      <button class="glass-icon-btn small" type="button" data-close-inspector aria-label="关闭参数面板">${icon("x", 14)}</button>
-    </header>
-    <div class="inspector-body">
-      ${rangeRow("temperature", "温度", p.temperature, 0, 1.5, .05, "精确", "发散")}
-      ${rangeRow("topP", "Top P", p.topP, 0, 1, .01, "聚焦", "多样")}
-      ${rangeRow("tokens", "最大输出", p.tokens, 512, 8192, 256, "512", "8192")}
-      <div class="param-row">
-        <div class="param-head"><span>思考模式</span><b>${esc(p.thinking)}</b></div>
-        <div class="settings-segmented think-segment" data-thinking-choice>
-          ${["自动", "关闭", "开启"].map((choice) => `<button type="button" class="${p.thinking === choice ? "active" : ""}" data-thinking="${choice}">${choice}</button>`).join("")}
-        </div>
-      </div>
-    </div>
-    <footer class="inspector-foot">
-      <button class="button" type="button" data-action="reset-params">重置</button>
-      <button class="button primary" type="button" data-action="save-params">应用</button>
-    </footer>`;
-  requestAnimationFrame(() => {
-    $$(".range-input", $("#inspector")).forEach(updateRangeVisual);
-  });
-}
 
-function rangeRow(key, label, value, min, max, step, low, high) {
+export function rangeRow(key, label, value, min, max, step, low, high) {
   return `<div class="param-row">
     <div class="param-head"><span>${esc(label)}</span><b data-range-value="${key}">${esc(value)}</b></div>
     <input class="range-input" type="range" min="${min}" max="${max}" step="${step}"
@@ -1680,7 +602,7 @@ function rangeRow(key, label, value, min, max, step, low, high) {
   </div>`;
 }
 
-function updateRangeVisual(input) {
+export function updateRangeVisual(input) {
   const min = Number(input.min || 0);
   const max = Number(input.max || 100);
   const value = Number(input.value);
@@ -1690,66 +612,6 @@ function updateRangeVisual(input) {
   if (label) label.textContent = String(value);
 }
 
-function openDownloads() {
-  closeOverlays({ immediate: true, restoreFocus: false });
-  openOverlay("downloads");
-  const sheet = $("#downloadSheet");
-  sheet.innerHTML = `
-    <header class="sheet-head">
-      <div><span class="eyebrow">MODEL DOWNLOADS</span><h2 id="downloadTitle">下载中心</h2></div>
-      <button class="glass-icon-btn small" type="button" data-close-downloads aria-label="关闭下载中心">${icon("x", 14)}</button>
-    </header>
-    <div class="download-list">
-      <article class="download-item">
-        <div class="download-type">MLX</div>
-        <div class="download-copy"><strong>Qwen3.8-27B-4bit</strong><span>13.8 / 20.2 GB · 48 MB/s</span><div class="progress-track"><i style="width:68%"></i></div></div>
-        <span class="download-percent">68%</span>
-      </article>
-      <article class="download-item">
-        <div class="download-type gguf">GGUF</div>
-        <div class="download-copy"><strong>Qwen3.5-4B-Q4_K_M</strong><span>1.7 / 2.6 GB · 等待中</span><div class="progress-track queued"><i style="width:64%"></i></div></div>
-        <span class="download-percent muted">暂停</span>
-      </article>
-    </div>`;
-}
-
-function openModelPopover(anchor) {
-  if ($("#overlayLayer").classList.contains("model-open")) {
-    closeOverlays();
-    return;
-  }
-  closeOverlays({ immediate: true, restoreFocus: false });
-  openOverlay("model");
-  const popover = $("#modelPopover");
-  popover.innerHTML = MODELS.slice(0, 4).map((model, index) => `
-    <button class="model-option" style="--i:${index}" type="button" data-select-model="${esc(model.name)}">
-      ${window.FCModelBrand
-        ? window.FCModelBrand.tile(model.name, { size: 15, className: "model-option-icon fc-series-tile" })
-        : `<span class="model-option-icon">${icon("brain", 14)}</span>`}
-      <span class="model-option-copy"><strong>${esc(shortModel(model.name))}</strong><span>${esc(model.engine)} · ${esc(model.size)} · ${esc(model.format)}</span></span>
-      ${model.name === state.model ? `<span class="model-option-check">${icon("check", 14)}</span>` : ""}
-    </button>`).join("");
-  const rect = anchor.getBoundingClientRect();
-  const width = 318;
-  const left = Math.max(14, Math.min(window.innerWidth - width - 14, rect.left));
-  if (window.FCOverlayBounds) {
-    window.FCOverlayBounds.place(anchor, popover, {
-      boundary: ".window",
-      preferredSide: "bottom",
-      align: "start",
-      gap: 8,
-      padding: 14,
-      width,
-      maxHeight: 420,
-      scroll: true,
-      flip: true,
-      clamp: true,
-    });
-  } else {
-    popover.style.left = `${left}px`;
-    popover.style.top = `${rect.bottom + 8}px`;
-  }
-}
 
 // ---------- model label morph ----------
 // 换模型只换一个名字，却会改变按钮宽度：直接写 textContent 的话，新名字是
@@ -1855,66 +717,10 @@ function morphModelButton(button, next = {}) {
   return true;
 }
 
-// 标题走 overview 的逐字翻滚：同一个动作在概览页已经存在，这里只负责在
-// 「模型真的变了」的时候触发它，而不是每来一张快照就重播。
-function rollModelTitle(title, label) {
-  if (!title) return;
-  title.innerHTML = Array.from(String(label)).map((char, index) =>
-    `<span class="model-char" style="--i:${index}">${char === " " ? "&nbsp;" : esc(char)}</span>`).join("");
-  title.classList.toggle("is-long", String(label).length > 28);
-  title.title = label;
-  title.classList.remove("is-switching");
-  void title.offsetWidth;
-  title.classList.add("is-switching");
-  clearTimeout(title.__rollTimer);
-  title.__rollTimer = setTimeout(() => title.classList.remove("is-switching"), 640 + String(label).length * 17);
-}
+export const fcMorphModelButton = morphModelButton;
 
-// 换模型后只更新「写着模型名的地方」，不再重建整页。整页替换会让页面先淡出
-// 再淡入，读者看到的是闪一下，正在做的其它事情（滚动位置、菜单收起的动画）
-// 也会跟着断掉。
-function syncModelSurfaces() {
-  const label = shortModel(state.model);
-  const glyph = window.FCModelBrand ? window.FCModelBrand.inline(state.model, 12) : "";
-  const line = $(".chat-model-line");
-  if (line) {
-    line.dataset.modelKey = state.model;
-    line.title = state.model;
-    morphModelButton(line, { label, glyph });
-  }
-  const chip = $('.composer-chip[data-action="model-menu"]');
-  if (chip) {
-    chip.dataset.modelKey = state.model;
-    chip.title = state.model;
-    morphModelButton(chip, { label, glyph });
-  }
-  const title = $("[data-model-title]");
-  if (title) rollModelTitle(title, shortModel(state.model));
-  const settingsModel = $("[data-default-model]");
-  if (settingsModel) settingsModel.textContent = label;
-  const grid = $("#modelsGrid");
-  if (grid && window.FCModelWorkspace && typeof window.FCModelWorkspace.patchSelection === "function") {
-    window.FCModelWorkspace.patchSelection(grid, filteredModels(), state);
-  }
-  if (window.FCSegments) requestAnimationFrame(() => window.FCSegments.paintAll());
-}
 
-window.fcMorphModelButton = morphModelButton;
-
-function selectModel(name) {
-  if (state.model === name) {
-    closeOverlays();
-    return;
-  }
-  state.model = name;
-  closeOverlays();
-  showToast(`已切换到 ${shortModel(name)}`);
-  updateEngineChrome();
-  syncModelSurfaces();
-  pulseHaptic();
-}
-
-function showToast(message, tone = "ok") {
+export function showToast(message, tone = "ok") {
   const stack = $("#toastStack");
   const toast = document.createElement("div");
   toast.className = "toast";
@@ -1930,32 +736,13 @@ function pulseHaptic() {
   if (navigator.vibrate) navigator.vibrate(8);
 }
 
-function copyText(text) {
-  const value = String(text || "");
-  const done = () => showToast("已复制到剪贴板");
-  if (navigator.clipboard && window.isSecureContext) {
-    navigator.clipboard.writeText(value).then(done).catch(() => fallbackCopy(value, done));
-  } else {
-    fallbackCopy(value, done);
-  }
-}
 
-function fallbackCopy(value, done) {
-  const area = document.createElement("textarea");
-  area.value = value;
-  area.style.cssText = "position:fixed;opacity:0";
-  document.body.appendChild(area);
-  area.select();
-  try { document.execCommand("copy"); done(); } catch { showToast("无法访问剪贴板", "error"); }
-  area.remove();
-}
-
-function inspectChartSegment() {
+export function inspectChartSegment() {
   const segmented = $("[data-chart-range]");
-  if (segmented) window.FCSegments?.paint(segmented);
+  if (segmented) FCSegments?.paint(segmented);
 }
 
-function startClock() {
+export function startClock() {
   // The app has no fake system menu bar (the real one is native), so the
   // preview's clock element is absent. Skip instead of throwing during init:
   // an exception here would abort bindGlobalEvents and leave every custom
@@ -1970,66 +757,8 @@ function startClock() {
   setInterval(tick, 30000);
 }
 
-function startLiveTelemetry() {
-  setInterval(() => {
-    if (!flowHistory.length) return;
-    flowHistory.shift();
-    const last = flowHistory[flowHistory.length - 1] || 100;
-    const next = state.engineRunning
-      ? Math.max(76, Math.min(124, last + (Math.random() - .48) * 10 + Math.sin(Date.now() / 3200) * 2.2))
-      : 0;
-    flowHistory.push(next);
-  }, 1000);
 
-  setInterval(() => {
-    state.metricTick += 1;
-    updateEngineChrome();
-    const spark = $("[data-live-spark]");
-    if (spark && state.engineRunning) {
-      $$("i", spark).forEach((bar, index) => {
-        if ((index + state.metricTick) % 4 === 0) {
-          bar.style.height = `${6 + Math.random() * 29}px`;
-        }
-      });
-    }
-    if (state.page === "logs" && !state.logPaused && state.engineRunning && logSequence < 20) {
-      logSequence += 1;
-      appendLiveLog();
-    }
-  }, 2300);
-
-  setInterval(() => {
-    if (state.page !== "models") return;
-    state.downloadsInFlight.forEach((progress, name) => {
-      const next = Math.min(99, progress + 2 + Math.random() * 4);
-      state.downloadsInFlight.set(name, next);
-      const card = $(`[data-model-name="${cssEscape(name)}"]`);
-      const button = card ? $(".fc-model-card-actions .fc-model-action", card) : null;
-      if (button) button.querySelector("span").textContent = `${Math.round(next)}%`;
-    });
-  }, 1800);
-}
-
-function initFlowHistory() {
-  flowHistory = Array.from({ length: 60 }, (_, index) =>
-    96 + Math.sin(index * .42) * 7 + Math.sin(index * .13 + .8) * 5 + (Math.random() - .5) * 3.5);
-}
-
-function appendLiveLog() {
-  const body = $("#consoleBody");
-  if (!body) return;
-  const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
-  const line = document.createElement("div");
-  const isWarning = logSequence % 7 === 0;
-  line.className = "log-line";
-  line.dataset.logLevel = isWarning ? "WARN" : "INFO";
-  line.dataset.logText = "gateway stream activity";
-  line.innerHTML = `<span class="time">${logTime()}</span><span class="level ${isWarning ? "warn" : ""}">${isWarning ? "WARN" : "INFO"}</span><span class="msg">Gateway stream active · output ${128 + logSequence} · ${(94 + Math.random() * 13).toFixed(1)} tok/s · finish_reason=stop</span>`;
-  body.appendChild(line);
-  if (nearBottom) body.scrollTop = body.scrollHeight;
-}
-
-function startFlowVisualization() {
+export function startFlowVisualization() {
   stopFlowVisualization();
   const canvas = $("#flowCanvas");
   if (!canvas) return;
@@ -2088,263 +817,13 @@ function stopFlowVisualization() {
   flowAnimation = 0;
 }
 
-function drawFlowFieldLegacy(ctx, width, height, time) {
-  const dark = resolvedTheme() === "dark";
-  const accent = computedColor("--accent");
-  const accent2 = computedColor("--accent-2");
-  const accent3 = computedColor("--accent-3");
-  const info = computedColor("--info");
-  const ok = computedColor("--ok");
-  const colors = [accent, info, accent3, accent2, ok];
-  const t = time / 1000;
-  const laneCount = 5;
-  const top = 34;
-  const bottom = height - 28;
-  const gap = (bottom - top) / (laneCount - 1);
-  const baseRates = [104, 88, 119, 76, 96];
-  ctx.clearRect(0, 0, width, height);
-  ctx.save();
-  ctx.globalCompositeOperation = dark ? "lighter" : "source-over";
 
-  const pulseX = ((t * 58) % (width + 180)) - 80;
-  const pulseGradient = ctx.createLinearGradient(pulseX - 90, 0, pulseX + 90, 0);
-  pulseGradient.addColorStop(0, colorWithAlpha(accent, 0));
-  pulseGradient.addColorStop(.5, colorWithAlpha(accent, dark ? .055 : .04));
-  pulseGradient.addColorStop(1, colorWithAlpha(accent, 0));
-  ctx.fillStyle = pulseGradient;
-  ctx.fillRect(pulseX - 90, 0, 180, height);
-
-  for (let lane = 0; lane < laneCount; lane++) {
-    const laneY = top + lane * gap;
-    const color = colors[lane % colors.length];
-    const activeRate = state.engineRunning ? baseRates[lane] : 0;
-    const wave = Math.min(6.5, 2.5 + activeRate / 34);
-    const laneGradient = ctx.createLinearGradient(0, 0, width, 0);
-    laneGradient.addColorStop(0, colorWithAlpha(color, 0));
-    laneGradient.addColorStop(.1, colorWithAlpha(color, dark ? .035 : .025));
-    laneGradient.addColorStop(.55, colorWithAlpha(color, dark ? .075 : .05));
-    laneGradient.addColorStop(.97, colorWithAlpha(color, 0));
-    ctx.fillStyle = laneGradient;
-    ctx.fillRect(0, laneY - 7, width, 14);
-
-    const hoveredLane = flowState.hoverY != null && Math.abs(flowState.hoverY - laneY) < gap * .36;
-    if (hoveredLane) {
-      ctx.fillStyle = colorWithAlpha(color, dark ? .075 : .05);
-      ctx.fillRect(0, laneY - 12, width, 24);
-    }
-
-    const lanePath = () => {
-      ctx.beginPath();
-      for (let x = -4; x <= width + 4; x += 5) {
-        const y = laneY
-          + Math.sin(x * .021 + t * (.7 + lane * .028) + lane * 1.13) * wave
-          + Math.sin(x * .008 - t * .23 + lane * .7) * 1.2;
-        if (x === -4) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-    };
-    const lineGradient = ctx.createLinearGradient(0, 0, width, 0);
-    lineGradient.addColorStop(0, colorWithAlpha(color, 0));
-    lineGradient.addColorStop(.08, colorWithAlpha(color, state.engineRunning ? .32 : .09));
-    lineGradient.addColorStop(.52, colorWithAlpha(color, state.engineRunning ? .54 : .13));
-    lineGradient.addColorStop(.93, colorWithAlpha(color, state.engineRunning ? .38 : .09));
-    lineGradient.addColorStop(1, colorWithAlpha(color, 0));
-    lanePath();
-    ctx.strokeStyle = lineGradient;
-    ctx.lineWidth = state.engineRunning ? 1.35 : .7;
-    ctx.stroke();
-
-    if (state.engineRunning) {
-      lanePath();
-      ctx.save();
-      ctx.setLineDash([8, 19]);
-      ctx.lineDashOffset = -(t * (17 + activeRate * .24) + lane * 11);
-      ctx.strokeStyle = colorWithAlpha(color, hoveredLane ? .94 : .72);
-      ctx.lineWidth = hoveredLane ? 2.1 : 1.45;
-      ctx.shadowColor = colorWithAlpha(color, .8);
-      ctx.shadowBlur = hoveredLane ? 12 : 7;
-      ctx.stroke();
-      ctx.restore();
-
-      const headX = ((t * activeRate * 1.28 + lane * 89) % (width + 20)) - 10;
-      const headY = laneY
-        + Math.sin(headX * .021 + t * (.7 + lane * .028) + lane * 1.13) * wave
-        + Math.sin(headX * .008 - t * .23 + lane * .7) * 1.2;
-      const headFade = Math.sin(Math.min(1, Math.max(0, headX / width)) * Math.PI);
-      ctx.save();
-      ctx.shadowColor = colorWithAlpha(color, .9);
-      ctx.shadowBlur = 12;
-      ctx.fillStyle = colorWithAlpha(color, .95 * Math.max(.08, headFade));
-      ctx.beginPath();
-      ctx.arc(headX, headY, hoveredLane ? 2.5 : 2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-
-    ctx.font = "7.5px SFMono-Regular, Menlo, monospace";
-    ctx.textAlign = "left";
-    ctx.fillStyle = colorWithAlpha(color, .72);
-    ctx.fillText(`R${lane + 1}`, 13, laneY - 7);
-    ctx.textAlign = "right";
-    ctx.fillStyle = colorWithAlpha(computedColor("--text-3"), .76);
-    ctx.fillText(state.engineRunning ? activeRate.toFixed(1) : "idle", width - 13, laneY - 7);
-  }
-
-  const events = [
-    { x: .33, label: "#1840" },
-    { x: .56, label: "#1841" },
-    { x: .77, label: "#1842" },
-  ];
-  events.forEach((event) => {
-    const x = width * event.x;
-    ctx.strokeStyle = colorWithAlpha(accent, .22);
-    ctx.lineWidth = 1;
-    ctx.setLineDash([2, 5]);
-    ctx.beginPath();
-    ctx.moveTo(x, top - 9);
-    ctx.lineTo(x, bottom + 8);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = colorWithAlpha(accent, .68);
-    ctx.beginPath();
-    ctx.arc(x, bottom + 8, 1.7, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.font = "7px SFMono-Regular, Menlo, monospace";
-    ctx.textAlign = "center";
-    ctx.fillStyle = colorWithAlpha(computedColor("--text-3"), .82);
-    ctx.fillText(event.label, x, height - 7);
-  });
-  ctx.restore();
-
-  if (!state.engineRunning) {
-    $("#flowStateLabel") && ($("#flowStateLabel").textContent = "IDLE · ENGINE STOPPED");
-  } else if ($("#flowStateLabel")) {
-    $("#flowStateLabel").textContent = "LIVE · DECODE";
-  }
-  if (time - flowState.lastReadout > 240) {
-    flowState.lastReadout = time;
-    const live = $("#flowLiveValue");
-    if (live) live.textContent = state.engineRunning ? (101 + Math.sin(t * 1.7) * 3.2).toFixed(1) : "—";
-  }
-}
-
-function drawFlowField(ctx, width, height, time) {
-  const dark = resolvedTheme() === "dark";
-  const accent = computedColor("--accent");
-  const accent2 = computedColor("--accent-2");
-  const accent3 = computedColor("--accent-3");
-  ctx.clearRect(0, 0, width, height);
-  ctx.save();
-  ctx.globalCompositeOperation = dark ? "lighter" : "source-over";
-
-  ctx.strokeStyle = dark ? "rgba(255, 255, 255, .035)" : "rgba(31, 41, 60, .045)";
-  ctx.lineWidth = 1;
-  ctx.setLineDash([3, 8]);
-  for (let ratio = .2; ratio < 1; ratio += .2) {
-    ctx.beginPath();
-    ctx.moveTo(width * ratio, 13);
-    ctx.lineTo(width * ratio, height - 13);
-    ctx.stroke();
-  }
-  ctx.setLineDash([]);
-
-  const samples = flowHistory.length ? flowHistory.slice(-60) : Array(60).fill(0);
-  const padX = 16;
-  const top = 24;
-  const bottom = height - 18;
-  const valueFloor = 60;
-  const valueCeiling = 140;
-  const points = samples.map((value, index) => ({
-    x: padX + (index / (samples.length - 1)) * (width - padX * 2),
-    y: bottom - ((Math.max(valueFloor, Math.min(valueCeiling, value)) - valueFloor) / (valueCeiling - valueFloor)) * (bottom - top),
-  }));
-  const path = () => {
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let index = 1; index < points.length - 1; index++) {
-      const next = points[index + 1];
-      const midX = (points[index].x + next.x) / 2;
-      const midY = (points[index].y + next.y) / 2;
-      ctx.quadraticCurveTo(points[index].x, points[index].y, midX, midY);
-    }
-    ctx.lineTo(points[points.length - 1].x, points[points.length - 1].y);
-  };
-
-  const area = ctx.createLinearGradient(0, 0, 0, height);
-  area.addColorStop(0, colorWithAlpha(accent, dark ? .14 : .12));
-  area.addColorStop(.72, colorWithAlpha(accent3, dark ? .045 : .04));
-  area.addColorStop(1, colorWithAlpha(accent, 0));
-  path();
-  ctx.lineTo(points[points.length - 1].x, height);
-  ctx.lineTo(points[0].x, height);
-  ctx.closePath();
-  ctx.fillStyle = area;
-  ctx.fill();
-
-  const stroke = ctx.createLinearGradient(0, 0, width, 0);
-  stroke.addColorStop(0, colorWithAlpha(accent3, 0));
-  stroke.addColorStop(.12, colorWithAlpha(accent3, .7));
-  stroke.addColorStop(.5, colorWithAlpha(accent, .84));
-  stroke.addColorStop(.85, colorWithAlpha(accent2, .8));
-  stroke.addColorStop(1, colorWithAlpha(accent2, 0));
-
-  path();
-  ctx.save();
-  ctx.shadowColor = colorWithAlpha(accent, .28);
-  ctx.shadowBlur = 18;
-  ctx.strokeStyle = stroke;
-  ctx.lineWidth = state.engineRunning ? 2 : 1;
-  ctx.stroke();
-  ctx.restore();
-
-  const head = points[points.length - 1];
-  ctx.save();
-  ctx.shadowColor = colorWithAlpha(accent2, .9);
-  ctx.shadowBlur = 18;
-  ctx.fillStyle = colorWithAlpha(accent2, state.engineRunning ? .95 : .28);
-  ctx.beginPath();
-  ctx.arc(head.x, head.y, state.engineRunning ? 3.2 : 2, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-  ctx.restore();
-
-  if (time - flowState.lastReadout > 240) {
-    flowState.lastReadout = time;
-    const live = $("#flowLiveValue");
-    if (live) live.textContent = state.engineRunning ? samples[samples.length - 1].toFixed(1) : "—";
-  }
-}
-
-function updateFlowProbe(width, height) {
-  if (!flowState || flowState.hoverX == null) return;
-  const cursor = $("#flowCursor");
-  const tooltip = $("#flowTooltip");
-  const x = Math.max(12, Math.min(width - 12, flowState.hoverX));
-  const progress = Math.max(0, Math.min(1, (x - 16) / Math.max(1, width - 32)));
-  const index = Math.max(0, Math.min(flowHistory.length - 1, Math.round(progress * (flowHistory.length - 1))));
-  const rate = flowHistory[index] || 0;
-  const tokens = Math.round(rate * (1.8 + progress * 2.2));
-  const secondsAgo = Math.round((1 - progress) * 60);
-  if (cursor) {
-    cursor.style.left = `${x}px`;
-    cursor.style.opacity = "1";
-  }
-  if (tooltip) {
-    tooltip.innerHTML = `<span>${secondsAgo === 0 ? "NOW" : `${secondsAgo} 秒前`}</span><strong>${state.engineRunning ? rate.toFixed(1) : "—"} tok/s</strong><small>${state.engineRunning ? `${tokens} tokens` : "等待解码"}</small>`;
-    const left = x > width - 130 ? x - 126 : x + 12;
-    const top = Math.max(36, Math.min(height - 87, (flowState.hoverY || 58) + 16));
-    tooltip.style.left = `${left}px`;
-    tooltip.style.top = `${top}px`;
-    tooltip.style.opacity = "1";
-  }
-}
-
-function computedColor(variable) {
+export function computedColor(variable) {
   const value = getComputedStyle(document.documentElement).getPropertyValue(variable).trim();
   return value || "#d94d78";
 }
 
-function colorWithAlpha(color, alpha) {
+export function colorWithAlpha(color, alpha) {
   const value = String(color).trim();
   if (value.startsWith("#")) {
     const hex = value.length === 4
@@ -2363,7 +842,7 @@ function colorWithAlpha(color, alpha) {
   return `rgba(217, 77, 120, ${alpha})`;
 }
 
-function startAmbient() {
+export function startAmbient() {
   const canvas = $("#ambient");
   const ctx = canvas.getContext("2d");
   let width = 0;
@@ -2392,7 +871,7 @@ function startAmbient() {
   }
 }
 
-function drawAmbient(time = 0) {
+export function drawAmbient(time = 0) {
   const canvas = $("#ambient");
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
@@ -2462,7 +941,7 @@ function drawAmbient(time = 0) {
   ctx.restore();
 }
 
-function bindGlobalEvents() {
+export function bindGlobalEvents() {
   document.addEventListener("click", handleClick);
   document.addEventListener("input", handleInput);
   document.addEventListener("pointermove", handlePointerMove, { passive: true });
@@ -2474,7 +953,6 @@ function bindGlobalEvents() {
   }, { passive: true });
 
   $("#sidebarToggle").addEventListener("click", toggleSidebar);
-  if ($("#commandTrigger")) $("#commandTrigger").addEventListener("click", openCommand);
   $("#themeToggle").addEventListener("click", () => setTheme(resolvedTheme() === "dark" ? "light" : "dark"));
   $("#downloadShortcut").addEventListener("click", openDownloads);
   bindSidebarResize();
@@ -2614,8 +1092,8 @@ function handleClick(event) {
 
   const thinkingTrigger = event.target.closest("[data-fc-thinking-trigger]");
   if (thinkingTrigger) {
-    if (window.FCChatThinking?.isOpen()) window.FCChatThinking.close();
-    else window.FCChatThinking?.open(thinkingTrigger, state, {
+    if (FCChatThinking?.isOpen()) FCChatThinking.close();
+    else FCChatThinking?.open(thinkingTrigger, state, {
       boundary: ".window",
       align: "start",
       gap: 9,
@@ -2640,13 +1118,13 @@ function handleClick(event) {
       state.settings.thinking = "开启";
       state.params.thinking = "开启";
       state.settings.reasoningEffort = value;
-      state.settings.reasoningEffortLabel = window.FCChatThinking.EFFORTS.find((item) => item.value === value)?.label || value;
+      state.settings.reasoningEffortLabel = FCChatThinking.EFFORTS.find((item) => item.value === value)?.label || value;
     }
     if (kind === "mode" && value === "on") {
-      requestAnimationFrame(() => window.FCChatThinking?.update(state));
+      requestAnimationFrame(() => FCChatThinking?.update(state));
     } else {
-      window.FCChatThinking?.update(state);
-      window.FCChatThinking?.close();
+      FCChatThinking?.update(state);
+      FCChatThinking?.close();
     }
     syncThinkingTriggerLabel();
     return;
@@ -2794,119 +1272,6 @@ function handleClick(event) {
   }
 }
 
-function handleAction(action, element) {
-  switch (action) {
-    case "refresh-overview":
-      showToast("状态已刷新");
-      pulseHaptic();
-      break;
-    case "request-detail":
-      showToast("请求详情已在实时流中定位");
-      break;
-    case "toggle-engine":
-      toggleEngine();
-      break;
-    case "model-menu":
-      openModelPopover(element);
-      break;
-    case "open-inspector":
-      openInspector();
-      break;
-    case "engine-config":
-      showToast("引擎配置已打开");
-      break;
-    case "downloads":
-      openDownloads();
-      break;
-    case "send-chat":
-      // 实时壳（live.js）已经接管了这个动作。两边都执行的话，第一次发出
-      // sendChat，第二次读到的已是 chatStreaming=true，于是追加一条
-      // stopGeneration——刚发起的生成 1 毫秒后就被自己取消，界面上表现为
-      // 「提问发出去了，模型永远不回答」。预览页面没有 live 层，才由这里处理。
-      if (!window.FC_LIVE) sendChat();
-      break;
-    case "toggle-reasoning": {
-      const block = element.closest("[data-think]");
-      if (!block) break;
-      if (window.FCChatStream) window.FCChatStream.toggleThinking(block);
-      else {
-        const open = block.classList.toggle("is-open");
-        element.setAttribute("aria-expanded", String(open));
-      }
-      break;
-    }
-    case "chat-more":
-      showToast("对话已保存到本地");
-      break;
-    case "new-chat":
-      state.chatMessages = [];
-      state.chatStreaming = false;
-      renderPage(false);
-      showToast("已新建对话");
-      break;
-    case "recent-chat":
-      navigate("chat");
-      break;
-    case "thinking-cycle":
-      cycleThinking();
-      break;
-    case "search-hub":
-      closeOverlays();
-      showToast("模型广场已准备就绪");
-      break;
-    case "refresh-models":
-      showToast("模型状态已刷新");
-      break;
-    case "refresh-engines":
-      showToast("引擎状态已刷新");
-      break;
-    case "use-model":
-      showToast("当前权重已在使用");
-      break;
-    case "model-detail":
-    case "model-more":
-      showToast("模型详情已展开");
-      break;
-    case "check-updates":
-      showToast("三个引擎均为最新版本");
-      break;
-    case "toggle-log-pause":
-      state.logPaused = !state.logPaused;
-      renderPage(false);
-      showToast(state.logPaused ? "日志已暂停跟随" : "日志已恢复实时跟随");
-      break;
-    case "clear-logs":
-      logSequence = 0;
-      renderPage(false);
-      showToast("已清空当前视图日志");
-      break;
-    case "log-copy":
-      copyText($$(".log-line:not(.hidden) .msg").map((node) => node.textContent).join("\n"));
-      break;
-    case "reset-settings":
-      resetSettings();
-      break;
-    case "reset-params":
-      state.params = { temperature: .7, topP: .92, tokens: 4096, thinking: "自动" };
-      openInspector();
-      break;
-    case "save-params":
-      closeOverlays();
-      showToast("生成参数已应用");
-      break;
-  }
-}
-
-function resetSettings() {
-  state.settings = { launchEngine: true, login: true, gateway: true, thinking: "自动" };
-  state.theme = "system";
-  state.settings.appearance = "system";
-  localStorage.removeItem("fc-preview-theme");
-  document.documentElement.dataset.theme = resolvedTheme();
-  updateThemeIcon();
-  renderPage(false);
-  showToast("设置已恢复为默认值");
-}
 
 function handleInput(event) {
   if (event.target.id === "modelSearch") {
@@ -2941,10 +1306,10 @@ function updateModelsGrid() {
   modelListAnimationToken += 1;
   const filtered = filteredModels();
   const commit = () => {
-    grid.innerHTML = window.FCModelWorkspace.cards(filtered, state);
+    grid.innerHTML = FCModelWorkspace.cards(filtered, state);
   };
-  if (window.FCMotionGuard) {
-    window.FCMotionGuard.fadeSwap(grid, commit, {
+  if (FCMotionGuard) {
+    FCMotionGuard.fadeSwap(grid, commit, {
       durationOut: 70,
       durationIn: 150,
       distance: 3,
@@ -2957,14 +1322,14 @@ function updateModelsGrid() {
 // 滑块的定位统一交给 FCSegments：它按真实按钮量位置，并自己监听 active 变化。
 // 下面几个旧入口保留名字，只是转发，免得调用点散落一地。
 function updateEngineTabIndicator() {
-  window.FCSegments?.paintAll();
+  FCSegments?.paintAll();
 }
 
-function updateSlidingSegments() {
-  window.FCSegments?.paintAll();
+export function updateSlidingSegments() {
+  FCSegments?.paintAll();
 }
 
-function syncThinkingTriggerLabel() {
+export function syncThinkingTriggerLabel() {
   const trigger = $("[data-fc-thinking-trigger]");
   if (!trigger) return;
   const mode = state.settings.thinking;
@@ -2977,7 +1342,7 @@ function syncThinkingTriggerLabel() {
 }
 
 function updateSlidingSegment(container) {
-  if (container) window.FCSegments?.paint(container);
+  if (container) FCSegments?.paint(container);
 }
 
 function setModelFilter(filter) {
@@ -2996,7 +1361,7 @@ function setModelFilter(filter) {
   setTimeout(() => {
     if (token !== modelListAnimationToken) return;
     const filtered = filteredModels();
-    grid.innerHTML = window.FCModelWorkspace.cards(filtered, state);
+    grid.innerHTML = FCModelWorkspace.cards(filtered, state);
     grid.classList.remove("is-leaving");
     grid.classList.add("is-entering");
     setTimeout(() => {
@@ -3006,11 +1371,11 @@ function setModelFilter(filter) {
 }
 
 function filterLogRows() {
-  const query = state.logSearch.toLowerCase();
+  const query = String(state.logSearch || "").toLowerCase();
   const level = state.logFilter === "提示" ? "INFO" : state.logFilter === "警告" ? "WARN" : state.logFilter === "错误" ? "ERROR" : "";
   $$(".log-line").forEach((line) => {
     const matchesLevel = !level || line.dataset.logLevel === level;
-    const matchesSearch = !query || line.dataset.logText.includes(query);
+    const matchesSearch = !query || (line.dataset.logText || "").includes(query);
     const hidden = !matchesLevel || !matchesSearch;
     if (hidden) {
       if (!line.classList.contains("hidden")) {
@@ -3024,10 +1389,12 @@ function filterLogRows() {
       }
     } else {
       line.classList.remove("hidden", "is-filtering-out");
-      line.animate(
-        [{ opacity: 0, transform: "translateY(-3px)" }, { opacity: 1, transform: "none" }],
-        { duration: 180, easing: "cubic-bezier(.16,1,.3,1)" }
-      );
+      if (typeof line.animate === "function") {
+        line.animate(
+          [{ opacity: 0, transform: "translateY(-3px)" }, { opacity: 1, transform: "none" }],
+          { duration: 180, easing: "cubic-bezier(.16,1,.3,1)" }
+        );
+      }
     }
   });
 }
@@ -3085,7 +1452,7 @@ function handleKeydown(event) {
     return;
   }
   // 同上：实时壳自己监听 Enter，这里再发一次就是「发送+立即停止」。
-  if (!window.FC_LIVE && state.page === "chat" && event.key === "Enter" && !event.shiftKey && event.target.id === "chatInput") {
+  if (!FC_LIVE && state.page === "chat" && event.key === "Enter" && !event.shiftKey && event.target.id === "chatInput") {
     event.preventDefault();
     sendChat();
   }
@@ -3095,9 +1462,17 @@ function handleKeydown(event) {
   }
 }
 
+// app.js is the shared shell: state, nav chrome and the interaction layer that
+// live.js builds on. live.js owns rendering — if it is missing there is nothing
+// to paint, so say so loudly instead of falling back to the old mock-data
+// preview. The render harness asserts on console errors, so a broken load shows
+// up in `make webui-check` instead of shipping a fake UI.
 document.addEventListener("DOMContentLoaded", function () {
-  if (window.FC_LIVE) window.FC_LIVE.init();
-  else init();
+  if (!FC_LIVE) {
+    console.error("[flashCat] live.js did not load — no UI to render.");
+    return;
+  }
+  FC_LIVE.init();
 });
 window.addEventListener("beforeunload", () => {
   if (ambientAnimation) cancelAnimationFrame(ambientAnimation);

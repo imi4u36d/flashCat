@@ -16,10 +16,10 @@ enum Page: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
-        case .overview: return "gauge.with.dots.needle.33percent"
-        case .chat: return "bubble.left.and.text.bubble.right"
-        case .models: return "shippingbox"
-        case .engines: return "gearshape"
+        case .overview: return "square.grid.2x2"
+        case .chat: return "bubble.left"
+        case .models: return "square.stack.3d.up"
+        case .engines: return "cpu"
         case .logs: return "doc.plaintext"
         case .settings: return "slider.horizontal.3"
         }

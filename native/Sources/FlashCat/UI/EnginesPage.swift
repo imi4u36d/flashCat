@@ -2,10 +2,7 @@ import SwiftUI
 import AppKit
 import FlashCatKit
 
-/// 引擎页：五台平级引擎的安装、启停、切换、版本与配置入口。
-///
-/// 所有差异都来自 descriptor（名称、强调色、端口、切换方式、能力位），
-/// 页面不按引擎 id 分支。
+/// 引擎页：按 WebUI 版式——顶部运行时统计，下面是整行引擎卡。
 struct EnginesPage: View {
     @ObservedObject var state: AppState
     @ObservedObject var installs: EngineInstallCenter
@@ -13,66 +10,27 @@ struct EnginesPage: View {
     @State private var configuring: EngineID?
     @State private var pendingRemoval: EngineID?
 
-    private let columns = [GridItem(.adaptive(minimum: 340, maximum: 620), spacing: Native.gap)]
+    private var installedCount: Int {
+        EngineCatalog.allIDs.filter { state.engineIsInstalled($0) }.count
+    }
+
+    private var runningCount: Int {
+        state.isRunning ? 1 : 0
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            PageHeader(title: "引擎",
-                       subtitle: "五台引擎平级并存：装哪台、跑哪台、端口与调优都在这里",
-                       eyebrow: "ENGINES") {
-                Button {
-                    state.showsLaunchPage = true
-                } label: {
-                    Label("启动页", systemImage: "rectangle.stack.badge.plus")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                header
+                ForEach(EngineCatalog.allIDs, id: \.self) { id in
+                    engineRow(id)
                 }
-                .buttonStyle(.arcadeGlass)
-
-                Button {
-                    Task { @MainActor in
-                        installs.refreshInstalled()
-                        await installs.loadIndexIfNeeded(force: true)
-                        await installs.checkUpstream(force: true)
-                    }
-                } label: {
-                    Label("检查更新", systemImage: "arrow.triangle.2.circlepath")
-                }
-                .buttonStyle(.arcadePill)
             }
-            .padding(.horizontal, Native.pagePadding)
-            .padding(.top, 30)
-            .padding(.bottom, 14)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: Native.gap) {
-                    if let error = installs.indexError, !error.isEmpty {
-                        Card("发布索引不可用",
-                             subtitle: "暂时拿不到可安装版本，已安装的引擎不受影响",
-                             tint: Native.orange) {
-                            Text(error)
-                                .font(Native.bodyFont)
-                                .foregroundStyle(Native.orange)
-                                .textSelection(.enabled)
-                        }
-                    }
-
-                    LazyVGrid(columns: columns, alignment: .leading, spacing: Native.gap) {
-                        ForEach(EngineCatalog.allIDs, id: \.self) { id in
-                            EngineCard(state: state,
-                                       installs: installs,
-                                       id: id,
-                                       configure: { configuring = id },
-                                       remove: { pendingRemoval = id })
-                        }
-                    }
-
-                    storageCard
-                }
-                .padding(.horizontal, Native.pagePadding)
-                .padding(.bottom, 30)
-                .pageColumn()
-            }
-            .scrollIndicators(.never)
+            .padding(.horizontal, Console.contentPadding)
+            .padding(.top, 78)
+            .padding(.bottom, 26)
         }
+        .scrollIndicators(.never)
         .task {
             installs.refreshInstalled()
             await installs.loadIndexIfNeeded()
@@ -107,293 +65,185 @@ struct EnginesPage: View {
         return versions.sorted().joined(separator: "、")
     }
 
-    private var storageCard: some View {
-        Card("运行时与模型目录", subtitle: "pack 与权重都在用户目录里，删应用不会删模型") {
-            VStack(spacing: 0) {
-                pathRow("引擎运行时", EnginePaths.enginesDirectory) {
-                    Paths.ensureDirectory(EnginePaths.enginesDirectory)
-                    NSWorkspace.shared.open(URL(fileURLWithPath: EnginePaths.enginesDirectory))
+    private var header: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Text("运行时")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(Console.text)
+            Circle()
+                .fill(runningCount > 0 ? Console.ok : Console.tertiary)
+                .frame(width: 6, height: 6)
+            Text("\(runningCount) 运行中")
+                .font(.system(size: 12))
+                .foregroundStyle(Console.secondary)
+            Rectangle().fill(Console.cardStroke).frame(width: 1, height: 14)
+            Text("\(installedCount) / \(EngineCatalog.allIDs.count) 已安装")
+                .font(.system(size: 12))
+                .foregroundStyle(Console.secondary)
+            Spacer(minLength: 0)
+            Button {
+                Task { @MainActor in
+                    installs.refreshInstalled()
+                    await installs.loadIndexIfNeeded(force: true)
+                    await installs.checkUpstream(force: true)
                 }
-                Hairline()
-                pathRow("模型总目录", EnginePaths.modelsRoot) {
-                    Paths.ensureDirectory(EnginePaths.modelsRoot)
-                    NSWorkspace.shared.open(URL(fileURLWithPath: EnginePaths.modelsRoot))
-                }
-                Hairline()
-                pathRow("日志目录", EnginePaths.logsDirectory) {
-                    Paths.ensureDirectory(EnginePaths.logsDirectory)
-                    NSWorkspace.shared.open(URL(fileURLWithPath: EnginePaths.logsDirectory))
-                }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Console.secondary)
+                    .frame(width: 32, height: 32)
+                    .background(Circle().fill(Console.card.opacity(0.75)))
+                    .overlay(Circle().strokeBorder(Console.cardStroke, lineWidth: 0.8))
             }
+            .buttonStyle(.plain)
+            .help("检查更新")
         }
     }
 
-    private func pathRow(_ label: String, _ path: String, reveal: @escaping () -> Void) -> some View {
-        HStack(spacing: 10) {
-            Text(label)
-                .font(Native.bodyFont)
-                .foregroundStyle(Native.secondary)
-            Spacer(minLength: 10)
-            Text(verbatim: (path as NSString).abbreviatingWithTildeInPath)
-                .font(Native.monoFont)
-                .foregroundStyle(Native.label)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .textSelection(.enabled)
-            Button("打开", action: reveal)
-                .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
-        }
-        .padding(.vertical, 8)
-    }
-}
+    private func engineRow(_ id: EngineID) -> some View {
+        let installed = state.engineIsInstalled(id)
+        let isActive = state.activeEngine == id
+        let versions = installs.installed[id] ?? []
+        let phase = installs.phases[id] ?? .idle
+        let busy = phase.isBusy || installs.building == id
+        let accent = engineAccent(id)
+        let port = EngineStore.shared.configuration(for: id).port ?? id.defaultPort
 
-// MARK: - Card
+        return GlassCard(padding: 20) {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .top, spacing: 18) {
+                    LetterTile(letter: String(id.displayName.prefix(1)).uppercased(),
+                               color: accent, size: 52)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 10) {
+                            Text(id.displayName)
+                                .font(.system(size: 22, weight: .semibold))
+                                .foregroundStyle(Console.text)
+                            statusChip(installed: installed, active: isActive, busy: busy)
+                        }
+                        Text(verbatim: "v\(versions.last ?? "—")  ·  :\(port)")
+                            .font(.system(size: 11.5, design: .monospaced))
+                            .foregroundStyle(Console.tertiary)
+                        Text(id.descriptor.summary)
+                            .font(.system(size: 13))
+                            .foregroundStyle(Console.secondary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 2)
+                        HStack(spacing: 6) {
+                            ForEach(id.descriptor.capabilities.prefix(3), id: \.rawValue) { capability in
+                                ConsoleTag(text: capability.displayName)
+                            }
+                        }
+                        .padding(.top, 2)
+                    }
+                    Spacer(minLength: 16)
 
-private struct EngineCard: View {
-    @ObservedObject var state: AppState
-    @ObservedObject var installs: EngineInstallCenter
-    let id: EngineID
-    let configure: () -> Void
-    let remove: () -> Void
+                    column("当前", value: currentText(id, installed: installed, isActive: isActive))
+                    column("接口", value: installed ? "127.0.0.1:\(port)" : "端口 \(port)")
+                    column("状态", value: statusText(installed: installed, busy: busy))
+                }
 
-    private var isActive: Bool { state.activeEngine == id }
-    private var installed: Bool { state.engineIsInstalled(id) }
-    private var versions: [String] { installs.installed[id] ?? [] }
-    private var phase: EngineInstallPhase { installs.phases[id] ?? .idle }
-    private var busy: Bool { phase.isBusy || installs.building == id }
-    private var accent: Color { engineAccent(id) }
+                HStack(spacing: 10) {
+                    Spacer(minLength: 0)
+                    if busy {
+                        ProgressRing(fraction: installs.progress[id] ?? 0, tint: accent, size: 24, lineWidth: 3)
+                        Text(installs.progressStep[id] ?? phase.label)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Console.secondary)
+                    } else if !installed {
+                        Button {
+                            install(id)
+                        } label: {
+                            Label("下载", systemImage: "arrow.down.circle.fill")
+                        }
+                        .buttonStyle(ConsolePillStyle(tone: .primary))
+                    } else if isActive {
+                        Button {
+                            state.toggleService()
+                        } label: {
+                            Label(state.isRunning ? "停止" : "启动",
+                                  systemImage: state.isRunning ? "stop.fill" : "play.fill")
+                        }
+                        .buttonStyle(EngineColorButton(color: accent))
+                        .disabled(state.isSwitchingModel)
+                    } else {
+                        Button {
+                            Task { @MainActor in await state.switchEngine(id) }
+                        } label: {
+                            Label("启动", systemImage: "play.fill")
+                        }
+                        .buttonStyle(EngineColorButton(color: accent))
+                        .disabled(state.isSwitchingModel || busy)
+                    }
 
-    var body: some View {
-        HoverSurface(radius: Native.radiusPanel,
-                     accent: accent,
-                     active: isActive,
-                     padding: Native.cardPadding) {
-            VStack(alignment: .leading, spacing: 12) {
-                identityRow
-                Text(id.descriptor.summary)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Native.secondary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                capabilityRow
-                Hairline()
-                runtimeRow
-                upstreamRow
-                if busy { progressRow }
-                actionRow
+                    Button("配置") { configuring = id }
+                        .buttonStyle(.consoleSecondary)
+                        .disabled(versions.isEmpty)
+
+                    Button {
+                        pendingRemoval = id
+                    } label: {
+                        Label("删除", systemImage: "trash")
+                    }
+                    .buttonStyle(.consoleDanger)
+                    .disabled(busy || versions.isEmpty || (isActive && state.isRunning))
+                }
             }
         }
         .overlay(alignment: .leading) {
             if isActive {
-                Capsule()
+                RoundedRectangle(cornerRadius: 2)
                     .fill(accent)
                     .frame(width: 3)
-                    .padding(.vertical, 18)
+                    .padding(.vertical, 22)
                     .padding(.leading, 2)
-                    .shadow(color: accent.opacity(0.55), radius: 4)
-            }
-        }
-        .animation(Motion.standard, value: isActive)
-    }
-
-    private var identityRow: some View {
-        HStack(spacing: 10) {
-            ArcadeIcon(symbol: engineSymbol(id),
-                       colors: [accent, accent.opacity(0.62)],
-                       size: 30,
-                       glyphScale: 0.44,
-                       glow: false)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(id.displayName)
-                        .font(.system(size: 14.5, weight: .semibold))
-                        .foregroundStyle(Native.label)
-                    if isActive {
-                        Tag(text: state.isRunning ? "运行中" : "当前",
-                            tone: state.isRunning ? .success : .neutral)
-                    }
-                }
-                Text(versionText)
-                    .font(Native.monoSmall)
-                    .foregroundStyle(Native.tertiary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 6)
-            Toggle(isOn: Binding(
-                get: { isActive && state.isRunning },
-                set: { on in
-                    if isActive {
-                        on ? state.startService() : state.stopService()
-                    } else if on {
-                        Task { @MainActor in await state.switchEngine(id) }
-                    }
-                })) {
-                EmptyView()
-            }
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .labelsHidden()
-            .disabled(!installed || state.isSwitchingModel)
-            .help(isActive ? (state.isRunning ? "停止引擎" : "启动引擎") : "切换到 \(id.displayName)")
-        }
-    }
-
-    private var versionText: String {
-        if busy { return installs.progressStep[id] ?? phase.label }
-        if versions.isEmpty { return "未安装" }
-        return versions.sorted().joined(separator: "、")
-    }
-
-    private var capabilityRow: some View {
-        FlowLayout(spacing: 5, lineSpacing: 5) {
-            Tag(text: "端口 \(portValue)", tone: .neutral, icon: "number")
-            Tag(text: id.descriptor.switchMode == .hot ? "热切换" : "重启切换",
-                tone: id.descriptor.switchMode == .hot ? .success : .neutral,
-                icon: id.descriptor.switchMode == .hot ? "arrow.triangle.2.circlepath" : "power")
-            ForEach(id.descriptor.capabilities.prefix(4), id: \.rawValue) { capability in
-                Tag(text: capability.displayName, tone: .neutral)
             }
         }
     }
 
-    private var portValue: Int {
-        EngineStore.shared.configuration(for: id).port ?? id.defaultPort
-    }
-
-    private var runtimeRow: some View {
-        HStack(spacing: 8) {
-            StatusDot(color: isActive ? statusColor(state.serverState) : Native.gray,
-                      diameter: 6,
-                      pulsing: isActive && state.serverState == .starting)
-            Text(isActive ? state.startupStage : (installed ? "待切换" : "未安装"))
+    private func column(_ label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(label)
                 .font(.system(size: 11))
-                .foregroundStyle(isActive ? Native.secondary : Native.tertiary)
+                .foregroundStyle(Console.tertiary)
+            Text(value)
+                .font(.system(size: 12))
+                .foregroundStyle(Console.text)
                 .lineLimit(1)
-            Spacer(minLength: 6)
-            Button("配置…", action: configure)
-                .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
-                .disabled(versions.isEmpty)
         }
+        .frame(width: 112, alignment: .leading)
     }
 
-    @ViewBuilder private var upstreamRow: some View {
-        switch installs.upstream[id] {
-        case .update(_, let release):
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.down.circle.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Native.blue)
-                Text("上游有新版本 \(release.version)")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Native.secondary)
-                Spacer(minLength: 4)
-                Button("更新") { install(release.version) }
-                    .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
-                    .disabled(busy)
-            }
-        case .current(let version):
-            HStack(spacing: 6) {
-                Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Native.green)
-                Text("已是最新 \(version)")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Native.tertiary)
-                Spacer(minLength: 0)
-            }
-        case .unavailable(let reason):
-            Text(reason.isEmpty ? "未检查上游版本" : reason)
-                .font(.system(size: 11))
-                .foregroundStyle(Native.tertiary)
-                .lineLimit(1)
-        case .none:
-            Text("未检查上游版本")
-                .font(.system(size: 11))
-                .foregroundStyle(Native.tertiary)
+    private func statusChip(installed: Bool, active: Bool, busy: Bool) -> some View {
+        if busy {
+            return StatusChip(text: "安装中", color: Console.warn, filled: true)
         }
-    }
-
-    private var progressRow: some View {
-        HStack(spacing: 9) {
-            ProgressRing(fraction: installs.progress[id] ?? 0, tint: accent, size: 26, lineWidth: 3)
-            Text(installs.progressStep[id] ?? phase.label)
-                .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(Native.secondary)
-                .lineLimit(2)
-            Spacer(minLength: 0)
-        }
-    }
-
-    private var actionRow: some View {
-        HStack(spacing: 8) {
-            primaryButton
-            Spacer(minLength: 4)
-            Menu {
-                Button("启用 / 切换到此引擎") {
-                    Task { @MainActor in await state.switchEngine(id) }
-                }
-                .disabled(isActive)
-                Button("打开模型目录") {
-                    let directory = EnginePaths.modelsDirectory(id)
-                    Paths.ensureDirectory(directory)
-                    NSWorkspace.shared.open(URL(fileURLWithPath: directory))
-                }
-                Button("显示日志文件") {
-                    let path = EnginePaths.logFile(id)
-                    guard Paths.fileExists(path) else {
-                        state.toast("该引擎还没有日志文件")
-                        return
-                    }
-                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
-                }
-                Divider()
-                Button("删除运行时…", role: .destructive, action: remove)
-                    .disabled(busy || versions.isEmpty)
-            } label: {
-                IconMenuLabel(systemName: "ellipsis")
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-        }
-    }
-
-    @ViewBuilder private var primaryButton: some View {
         if !installed {
-            Button {
-                install(nil)
-            } label: {
-                Text(busy ? (installs.progressStep[id] ?? "安装中…") : "安装")
-            }
-            .buttonStyle(.arcadePill)
-            .disabled(busy || installs.building != nil)
-        } else if isActive {
-            Button {
-                state.toggleService()
-            } label: {
-                Text(state.isRunning ? "停止引擎" : "启动引擎")
-            }
-            .buttonStyle(state.isRunning ? ArcadePillStyle(tone: .quietDanger) : .arcadePill)
-            .disabled(state.isSwitchingModel)
-        } else {
-            Button {
-                Task { @MainActor in await state.switchEngine(id) }
-            } label: {
-                Text("切换到此引擎")
-            }
-            .buttonStyle(.arcadePill)
-            .disabled(state.isSwitchingModel || busy)
+            return StatusChip(text: "未安装", color: Console.tertiary)
         }
+        if active && state.isRunning {
+            return StatusChip(text: "运行中", color: Console.ok, filled: true)
+        }
+        return StatusChip(text: "已停止", color: Console.tertiary)
     }
 
-    /// 发布索引里优先；没有归档时退回上游构建。
-    private func install(_ version: String?) {
-        if let release = installs.releases[id]?.first(where: { $0.version == version }) {
-            installs.install(release, for: id)
-            return
+    private func currentText(_ id: EngineID, installed: Bool, isActive: Bool) -> String {
+        guard installed else { return "等待安装" }
+        if isActive, state.isRunning {
+            return state.serverState == .ready ? "进程已就绪" : (state.startupStage.isEmpty ? "启动中" : state.startupStage)
         }
-        if version == nil,
-           let latest = installs.releases[id]?.max(by: { EngineVersionOrder.isNewer($1.version, than: $0.version) }) {
+        return "进程未启动"
+    }
+
+    private func statusText(installed: Bool, busy: Bool) -> String {
+        if busy { return "安装中" }
+        guard installed else { return "未下载" }
+        return "待机"
+    }
+
+    private func install(_ id: EngineID) {
+        if let latest = installs.releases[id]?.max(by: { EngineVersionOrder.isNewer($1.version, than: $0.version) }) {
             installs.install(latest, for: id)
             return
         }
@@ -409,12 +259,17 @@ private struct EngineCard: View {
     }
 }
 
-// MARK: - Engine helpers
+// MARK: - Engine identity
 
 func engineAccent(_ id: EngineID) -> Color {
-    let hex = id.descriptor.accentColor.trimmingCharacters(in: CharacterSet(charactersIn: "# "))
-    guard hex.count == 6, let value = UInt32(hex, radix: 16) else { return Native.accent }
-    return Color(hex: value)
+    switch id {
+    case .splash: return Color(console: 0xE0893F)
+    case .omlx: return Color(console: 0x2F8C99)
+    case .mtplx: return Color(console: 0x5B57C9)
+    case .mlxServe: return Color(console: 0x2F7CF6)
+    case .strata: return Color(console: 0x3FAE7A)
+    default: return Console.accent
+    }
 }
 
 func engineSymbol(_ id: EngineID) -> String {

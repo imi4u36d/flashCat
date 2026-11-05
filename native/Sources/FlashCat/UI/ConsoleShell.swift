@@ -2,11 +2,8 @@ import SwiftUI
 import AppKit
 import FlashCatKit
 
-/// 控制台根视图：侧栏 + 六个原生页面 + 启动页。
-///
-/// 这里没有网页、没有快照桥：页面直接读 `AppState` 的 `@Published` 状态，
-/// 用户动作直接调用 `AppState` 的方法。所有可变状态仍然只在一个 `@MainActor`
-/// 对象上，视图是它的纯函数。
+/// 控制台根视图：玻璃侧栏 + 浮层标题栏 + 六个原生页面 + 启动页。
+/// 版式按 WebUI 1:1：200 pt 侧栏、54 pt 浮层标题栏、24 pt 内容边距。
 struct ConsoleView: View {
     @ObservedObject var state: AppState
     @ObservedObject private var theme = AppState.shared.theme
@@ -14,17 +11,15 @@ struct ConsoleView: View {
     @State private var showCommand = false
     @State private var showDownloads = false
     @State private var showHub = false
-    @AppStorage("sidebarWidth") private var sidebarWidth: Double = 216
+    @AppStorage("sidebarWidth") private var sidebarWidth: Double = 200
 
     private var resolvedSidebarWidth: CGFloat {
         CGFloat(min(max(sidebarWidth, 180), 320))
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ConsoleTitlebar(state: state,
-                            openCommand: { showCommand = true },
-                            openDownloads: { showDownloads = true })
+        ZStack(alignment: .topLeading) {
+            ConsoleBackdrop(accent: state.section.keyColor)
 
             HStack(spacing: 0) {
                 if state.showsSidebar {
@@ -49,9 +44,14 @@ struct ConsoleView: View {
                 .animation(Motion.standard, value: state.section)
             }
             .animation(.easeInOut(duration: 0.22), value: state.showsSidebar)
+
+            ConsoleTitlebar(state: state,
+                            openCommand: { showCommand = true },
+                            openDownloads: { showDownloads = true })
+                .frame(height: Console.titlebarHeight)
+                .frame(maxWidth: .infinity, alignment: .top)
         }
-        .background(PageBackdrop(accent: state.section.keyColor))
-        .tint(Native.accent)
+        .tint(Console.accent)
         .preferredColorScheme(preferredScheme)
         .overlay(alignment: .bottom) {
             if let message = state.toastMessage {
@@ -76,32 +76,12 @@ struct ConsoleView: View {
                     .transition(.opacity)
             }
         }
-        .sheet(isPresented: $showDownloads) {
-            DownloadCenterSheet(state: state)
-        }
-        .sheet(isPresented: $showHub) {
-            HubSheet(state: state, engine: state.libraryEngine)
-        }
-        .background {
-            Group {
-                Button("") { showCommand = true }
-                    .keyboardShortcut("k", modifiers: .command)
-                Button("") {
-                    let dark = state.theme.mode.resolvedIsDark
-                    state.theme.set(dark ? .light : .dark)
-                }
-                .keyboardShortcut("a", modifiers: [.command, .shift])
-            }
-            .opacity(0)
-            .frame(width: 0, height: 0)
-        }
-        .animation(.easeOut(duration: 0.2), value: state.isPresentingLaunchPage || state.showsRecommendationPage)
+        .sheet(isPresented: $showDownloads) { DownloadCenterSheet(state: state) }
+        .sheet(isPresented: $showHub) { HubSheet(state: state, engine: state.libraryEngine) }
         .alert("切换模型？", isPresented: modelSwitchShown) {
             Button("取消", role: .cancel) { state.cancelModelSwitchRequest() }
             Button("停止并切换") { state.confirmModelSwitch() }
-        } message: {
-            Text(modelSwitchMessage)
-        }
+        } message: { Text(modelSwitchMessage) }
         .alert("\(state.pendingEngineInstall?.displayName ?? "该引擎") 还没安装",
                isPresented: engineInstallShown,
                presenting: state.pendingEngineInstall) { _ in
@@ -115,6 +95,19 @@ struct ConsoleView: View {
             Button("取消", role: .cancel) { state.cancelLibraryUse() }
         } message: { request in
             Text("\(request.model) 属于 \(request.engine.displayName)，切换会先停掉 \(state.activeEngine.displayName)，再以这个模型启动 \(request.engine.displayName)。")
+        }
+        .background {
+            Group {
+                Button("") { showCommand = true }
+                    .keyboardShortcut("k", modifiers: .command)
+                Button("") {
+                    let dark = state.theme.mode.resolvedIsDark
+                    state.theme.set(dark ? .light : .dark)
+                }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+            }
+            .opacity(0)
+            .frame(width: 0, height: 0)
         }
     }
 
@@ -139,8 +132,6 @@ struct ConsoleView: View {
         case .settings: SettingsPage(state: state)
         }
     }
-
-    // MARK: Bindings
 
     private var modelSwitchShown: Binding<Bool> {
         Binding(get: { state.confirmingModelSwitch != nil },
@@ -175,89 +166,41 @@ struct ConsoleSidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             brand
-                .padding(.horizontal, collapsed ? 10 : 14)
-                .padding(.top, 10)
-                .padding(.bottom, 12)
-
-            if !collapsed {
-                Button {
-                    state.newConversation()
-                    state.section = .chat
-                } label: {
-                    Label("新对话", systemImage: "square.and.pencil")
-                        .font(.system(size: 12, weight: .semibold))
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.arcadePillCompact)
-                .padding(.horizontal, 12)
-                .padding(.bottom, 12)
-            } else {
-                IconAction(systemName: "sidebar.left", help: "展开边栏（⌘\\）") {
-                    state.toggleSidebar()
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.bottom, 10)
-            }
+                .padding(.leading, collapsed ? 22 : 28)
+                .padding(.top, 60)
+                .padding(.bottom, 4)
 
             workspace
-                .padding(.horizontal, collapsed ? 8 : 10)
+                .padding(.horizontal, collapsed ? 8 : 14)
 
             if !collapsed {
                 recents
-                    .padding(.top, 16)
+                    .padding(.top, 20)
             }
 
             Spacer(minLength: 12)
-
-            engineCard
-                .padding(.horizontal, collapsed ? 8 : 12)
-                .padding(.bottom, 14)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background {
-            LinearGradient(colors: [Native.sidebar, Native.sidebar.opacity(0.92)],
-                           startPoint: .top, endPoint: .bottom)
-        }
+        .background(Console.sidebar)
         .overlay(alignment: .trailing) {
-            Rectangle()
-                .fill(Native.hairline.opacity(0.8))
-                .frame(width: 1)
+            Rectangle().fill(Console.sidebarEdge).frame(width: 1)
         }
         .animation(Motion.standard, value: state.section)
     }
 
     private var brand: some View {
-        HStack(spacing: 9) {
-            ZStack {
-                Circle()
-                    .fill(RadialGradient(colors: [Native.accent.opacity(0.22), .clear],
-                                         center: .center, startRadius: 2, endRadius: 26))
-                    .frame(width: 48, height: 48)
-                BrandMark(size: collapsed ? 28 : 32)
-            }
-            if !collapsed {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("flashCat")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Native.label)
-                    Text("本地推理控制台")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Native.tertiary)
-                }
-                Spacer(minLength: 0)
-            } else {
-                Spacer(minLength: 0)
-            }
+        ZStack(alignment: .bottomTrailing) {
+            BrandMark(size: collapsed ? 30 : 36)
+            Circle()
+                .fill(Native.green)
+                .frame(width: 9, height: 9)
+                .overlay(Circle().stroke(Console.sidebar, lineWidth: 2))
+                .offset(x: 3, y: 3)
         }
     }
 
     private var workspace: some View {
-        VStack(spacing: 2) {
-            if !collapsed {
-                Eyebrow(text: "工作区")
-                    .padding(.horizontal, 9)
-                    .padding(.bottom, 5)
-            }
+        VStack(spacing: 4) {
             ForEach(Page.allCases) { page in
                 SidebarNavRow(page: page,
                               active: state.section == page,
@@ -271,129 +214,36 @@ struct ConsoleSidebar: View {
     }
 
     private var modelCount: Int {
-        EngineCatalog.allIDs.reduce(0) { total, id in
-            total + state.libraryEntries(for: id).filter(\.installed).count
-        }
+        state.libraryEntries(for: state.libraryEngine).filter(\.installed).count
+    }
+
+    private func recentDate(_ date: Date) -> String {
+        if Calendar.current.isDateInToday(date) { return Format.clock(date) }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "M/d"
+        return formatter.string(from: date)
     }
 
     private var recents: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Eyebrow(text: "最近对话")
-                .padding(.horizontal, 10)
-                .padding(.bottom, 5)
+        VStack(alignment: .leading, spacing: 2) {
+            Text("最近对话")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Console.secondary)
+                .padding(.leading, 16)
+                .padding(.bottom, 8)
             ForEach(state.threads.prefix(6)) { thread in
                 SidebarRecentRow(title: thread.title,
+                                 date: recentDate(thread.updatedAt),
                                  active: state.currentThreadID == thread.id) {
                     state.openThread(thread)
                     state.section = .chat
                 }
+                .padding(.horizontal, 8)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
-
-    private var engineCard: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 7) {
-                if state.isRunning {
-                    LiveDot(color: statusColor(state.serverState), diameter: 7)
-                } else {
-                    Circle()
-                        .fill(statusColor(state.serverState))
-                        .frame(width: 7, height: 7)
-                        .padding(.horizontal, 3.5)
-                }
-                if !collapsed {
-                    Text(state.activeEngine.displayName)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Native.label)
-                        .lineLimit(1)
-                    Spacer(minLength: 4)
-                    Text(state.isRunning ? "运行中" : state.serverState == .starting ? "启动中" : "已停止")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Native.tertiary)
-                } else {
-                    Spacer(minLength: 0)
-                }
-            }
-
-            if !collapsed {
-                Text(verbatim: "\(state.engineVersion) · \(state.port)")
-                    .font(Native.monoSmall)
-                    .foregroundStyle(Native.tertiary)
-                    .lineLimit(1)
-
-                HStack(spacing: 6) {
-                    Button {
-                        state.toggleService()
-                    } label: {
-                        Text(state.isRunning ? "停止" : "启动")
-                            .frame(minWidth: 42)
-                    }
-                    .buttonStyle(ArcadePillStyle(tone: state.isRunning ? .quietDanger : .light, compact: true))
-                    .disabled(state.isSwitchingModel)
-
-                    Menu {
-                        ForEach(EngineCatalog.allIDs, id: \.self) { id in
-                            Button {
-                                Task { @MainActor in await state.switchEngine(id) }
-                            } label: {
-                                if id == state.activeEngine {
-                                    Label(id.displayName, systemImage: "checkmark")
-                                } else {
-                                    Text(id.displayName)
-                                }
-                            }
-                            .disabled(!state.engineIsInstalled(id))
-                        }
-                    } label: {
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(Native.secondary)
-                            .frame(width: 24, height: 24)
-                            .background(Circle().fill(Native.overlay(0.07)))
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
-                    .help("切换引擎")
-                }
-            } else {
-                Button {
-                    state.toggleService()
-                } label: {
-                    Image(systemName: state.isRunning ? "stop.fill" : "play.fill")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(state.isRunning ? Native.red : Native.green)
-                        .frame(width: 26, height: 26)
-                        .background(Circle().fill(Native.overlay(0.07)))
-                }
-                .buttonStyle(.plain)
-                .help(state.isRunning ? "停止引擎" : "启动引擎")
-            }
-        }
-        .padding(collapsed ? 9 : 11)
-        .background {
-            let shape = RoundedRectangle(cornerRadius: Native.radiusTile, style: .continuous)
-            shape
-                .fill(Native.canvas)
-                .overlay {
-                    shape.fill(statusColor(state.serverState).opacity(state.isRunning ? 0.055 : 0))
-                }
-                .overlay {
-                    shape.strokeBorder(state.isRunning
-                                       ? statusColor(state.serverState).opacity(0.28)
-                                       : Native.hairline,
-                                       lineWidth: 1)
-                }
-                .shadow(color: Native.panelShadow.opacity(state.isRunning ? 0.9 : 0),
-                        radius: 10, y: 3)
-        }
-        .animation(Motion.standard, value: state.isRunning)
-    }
 }
-
-// MARK: - Sidebar rows
 
 private struct SidebarNavRow: View {
     let page: Page
@@ -408,69 +258,58 @@ private struct SidebarNavRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 9) {
+            HStack(spacing: 11) {
                 Image(systemName: page.symbol)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(active ? page.keyColor : Native.secondary)
-                    .frame(width: 18)
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(active ? Console.accent : Console.secondary)
+                    .frame(width: 24)
                     .symbolRenderingMode(.hierarchical)
                 if !collapsed {
                     Text(page.rawValue)
-                        .font(.system(size: 12.5, weight: active ? .semibold : .regular))
-                        .foregroundStyle(active ? Native.label : Native.secondary)
+                        .font(.system(size: 14.5, weight: active ? .semibold : .regular))
+                        .foregroundStyle(active ? Console.text : Console.secondary)
                     Spacer(minLength: 4)
                     if badge > 0 {
                         Text(verbatim: "\(badge)")
                             .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(active ? Native.accent : Native.tertiary)
+                            .foregroundStyle(Console.tertiary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
-                            .background(Capsule().fill(Native.overlay(active ? 0.08 : 0.05)))
+                            .background(Capsule().fill(Console.inset))
                     }
                 }
             }
-            .padding(.horizontal, collapsed ? 0 : 9)
-            .frame(height: 31)
+            .padding(.horizontal, collapsed ? 0 : 12)
+            .frame(height: 44)
             .frame(maxWidth: .infinity, alignment: collapsed ? .center : .leading)
             .background {
                 if active {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(LinearGradient(colors: [page.keyColor.opacity(0.16),
-                                                      page.keyColor.opacity(0.05)],
-                                             startPoint: .leading, endPoint: .trailing))
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(Console.cardStrong)
                         .overlay {
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(page.keyColor.opacity(0.20), lineWidth: 0.8)
+                            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                                .strokeBorder(Console.cardStroke, lineWidth: 0.8)
                         }
+                        .shadow(color: Console.shadow, radius: 12, x: 0, y: 5)
                         .matchedGeometryEffect(id: "nav.selection", in: namespace)
                 } else if hovering {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Native.overlay(0.05))
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(Console.inset)
                 }
             }
-            .overlay(alignment: .leading) {
-                if active {
-                    Capsule()
-                        .fill(page.keyColor)
-                        .frame(width: 2.5, height: 15)
-                        .padding(.leading, 1)
-                        .shadow(color: page.keyColor.opacity(0.6), radius: 3)
-                }
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
         }
         .buttonStyle(.plain)
-        .help(page.rawValue)
         .onHover { value in
             guard !reduceMotion else { hovering = value; return }
             withAnimation(Motion.quick) { hovering = value }
         }
-        .animation(Motion.quick, value: active)
     }
 }
 
 private struct SidebarRecentRow: View {
     let title: String
+    let date: String
     let active: Bool
     let action: () -> Void
 
@@ -478,50 +317,35 @@ private struct SidebarRecentRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 7) {
-                Image(systemName: "clock")
-                    .font(.system(size: 9))
-                    .foregroundStyle(Native.tertiary.opacity(0.8))
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(active ? Console.accent : Console.tertiary.opacity(0.7))
+                    .frame(width: 5, height: 5)
                 Text(title)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(active ? Native.label : Native.secondary)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(active ? Console.text : Console.secondary)
                     .lineLimit(1)
-                Spacer(minLength: 0)
+                Spacer(minLength: 4)
+                Text(date)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Console.tertiary)
+                    .lineLimit(1)
             }
-            .padding(.horizontal, 10)
-            .frame(height: 27)
+            .padding(.horizontal, 8)
+            .frame(height: 30)
             .background {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(active ? Native.overlay(0.07)
-                                 : (hovering ? Native.overlay(0.035) : Color.clear))
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(active ? Console.inset : (hovering ? Console.inset.opacity(0.6) : .clear))
             }
-            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(title)
-        .onHover { value in
-            withAnimation(Motion.quick) { hovering = value }
-        }
+        .onHover { value in withAnimation(Motion.quick) { hovering = value } }
     }
 }
 
+// MARK: - Titlebar
 
-// MARK: - Window chrome
-
-/// 拖拽空白处移动窗口：SwiftUI 的 hiddenTitleBar 窗口默认没有可拖区域。
-struct WindowDragArea: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { DragView() }
-    func updateNSView(_ nsView: NSView, context: Context) {}
-
-    private final class DragView: NSView {
-        override var mouseDownCanMoveWindow: Bool { true }
-        override func mouseDown(with event: NSEvent) {
-            window?.performDrag(with: event)
-        }
-    }
-}
-
-/// 标题栏：折叠边栏、当前引擎、外观与下载中心。对应 WebUI 的 titlebar 一行。
 struct ConsoleTitlebar: View {
     @ObservedObject var state: AppState
     var openCommand: () -> Void
@@ -538,129 +362,120 @@ struct ConsoleTitlebar: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Color.clear.frame(width: 66, height: 1)
-
-            IconAction(systemName: "sidebar.left",
-                       help: state.showsSidebar ? "折叠边栏（⌘\\）" : "展开边栏（⌘\\）",
-                       active: false) {
-                state.toggleSidebar()
-            }
-
-            engineControl
-
-            Spacer(minLength: 8)
-
-            Button(action: openCommand) {
-                HStack(spacing: 5) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text("命令")
-                        .font(.system(size: 11))
-                    Text("⌘K")
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Native.tertiary)
+        ZStack {
+            HStack(spacing: 8) {
+                Color.clear.frame(width: 86, height: 1)
+                IconAction(systemName: "sidebar.left", help: "折叠边栏（⌘\\）") {
+                    state.toggleSidebar()
                 }
-                .foregroundStyle(Native.secondary)
-                .padding(.horizontal, 10)
-                .frame(height: 26)
-                .background(Capsule().fill(Native.overlay(0.05)))
-                .overlay(Capsule().strokeBorder(Native.hairline, lineWidth: 0.8))
-            }
-            .buttonStyle(.plain)
-            .help("命令面板（⌘K）")
+                Spacer(minLength: 8)
+                Button(action: openCommand) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("命令")
+                            .font(.system(size: 11.5))
+                        Text("⌘K")
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Console.tertiary)
+                    }
+                    .foregroundStyle(Console.secondary)
+                    .padding(.horizontal, 10)
+                    .frame(height: 28)
+                    .background(Capsule().fill(Console.card.opacity(0.7)))
+                    .overlay(Capsule().strokeBorder(Console.cardStroke, lineWidth: 0.8))
+                }
+                .buttonStyle(.plain)
 
-            IconAction(systemName: state.theme.mode.resolvedIsDark ? "sun.max" : "moon",
-                       help: "切换外观（⌘⇧A）") {
-                state.theme.set(state.theme.mode.resolvedIsDark ? .light : .dark)
-            }
+                IconAction(systemName: state.theme.mode.resolvedIsDark ? "sun.max" : "moon",
+                           help: "切换外观（⌘⇧A）") {
+                    state.theme.set(state.theme.mode.resolvedIsDark ? .light : .dark)
+                }
 
-            Button(action: openDownloads) {
-                ZStack(alignment: .topTrailing) {
-                    Image(systemName: "arrow.down.circle")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Native.label.opacity(0.82))
-                        .frame(width: 30, height: 30)
-                        .background(Circle().fill(Native.overlay(0.07)))
-                        .overlay(Circle().stroke(Native.hairline, lineWidth: 1))
-                    if downloadCount > 0 {
-                        Text(verbatim: "\(downloadCount)")
-                            .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(Native.accent))
-                            .offset(x: 4, y: -3)
+                Button(action: openDownloads) {
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Console.text.opacity(0.8))
+                            .frame(width: 32, height: 32)
+                            .background(Circle().fill(Console.card.opacity(0.7)))
+                            .overlay(Circle().stroke(Console.cardStroke, lineWidth: 0.8))
+                        if downloadCount > 0 {
+                            Text(verbatim: "\(downloadCount)")
+                                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Console.accent))
+                                .offset(x: 3, y: -2)
+                        }
                     }
                 }
+                .buttonStyle(.plain)
+                .help("下载中心")
             }
-            .buttonStyle(.plain)
-            .help("下载中心")
+            .padding(.horizontal, 16)
+
+            enginePill
         }
-        .padding(.horizontal, 14)
-        .frame(height: 48)
-        .background {
-            Rectangle()
-                .fill(Native.surface.opacity(0.72))
-                .overlay(alignment: .bottom) {
-                    Rectangle().fill(Native.hairline.opacity(0.7)).frame(height: 1)
-                }
-                .background(WindowDragArea())
-        }
+        .background(WindowDragArea())
     }
 
-    private var engineControl: some View {
+    private var enginePill: some View {
         Button {
             state.toggleService()
         } label: {
-            HStack(spacing: 7) {
+            HStack(spacing: 8) {
                 if state.isRunning {
-                    LiveDot(color: statusColor(state.serverState), diameter: 6)
+                    LiveDot(color: Console.ok, diameter: 6)
                 } else {
                     Circle()
-                        .fill(statusColor(state.serverState))
+                        .fill(Console.tertiary)
                         .frame(width: 6, height: 6)
                         .padding(.horizontal, 3)
                 }
                 Text(state.activeEngine.displayName)
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(Native.label)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(Console.text)
                 Text(state.isRunning ? "运行中" : state.serverState == .starting ? "启动中" : "已停止")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Native.tertiary)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Console.secondary)
                 if state.isRunning {
-                    Rectangle()
-                        .fill(Native.hairline)
-                        .frame(width: 1, height: 11)
+                    Rectangle().fill(Console.cardStroke).frame(width: 1, height: 12)
                     Text("\(Format.compact(rate)) tok/s")
-                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Native.accent)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Console.secondary)
                 }
-                if hoveringEngine {
-                    Image(systemName: state.isRunning ? "stop.fill" : "play.fill")
-                        .font(.system(size: 8.5, weight: .bold))
-                        .foregroundStyle(state.isRunning ? Native.red : Native.green)
-                }
+                Image(systemName: state.isRunning ? "stop.fill" : "play.fill")
+                    .font(.system(size: 8.5, weight: .bold))
+                    .foregroundStyle(state.isRunning ? Native.red : Console.secondary)
+                    .opacity(hoveringEngine ? 1 : 0.45)
             }
-            .padding(.horizontal, 11)
-            .frame(height: 28)
-            .background(Capsule().fill(Native.overlay(hoveringEngine ? 0.09 : 0.05)))
-            .overlay(Capsule().strokeBorder(Native.hairline, lineWidth: 0.8))
-            .contentShape(Capsule())
+            .padding(.horizontal, 13)
+            .frame(height: 30)
+            .background(Capsule().fill(Console.card.opacity(0.82)))
+            .overlay(Capsule().strokeBorder(Console.cardStroke, lineWidth: 0.8))
+            .shadow(color: Console.shadow.opacity(0.5), radius: 10, y: 3)
         }
         .buttonStyle(.plain)
-        .onHover { value in
-            withAnimation(Motion.quick) { hoveringEngine = value }
-        }
+        .onHover { value in withAnimation(Motion.quick) { hoveringEngine = value } }
         .disabled(state.isSwitchingModel || state.runtimeMissing != nil)
         .help(state.isRunning ? "停止引擎" : "启动引擎")
     }
-
-
 }
 
+// MARK: - Window chrome helpers
 
-/// 边栏右缘的拖拽手柄：宽度 180–320，落盘到 UserDefaults。
+struct WindowDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { DragView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class DragView: NSView {
+        override var mouseDownCanMoveWindow: Bool { true }
+        override func mouseDown(with event: NSEvent) { window?.performDrag(with: event) }
+    }
+}
+
 struct SidebarResizeHandle: View {
     @Binding var width: Double
     @State private var startWidth: Double?
@@ -668,7 +483,7 @@ struct SidebarResizeHandle: View {
     var body: some View {
         Rectangle()
             .fill(Color.clear)
-            .frame(width: 7)
+            .frame(width: 6)
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
             .onHover { inside in

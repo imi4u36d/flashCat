@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 import FlashCatKit
 
-/// 对话页：流式输出、思考块、Markdown 正文、生成参数与最近会话。
+/// 对话页：按 WebUI 版式——顶部模型行、居中空态、悬浮输入卡。
 struct ChatPage: View {
     @ObservedObject var state: AppState
 
@@ -10,151 +10,109 @@ struct ChatPage: View {
     @State private var showsParameters = false
     @State private var showsThreads = false
     @State private var atBottom = true
+    @State private var keyMonitor: Any?
     @FocusState private var composerFocused: Bool
-
-    private var title: String {
-        if let first = state.messages.first(where: { $0.role == "user" && !$0.content.isEmpty }) {
-            return String(first.content.prefix(40))
-        }
-        return "新对话"
-    }
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            Hairline()
             transcript
-            Hairline()
+        }
+        .padding(.top, 60)
+        .overlay(alignment: .bottom) {
             composer
+                .padding(.horizontal, 40)
+                .padding(.bottom, 18)
         }
-        .sheet(isPresented: $showsParameters) {
-            ChatParametersSheet(state: state)
-        }
+        .sheet(isPresented: $showsParameters) { ChatParametersSheet(state: state) }
     }
 
     // MARK: Header
 
     private var header: some View {
         HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Native.label)
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Native.tertiary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 8)
-
-            modelMenu
-
-            Button {
-                showsThreads.toggle()
-            } label: {
-                Label("最近对话", systemImage: "clock.arrow.circlepath")
-                    .font(.system(size: 11.5))
-            }
-            .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
-            .popover(isPresented: $showsThreads, arrowEdge: .bottom) {
-                threadList
-            }
-
-            Button {
-                showsParameters = true
-            } label: {
-                Image(systemName: "slider.horizontal.3")
-            }
-            .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
-            .help("生成参数")
-
             Menu {
-                Button("复制整段对话") {
-                    state.copy(conversationText, label: "已复制整段对话")
-                }
-                .disabled(state.messages.isEmpty)
-                Button("清空当前对话") { state.newConversation() }
-            } label: {
-                IconMenuLabel(systemName: "ellipsis")
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-
-            Button {
-                state.newConversation()
-            } label: {
-                Label("新对话", systemImage: "square.and.pencil")
-                    .font(.system(size: 11.5))
-            }
-            .buttonStyle(ArcadePillStyle(tone: .light, compact: true))
-        }
-        .padding(.horizontal, Native.pagePadding)
-        .padding(.top, 26)
-        .padding(.bottom, 12)
-    }
-
-    private var subtitle: String {
-        let model = state.selectedModel.isEmpty ? "未选择模型" : state.shortModelName(state.selectedModel)
-        let engine = state.activeEngine.displayName
-        let context = state.contextWindowCeiling.map { " · 窗口 \(Format.tokens($0))" } ?? ""
-        return "\(engine) · \(model)\(context)"
-    }
-
-    private var modelMenu: some View {
-        Menu {
-            ForEach(EngineCatalog.allIDs.filter { state.engineIsInstalled($0) }, id: \.self) { id in
-                let models = state.engineModels(for: id)
-                    .filter { !$0.hidden && !$0.helper && !ModelLibraryEntry.isDraftModel($0.id) }
-                if !models.isEmpty {
-                    Section(id.displayName) {
-                        ForEach(models) { model in
-                            Button {
-                                state.applyModelFromAnyEngine(model.id, engine: id)
-                            } label: {
-                                if model.id == state.selectedModel, id == state.activeEngine {
-                                    Label(state.shortModelName(model.id), systemImage: "checkmark")
-                                } else {
-                                    Text(state.shortModelName(model.id))
+                ForEach(EngineCatalog.allIDs.filter { state.engineIsInstalled($0) }, id: \.self) { id in
+                    let models = state.engineModels(for: id)
+                        .filter { !$0.hidden && !$0.helper && !ModelLibraryEntry.isDraftModel($0.id) }
+                    if !models.isEmpty {
+                        Section(id.displayName) {
+                            ForEach(models) { model in
+                                Button {
+                                    state.applyModelFromAnyEngine(model.id, engine: id)
+                                } label: {
+                                    if model.id == state.selectedModel, id == state.activeEngine {
+                                        Label(state.shortModelName(model.id), systemImage: "checkmark")
+                                    } else {
+                                        Text(state.shortModelName(model.id))
+                                    }
                                 }
                             }
                         }
                     }
                 }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Console.accent)
+                    Text(state.selectedModel.isEmpty ? "选择模型" : state.shortModelName(state.selectedModel))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Console.text)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(Console.tertiary)
+                }
             }
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "cpu")
-                    .font(.system(size: 9.5))
-                Text(state.selectedModel.isEmpty ? "选择模型" : state.shortModelName(state.selectedModel))
-                    .font(.system(size: 11.5, weight: .medium))
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 7.5, weight: .bold))
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .disabled(state.generating)
+
+            Text("\(Format.tokens(state.contextUsedTokens)) / \(state.contextWindowCeiling.map { shortTokens($0) } ?? "—")")
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundStyle(Console.tertiary)
+
+            Spacer(minLength: 0)
+
+            Button {
+                showsThreads.toggle()
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Console.secondary)
+                    .frame(width: 32, height: 32)
             }
-            .foregroundStyle(Native.secondary)
-            .padding(.horizontal, 10)
-            .frame(height: 26)
-            .background(Capsule().fill(Native.overlay(0.06)))
+            .buttonStyle(.plain)
+            .popover(isPresented: $showsThreads, arrowEdge: .bottom) { threadList }
+
+            Button {
+                state.newConversation()
+            } label: {
+                Label("新对话", systemImage: "square.and.pencil")
+            }
+            .buttonStyle(.consoleSecondary)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .disabled(state.generating)
+        .padding(.horizontal, Console.contentPadding + 8)
+        .frame(height: 44)
+    }
+
+    private func shortTokens(_ value: Int) -> String {
+        value >= 1000 ? "\(Int((Double(value) / 1000).rounded()))K" : "\(value)"
     }
 
     private var threadList: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("最近对话")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Native.secondary)
+                .foregroundStyle(Console.secondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
             if state.threads.isEmpty {
                 Text("还没有保存的对话")
-                    .font(Native.captionFont)
-                    .foregroundStyle(Native.tertiary)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Console.tertiary)
                     .padding(12)
             } else {
                 ForEach(state.threads) { thread in
@@ -165,11 +123,11 @@ struct ChatPage: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(thread.title)
                                 .font(.system(size: 12))
-                                .foregroundStyle(Native.label)
+                                .foregroundStyle(Console.text)
                                 .lineLimit(1)
                             Text("\(thread.messages.count) 条 · \(Format.relative(thread.updatedAt))")
                                 .font(.system(size: 9.5))
-                                .foregroundStyle(Native.tertiary)
+                                .foregroundStyle(Console.tertiary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 12)
@@ -179,13 +137,13 @@ struct ChatPage: View {
                     .buttonStyle(.plain)
                 }
             }
-            Hairline().padding(.vertical, 4)
+            Divider().overlay(Console.insetStroke).padding(.vertical, 4)
             Button("清空历史") { state.clearThreads() }
-                .buttonStyle(ArcadePillStyle(tone: .quietDanger, compact: true))
+                .buttonStyle(.consoleSoft)
                 .padding(10)
         }
         .frame(width: 260)
-        .background(Native.canvas)
+        .background(Console.card)
     }
 
     // MARK: Transcript
@@ -203,32 +161,26 @@ struct ChatPage: View {
                                 .transition(.opacity.combined(with: .offset(y: 10)))
                         }
                     }
-                    Color.clear.frame(height: 1).id("bottom")
+                    Color.clear.frame(height: 140).id("bottom")
                 }
-                .padding(.horizontal, Native.pagePadding)
-                .padding(.vertical, 20)
-                .frame(maxWidth: 900)
+                .padding(.horizontal, 40)
+                .padding(.top, 8)
+                .frame(maxWidth: 820)
                 .frame(maxWidth: .infinity)
                 .animation(Motion.entrance, value: state.messages.count)
             }
             .scrollIndicators(.never)
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 geometry.contentOffset.y + geometry.containerSize.height
-                    >= geometry.contentSize.height - 70
+                    >= geometry.contentSize.height - 90
             } action: { _, bottom in
-                if atBottom != bottom {
-                    withAnimation(Motion.quick) { atBottom = bottom }
-                }
+                if atBottom != bottom { withAnimation(Motion.quick) { atBottom = bottom } }
             }
-            .onChange(of: state.messages.count) { _, _ in
-                scroll(proxy, animated: true, force: true)
-            }
+            .onChange(of: state.messages.count) { _, _ in scroll(proxy, animated: true, force: true) }
             .onChange(of: state.messages.last?.content.count ?? 0) { _, _ in
                 if state.generating, atBottom { scroll(proxy, animated: false) }
             }
-            .onChange(of: state.currentThreadID) { _, _ in
-                scroll(proxy, animated: false, force: true)
-            }
+            .onChange(of: state.currentThreadID) { _, _ in scroll(proxy, animated: false, force: true) }
             .onAppear { scroll(proxy, animated: false, force: true) }
             .overlay(alignment: .bottom) {
                 if !atBottom {
@@ -237,15 +189,14 @@ struct ChatPage: View {
                     } label: {
                         Label("回到最新", systemImage: "arrow.down")
                             .font(.system(size: 10.5, weight: .semibold))
-                            .padding(.horizontal, 11)
-                            .frame(height: 26)
-                            .background(Capsule().fill(Native.canvas))
-                            .overlay(Capsule().strokeBorder(Native.hairline, lineWidth: 1))
-                            .shadow(color: Native.panelShadow, radius: 8, y: 2)
+                            .padding(.horizontal, 12)
+                            .frame(height: 28)
+                            .background(Capsule().fill(Console.cardStrong))
+                            .overlay(Capsule().strokeBorder(Console.cardStroke, lineWidth: 1))
+                            .shadow(color: Console.shadow, radius: 8, y: 2)
                     }
                     .buttonStyle(.plain)
-                    .padding(.bottom, 10)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .padding(.bottom, 150)
                 }
             }
         }
@@ -262,145 +213,200 @@ struct ChatPage: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            BrandMark(size: 54)
-            Text("问点什么")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(Native.label)
-            Text("回答由 \(state.activeEngine.displayName) 在本机生成，会话只留在本机。")
-                .font(.system(size: 11.5))
-                .foregroundStyle(Native.tertiary)
-            HStack(spacing: 8) {
-                ForEach(["解释一下什么是统一内存", "帮我写一个 Swift 并发示例", "总结这段日志里的错误"], id: \.self) { suggestion in
-                    Button(suggestion) {
-                        draft = suggestion
-                        composerFocused = true
-                    }
-                    .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
-                }
+        VStack(spacing: 14) {
+            Spacer(minLength: 24)
+            ZStack {
+                Circle()
+                    .fill(RadialGradient(colors: [Console.accent.opacity(0.28), .clear],
+                                         center: .center, startRadius: 4, endRadius: 56))
+                    .frame(width: 120, height: 120)
+                BrandMark(size: 76)
             }
-            .padding(.top, 4)
+            Text("把推理留在这台 Mac 上")
+                .font(.system(size: 30, weight: .bold))
+                .foregroundStyle(Console.text)
+            Text("当前由 **\(state.activeEngine.displayName)** 加载 **\(state.selectedModel.isEmpty ? "未选择模型" : state.shortModelName(state.selectedModel))**。数据不出本机，离线也能用。")
+                .font(.system(size: 13.5))
+                .foregroundStyle(Console.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 560)
+            HStack(spacing: 10) {
+                suggestion("用三句话介绍本地大模型的优势")
+                suggestion("总结这段对话的要点")
+            }
+            .padding(.top, 6)
+            Spacer(minLength: 120)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 60)
+    }
+
+    private func suggestion(_ text: String) -> some View {
+        Button {
+            draft = text
+            composerFocused = true
+        } label: {
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundStyle(Console.secondary)
+                .padding(.horizontal, 14)
+                .frame(height: 32)
+                .background(Capsule().fill(Console.card.opacity(0.8)))
+                .overlay(Capsule().strokeBorder(Console.cardStroke, lineWidth: 0.9))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: Composer
 
     private var composer: some View {
-        VStack(spacing: 8) {
-            HStack(alignment: .bottom, spacing: 10) {
-                ZStack(alignment: .topLeading) {
-                    if draft.isEmpty {
-                        Text(composerPlaceholder)
-                            .font(.system(size: 13))
-                            .foregroundStyle(Native.tertiary)
-                            .padding(.horizontal, 13)
-                            .padding(.top, 10)
-                            .allowsHitTesting(false)
-                    }
-                    TextEditor(text: $draft)
+        VStack(spacing: 10) {
+            ZStack(alignment: .topLeading) {
+                if draft.isEmpty {
+                    Text("输入消息…  ⏎ 发送 · ⇧⏎ 换行")
                         .font(.system(size: 13))
-                        .scrollContentBackground(.hidden)
-                        .focused($composerFocused)
-                        .disabled(!state.isRunning || state.generating)
-                        .frame(height: composerHeight)
-                        .onKeyPress(phases: .down) { press in
-                            guard press.key == .return else { return .ignored }
-                            if press.modifiers.contains(.shift) { return .ignored }
-                            send()
-                            return .handled
-                        }
+                        .foregroundStyle(Console.tertiary)
+                        .padding(.horizontal, 18)
+                        .padding(.top, 14)
+                        .allowsHitTesting(false)
                 }
-                .padding(.horizontal, 4)
-                .padding(.vertical, 4)
-                .background {
-                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .fill(Native.recess)
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                .strokeBorder(composerFocused ? Native.accent.opacity(0.55) : Native.hairline,
-                                              lineWidth: composerFocused ? 1.2 : 1)
+                TextEditor(text: $draft)
+                    .font(.system(size: 13))
+                    .scrollContentBackground(.hidden)
+                    .focused($composerFocused)
+                    .disabled(!state.isRunning || state.generating)
+                    .frame(height: composerHeight)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .onKeyPress(phases: .down) { press in
+                        guard press.key == .return else { return .ignored }
+                        if press.modifiers.contains(.shift) { return .ignored }
+                        send()
+                        return .handled
+                    }
+            }
+
+            HStack(spacing: 10) {
+                Menu {
+                    ForEach(EngineCatalog.allIDs.filter { state.engineIsInstalled($0) }, id: \.self) { id in
+                        Section(id.displayName) {
+                            ForEach(state.engineModels(for: id).filter { !$0.hidden && !$0.helper }) { model in
+                                Button(state.shortModelName(model.id)) {
+                                    state.applyModelFromAnyEngine(model.id, engine: id)
+                                }
+                            }
                         }
-                        .shadow(color: composerFocused ? Native.accent.opacity(0.16) : .clear,
-                                radius: 10, y: 2)
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Console.accent)
+                        Text(state.selectedModel.isEmpty ? "选择模型" : state.shortModelName(state.selectedModel))
+                            .font(.system(size: 11.5))
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 7.5, weight: .bold))
+                            .foregroundStyle(Console.tertiary)
+                    }
+                    .foregroundStyle(Console.secondary)
                 }
-                .animation(Motion.quick, value: composerFocused)
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+
+                Button {
+                    showsParameters = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("参数")
+                            .font(.system(size: 11.5))
+                    }
+                    .foregroundStyle(Console.secondary)
+                }
+                .buttonStyle(.plain)
+
+                Menu {
+                    ForEach(ThinkingMode.allCases, id: \.self) { mode in
+                        Button(mode.label) { state.settings.setThinkingMode(mode) }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "brain")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("思考 · \(thinkingLabel)")
+                            .font(.system(size: 11.5))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 7.5, weight: .bold))
+                    }
+                    .foregroundStyle(Console.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+
+                Spacer(minLength: 0)
+
+                if !draft.isEmpty {
+                    Text("≈ \(AppState.estimateTokens(draft)) tokens")
+                        .font(.system(size: 9.5, design: .monospaced))
+                        .foregroundStyle(Console.tertiary)
+                }
 
                 if state.generating {
                     Button {
                         state.cancelGeneration()
                     } label: {
                         Image(systemName: "stop.fill")
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(.white)
-                            .frame(width: 36, height: 36)
+                            .frame(width: 38, height: 38)
                             .background(Circle().fill(Native.red))
                     }
                     .buttonStyle(.plain)
-                    .help("停止生成")
                 } else {
                     Button(action: send) {
                         Image(systemName: "arrow.up")
                             .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(canSend ? Native.pillText : Native.tertiary)
-                            .frame(width: 36, height: 36)
-                            .background(Circle().fill(canSend ? Native.pillFill : Native.overlay(0.06)))
+                            .foregroundStyle(.white)
+                            .frame(width: 38, height: 38)
+                            .background(Circle().fill(LinearGradient(colors: [Console.accent, Console.accentDeep],
+                                                                     startPoint: .top, endPoint: .bottom)))
+                            .shadow(color: Console.accent.opacity(0.35), radius: 10, y: 4)
                     }
                     .buttonStyle(.plain)
                     .disabled(!canSend)
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .help("发送（⌘↩）")
+                    .opacity(canSend ? 1 : 0.45)
                 }
             }
-
-            HStack(spacing: 8) {
-                Button {
-                    state.regenerate()
-                } label: {
-                    Label("重新生成", systemImage: "arrow.clockwise")
-                        .font(.system(size: 10.5))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Native.tertiary)
-                .disabled(!state.isRunning || state.generating || state.messages.isEmpty)
-
-                Button {
-                    state.copy(conversationText, label: "已复制整段对话")
-                } label: {
-                    Label("复制对话", systemImage: "doc.on.doc")
-                        .font(.system(size: 10.5))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Native.tertiary)
-                .disabled(state.messages.isEmpty)
-
-                Spacer(minLength: 0)
-
-                if !draft.isEmpty {
-                    Text("≈ \(AppState.estimateTokens(draft)) tokens")
-                        .font(Native.monoSmall)
-                        .foregroundStyle(Native.tertiary)
-                }
-                Text("⌘↩ 发送")
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(Native.tertiary.opacity(0.8))
-            }
+            .padding(.top, 2)
         }
-        .padding(.horizontal, Native.pagePadding)
+        .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(Native.surface)
+        .frame(maxWidth: 780)
+        .background {
+            let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+            shape
+                .fill(Console.cardStrong)
+                .overlay { shape.strokeBorder(composerFocused ? Console.accent.opacity(0.35) : Console.cardStroke,
+                                              lineWidth: 1) }
+                .shadow(color: Console.shadow, radius: 24, y: 10)
+        }
+        .animation(Motion.quick, value: composerFocused)
+    }
+
+    private var thinkingLabel: String {
+        switch state.settings.thinkingMode {
+        case .automatic: return "自动"
+        case .off: return "关闭"
+        case .on: return state.settings.reasoningEffort.label
+        }
     }
 
     private var composerHeight: CGFloat {
         let lines = max(1, draft.components(separatedBy: "\n").count)
-        return min(120, max(36, CGFloat(lines) * 18 + 8))
-    }
-
-    private var composerPlaceholder: String {
-        state.isRunning
-            ? "给 \(state.activeEngine.displayName) 发一条消息…"
-            : "启动本地服务后即可发送消息"
+        return min(110, max(30, CGFloat(lines) * 18 + 6))
     }
 
     private var canSend: Bool {
@@ -430,110 +436,76 @@ private struct MessageRow: View {
     @State private var manualThinking: Bool?
     @State private var caretVisible = false
 
+    private var isUser: Bool { message.role == "user" }
     private var showsReasoning: Bool {
         manualThinking ?? (message.streaming && message.content.isEmpty)
     }
 
-    private var isUser: Bool { message.role == "user" }
-
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            if isUser { Spacer(minLength: 70) }
-            if !isUser { avatar }
-            VStack(alignment: .leading, spacing: 6) {
-                if !isUser {
-                    header
+        Group {
+            if isUser {
+                HStack {
+                    Spacer(minLength: 80)
+                    Text(message.content)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Console.text)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background {
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(Console.accent.opacity(0.10))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .strokeBorder(Console.accent.opacity(0.16), lineWidth: 0.8)
+                                }
+                        }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 6) {
+                        Text(message.model.map(state.shortModelName) ?? state.activeEngine.displayName)
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(Console.secondary)
+                        if message.streaming {
+                            Text("生成中")
+                                .font(.system(size: 9.5))
+                                .foregroundStyle(Console.accent)
+                        }
+                    }
                     if let reasoning = message.reasoning, !reasoning.isEmpty {
                         reasoningBlock(reasoning)
                     }
+                    if message.content.isEmpty {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text(message.reasoning?.isEmpty == false ? "思考中…" : "等待首个 token…")
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(Console.tertiary)
+                        }
+                    } else {
+                        ZStack(alignment: .bottomTrailing) {
+                            MarkdownView(text: message.content)
+                            if message.streaming {
+                                RoundedRectangle(cornerRadius: 1.5)
+                                    .fill(Console.accent)
+                                    .frame(width: 6, height: 14)
+                                    .opacity(caretVisible ? 1 : 0.15)
+                                    .animation(.easeInOut(duration: 0.55).repeatForever(autoreverses: true),
+                                               value: caretVisible)
+                                    .onAppear { caretVisible = true }
+                            }
+                        }
+                    }
+                    footer
                 }
-                content
-                if !isUser { footer }
             }
-            if !isUser { Spacer(minLength: 40) }
-            if isUser { avatarUser }
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
     }
 
-    private var avatar: some View {
-        BrandMark(size: 24)
-    }
-
-    private var avatarUser: some View {
-        ZStack {
-            Circle().fill(Native.overlay(0.08))
-            Image(systemName: "person.fill")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Native.secondary)
-        }
-        .frame(width: 24, height: 24)
-    }
-
-    private var header: some View {
-        HStack(spacing: 6) {
-            Text(message.model.map(state.shortModelName) ?? state.activeEngine.displayName)
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(Native.secondary)
-            if message.streaming {
-                Text("生成中")
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(Native.accent)
-            }
-        }
-    }
-
-    @ViewBuilder private var content: some View {
-        if isUser {
-            Text(message.content)
-                .font(.system(size: 13))
-                .foregroundStyle(Native.pillText)
-                .textSelection(.enabled)
-                .padding(.horizontal, 13)
-                .padding(.vertical, 9)
-                .background {
-                    RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .fill(Native.pillFill)
-                }
-        } else if message.content.isEmpty {
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text(message.reasoning?.isEmpty == false ? "思考中…" : "等待首个 token…")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Native.tertiary)
-            }
-            .padding(.vertical, 4)
-        } else {
-            ZStack(alignment: .bottomTrailing) {
-                MarkdownView(text: message.content)
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 10)
-                    .background {
-                        RoundedRectangle(cornerRadius: 13, style: .continuous)
-                            .fill(Native.overlay(0.035))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                                    .strokeBorder(message.streaming ? Native.accent.opacity(0.22) : Native.hairline,
-                                                  lineWidth: 1)
-                            }
-                    }
-                if message.streaming {
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(Native.accent)
-                        .frame(width: 6, height: 14)
-                        .padding(.trailing, 14)
-                        .padding(.bottom, 14)
-                        .opacity(caretVisible ? 1 : 0.15)
-                        .animation(.easeInOut(duration: 0.55).repeatForever(autoreverses: true),
-                                   value: caretVisible)
-                        .onAppear { caretVisible = true }
-                }
-            }
-        }
-    }
-
     private func reasoningBlock(_ reasoning: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 5) {
             Button {
                 withAnimation(Motion.standard) { manualThinking = !showsReasoning }
             } label: {
@@ -542,24 +514,20 @@ private struct MessageRow: View {
                         .font(.system(size: 8, weight: .bold))
                     Text(thinkingLabel)
                         .font(.system(size: 10.5, weight: .medium))
-                    if message.streaming {
-                        LiveDot(color: Native.accent, diameter: 4)
-                    }
+                    if message.streaming { LiveDot(color: Console.accent, diameter: 4) }
                 }
-                .foregroundStyle(Native.tertiary)
+                .foregroundStyle(Console.tertiary)
             }
             .buttonStyle(.plain)
-
             if showsReasoning {
                 Text(reasoning)
                     .font(.system(size: 11.5))
-                    .foregroundStyle(Native.secondary)
+                    .foregroundStyle(Console.secondary)
                     .textSelection(.enabled)
-                    .padding(10)
+                    .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background {
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(Native.overlay(0.04))
+                        RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Console.inset)
                     }
             }
         }
@@ -574,12 +542,8 @@ private struct MessageRow: View {
 
     private var footer: some View {
         HStack(spacing: 10) {
-            if let rate = message.rateText {
-                Text(rate)
-            }
-            if message.tokenCount > 0 {
-                Text("\(message.tokenCount) tokens")
-            }
+            if let rate = message.rateText { Text(rate) }
+            if message.tokenCount > 0 { Text("\(message.tokenCount) tokens") }
             if let ttft = message.firstTokenSeconds, ttft > 0 {
                 Text(String(format: "首字 %.0f ms", ttft * 1000))
             }
@@ -588,16 +552,14 @@ private struct MessageRow: View {
                 Button {
                     state.copy(message.content, label: "已复制回答")
                 } label: {
-                    Image(systemName: "doc.on.doc")
-                        .font(.system(size: 9.5))
+                    Image(systemName: "doc.on.doc").font(.system(size: 9.5))
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(Native.tertiary)
-                .help("复制回答")
+                .foregroundStyle(Console.tertiary)
             }
         }
-        .font(Native.monoSmall)
-        .foregroundStyle(Native.tertiary)
+        .font(.system(size: 9.5, design: .monospaced))
+        .foregroundStyle(Console.tertiary)
     }
 }
 
@@ -615,110 +577,87 @@ struct ChatParametersSheet: View {
                         .font(.system(size: 15, weight: .semibold))
                     Text("这些默认值会随每条消息一起发送")
                         .font(.system(size: 10.5))
-                        .foregroundStyle(Native.tertiary)
+                        .foregroundStyle(Console.tertiary)
                 }
                 Spacer(minLength: 8)
                 IconAction(systemName: "xmark", help: "关闭") { dismiss() }
             }
-            .padding(.horizontal, Native.pagePadding)
+            .padding(.horizontal, 20)
             .padding(.vertical, 14)
-            Hairline()
+            Divider().overlay(Console.insetStroke)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: Native.gap) {
-                    Card("采样", subtitle: "越高越发散；留空的最大输出表示模型自身上限") {
-                        VStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 14) {
+                    GlassCard(padding: 16) {
+                        VStack(spacing: 14) {
                             slider("温度", value: state.settings.temperature, range: 0...2,
                                    format: "%.2f") { state.settings.setTemperature($0) }
                             slider("top-p", value: state.settings.topP, range: 0...1,
                                    format: "%.2f") { state.settings.setTopP($0) }
                             HStack(spacing: 10) {
                                 Text("最大输出")
-                                    .font(Native.bodyFont)
-                                    .foregroundStyle(Native.secondary)
-                                    .frame(width: 76, alignment: .leading)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Console.secondary)
+                                    .frame(width: 70, alignment: .leading)
                                 TextField("模型上限", text: Binding(
                                     get: { state.settings.maxTokens > 0 ? String(state.settings.maxTokens) : "" },
                                     set: { state.settings.setMaxTokens(Int($0) ?? 0) }))
                                     .textFieldStyle(.roundedBorder)
-                                    .font(Native.monoFont)
-                                    .frame(width: 120)
-                                Text("实际生效 \(state.effectiveMaxTokens) tokens")
+                                    .font(.system(size: 11.5, design: .monospaced))
+                                    .frame(width: 110)
+                                Text("生效 \(state.effectiveMaxTokens)")
                                     .font(.system(size: 10))
-                                    .foregroundStyle(Native.tertiary)
+                                    .foregroundStyle(Console.tertiary)
                                 Spacer(minLength: 0)
                             }
                         }
                     }
-
-                    Card("思考", subtitle: "思考模式的默认值与推理等级") {
+                    GlassCard(padding: 16) {
                         VStack(alignment: .leading, spacing: 10) {
-                            Picker("", selection: Binding(
-                                get: { state.settings.thinkingMode },
-                                set: { state.settings.setThinkingMode($0) })) {
-                                ForEach(ThinkingMode.allCases, id: \.self) { mode in
-                                    Text(mode.label).tag(mode)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-
-                            Picker("推理等级", selection: Binding(
-                                get: { state.settings.reasoningEffort },
-                                set: { state.settings.setReasoningEffort($0) })) {
-                                ForEach(ReasoningEffort.allCases, id: \.self) { effort in
-                                    Text(effort.label).tag(effort)
-                                }
-                            }
-                            .disabled(state.settings.thinkingMode != .on)
-
-                            Text("思考 token 预算由引擎配置决定（引擎页 → 配置…）")
-                                .font(.system(size: 10))
-                                .foregroundStyle(Native.tertiary)
+                            Text("系统提示")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Console.text)
+                            TextEditor(text: Binding(
+                                get: { state.settings.systemPrompt },
+                                set: { state.settings.setSystemPrompt($0) }))
+                                .font(.system(size: 12))
+                                .scrollContentBackground(.hidden)
+                                .frame(height: 100)
+                                .padding(6)
+                                .background(RoundedRectangle(cornerRadius: 9).fill(Console.inset))
                         }
                     }
-
-                    Card("系统提示", subtitle: "留空则不附加系统消息") {
-                        TextEditor(text: Binding(
-                            get: { state.settings.systemPrompt },
-                            set: { state.settings.setSystemPrompt($0) }))
-                            .font(.system(size: 12))
-                            .scrollContentBackground(.hidden)
-                            .frame(height: 90)
-                            .padding(6)
-                            .background(RoundedRectangle(cornerRadius: 8).fill(Native.recess))
-                    }
                 }
-                .padding(Native.pagePadding)
+                .padding(20)
             }
             .scrollIndicators(.never)
-            Hairline()
+            Divider().overlay(Console.insetStroke)
             HStack(spacing: 10) {
                 Button("恢复默认") { state.resetChatParameters() }
-                    .buttonStyle(.arcadeGlass)
+                    .buttonStyle(.consoleSoft)
                 Spacer(minLength: 0)
                 Button("完成") { dismiss() }
-                    .buttonStyle(.arcadePill)
+                    .buttonStyle(.consolePrimary)
                     .keyboardShortcut(.defaultAction)
             }
-            .padding(.horizontal, Native.pagePadding)
+            .padding(.horizontal, 20)
             .padding(.vertical, 12)
         }
-        .frame(width: 520, height: 560)
-        .background(Native.canvas)
+        .frame(width: 500, height: 500)
+        .background(Console.cardStrong)
     }
 
     private func slider(_ label: String, value: Double, range: ClosedRange<Double>,
                         format: String, set: @escaping (Double) -> Void) -> some View {
         HStack(spacing: 10) {
             Text(label)
-                .font(Native.bodyFont)
-                .foregroundStyle(Native.secondary)
-                .frame(width: 76, alignment: .leading)
+                .font(.system(size: 12))
+                .foregroundStyle(Console.secondary)
+                .frame(width: 70, alignment: .leading)
             Slider(value: Binding(get: { value }, set: set), in: range)
             Text(String(format: format, value))
-                .font(Native.monoSmall)
-                .foregroundStyle(Native.tertiary)
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundStyle(Console.tertiary)
                 .frame(width: 40, alignment: .trailing)
         }
     }

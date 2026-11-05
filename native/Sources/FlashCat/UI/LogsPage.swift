@@ -2,12 +2,13 @@ import SwiftUI
 import AppKit
 import FlashCatKit
 
-/// 日志页：引擎与网关的实时输出，按级别过滤、搜索、暂停、清空。
+/// 日志页：顶部过滤条 + 一块玻璃控制台，版式对齐 WebUI。
 struct LogsPage: View {
     @ObservedObject var state: AppState
     @State private var level: LogsFilter = .all
     @State private var query = ""
     @State private var paused = false
+    @State private var frozen: [LogLine] = []
 
     private var lines: [LogLine] {
         let source = paused ? frozen : state.logs
@@ -18,146 +19,213 @@ struct LogsPage: View {
         }
     }
 
-    @State private var frozen: [LogLine] = []
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            PageHeader(title: "日志",
-                       subtitle: "当前引擎与网关的实时输出",
-                       eyebrow: "实时输出") {
-                Button {
-                    let path = Paths.logFile
-                    guard Paths.fileExists(path) else {
-                        state.toast("日志文件尚未创建")
-                        return
-                    }
-                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
-                } label: {
-                    Label("打开日志文件", systemImage: "doc.text")
-                }
-                .buttonStyle(.arcadeGlass)
-
-                Button {
-                    state.clearLogs()
-                    frozen = []
-                } label: {
-                    Label("清空", systemImage: "trash")
-                }
-                .buttonStyle(ArcadePillStyle(tone: .quietDanger))
-            }
-            .padding(.horizontal, Native.pagePadding)
-            .padding(.top, 30)
-            .padding(.bottom, 14)
-
-            toolbar
-                .padding(.horizontal, Native.pagePadding)
-                .padding(.bottom, 10)
-
+        VStack(alignment: .leading, spacing: 14) {
+            topBar
             console
-                .padding(.horizontal, Native.pagePadding)
-                .padding(.bottom, Native.pagePadding)
         }
+        .padding(.horizontal, Console.contentPadding)
+        .padding(.top, 78)
+        .padding(.bottom, 22)
     }
 
-    private var toolbar: some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 6) {
+    private var topBar: some View {
+        HStack(spacing: 14) {
+            HStack(spacing: 2) {
+                filterTab(.all)
+                filterTab(.info)
+                filterTab(.warning)
+                filterTab(.error)
+            }
+            .padding(4)
+            .background(Capsule().fill(Console.card.opacity(0.72)))
+            .overlay(Capsule().strokeBorder(Console.cardStroke, lineWidth: 0.8))
+
+            HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Native.tertiary)
-                TextField("搜索日志", text: $query)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Console.tertiary)
+                TextField("搜索", text: $query)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 11.5))
-                    .frame(width: 180)
+                    .font(.system(size: 12.5))
             }
-            .padding(.horizontal, 9)
-            .frame(height: 28)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Native.recess))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Native.hairline, lineWidth: 1))
+            .padding(.horizontal, 12)
+            .frame(height: 36)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Console.card.opacity(0.72)))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Console.cardStroke, lineWidth: 0.8))
+            .frame(maxWidth: 380)
 
-            Picker("", selection: $level) {
-                ForEach(LogsFilter.allCases) { item in
-                    Text("\(item.label) \(count(item))").tag(item)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 320)
-
-            Spacer(minLength: 4)
-
-            Toggle(isOn: $paused) {
-                Text(paused ? "已暂停" : "自动滚动")
-                    .font(.system(size: 11))
-            }
-            .toggleStyle(.switch)
-            .controlSize(.small)
+            Spacer(minLength: 0)
 
             Button {
                 state.copy(lines.map(\.text).joined(separator: "\n"), label: "已复制筛选后的日志")
             } label: {
                 Image(systemName: "doc.on.doc")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Console.secondary)
+                    .frame(width: 32, height: 32)
+                    .background(Circle().fill(Console.card.opacity(0.7)))
+                    .overlay(Circle().strokeBorder(Console.cardStroke, lineWidth: 0.8))
             }
-            .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
+            .buttonStyle(.plain)
             .disabled(lines.isEmpty)
             .help("复制筛选后的日志")
-        }
-        .onChange(of: paused) { _, isPaused in
-            if isPaused { frozen = state.logs } else { frozen = [] }
+
+            Button {
+                let path = Paths.logFile
+                guard Paths.fileExists(path) else {
+                    state.toast("日志文件尚未创建")
+                    return
+                }
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+            } label: {
+                Image(systemName: "doc.text")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Console.secondary)
+                    .frame(width: 32, height: 32)
+                    .background(Circle().fill(Console.card.opacity(0.7)))
+                    .overlay(Circle().strokeBorder(Console.cardStroke, lineWidth: 0.8))
+            }
+            .buttonStyle(.plain)
+            .help("打开日志文件")
+
+            Button {
+                if paused {
+                    paused = false
+                    frozen = []
+                } else {
+                    frozen = state.logs
+                    paused = true
+                }
+            } label: {
+                Label(paused ? "继续" : "暂停", systemImage: paused ? "play.fill" : "pause.fill")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Console.secondary)
+                    .padding(.horizontal, 14)
+                    .frame(height: 34)
+                    .background(Capsule().fill(Console.card.opacity(0.72)))
+                    .overlay(Capsule().strokeBorder(Console.cardStroke, lineWidth: 0.8))
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                state.clearLogs()
+                frozen = []
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Console.secondary)
+                    .frame(width: 32, height: 32)
+                    .background(Circle().fill(Console.card.opacity(0.7)))
+                    .overlay(Circle().strokeBorder(Console.cardStroke, lineWidth: 0.8))
+            }
+            .buttonStyle(.plain)
+            .help("清空日志")
         }
     }
 
-    private func count(_ item: LogsFilter) -> Int {
-        (paused ? frozen : state.logs).filter { item.matches($0.level) }.count
+    private func filterTab(_ item: LogsFilter) -> some View {
+        let active = level == item
+        let count = (paused ? frozen : state.logs).filter { item.matches($0.level) }.count
+        return Button {
+            withAnimation(Motion.quick) { level = item }
+        } label: {
+            HStack(spacing: 5) {
+                Text(item.label)
+                    .font(.system(size: 12, weight: active ? .semibold : .regular))
+                Text(verbatim: "\(count)")
+                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Console.tertiary)
+            }
+            .foregroundStyle(active ? Console.text : Console.secondary)
+            .padding(.horizontal, 12)
+            .frame(height: 28)
+            .background {
+                if active {
+                    Capsule().fill(Console.cardStrong)
+                        .shadow(color: Console.shadow.opacity(0.6), radius: 8, y: 2)
+                }
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     private var console: some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
-                    if lines.isEmpty {
-                        EmptyHint(icon: "terminal",
-                                  title: "还没有日志输出",
-                                  detail: "启动服务后，引擎日志会实时出现在这里。")
-                            .padding(.vertical, 50)
-                    } else {
-                        ForEach(lines) { line in
-                            row(line).id(line.id)
-                        }
+            GlassCard(padding: 0, content: {
+                VStack(spacing: 0) {
+                    HStack(spacing: 7) {
+                        Circle()
+                            .fill(Console.ok)
+                            .frame(width: 6, height: 6)
+                        Text("LIVE")
+                            .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                            .tracking(0.8)
+                            .foregroundStyle(Console.ok)
+                        Text("\(state.activeEngine.rawValue).log")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(Console.tertiary)
+                        Spacer(minLength: 0)
+                        Text("\(lines.count) 行")
+                            .font(.system(size: 10.5, design: .monospaced))
+                            .foregroundStyle(Console.tertiary)
                     }
-                    Color.clear.frame(height: 1).id("logBottom")
+                    .padding(.horizontal, 16)
+                    .frame(height: 42)
+
+                    Rectangle().fill(Console.insetStroke).frame(height: 1)
+
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 1) {
+                            if lines.isEmpty {
+                                Text("启动服务后，引擎日志会实时出现在这里")
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(Console.tertiary)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 40)
+                            } else {
+                                ForEach(lines) { line in
+                                    row(line).id(line.id)
+                                }
+                            }
+                            Color.clear.frame(height: 1).id("logBottom")
+                        }
+                        .padding(12)
+                    }
+                    .scrollIndicators(.never)
+                    .onChange(of: lines.count) { _, _ in
+                        guard !paused else { return }
+                        proxy.scrollTo("logBottom", anchor: .bottom)
+                    }
                 }
-                .padding(10)
-            }
-            .scrollIndicators(.never)
-            .background { GlassSurface(radius: Native.radiusTile, tint: Native.recess) }
-            .onChange(of: lines.count) { _, _ in
-                guard !paused else { return }
-                proxy.scrollTo("logBottom", anchor: .bottom)
-            }
+            })
+            .frame(maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func row(_ line: LogLine) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text(Format.clock(line.time))
                 .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(Native.tertiary)
-                .frame(width: 56, alignment: .leading)
+                .foregroundStyle(Console.tertiary)
+                .frame(width: 54, alignment: .leading)
             Text(line.level.label)
                 .font(.system(size: 9, weight: .bold, design: .monospaced))
                 .foregroundStyle(levelColor(line.level))
-                .frame(width: 34, alignment: .leading)
+                .frame(width: 32, alignment: .leading)
             Text(line.text)
-                .font(Native.monoFont)
-                .foregroundStyle(Native.label)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(Console.text)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 1.5)
-        .padding(.horizontal, 4)
-        .background(line.level == .error ? Native.red.opacity(0.07) : Color.clear)
+        .padding(.vertical, 2)
+        .padding(.horizontal, 6)
+        .background {
+            RoundedRectangle(cornerRadius: 5)
+                .fill(line.level == .error ? Console.danger.opacity(0.06) : .clear)
+        }
     }
 }
 

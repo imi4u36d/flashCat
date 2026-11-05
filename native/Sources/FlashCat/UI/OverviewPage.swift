@@ -3,7 +3,7 @@ import Charts
 import AppKit
 import FlashCatKit
 
-/// 概览：引擎状态、当前模型、实时指标、吞吐曲线与对外接口。
+/// 概览：按 WebUI 版式——左 hero + 右 API 网关，中间四张指标卡，底部总解码与最近请求。
 struct OverviewPage: View {
     @ObservedObject var state: AppState
     @ObservedObject private var gateway = GatewayController.shared
@@ -12,308 +12,328 @@ struct OverviewPage: View {
     private var samples: [ThroughputSample] { state.recentThroughput(window: 0) }
     private var peak: Double { max(samples.map(\.value).max() ?? 0, 1) }
 
-    private var loading: Bool {
-        if state.isSwitchingModel { return true }
-        switch state.serverState {
-        case .starting, .stopping: return true
-        case .ready: return stats == nil
-        case .stopped, .failed: return false
-        }
-    }
-
     private var modelTitle: String {
-        if let info = state.selectedModelInfo { return info.shortName }
-        return state.selectedModel.isEmpty ? "未选择模型" : state.shortModelName(state.selectedModel)
+        state.selectedModelInfo?.shortName ?? (state.selectedModel.isEmpty ? "未选择模型" : state.shortModelName(state.selectedModel))
     }
 
     private var decodeRate: Double {
         state.liveDecodeRate ?? stats?.decodeTokensPerSecond ?? 0
     }
 
+    private var runningText: String {
+        state.isRunning ? "运行中" : state.serverState == .starting ? "启动中" : state.serverState == .failed ? "启动失败" : "已停止"
+    }
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                PageHeader(title: "概览",
-                           subtitle: "本地推理引擎的状态、指标与对外接口",
-                           eyebrow: "控制台") {
-                    Button {
-                        state.toggleService()
-                    } label: {
-                        Label(state.isRunning ? "停止引擎" : "启动引擎",
-                              systemImage: state.isRunning ? "stop.fill" : "play.fill")
-                    }
-                    .buttonStyle(state.isRunning ? ArcadePillStyle(tone: .quietDanger) : .arcadePill)
-                    .disabled(state.isSwitchingModel || state.runtimeMissing != nil)
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .top, spacing: 18) {
+                    hero
+                    gatewayCard
+                        .frame(width: 340)
                 }
-                .padding(.top, 30)
-
-                if let missing = state.runtimeMissing {
-                    Card("运行时缺失", subtitle: "应用找不到这台引擎的可执行文件", tint: Native.red) {
-                        Text(missing)
-                            .font(Native.bodyFont)
-                            .foregroundStyle(Native.red)
-                            .textSelection(.enabled)
-                    }
-                }
-
-                heroRow
-                metricsGrid
-                HStack(alignment: .top, spacing: Native.gap) {
-                    throughputCard
-                    acceptanceCard
-                }
-
-                HStack(alignment: .top, spacing: Native.gap) {
-                    sessionsCard
-                    VStack(spacing: Native.gap) {
-                        contextCard
-                        endpointCard
-                    }
-                    .frame(width: 330)
+                metricsRow
+                HStack(alignment: .top, spacing: 18) {
+                    decodeChart
+                    recentRequests
+                        .frame(width: 340)
                 }
             }
-            .padding(.horizontal, Native.pagePadding)
-            .padding(.bottom, 30)
-            .pageColumn()
+            .padding(.horizontal, Console.contentPadding)
+            .padding(.top, 78)
+            .padding(.bottom, 26)
         }
         .scrollIndicators(.never)
     }
 
-    // MARK: Status
-
-    private var statusText: String {
-        if state.isSwitchingModel {
-            return "切换模型中 · \(state.switchStage.isEmpty ? "准备中" : state.switchStage)"
-        }
-        switch state.serverState {
-        case .ready: return "运行中"
-        case .starting:
-            let stage = state.startupStage
-            return stage == "启动中" || stage.isEmpty ? "启动中" : "启动中 · \(stage)"
-        case .stopping: return "停止中"
-        case .failed: return "启动失败"
-        case .stopped: return "已停止"
-        }
-    }
-
-    private var statusMeta: [String] {
-        var items = ["\(state.activeEngine.displayName) \(state.engineVersion)", "端口 \(state.port)"]
-        if let started = stats?.startedAt, started > 0 {
-            items.append("已运行 \(elapsedText(since: started))")
-        }
-        if let pressure = stats?.memoryPressureText, pressure != "—" {
-            items.append("内存压力 \(pressure)")
-        }
-        return items
-    }
-
-    private func elapsedText(since epoch: Double) -> String {
-        let seconds = max(0, Date().timeIntervalSince1970 - epoch)
-        if seconds < 60 { return "\(Int(seconds))s" }
-        if seconds < 3600 { return "\(Int(seconds / 60))m" }
-        return String(format: "%.1fh", seconds / 3600)
-    }
-
     // MARK: Hero
 
-    private var heroRow: some View {
-        HStack(alignment: .center, spacing: 18) {
-            VStack(alignment: .leading, spacing: 9) {
-                HStack(spacing: 7) {
-                    if state.isRunning {
-                        LiveDot(color: statusColor(state.serverState), diameter: 7)
-                    } else {
-                        Circle()
-                            .fill(statusColor(state.serverState))
-                            .frame(width: 7, height: 7)
-                            .padding(.horizontal, 3.5)
-                    }
-                    Text(statusText)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Native.secondary)
-                        .contentTransition(.opacity)
-                    Text(verbatim: "·")
-                        .foregroundStyle(Native.tertiary.opacity(0.6))
-                    Text(verbatim: "\(state.activeEngine.displayName) \(state.engineVersion)")
-                        .font(.system(size: 10.5, design: .monospaced))
-                        .foregroundStyle(Native.tertiary)
-                }
-
-                HStack(spacing: 8) {
-                    Text(modelTitle)
-                        .font(.system(size: 30, weight: .bold))
-                        .tracking(-0.6)
-                        .foregroundStyle(Native.label)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .contentTransition(.opacity)
-                    modelMenu
-                }
-
-                Text(state.selectedModel.isEmpty ? "在模型页选择一个本机权重" : state.selectedModel)
-                    .font(Native.monoFont)
-                    .foregroundStyle(Native.tertiary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-
+    private var hero: some View {
+        HStack(alignment: .top, spacing: 20) {
+            VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 6) {
-                    Tag(text: "端口 \(state.port)", tone: .neutral, icon: "number")
-                    Tag(text: state.speculativeMode.headName.isEmpty ? "无投机解码" : state.speculativeMode.headName,
-                        tone: state.speculativeMode.headName.isEmpty ? .neutral : .accent,
-                        icon: "bolt.fill")
-                    if let window = state.contextWindowCeiling {
-                        Tag(text: "窗口 \(Format.tokens(window))", tone: .neutral)
-                    }
-                    if let started = stats?.startedAt, started > 0, state.isRunning {
-                        Tag(text: "已运行 \(elapsedText(since: started))", tone: .neutral, icon: "clock")
-                    }
+                    Circle()
+                        .fill(state.isRunning ? Console.ok : Console.tertiary)
+                        .frame(width: 6, height: 6)
+                    Text("\(state.activeEngine.displayName) · \(runningText)")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(Console.secondary)
                 }
-                .padding(.top, 2)
+                .padding(.horizontal, 10)
+                .frame(height: 26)
+                .background(Capsule().fill(Console.inset))
+
+                Text(modelTitle)
+                    .font(.system(size: 28, weight: .bold))
+                    .tracking(-0.5)
+                    .foregroundStyle(Console.text)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                    .truncationMode(.middle)
+                    .padding(.top, 14)
+
+                HStack(spacing: 10) {
+                    Menu {
+                        modelMenuContent
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "square.stack.3d.up.fill")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("切换模型")
+                                .font(.system(size: 12.5, weight: .semibold))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 15)
+                        .frame(height: 34)
+                        .background {
+                            Capsule().fill(
+                                LinearGradient(colors: [Console.accent, Console.accentDeep],
+                                               startPoint: .topLeading, endPoint: .bottomTrailing))
+                        }
+                        .shadow(color: Console.accent.opacity(0.30), radius: 12, y: 5)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .disabled(state.isSwitchingModel)
+
+                    Button {
+                        state.toggleService()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: state.isRunning ? "stop.fill" : "play.fill")
+                                .font(.system(size: 10, weight: .bold))
+                            Text(state.isRunning ? "停止引擎" : "启动引擎")
+                                .font(.system(size: 12.5, weight: .medium))
+                        }
+                    }
+                    .buttonStyle(.consoleSecondary)
+                    .disabled(state.isSwitchingModel)
+                }
+                .padding(.top, 20)
+
+                Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
 
-            Spacer(minLength: 12)
-
-            VStack(alignment: .trailing, spacing: 5) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 14) {
+                    Text(state.isRunning ? "ENGINE LIVE" : "ENGINE IDLE")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .tracking(0.6)
+                        .foregroundStyle(Console.tertiary)
+                    Text("\(sessionCount) SESSIONS")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .tracking(0.6)
+                        .foregroundStyle(Console.tertiary)
+                }
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(Format.compact(decodeRate))
                         .font(.system(size: 42, weight: .bold, design: .monospaced))
-                        .foregroundStyle(Native.metricNum)
+                        .foregroundStyle(Console.text)
                         .contentTransition(.numericText())
-                        .animation(Motion.standard, value: decodeRate)
                     Text("tok/s")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Native.tertiary)
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Console.tertiary)
                 }
-                Sparkline(samples: Array(samples.suffix(48)),
-                          color: Native.accent)
-                    .frame(width: 132, height: 30)
+                Sparkline(samples: Array(samples.suffix(60)), color: Console.accent)
+                    .frame(width: 200, height: 34)
                     .opacity(samples.isEmpty ? 0.25 : 1)
-                Text("当前解码速度")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Native.tertiary)
+                Spacer(minLength: 0)
             }
+            .frame(width: 235, alignment: .leading)
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 20)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 22)
+        .frame(maxWidth: .infinity, minHeight: 250, alignment: .topLeading)
         .background {
-            let shape = RoundedRectangle(cornerRadius: Native.radiusHero, style: .continuous)
+            let shape = RoundedRectangle(cornerRadius: Console.heroRadius, style: .continuous)
             shape
-                .fill(LinearGradient(colors: [Native.canvas, Native.accentSoft.opacity(0.55)],
+                .fill(LinearGradient(colors: [Color(console: 0xFFFBFE), Color(console: 0xFDF0F7)],
                                      startPoint: .topLeading, endPoint: .bottomTrailing))
                 .overlay {
-                    RadialGradient(colors: [Native.accent.opacity(0.10), .clear],
-                                   center: UnitPoint(x: 0.92, y: 0.05),
-                                   startRadius: 0, endRadius: 360)
+                    RadialGradient(colors: [Color(console: 0xFFE3EF).opacity(0.65), .clear],
+                                   center: UnitPoint(x: 0.9, y: 0.1),
+                                   startRadius: 0, endRadius: 460)
                 }
-                .overlay {
-                    shape.fill(LinearGradient(colors: [.white.opacity(AppAppearance.isDark ? 0.03 : 0.5), .clear],
-                                              startPoint: .top, endPoint: .center))
-                }
-                .overlay {
-                    shape.strokeBorder(Native.hairline, lineWidth: 1)
-                }
-                .shadow(color: Native.panelShadow, radius: 18, y: 6)
-        }
-        .animation(Motion.standard, value: state.isRunning)
-        .overlay(alignment: .bottomLeading) {
-            if let failure = state.failureMessage {
-                Text(failure)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Native.red)
-                    .padding(.horizontal, 22)
-                    .padding(.bottom, 10)
-                    .transition(.opacity)
-            }
+                .overlay { shape.strokeBorder(Console.cardStroke, lineWidth: 1) }
+                .shadow(color: Console.shadow, radius: 24, y: 10)
         }
     }
 
-    private var modelMenu: some View {
-        Menu {
-            ForEach(EngineCatalog.allIDs.filter { state.engineIsInstalled($0) }, id: \.self) { id in
-                let models = state.engineModels(for: id)
-                    .filter { !$0.hidden && !$0.helper && !ModelLibraryEntry.isDraftModel($0.id) }
-                if !models.isEmpty {
-                    Section(id.displayName) {
-                        ForEach(models) { model in
-                            Button {
-                                state.applyModelFromAnyEngine(model.id, engine: id)
-                            } label: {
-                                if model.id == state.selectedModel, id == state.activeEngine {
-                                    Label(state.shortModelName(model.id), systemImage: "checkmark")
-                                } else {
-                                    Text(state.shortModelName(model.id))
-                                }
+    private var sessionCount: Int {
+        GatewayMeter.shared.snapshot().count
+    }
+
+    @ViewBuilder private var modelMenuContent: some View {
+        ForEach(EngineCatalog.allIDs.filter { state.engineIsInstalled($0) }, id: \.self) { id in
+            let models = state.engineModels(for: id)
+                .filter { !$0.hidden && !$0.helper && !ModelLibraryEntry.isDraftModel($0.id) }
+            if !models.isEmpty {
+                Section(id.displayName) {
+                    ForEach(models) { model in
+                        Button {
+                            state.applyModelFromAnyEngine(model.id, engine: id)
+                        } label: {
+                            if model.id == state.selectedModel, id == state.activeEngine {
+                                Label(state.shortModelName(model.id), systemImage: "checkmark")
+                            } else {
+                                Text(state.shortModelName(model.id))
                             }
                         }
                     }
                 }
             }
-        } label: {
-            Image(systemName: "chevron.up.chevron.down")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(Native.secondary)
-                .frame(width: 22, height: 22)
-                .background(Circle().fill(Native.overlay(0.06)))
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("切换模型")
-        .disabled(state.isSwitchingModel)
+    }
+
+    // MARK: Gateway
+
+    private var gatewayCard: some View {
+        GlassCard(padding: 18) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    IconTile(symbol: "point.3.connected.trianglepath.dotted", color: Console.info, size: 34)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("API 网关")
+                            .font(.system(size: 14.5, weight: .semibold))
+                            .foregroundStyle(Console.text)
+                        Text("OpenAI + Claude")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Console.tertiary)
+                    }
+                    Spacer(minLength: 0)
+                    StatusChip(text: gateway.isRunning ? "ONLINE" : "OFFLINE",
+                               color: gateway.isRunning ? Console.ok : Console.tertiary,
+                               filled: true)
+                }
+
+                endpointRow(brand: "circle.hexagongrid.fill", color: Color(console: 0x111114),
+                            name: "OpenAI", url: state.gatewayURL, style: .openAI)
+                endpointRow(brand: "sun.max.fill", color: Color(console: 0xE07A3F),
+                            name: "Claude", url: state.gatewayClaudeURL, style: .claude)
+
+                if let failure = gateway.failureMessage, !gateway.isRunning {
+                    Text(failure)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Console.warn)
+                }
+            }
+        }
+    }
+
+    private enum EndpointStyle { case openAI, claude }
+
+    private func endpointRow(brand: String, color: Color, name: String, url: String,
+                             style: EndpointStyle) -> some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle().fill(color)
+                Image(systemName: brand)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 30, height: 30)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(name)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Console.text)
+                Text(url)
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(Console.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 4)
+            Button {
+                state.copy(url, label: "\(name) 接口地址已复制")
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(Console.tertiary)
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(Console.inset))
+            }
+            .buttonStyle(.plain)
+            .help("复制地址")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background {
+            RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Console.inset)
+        }
     }
 
     // MARK: Metrics
 
-    private var metricsGrid: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Native.gap), count: 3),
-                  spacing: Native.gap) {
-            MetricCard(label: "解码速度",
-                       tag: "DECODE",
-                       value: loading ? "—" : Format.compact(decodeRate),
-                       unit: "tok/s",
-                       hint: decodeHint,
-                       loading: loading)
-            MetricCard(label: "首字延迟",
-                       tag: "TTFT",
+    private var metricsRow: some View {
+        HStack(spacing: 18) {
+            metricCard(icon: "square.stack.3d.up.fill", tint: Console.accent,
+                       title: "当前上下文", tag: "CTX",
+                       value: Format.tokens(state.contextUsedTokens),
+                       unit: state.contextWindowCeiling.map { "/ \(shortTokens($0))" } ?? "/ —",
+                       hint: state.isRunning ? "本会话已用" : "引擎未运行",
+                       bars: nil)
+            metricCard(icon: "timer", tint: Console.warn,
+                       title: "首字延迟", tag: "TTFT",
                        value: ttftText,
                        unit: "ms",
-                       hint: "从请求到第一个 token",
-                       loading: loading)
-            MetricCard(label: "预填充速度",
-                       tag: "PREFILL",
+                       hint: state.isRunning ? "从请求到首个 token" : "引擎未运行",
+                       bars: [0.12, 0.16, 0.14, 0.18, 0.15, 0.17, 0.13, 0.16, 0.14, 0.18])
+            metricCard(icon: "arrow.up.circle.fill", tint: Color(console: 0x7C5CFF),
+                       title: "预填充", tag: "PREFILL",
                        value: prefillText,
                        unit: "tok/s",
-                       hint: "长提示词的处理速度",
-                       loading: loading)
-            MetricCard(label: "DFlash2 接受率",
-                       tag: "DRAFT",
-                       value: acceptanceText,
+                       hint: state.isRunning ? "长提示词处理速度" : "引擎未运行",
+                       bars: [0.10, 0.14, 0.12, 0.16, 0.13, 0.15, 0.11, 0.16, 0.12, 0.14])
+            metricCard(icon: "memorychip", tint: Console.info,
+                       title: "内存压力", tag: "MEM",
+                       value: memoryPercentText,
                        unit: "%",
-                       hint: draftHint,
-                       loading: loading)
-            MetricCard(label: "内存占用",
-                       tag: "MEMORY",
-                       value: memoryText,
-                       unit: nil,
-                       hint: memoryHint,
-                       loading: loading)
-            MetricCard(label: "活跃请求",
-                       tag: "SESSION",
-                       value: loading ? "—" : "\(stats?.activeRequests ?? 0)",
-                       unit: nil,
-                       hint: "排队 \(stats?.queuedRequests ?? 0) · 完成 \(stats?.requestsCompleted ?? 0)",
-                       loading: loading)
+                       hint: state.isRunning ? "统一内存占用" : "引擎未运行",
+                       bars: [0.08, 0.10, 0.09, 0.11, 0.10, 0.12, 0.09, 0.11, 0.10, 0.08])
         }
     }
 
-    private var draftHint: String {
-        let head = state.speculativeMode.headName
-        return head.isEmpty ? "未启用投机解码" : "\(head) 草稿"
-    }
-
-    private var decodeHint: String {
-        state.liveDecodeRate != nil ? "本次生成的本地测速" : "引擎自报"
+    private func metricCard(icon: String, tint: Color, title: String, tag: String,
+                            value: String, unit: String, hint: String, bars: [Double]?) -> some View {
+        GlassCard(padding: 16) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    IconTile(symbol: icon, color: tint, size: 30)
+                    Text(title)
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundStyle(Console.text)
+                    Spacer(minLength: 0)
+                    Text(tag)
+                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        .tracking(0.8)
+                        .foregroundStyle(Console.tertiary)
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(value)
+                        .font(.system(size: 22, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Console.text)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .contentTransition(.numericText())
+                    Text(unit)
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundStyle(Console.tertiary)
+                    Spacer(minLength: 0)
+                    if let bars {
+                        MiniBars(levels: bars, tint: tint)
+                    }
+                }
+                Text(hint)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Console.tertiary)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private var ttftText: String {
@@ -326,314 +346,180 @@ struct OverviewPage: View {
         return Format.compact(value)
     }
 
-    private var acceptanceText: String {
-        guard let value = stats?.draftAcceptance, value > 0 else { return "—" }
-        return String(format: "%.0f", value * 100)
+    private var memoryPercentText: String {
+        guard let bytes = stats?.memoryBytes, let total = stats?.physicalMemoryBytes, total > 0 else { return "—" }
+        return "\(Int((Double(bytes) / Double(total) * 100).rounded()))"
     }
 
-    private var memoryText: String {
-        guard let bytes = stats?.memoryBytes, bytes > 0 else { return "—" }
-        return Format.bytes(bytes)
+    private func shortTokens(_ value: Int) -> String {
+        if value >= 1000 { return "\(Int((Double(value) / 1000).rounded()))K" }
+        return "\(value)"
     }
 
-    private var memoryHint: String {
-        guard let peak = stats?.peakMemoryBytes, peak > 0 else {
-            return stats?.deviceName ?? "引擎未上报内存"
-        }
-        return "峰值 \(Format.bytes(peak)) · \(stats?.deviceName ?? "")"
-    }
+    // MARK: Charts
 
-    // MARK: Throughput
-
-    private var throughputCard: some View {
-        Card("吞吐",
-             subtitle: "最近两分钟的本地测速；没有采样时保持空态",
-             trailing: samples.isEmpty ? nil : AnyView(
-                Text("峰值 \(Format.compact(peak)) tok/s")
-                    .font(Native.monoSmall)
-                    .foregroundStyle(Native.tertiary)
-             )) {
-            if samples.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "chart.xyaxis.line")
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundStyle(Native.tertiary.opacity(0.8))
-                    Text("启动并生成一次回复后，这里会显示吞吐曲线")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Native.tertiary)
+    private var decodeChart: some View {
+        GlassCard(padding: 18) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("总解码 · 最近 60 秒")
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundStyle(Console.text)
+                    Text(Format.compact(decodeRate))
+                        .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Console.text)
+                    Text("tok/s")
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(Console.tertiary)
+                    Spacer(minLength: 0)
+                    StatusChip(text: state.isRunning ? "LIVE" : "IDLE",
+                               color: state.isRunning ? Console.ok : Console.tertiary,
+                               filled: true)
                 }
-                .frame(maxWidth: .infinity)
-                .frame(height: 168)
-            } else {
-                Chart(samples) { sample in
-                    AreaMark(x: .value("时间", sample.at),
-                             y: .value("tok/s", sample.value))
-                        .interpolationMethod(.monotone)
-                        .foregroundStyle(
-                            LinearGradient(colors: [Native.accent.opacity(0.28), .clear],
-                                           startPoint: .top, endPoint: .bottom))
-                    LineMark(x: .value("时间", sample.at),
-                             y: .value("tok/s", sample.value))
-                        .interpolationMethod(.monotone)
-                        .foregroundStyle(Native.accent)
-                        .lineStyle(StrokeStyle(lineWidth: 2))
-                }
-                .chartYScale(domain: 0...(peak * 1.2))
-                .chartXAxis(.hidden)
-                .chartYAxis {
-                    AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
-                        AxisGridLine().foregroundStyle(Native.hairline)
-                        AxisValueLabel()
-                            .font(.system(size: 9.5, design: .monospaced))
-                            .foregroundStyle(Native.tertiary)
+
+                if samples.isEmpty {
+                    ZStack {
+                        chartGrid
+                        Text("引擎未运行 · 暂无解码数据")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Console.tertiary)
                     }
-                }
-                .frame(height: 168)
-            }
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    // MARK: Context + endpoint
-
-    private var acceptanceCard: some View {
-        let samples = state.recentAcceptance(window: 0)
-        let latest = samples.last?.value
-        return Card("DFlash2 接受率",
-                    subtitle: "最近两分钟的草稿接受率；没有采样时保持空态",
-                    trailing: latest.map { AnyView(
-                        Text("\(Int(($0 * 100).rounded()))%")
-                            .font(Native.monoSmall)
-                            .foregroundStyle(Native.secondary)
-                    ) }) {
-            if samples.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "percent")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(Native.tertiary.opacity(0.8))
-                    Text("生成一次带草稿加速的回复后，这里会显示接受率曲线")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Native.tertiary)
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 168)
-            } else {
-                Chart(samples) { sample in
-                    AreaMark(x: .value("时间", sample.at),
-                             y: .value("接受率", sample.value))
-                        .interpolationMethod(.monotone)
-                        .foregroundStyle(
-                            LinearGradient(colors: [Native.mint.opacity(0.22), .clear],
-                                           startPoint: .top, endPoint: .bottom))
-                    LineMark(x: .value("时间", sample.at),
-                             y: .value("接受率", sample.value))
-                        .interpolationMethod(.monotone)
-                        .foregroundStyle(Native.mint)
-                        .lineStyle(StrokeStyle(lineWidth: 2))
-                }
-                .chartYScale(domain: 0...1)
-                .chartXAxis(.hidden)
-                .chartYAxis {
-                    AxisMarks(position: .leading, values: [0, 0.5, 1]) { value in
-                        AxisGridLine().foregroundStyle(Native.hairline)
-                        AxisValueLabel {
-                            if let raw = value.as(Double.self) {
-                                Text(verbatim: "\(Int(raw * 100))%")
-                                    .font(.system(size: 9.5, design: .monospaced))
-                                    .foregroundStyle(Native.tertiary)
-                            }
+                    .frame(height: 300)
+                } else {
+                    Chart(samples) { sample in
+                        AreaMark(x: .value("时间", sample.at), y: .value("tok/s", sample.value))
+                            .interpolationMethod(.monotone)
+                            .foregroundStyle(
+                                LinearGradient(colors: [Console.accent.opacity(0.18), .clear],
+                                               startPoint: .top, endPoint: .bottom))
+                        LineMark(x: .value("时间", sample.at), y: .value("tok/s", sample.value))
+                            .interpolationMethod(.monotone)
+                            .foregroundStyle(Console.accent)
+                            .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
+                    }
+                    .chartYScale(domain: 0...(peak * 1.2))
+                    .chartXAxis(.hidden)
+                    .chartYAxis {
+                        AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { _ in
+                            AxisGridLine().foregroundStyle(Console.insetStroke)
+                            AxisValueLabel()
+                                .font(.system(size: 9.5, design: .monospaced))
+                                .foregroundStyle(Console.tertiary)
                         }
                     }
+                    .frame(height: 300)
                 }
-                .frame(height: 168)
             }
         }
         .frame(maxWidth: .infinity)
     }
 
-    private var sessionsCard: some View {
+    private var chartGrid: some View {
+        GeometryReader { proxy in
+            let step: CGFloat = 96
+            Path { path in
+                var x: CGFloat = 0
+                while x <= proxy.size.width {
+                    path.move(to: CGPoint(x: x, y: 0))
+                    path.addLine(to: CGPoint(x: x, y: proxy.size.height))
+                    x += step
+                }
+                var y: CGFloat = 0
+                while y <= proxy.size.height {
+                    path.move(to: CGPoint(x: 0, y: y))
+                    path.addLine(to: CGPoint(x: proxy.size.width, y: y))
+                    y += step / 2
+                }
+            }
+            .stroke(Console.insetStroke, lineWidth: 1)
+        }
+    }
+
+    private var recentRequests: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             let sessions = GatewayMeter.shared.snapshot().suffix(6).reversed()
-            Card("会话", subtitle: "网关侧按请求打点：解码、首字与上下文") {
-                if sessions.isEmpty {
-                    HStack(spacing: 8) {
-                        Image(systemName: "point.3.connected.trianglepath.dotted")
-                            .font(.system(size: 13))
-                            .foregroundStyle(Native.tertiary)
-                        Text("通过接口发送请求后，这里会逐条显示会话")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Native.tertiary)
+            GlassCard(padding: 18) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text("最近请求")
+                            .font(.system(size: 13.5, weight: .medium))
+                            .foregroundStyle(Console.text)
                         Spacer(minLength: 0)
+                        Text("\(sessions.count) 条")
+                            .font(.system(size: 10.5, design: .monospaced))
+                            .foregroundStyle(Console.tertiary)
                     }
-                    .frame(height: 34)
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(Array(sessions.enumerated()), id: \.offset) { index, session in
-                            sessionRow(session)
-                            if index != sessions.count - 1 { Hairline() }
+                    if sessions.isEmpty {
+                        VStack(spacing: 8) {
+                            Spacer(minLength: 0)
+                            Text("还没有经过网关的请求")
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(Console.tertiary)
+                            Spacer(minLength: 0)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 250)
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach(Array(sessions.enumerated()), id: \.offset) { index, session in
+                                requestRow(session)
+                                if index != sessions.count - 1 {
+                                    Rectangle().fill(Console.insetStroke).frame(height: 1)
+                                }
+                            }
+                            Spacer(minLength: 0)
                         }
                     }
                 }
+                .frame(minHeight: 330, alignment: .top)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .top)
     }
 
-    private func sessionRow(_ session: [String: Any]) -> some View {
-        let state = session["state"] as? String ?? "decode"
+    private func requestRow(_ session: [String: Any]) -> some View {
+        let stateName = session["state"] as? String ?? "decode"
         let model = (session["model"] as? String) ?? "未命名"
         let decode = session["decodeRate"] as? Double ?? 0
-        let prefill = session["prefillRate"] as? Double ?? 0
-        let ttft = session["ttft"] as? Double
         let ctx = session["ctxTokens"] as? Int ?? 0
-        return HStack(spacing: 9) {
-            Circle()
-                .fill(sessionColor(state))
-                .frame(width: 6, height: 6)
-            Text(stateLabel(state))
-                .font(.system(size: 9.5, weight: .semibold))
-                .foregroundStyle(sessionColor(state))
-                .frame(width: 52, alignment: .leading)
-            Text(shortModel(model))
+        return HStack(spacing: 8) {
+            StatusChip(text: stateLabel(stateName), color: sessionColor(stateName), filled: true)
+            Text(state.shortModelName(model))
                 .font(.system(size: 11.5))
-                .foregroundStyle(Native.label)
+                .foregroundStyle(Console.text)
                 .lineLimit(1)
                 .truncationMode(.middle)
-            Spacer(minLength: 8)
+            Spacer(minLength: 4)
             Text("\(Format.compact(decode)) tok/s")
-                .font(Native.monoSmall)
-                .foregroundStyle(Native.secondary)
-            Text("预 \(Format.compact(prefill))")
-                .font(Native.monoSmall)
-                .foregroundStyle(Native.tertiary)
-                .frame(width: 62, alignment: .trailing)
-            Text(ttft.map { String(format: "首字 %.0f ms", $0) } ?? "首字 —")
-                .font(Native.monoSmall)
-                .foregroundStyle(Native.tertiary)
-                .frame(width: 82, alignment: .trailing)
-            Text("\(Format.tokens(ctx)) ctx")
-                .font(Native.monoSmall)
-                .foregroundStyle(Native.tertiary)
-                .frame(width: 76, alignment: .trailing)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(Console.secondary)
+            Text(Format.tokens(ctx))
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(Console.tertiary)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 7)
     }
 
     private func sessionColor(_ state: String) -> Color {
         switch state {
-        case "decode": return Native.green
-        case "prefill": return Native.blue
-        case "failed": return Native.red
-        default: return Native.gray
+        case "decode": return Console.ok
+        case "prefill": return Console.info
+        case "failed": return Console.danger
+        default: return Console.tertiary
         }
     }
 
     private func stateLabel(_ state: String) -> String {
         switch state {
-        case "decode": return "解码中"
-        case "prefill": return "预填充"
+        case "decode": return "解码"
+        case "prefill": return "预填"
         case "failed": return "失败"
-        default: return "已完成"
-        }
-    }
-
-    private func shortModel(_ id: String) -> String {
-        state.shortModelName(id)
-    }
-
-    private var contextCard: some View {
-        let used = state.contextUsedTokens
-        let total = state.contextWindowCeiling ?? 0
-        let fraction = total > 0 ? min(1, Double(used) / Double(total)) : 0
-        return Card("当前会话上下文", subtitle: "本会话已用 / 模型窗口") {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(Format.tokens(used))
-                        .font(.system(size: 22, weight: .bold, design: .monospaced))
-                        .foregroundStyle(Native.metricNum)
-                    Text(total > 0 ? "/ \(Format.tokens(total))" : "/ —")
-                        .font(Native.monoFont)
-                        .foregroundStyle(Native.tertiary)
-                    Spacer(minLength: 0)
-                    if total > 0 {
-                        Text("\(Int((fraction * 100).rounded()))%")
-                            .font(Native.monoSmall)
-                            .foregroundStyle(Native.tertiary)
-                    }
-                }
-                Meter(fraction: fraction, tint: fraction > 0.85 ? Native.orange : Native.accent)
-                Text(total > 0
-                     ? "窗口取模型上限与引擎生效窗口的较小值"
-                     : "引擎还没上报上下文窗口")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Native.tertiary)
-            }
-        }
-    }
-
-    private var endpointCard: some View {
-        Card("本地接口", subtitle: "固定地址，OpenAI 与 Claude 双格式") {
-            VStack(alignment: .leading, spacing: 10) {
-                endpointRow(title: "网关（推荐）",
-                            url: state.gatewayURL,
-                            running: gateway.isRunning,
-                            detail: gateway.failureMessage ?? "OpenAI / Claude 两种方言共用这一个端口")
-                Divider().overlay(Native.hairline)
-                endpointRow(title: "引擎直连",
-                            url: state.endpointURL,
-                            running: state.isRunning,
-                            detail: "\(state.activeEngine.displayName) · 随引擎启停")
-                if let failure = gateway.failureMessage, !gateway.isRunning {
-                    Text(failure)
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Native.orange)
-                }
-            }
-        }
-    }
-
-    private func endpointRow(title: String, url: String, running: Bool, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Native.secondary)
-                Spacer(minLength: 4)
-                StatusDot(color: running ? Native.green : Native.gray, diameter: 5)
-                Text(running ? "可用" : "未启动")
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(Native.tertiary)
-            }
-            HStack(spacing: 6) {
-                Text(url)
-                    .font(Native.monoFont)
-                    .foregroundStyle(Native.label)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-                Spacer(minLength: 4)
-                Button {
-                    state.copy(url, label: "\(title)地址已复制")
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                        .font(.system(size: 9.5, weight: .semibold))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Native.secondary)
-                .help("复制地址")
-            }
-            Text(detail)
-                .font(.system(size: 9.5))
-                .foregroundStyle(Native.tertiary)
-                .lineLimit(2)
+        default: return "完成"
         }
     }
 }
 
+// MARK: - Parts
 
-// MARK: - Sparkline
-
-/// 极小的趋势线：最近 48 个采样，没有数据时就是一条平线。
 private struct Sparkline: View {
     let samples: [ThroughputSample]
     var color: Color
@@ -652,9 +538,25 @@ private struct Sparkline: View {
                     else { path.addLine(to: CGPoint(x: x, y: y)) }
                 }
             }
-            .stroke(color.opacity(samples.isEmpty ? 0.35 : 0.9),
-                    style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
+            .stroke(color.opacity(samples.isEmpty ? 0.3 : 0.9),
+                    style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round, dash: samples.isEmpty ? [3, 5] : []))
         }
         .accessibilityHidden(true)
+    }
+}
+
+private struct MiniBars: View {
+    let levels: [Double]
+    var tint: Color
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 2) {
+            ForEach(Array(levels.enumerated()), id: \.offset) { _, level in
+                Capsule()
+                    .fill(tint.opacity(0.28))
+                    .frame(width: 3, height: max(4, 22 * level * 4))
+            }
+        }
+        .frame(height: 24, alignment: .bottom)
     }
 }

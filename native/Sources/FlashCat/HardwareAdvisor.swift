@@ -46,8 +46,8 @@ struct HardwareRecommendation: Codable, Equatable {
 
     /// One line for the settings card: the machine the answer was worked out on.
     var machineSummary: String {
-        var parts = [chipName, "\(memoryGB) GB 统一内存"]
-        if freeDiskBytes > 0 { parts.append("可用 " + Format.size(Int(freeDiskBytes))) }
+        var parts = [chipName, L10n.format("%lld GB 统一内存", memoryGB)]
+        if freeDiskBytes > 0 { parts.append(L10n.format("可用 %@", Format.size(Int(freeDiskBytes)))) }
         return parts.joined(separator: " · ")
     }
 }
@@ -85,9 +85,9 @@ enum HardwareAdvisor {
     /// confirmation sheet and the model page's tag all say the same thing.
     static func reason(verdict: DeviceFit, memoryGB: Int) -> String {
         switch verdict {
-        case .good, .unknown: return "\(memoryGB) GB 内存下最强"
-        case .tight: return "内存可能不够"
-        case .diskShort: return "磁盘可能不够"
+        case .good, .unknown: return L10n.format("%lld GB 内存下最强", memoryGB)
+        case .tight: return L10n.t("内存可能不够")
+        case .diskShort: return L10n.t("磁盘可能不够")
         }
     }
 }

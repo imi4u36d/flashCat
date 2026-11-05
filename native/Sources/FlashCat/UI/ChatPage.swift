@@ -56,7 +56,7 @@ struct ChatPage: View {
                     Image(systemName: "sparkles")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Console.accent)
-                    Text(state.selectedModel.isEmpty ? "选择模型" : state.shortModelName(state.selectedModel))
+                    Text(L10n.t(state.selectedModel.isEmpty ? "选择模型" : state.shortModelName(state.selectedModel)))
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Console.text)
                         .lineLimit(1)
@@ -247,7 +247,7 @@ struct ChatPage: View {
             draft = text
             composerFocused = true
         } label: {
-            Text(text)
+            Text(L10n.t(text))
                 .font(.system(size: 12))
                 .foregroundStyle(Console.secondary)
                 .padding(.horizontal, 14)
@@ -295,7 +295,7 @@ struct ChatPage: View {
                         Image(systemName: "sparkles")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(Console.secondary)
-                        Text(state.selectedModel.isEmpty ? "选择模型" : state.shortModelName(state.selectedModel))
+                        Text(L10n.t(state.selectedModel.isEmpty ? "选择模型" : state.shortModelName(state.selectedModel)))
                             .font(.system(size: 11.5))
                             .lineLimit(1)
                         Image(systemName: "chevron.down")
@@ -512,7 +512,7 @@ private struct MessageRow: View {
                     if message.content.isEmpty {
                         HStack(spacing: 6) {
                             ProgressView().controlSize(.small)
-                            Text(message.reasoning?.isEmpty == false ? "思考中…" : "等待首个 token…")
+                            Text(L10n.t(message.reasoning?.isEmpty == false ? "思考中…" : "等待首个 token…"))
                                 .font(.system(size: 11.5))
                                 .foregroundStyle(Console.tertiary)
                         }
@@ -568,7 +568,7 @@ private struct MessageRow: View {
 
     private var thinkingLabel: String {
         if let seconds = message.thinkingSeconds, seconds > 0 {
-            return String(format: "思考了 %.1f 秒", seconds)
+            return L10n.format("思考了 %.1f 秒", seconds)
         }
         return "思考过程"
     }
@@ -578,7 +578,7 @@ private struct MessageRow: View {
             if let rate = message.rateText { Text(rate) }
             if message.tokenCount > 0 { Text("\(message.tokenCount) tokens") }
             if let ttft = message.firstTokenSeconds, ttft > 0 {
-                Text(String(format: "首字 %.0f ms", ttft * 1000))
+                Text(L10n.format("首字 %.0f ms", ttft * 1000))
             }
             Spacer(minLength: 4)
             if !message.streaming {
@@ -683,7 +683,7 @@ struct ChatParametersSheet: View {
     private func slider(_ label: String, value: Double, range: ClosedRange<Double>,
                         format: String, set: @escaping (Double) -> Void) -> some View {
         HStack(spacing: 10) {
-            Text(label)
+            Text(L10n.t(label))
                 .font(.system(size: 12))
                 .foregroundStyle(Console.secondary)
                 .frame(width: 70, alignment: .leading)

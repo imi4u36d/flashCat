@@ -75,7 +75,7 @@ struct ModelPickerPopover: View {
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 if switching {
-                    Text(state.switchStage.isEmpty ? "加载中" : state.switchStage)
+                    Text(L10n.t(state.switchStage.isEmpty ? "加载中" : state.switchStage))
                         .font(.system(size: 10.5))
                         .foregroundStyle(Console.warn)
                         .lineLimit(1)

@@ -47,9 +47,9 @@ struct EnginesPage: View {
                 pendingRemoval = nil
                 Task { @MainActor in
                     if await installs.removeRuntime(id) {
-                        state.toast("\(id.displayName) 运行时已删除")
+                        state.toast(L10n.format("%@ 运行时已删除", id.displayName))
                     } else {
-                        state.toast("\(id.displayName) 没有可删除的运行时")
+                        state.toast(L10n.format("%@ 没有可删除的运行时", id.displayName))
                     }
                 }
             }
@@ -163,7 +163,7 @@ struct EnginesPage: View {
                         Button {
                             state.toggleService()
                         } label: {
-                            Label(state.isRunning ? "停止" : "启动",
+                            Label(L10n.t(state.isRunning ? "停止" : "启动"),
                                   systemImage: state.isRunning ? "stop.fill" : "play.fill")
                         }
                         .buttonStyle(.consolePrimary)
@@ -205,10 +205,10 @@ struct EnginesPage: View {
 
     private func column(_ label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(label)
+            Text(L10n.t(label))
                 .font(.system(size: 11))
                 .foregroundStyle(Console.tertiary)
-            Text(value)
+            Text(L10n.t(value))
                 .font(.system(size: 12))
                 .foregroundStyle(Console.text)
                 .lineLimit(1)
@@ -259,13 +259,13 @@ struct EnginesPage: View {
         }
         if case .update(_, let release) = installs.upstream[id] {
             guard installs.building == nil else {
-                state.toast("正在构建 \(installs.building?.displayName ?? "引擎")，完成后再试")
+                state.toast(L10n.format("正在构建 %@，完成后再试", installs.building?.displayName ?? L10n.t("引擎")))
                 return
             }
             _ = installs.buildAndInstall(release, for: id)
             return
         }
-        state.toast("暂时没有 \(id.displayName) 的可用安装版本")
+        state.toast(L10n.format("暂时没有 %@ 的可用安装版本", id.displayName))
     }
 }
 

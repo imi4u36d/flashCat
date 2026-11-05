@@ -128,7 +128,7 @@ struct ModelsPage: View {
     private var removalMessage: String {
         guard let entry = removeTarget else { return "" }
         if entry.model.path.isEmpty { return entry.model.id }
-        return "会删除 \(entry.model.sizeText) 的权重，无法恢复。"
+        return L10n.format("会删除 %@ 的权重，无法恢复。", entry.model.sizeText)
     }
 }
 
@@ -175,6 +175,7 @@ private struct ModelCard: View {
             SpecTable(items: [
                 ("ENGINE", entry.engine.displayName),
                 ("FORMAT", formatName),
+                ("QUANT", quantizationLabel ?? "—"),
                 ("SIZE", model.bytes > 0 ? model.sizeText : "—"),
             ])
             tags
@@ -215,6 +216,20 @@ private struct ModelCard: View {
 
     private var displayTitle: String {
         model.shortName
+    }
+
+    /// Quantization for the spec row. Scanned weights carry their own label;
+    /// a suggestion falls back to the catalog's chosen variant or tag, then to
+    /// whatever the repository id happens to spell out.
+    private var quantizationLabel: String? {
+        if let quant = model.quantization, !quant.isEmpty { return quant }
+        if let variant = entry.recommendation?.variant,
+           let quant = ModelQuantization.detect(in: variant) {
+            return quant
+        }
+        if let quant = ModelQuantization.detect(in: model.id) { return quant }
+        if let quant = ModelQuantization.detect(in: model.targetName) { return quant }
+        return entry.recommendation?.tags.first { ModelQuantization.detect(in: $0) != nil }
     }
 
     private var formatName: String {
@@ -292,11 +307,12 @@ private struct ModelCard: View {
 
     private var tagTexts: [String] {
         var values: [String] = []
-        if let quant = entry.recommendation?.tags.first(where: { $0.contains("Q") || $0.contains("bpw") }) {
-            values.append(quant)
-        }
+        // Quantization already has its own spec row; keeping it here too would
+        // print the same label twice.
         if let tags = entry.recommendation?.tags {
-            values.append(contentsOf: tags.filter { !values.contains($0) })
+            values.append(contentsOf: tags.filter {
+                ModelQuantization.detect(in: $0) == nil && !values.contains($0)
+            })
         }
         if entry.draftRepository != nil { values.append("DFlash2") }
         if ModelSharing.isShared(model.id) { values.append("共享") }
@@ -306,9 +322,9 @@ private struct ModelCard: View {
 
     private var memoryText: String {
         if let memory = entry.recommendation?.minimumMemory, memory > 0 {
-            return "\(memory) GB 内存起"
+            return L10n.format("%lld GB 内存起", memory)
         }
-        return "内存需求未标注"
+        return L10n.t("内存需求未标注")
     }
 
     @ViewBuilder private var action: some View {
@@ -316,14 +332,14 @@ private struct ModelCard: View {
             Button {
                 state.pauseDownload()
             } label: {
-                Label("下载 \(Int((fraction * 100).rounded()))%", systemImage: "pause.fill")
+                Label(L10n.format("下载 %lld%%", Int((fraction * 100).rounded())), systemImage: "pause.fill")
             }
             .buttonStyle(ConsolePillStyle(tone: .secondary))
         } else if let task {
             Button {
                 state.resumeDownload(task)
             } label: {
-                Label(task.status == .paused ? "继续 \(Int((task.fraction ?? 0) * 100))%" : "重试",
+                Label(task.status == .paused ? L10n.format("继续 %lld%%", Int((task.fraction ?? 0) * 100)) : L10n.t("重试"),
                       systemImage: "play.fill")
             }
             .buttonStyle(ConsolePillStyle(tone: .secondary))

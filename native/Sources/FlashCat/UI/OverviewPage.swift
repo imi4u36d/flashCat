@@ -112,7 +112,7 @@ struct OverviewPage: View {
                         HStack(spacing: 6) {
                             Image(systemName: state.isRunning ? "stop.fill" : "play.fill")
                                 .font(.system(size: 10, weight: .bold))
-                            Text(state.isRunning ? "停止引擎" : "启动引擎")
+                            Text(L10n.t(state.isRunning ? "停止引擎" : "启动引擎"))
                                 .font(.system(size: 12.5, weight: .medium))
                         }
                     }
@@ -308,7 +308,7 @@ struct OverviewPage: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
                     IconTile(symbol: icon, color: tint, size: 30)
-                    Text(title)
+                    Text(L10n.t(title))
                         .font(.system(size: 13.5, weight: .medium))
                         .foregroundStyle(Console.text)
                     Spacer(minLength: 0)
@@ -318,7 +318,7 @@ struct OverviewPage: View {
                         .foregroundStyle(Console.tertiary)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text(value)
+                    Text(L10n.t(value))
                         .font(.system(size: 22, weight: .bold, design: .monospaced))
                         .foregroundStyle(Console.text)
                         .lineLimit(1)

@@ -159,8 +159,8 @@ struct DownloadCenterSheet: View {
 
     private func detailText(_ task: ModelDownloadTask) -> String {
         var parts = [task.engine.displayName]
-        if task.downloadedBytes > 0 { parts.append("已下载 \(Format.bytes(task.downloadedBytes))") }
-        if task.totalBytes > 0 { parts.append("共 \(Format.bytes(task.totalBytes))") }
+        if task.downloadedBytes > 0 { parts.append(L10n.format("已下载 %@", Format.bytes(task.downloadedBytes))) }
+        if task.totalBytes > 0 { parts.append(L10n.format("共 %@", Format.bytes(task.totalBytes))) }
         return parts.joined(separator: " · ")
     }
 

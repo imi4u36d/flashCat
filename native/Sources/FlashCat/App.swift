@@ -49,7 +49,7 @@ struct FlashCatApp: App {
             }
             // 标准「显示 / 隐藏边栏」菜单位置与 ⌘\ 快捷键。
             CommandGroup(after: .sidebar) {
-                Button(state.showsSidebar ? "隐藏边栏" : "显示边栏") {
+                Button(L10n.t(state.showsSidebar ? "隐藏边栏" : "显示边栏")) {
                     state.toggleSidebar()
                 }
                 .keyboardShortcut("\\", modifiers: .command)
@@ -241,12 +241,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .joined(separator: "、")
         let alert = NSAlert()
         alert.messageText = "flashCat"
-        alert.informativeText = """
-        本地推理控制台 · v\(SPLASH_VERSION)
-        当前引擎：\(engine.map { "\($0.id.displayName) \($0.installation.version)" } ?? "未选择")
-        已安装：\(installed.isEmpty ? "无" : installed)
-        模型目录：\(EnginePaths.modelsRoot)
-        """
+        alert.informativeText = L10n.format(
+            "本地推理控制台 · v%@\n当前引擎：%@\n已安装：%@\n模型目录：%@",
+            SPLASH_VERSION,
+            engine.map { "\($0.id.displayName) \($0.installation.version)" } ?? L10n.t("未选择"),
+            installed.isEmpty ? L10n.t("无") : installed,
+            EnginePaths.modelsRoot
+        )
         alert.runModal()
     }
 }

@@ -495,6 +495,9 @@ enum EngineModelStore {
         var bytes: Int
         var maximumContextTokens: Int?
         var architecture: String?
+        /// Quantization declared by `config.json` (MLX / MTPLX packs usually
+        /// carry it under `quantization` or `quantization_config`).
+        var quantization: String?
     }
 
     private static let metaLock = NSLock()
@@ -513,7 +516,8 @@ enum EngineModelStore {
         let config = configFacts(path + "/config.json")
         let value = ScanMeta(bytes: size(of: path),
                              maximumContextTokens: config.window,
-                             architecture: config.architecture)
+                             architecture: config.architecture,
+                             quantization: config.quantization)
         metaLock.lock()
         metaCache[path] = (value, Date())
         metaLock.unlock()
@@ -527,15 +531,28 @@ enum EngineModelStore {
         metaLock.unlock()
     }
 
-    private static func configFacts(_ path: String) -> (window: Int?, architecture: String?) {
+    private static func configFacts(_ path: String) -> (window: Int?, architecture: String?, quantization: String?) {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-            return (nil, nil)
+            return (nil, nil, nil)
         }
         // 每条本地 config.json 都把窗口放在 text_config 下，draft 模型另有一份顶层副本。
         let window = (json["max_position_embeddings"] as? Int)
             ?? ((json["text_config"] as? [String: Any])?["max_position_embeddings"] as? Int)
-        return (window, json["model_type"] as? String)
+        return (window, json["model_type"] as? String, quantization(in: json))
+    }
+
+    /// `quantization` / `quantization_config` both hold `bits` on the packs
+    /// (MTPLX keeps two copies, MLX keeps one). A per-layer override map would
+    /// make a single number a lie, so only the top-level `bits` counts.
+    private static func quantization(in json: [String: Any]) -> String? {
+        for key in ["quantization", "quantization_config"] {
+            if let value = json[key] as? [String: Any],
+               let bits = (value["bits"] as? NSNumber)?.intValue {
+                return ModelQuantization.label(bits: bits)
+            }
+        }
+        return nil
     }
 
     static func size(of path: String) -> Int {

@@ -91,9 +91,10 @@ enum ModelLibrary {
                                   origin: found?.origin ?? .recommended,
                                   targetName: found?.targetName ?? "",
                                   family: found?.family,
-                                  draftPath: found?.draftPath,
-                                  mmprojPath: found?.mmprojPath,
-                                  approximateSize: found == nil && recommendation.bytes > 0)
+                                   draftPath: found?.draftPath,
+                                   mmprojPath: found?.mmprojPath,
+                                   approximateSize: found == nil && recommendation.bytes > 0,
+                                   quantization: found?.quantization)
             return ModelLibraryEntry(model: model,
                                      engine: engine,
                                      recommendation: recommendation,

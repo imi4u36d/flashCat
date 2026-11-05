@@ -66,7 +66,7 @@ final class StatusBarController: NSObject {
             button.target = self
             button.action = #selector(handleClick)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-            button.toolTip = "flashCat · \(state.serverState.rawValue)"
+            button.toolTip = "flashCat · \(L10n.t(state.serverState.rawValue))"
         }
 
         let root = MenuBarPanel(state: state, onOpenMainWindow: { MainWindow.show() })
@@ -85,7 +85,7 @@ final class StatusBarController: NSObject {
             .sink { [weak self] newState in
                 guard let self else { return }
                 self.statusItem.button?.image = MenuBarIcon.statusImage(state: newState)
-                self.statusItem.button?.toolTip = "flashCat · \(newState.rawValue)"
+                self.statusItem.button?.toolTip = "flashCat · \(L10n.t(newState.rawValue))"
             }
             .store(in: &cancellables)
     }

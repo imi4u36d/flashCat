@@ -20,10 +20,54 @@ struct ModelInfo: Identifiable {
     /// files, so the card marks it as approximate instead of claiming a
     /// measurement it never took.
     var approximateSize = false
+    /// Quantization (Q4_K_M / IQ3_S / 4-bit …), read from the file name or the
+    /// weights' `config.json`. Nil when no name or config states one.
+    var quantization: String? = nil
 
     var shortName: String { id.split(separator: "/").last.map(String.init) ?? id }
     var sizeText: String { bytes > 0 && approximateSize ? "≈" + Format.size(bytes) : Format.size(bytes) }
     var exists: Bool { Paths.fileExists(path) }
+}
+
+/// Reads a quantization label out of whatever text is at hand — a GGUF file
+/// name, a repository id, a catalog tag — so a model card can say how the
+/// weights were quantized instead of leaving the reader to decode the name.
+enum ModelQuantization {
+    static func label(bits: Int) -> String { "\(bits)-bit" }
+
+    static func detect(in raw: String) -> String? {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        // GGUF quant names first: Q4_K_M / IQ3_S / Q2_0.
+        if let value = firstMatch(#"(?i)\b(?:IQ[1-4](?:_[A-Z0-9]+)+|Q[1-8](?:_[A-Z0-9]+)+)\b"#, in: text) {
+            return value.uppercased()
+        }
+        // MLX-style oQ4e builds keep their original casing.
+        if let value = firstMatch(#"\boQ[1-8][A-Za-z0-9]*\b"#, in: text) { return value }
+        // Unquantized dtypes are their own answer.
+        if let value = firstMatch(#"(?i)\b(?:BF16|FP16|F16|FP32|F32)\b"#, in: text) {
+            return value.uppercased()
+        }
+        // "4-bit" / "8bit".
+        if let value = firstMatch(#"(?i)\b([1-8])\s*-?\s*bit\b"#, in: text),
+           let bits = Int(value.filter(\.isNumber)) {
+            return label(bits: bits)
+        }
+        // "3bpw" / "3.5 bpw" — bits-per-weight wording used by MLX packs.
+        if let value = firstMatch(#"(?i)\b(\d+(?:\.\d+)?)\s*-?\s*bpw\b"#, in: text) {
+            let number = value.filter { $0.isNumber || $0 == "." }
+            return "\(number) bpw"
+        }
+        return nil
+    }
+
+    private static func firstMatch(_ pattern: String, in text: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = regex.firstMatch(in: text, range: range),
+              let matchRange = Range(match.range, in: text) else { return nil }
+        return String(text[matchRange])
+    }
 }
 
 struct ModelCatalog {
@@ -166,19 +210,25 @@ final class ModelCatalogService {
             origin: .local,
             targetName: target ?? repository,
             draftPath: draft,
-            mmprojPath: mmproj
+            mmprojPath: mmproj,
+            quantization: target.flatMap { ModelQuantization.detect(in: $0) }
+                ?? EngineModelStore.meta(of: repository).quantization
         )
     }
 
     private func parseAssembly(_ assembly: String, fallbackId: String? = nil) -> ModelInfo? {
         var id: String?
         var family: String?
+        var quantization: String?
         var bytes = 0
         if let json = EngineRuntime.readJSON(assembly + "/model.json") as? [String: Any] {
             id = json["model"] as? String
             family = json["family"] as? String
             if let files = json["files"] as? [String: Any] {
-                for value in files.values {
+                for (name, value) in files {
+                    if quantization == nil {
+                        quantization = ModelQuantization.detect(in: name)
+                    }
                     if let item = value as? [String: Any], let count = item["bytes"] as? Double {
                         bytes += Int(count)
                     }
@@ -195,6 +245,10 @@ final class ModelCatalogService {
         let targetDirectory = assembly + "/target"
         guard Paths.fileExists(targetDirectory) else { return nil }
         let draft = assembly + "/draft"
+        if quantization == nil {
+            quantization = ModelQuantization.detect(in: modelId)
+                ?? EngineModelStore.meta(of: targetDirectory).quantization
+        }
 
         return ModelInfo(
             id: modelId,
@@ -203,7 +257,8 @@ final class ModelCatalogService {
             origin: .splash,
             targetName: targetDirectory,
             family: family,
-            draftPath: Paths.fileExists(draft) ? draft : nil
+            draftPath: Paths.fileExists(draft) ? draft : nil,
+            quantization: quantization
         )
     }
 

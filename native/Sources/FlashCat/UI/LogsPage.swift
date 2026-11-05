@@ -92,7 +92,7 @@ struct LogsPage: View {
                     paused = true
                 }
             } label: {
-                Label(paused ? "继续" : "暂停", systemImage: paused ? "play.fill" : "pause.fill")
+                Label(L10n.t(paused ? "继续" : "暂停"), systemImage: paused ? "play.fill" : "pause.fill")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Console.secondary)
                     .padding(.horizontal, 14)
@@ -226,7 +226,7 @@ struct LogsPage: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plainHit)
-            .help(isExpanded ? "收起详情" : "展开详情")
+            .help(L10n.t(isExpanded ? "收起详情" : "展开详情"))
 
             if isExpanded {
                 detail(line)

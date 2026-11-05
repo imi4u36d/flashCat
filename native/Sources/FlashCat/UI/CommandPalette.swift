@@ -134,11 +134,11 @@ struct CommandPalette: View {
                 .foregroundStyle(selected ? Native.accent : Native.secondary)
                 .frame(width: 22, height: 22)
             VStack(alignment: .leading, spacing: 1) {
-                Text(item.title)
+                Text(L10n.t(item.title))
                     .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
                     .foregroundStyle(Native.label)
                 if !item.detail.isEmpty {
-                    Text(item.detail)
+                    Text(L10n.t(item.detail))
                         .font(.system(size: 10))
                         .foregroundStyle(Native.tertiary)
                         .lineLimit(1)
@@ -192,7 +192,7 @@ struct CommandPalette: View {
                     .padding(.vertical, 1.5)
                     .background(RoundedRectangle(cornerRadius: 3.5).fill(Native.overlay(0.07)))
             }
-            Text(label)
+            Text(L10n.t(label))
                 .font(.system(size: 9.5))
                 .foregroundStyle(Native.tertiary)
         }
@@ -203,7 +203,7 @@ struct CommandPalette: View {
     private var commands: [CommandItem] {
         var list: [CommandItem] = Page.allCases.map { page in
             CommandItem(id: "nav.\(page.rawValue)",
-                        title: "打开\(page.rawValue)",
+                        title: L10n.format("打开%@", L10n.t(page.rawValue)),
                         detail: page.detail,
                         icon: page.symbol,
                         shortcut: "⌘\(pageIndex(page))") {
@@ -227,7 +227,7 @@ struct CommandPalette: View {
         list.append(CommandItem(id: "hub", title: "模型广场", detail: "搜索 Hugging Face 并下载",
                                 icon: "sparkle.magnifyingglass", shortcut: nil, run: openHub))
         list.append(CommandItem(id: "theme", title: "切换外观",
-                                detail: "当前：\(state.theme.mode.label)",
+                                detail: L10n.format("当前：%@", L10n.t(state.theme.mode.label)),
                                 icon: state.theme.mode == .dark ? "sun.max" : "moon", shortcut: "⌘⇧A") {
             toggleAppearance()
         })

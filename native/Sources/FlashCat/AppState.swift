@@ -422,28 +422,28 @@ final class AppState: ObservableObject {
     /// the engine is really in, so a weight load never reads as 「运行中」.
     var engineStageText: String {
         if isSwitchingModel {
-            var parts = ["切换中"]
-            if !switchStage.isEmpty { parts.append(switchStage) }
+            var parts = [L10n.t("切换中")]
+            if !switchStage.isEmpty { parts.append(L10n.t(switchStage)) }
             let stage = startupStage
             if !stage.isEmpty, stage != EngineStartupStage.ready.rawValue,
                stage != "已停止", stage != switchStage {
-                parts.append(stage)
+                parts.append(L10n.t(stage))
             }
-            parts.append("已等待 " + Format.elapsed(lifecycleSeconds))
+            parts.append(L10n.format("已等待 %@", Format.elapsed(lifecycleSeconds)))
             return parts.joined(separator: " · ")
         }
         if serverState == .ready {
             let stage = startupStage
-            return stage == EngineStartupStage.ready.rawValue ? "运行中" : stage
+            return stage == EngineStartupStage.ready.rawValue ? L10n.t("运行中") : L10n.t(stage)
         }
-        var parts = [serverState.rawValue]
+        var parts = [L10n.t(serverState.rawValue)]
         let stage = startupStage
         if !stage.isEmpty, stage != serverState.rawValue,
            stage != EngineStartupStage.ready.rawValue, stage != "已停止" {
-            parts.append(stage)
+            parts.append(L10n.t(stage))
         }
         if serverState == .starting {
-            parts.append("已等待 " + Format.elapsed(startupSeconds))
+            parts.append(L10n.format("已等待 %@", Format.elapsed(startupSeconds)))
         }
         return parts.joined(separator: " · ")
     }
@@ -639,7 +639,7 @@ final class AppState: ObservableObject {
         let migration = service.migrateLegacyDirectories()
         if !migration.isEmpty {
             let moved = migration.moved + migration.archived
-            toast("已把 \(moved) 项旧模型数据迁入 Application Support/flashCat")
+            toast(L10n.format("已把 %lld 项旧模型数据迁入 Application Support/flashCat", moved))
         }
         Paths.ensureDirectory(Paths.modelsDirectory)
 
@@ -650,7 +650,7 @@ final class AppState: ObservableObject {
             adopted += EngineModelStore.adoptExistingWeights(engine).adopted.count
         }
         if adopted > 0 {
-            toast("已把 \(adopted) 个模型搬进 flashCat 的模型目录，不再依赖外部目录")
+            toast(L10n.format("已把 %lld 个模型搬进 flashCat 的模型目录，不再依赖外部目录", adopted))
         }
 
         // 授权表是公共目录的真相：启动时按它把各引擎目录里的链接对齐。
@@ -870,7 +870,7 @@ final class AppState: ObservableObject {
     func recommendationTag(for id: String, engine: EngineID) -> String? {
         guard let pick = hardwareRecommendation?.pick(for: engine),
               ModelLibraryEntry.normalized(pick.model) == ModelLibraryEntry.normalized(id) else { return nil }
-        return "推荐 · " + pick.reason
+        return L10n.format("推荐 · %@", pick.reason)
     }
 
     /// An install that failed voids whatever the first-run page armed for it:
@@ -940,7 +940,7 @@ final class AppState: ObservableObject {
         adoptSavedModel(for: id)
         syncController()
         if start, !selectedModel.isEmpty { startService() }
-        toast("已切换到 \(id.displayName)")
+        toast(L10n.format("已切换到 %@", id.displayName))
         return true
     }
 
@@ -1026,12 +1026,15 @@ final class AppState: ObservableObject {
         if engine.adapter == .splash {
             installed = catalog.machine.filter { ModelSharing.visible($0.id, engine: .splash) }
         } else {
-            installed = engineModels(for: engine).map {
-                ModelInfo(id: $0.id,
-                          path: $0.path ?? (EnginePaths.modelsDirectory(engine) + "/" + $0.id),
-                          bytes: $0.bytes ?? 0,
-                          origin: .local,
-                          targetName: "")
+            installed = engineModels(for: engine).map { model in
+                let path = model.path ?? (EnginePaths.modelsDirectory(engine) + "/" + model.id)
+                return ModelInfo(id: model.id,
+                                 path: path,
+                                 bytes: model.bytes ?? 0,
+                                 origin: .local,
+                                 targetName: "",
+                                 quantization: ModelQuantization.detect(in: model.id)
+                                     ?? EngineModelStore.meta(of: path).quantization)
             }
         }
         return ModelLibrary.entries(installed: installed,
@@ -1116,9 +1119,9 @@ final class AppState: ObservableObject {
     func setDraftAssignment(_ draft: String?, engine: EngineID, model: String) {
         EngineStore.shared.setDraftAssignment(draft, engine: engine, model: model)
         if let draft, !draft.isEmpty {
-            toast("已为 \(shortModelName(model)) 指定辅助模型 \(shortModelName(draft))")
+            toast(L10n.format("已为 %@ 指定辅助模型 %@", shortModelName(model), shortModelName(draft)))
         } else {
-            toast("已清除 \(shortModelName(model)) 的辅助模型，跟随引擎设置")
+            toast(L10n.format("已清除 %@ 的辅助模型，跟随引擎设置", shortModelName(model)))
         }
         if engine == activeEngine, controller?.isRunning == true {
             Task { [weak self] in
@@ -1228,7 +1231,7 @@ final class AppState: ObservableObject {
             return
         }
         guard engineModels(for: engine).contains(where: { $0.id == id }) else {
-            toast("\(engine.displayName) 没有模型 \(shortModelName(id))")
+            toast(L10n.format("%@ 没有模型 %@", engine.displayName, shortModelName(id)))
             return
         }
         guard engine != activeEngine else {
@@ -1316,7 +1319,7 @@ final class AppState: ObservableObject {
             // 排到这次切换之后；队列只留最后一次，读者连点三下就是最后一下生效。
             if target != switchingModel {
                 queuedSwitchModel = target
-                toast("正在切换模型，完成后自动切到 \(shortModelName(target))")
+                toast(L10n.format("正在切换模型，完成后自动切到 %@", shortModelName(target)))
             }
             return
         }
@@ -1326,7 +1329,7 @@ final class AppState: ObservableObject {
         // 404 and keep retrying it.
         let models = engineModels()
         if !EngineModelSelection.isServable(target, available: models.map(\.id)) {
-            toast("\(activeEngine.displayName) 没有模型 \(shortModelName(target))")
+            toast(L10n.format("%@ 没有模型 %@", activeEngine.displayName, shortModelName(target)))
             return
         }
 
@@ -1473,7 +1476,7 @@ final class AppState: ObservableObject {
         let engine = activeEngine
         queuedSwitchModel = nil
         retireModelSwitch()
-        toast("已取消等待 · \(engine.displayName) 仍在后台加载")
+        toast(L10n.format("已取消等待 · %@ 仍在后台加载", engine.displayName))
     }
 
     /// Keep the stage line honest if the engine moves on its own between stages.
@@ -1489,7 +1492,7 @@ final class AppState: ObservableObject {
         switchStage = ""
         switch outcome {
         case .ready:
-            toast("模型已就绪 · \(shortModelName(selectedModel))")
+            toast(L10n.format("模型已就绪 · %@", shortModelName(selectedModel)))
         case .failed(let reason):
             notice = reason
             toast("模型切换失败，请查看日志")
@@ -1759,7 +1762,7 @@ final class AppState: ObservableObject {
         threads = history.load()
         // 删掉的是当前这段对话：下一轮算新会话，别写回刚删掉的 id。
         if thread.id == threadID { threadID = Self.newThreadID() }
-        toast("已删除对话「\(thread.title)」")
+        toast(L10n.format("已删除对话「%@」", thread.title))
     }
 
     func clearThreads() {
@@ -1788,7 +1791,7 @@ final class AppState: ObservableObject {
                 selectedModel = catalog.machine.first?.id ?? ""
                 settings.setModel(selectedModel)
             }
-            toast("已删除 \(model.id)")
+            toast(L10n.format("已删除 %@", model.id))
         } catch {
             notice = "删除失败：\((error as? ModelCatalogService.CatalogError)?.message ?? error.localizedDescription)"
         }
@@ -1830,7 +1833,7 @@ final class AppState: ObservableObject {
         }
         EngineModelStore.invalidateMetaCache()
         reloadModels()
-        toast("已删除 \(id) 及其权重文件")
+        toast(L10n.format("已删除 %@ 及其权重文件", id))
     }
 
     /// Fetch weights for the engine the model page is showing.
@@ -2047,7 +2050,7 @@ final class AppState: ObservableObject {
         }
         EngineModelStore.invalidateMetaCache()
         reloadModels()
-        toast("已删除 \(repo) 及其权重文件")
+        toast(L10n.format("已删除 %@ 及其权重文件", repo))
     }
 
     /// 真正拉起下载器的那一步：两条入口（引擎自己的目录 / 公共目录）只有落地
@@ -2250,7 +2253,7 @@ final class AppState: ObservableObject {
             return .ready(model)
         }
         append(log: "==> \(model.id) 缺少 DFlash2，先补齐 \(draft)", engine: .splash)
-        toast("\(shortModelName(model.id)) 缺少 DFlash2 加速模型，先下载好再启动")
+        toast(L10n.format("%@ 缺少 DFlash2 加速模型，先下载好再启动", shortModelName(model.id)))
         supplementInFlight = true
         let outcome = await downloadAndWait(model.id, engine: .splash, family: model.family)
         supplementInFlight = false
@@ -2568,11 +2571,11 @@ final class AppState: ObservableObject {
         // to answer, and the selection must not move under the start.
         guard !supplementInFlight else { return }
         guard engine == activeEngine else {
-            toast("已下载 \(model)，切到 \(engine.displayName) 就能用")
+            toast(L10n.format("已下载 %@，切到 %@ 就能用", model, engine.displayName))
             return
         }
         applyModel(installed)
-        toast("已下载 \(model)")
+        toast(L10n.format("已下载 %@", model))
     }
 
     /// Engine logs are per engine; only the running engine's copy is on screen.
@@ -2590,7 +2593,10 @@ final class AppState: ObservableObject {
     // MARK: toasts
 
     func toast(_ message: String) {
-        let notice = IslandNotice(message: message)
+        // Classify from the source text (the kind rules are written against
+        // Chinese phrases) before swapping in the localized message.
+        let kind = IslandNotice.Kind(message: message)
+        let notice = IslandNotice(message: L10n.t(message), kind: kind)
         islandNotice = notice
         islandNotices.insert(notice, at: 0)
         if islandNotices.count > 30 {

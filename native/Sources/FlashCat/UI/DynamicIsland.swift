@@ -265,7 +265,7 @@ struct DynamicIsland: View {
             }
             .buttonStyle(.plainHit)
             .disabled(state.isSwitchingModel || state.runtimeMissing != nil)
-            .help(state.isRunning ? "停止引擎" : "启动引擎")
+            .help(L10n.t(state.isRunning ? "停止引擎" : "启动引擎"))
         }
     }
 
@@ -315,7 +315,7 @@ struct DynamicIsland: View {
             Image(systemName: hasNotices ? "bell.badge.fill" : "cpu.fill")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(ink.opacity(0.55))
-            Text(hasNotices ? "通知" : "引擎详情")
+            Text(L10n.t(hasNotices ? "通知" : "引擎详情"))
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(ink.opacity(0.85))
                 .contentTransition(.opacity)
@@ -415,11 +415,11 @@ struct DynamicIsland: View {
 
     private func detailRow(_ label: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(label)
+            Text(L10n.t(label))
                 .font(.system(size: 11))
                 .foregroundStyle(ink.opacity(0.42))
                 .frame(width: 56, alignment: .leading)
-            Text(value)
+            Text(L10n.t(value))
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(ink.opacity(0.88))
                 .lineLimit(1)
@@ -459,7 +459,7 @@ struct DynamicIsland: View {
                               tint: Color? = nil,
                               action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title)
+            Text(L10n.t(title))
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(tint ?? ink.opacity(0.72))
                 .padding(.horizontal, 10)

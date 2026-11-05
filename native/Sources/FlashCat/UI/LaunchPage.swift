@@ -79,7 +79,7 @@ struct LaunchPage: View {
 
     private var intro: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(isRecommendation ? "先装一台引擎" : "选择一台引擎")
+            Text(L10n.t(isRecommendation ? "先装一台引擎" : "选择一台引擎"))
                 .font(.system(size: 30, weight: .bold))
                 .foregroundStyle(Console.text)
             Text(isRecommendation
@@ -215,7 +215,7 @@ struct LaunchPage: View {
                 Button {
                     startInstall(id, recommended: recommended)
                 } label: {
-                    Text(recommended == nil ? "安装" : "安装并开始")
+                    Text(L10n.t(recommended == nil ? "安装" : "安装并开始"))
                 }
                 .buttonStyle(.consolePrimary)
                 .disabled(installs.building != nil || busy != nil)
@@ -295,7 +295,7 @@ struct LaunchPage: View {
             _ = center.buildAndInstall(release, for: id)
         } else {
             busy = nil
-            state.toast("暂时没有 \(id.displayName) 的可用安装版本")
+            state.toast(L10n.format("暂时没有 %@ 的可用安装版本", id.displayName))
         }
     }
 
@@ -396,7 +396,7 @@ private struct LaunchProgressBadge: View {
             }
             .frame(width: 22, height: 22)
 
-            Text(label)
+            Text(L10n.t(label))
                 .font(.system(size: 11))
                 .foregroundStyle(Console.secondary)
                 .lineLimit(1)

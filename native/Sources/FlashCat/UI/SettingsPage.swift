@@ -275,12 +275,12 @@ struct SettingsPage: View {
 
     private var infoCard: some View {
         SettingsCard {
-            infoRow("flashCat", detail: "本地推理控制台 · v\(appVersion)", trailing: device.chipName)
+            infoRow("flashCat", detail: L10n.format("本地推理控制台 · v%@", appVersion), trailing: device.chipName)
             Divider().overlay(Console.insetStroke)
-            infoRow("这台 Mac", detail: "\(device.chipName) · \(device.memoryGB) GB 统一内存",
-                    trailing: "可用 \(Format.size(Int(device.freeDiskBytes)))")
+            infoRow("这台 Mac", detail: L10n.format("%@ · %lld GB 统一内存", device.chipName, device.memoryGB),
+                    trailing: L10n.format("可用 %@", Format.size(Int(device.freeDiskBytes))))
             Divider().overlay(Console.insetStroke)
-            SettingsRow(title: "对话参数", detail: "温度 \(String(format: "%.1f", state.settings.temperature)) · Top P \(String(format: "%.2f", state.settings.topP)) · 最大输出 \(state.effectiveMaxTokens)") {
+            SettingsRow(title: "对话参数", detail: L10n.format("温度 %.1f · Top P %.2f · 最大输出 %lld", state.settings.temperature, state.settings.topP, state.effectiveMaxTokens)) {
                 Button("调整") { state.section = .chat }
                     .buttonStyle(.consoleSecondary)
             }
@@ -307,15 +307,15 @@ struct SettingsPage: View {
     private func infoRow(_ title: String, detail: String, trailing: String) -> some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
+                Text(L10n.t(title))
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(Console.text)
-                Text(detail)
+                Text(L10n.t(detail))
                     .font(.system(size: 10.5))
                     .foregroundStyle(Console.tertiary)
             }
             Spacer(minLength: 8)
-            Text(trailing)
+            Text(L10n.t(trailing))
                 .font(.system(size: 10.5))
                 .foregroundStyle(Console.tertiary)
         }
@@ -354,11 +354,11 @@ struct SettingsRow<Trailing: View>: View {
     var body: some View {
         HStack(alignment: trailingTop ? .top : .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
+                Text(L10n.t(title))
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Console.text)
                 if let detail {
-                    Text(detail)
+                    Text(L10n.t(detail))
                         .font(.system(size: 10.5))
                         .foregroundStyle(Console.tertiary)
                         .lineLimit(2)

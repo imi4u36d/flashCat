@@ -93,7 +93,7 @@ struct HubSheet: View {
                                                 filter: filter.rawValue,
                                                 page: state.hubPage + 1)
                             } label: {
-                                Text(state.hubLoading ? "加载中…" : "加载更多")
+                                Text(L10n.t(state.hubLoading ? "加载中…" : "加载更多"))
                                     .font(.system(size: 12, weight: .medium))
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 12)
@@ -156,7 +156,7 @@ struct HubSheet: View {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.up.arrow.down")
                             .font(.system(size: 9, weight: .bold))
-                        Text(sort == .trending ? "趋势" : "下载量")
+                        Text(L10n.t(sort == .trending ? "趋势" : "下载量"))
                             .font(.system(size: 11, weight: .medium))
                     }
                     .foregroundStyle(Native.secondary)
@@ -290,9 +290,9 @@ struct HubSheet: View {
     }
 
     private func downloadsText(_ value: Int) -> String {
-        if value >= 1_000_000 { return String(format: "%.1fM 下载", Double(value) / 1_000_000) }
-        if value >= 1000 { return String(format: "%.0fK 下载", Double(value) / 1000) }
-        return "\(value) 下载"
+        if value >= 1_000_000 { return L10n.format("%.1fM 下载", Double(value) / 1_000_000) }
+        if value >= 1000 { return L10n.format("%.0fK 下载", Double(value) / 1000) }
+        return L10n.format("%lld 下载", value)
     }
 
     // MARK: Right
@@ -422,7 +422,7 @@ struct HubSheet: View {
         let busy = state.downloadingModel != nil
         return HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(local ? "已在本机" : "下载到公共目录")
+                Text(L10n.t(local ? "已在本机" : "下载到公共目录"))
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Native.label)
                 Text(local

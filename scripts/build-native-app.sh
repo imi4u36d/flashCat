@@ -146,7 +146,15 @@ RESOURCE_BUNDLE="$NATIVE_DIR/.build/release/FlashCat_FlashCat.bundle"
 if [ -d "$RESOURCE_BUNDLE" ]; then
     rm -rf "$APP/Contents/Resources/$(basename "$RESOURCE_BUNDLE")"
     cp -R "$RESOURCE_BUNDLE" "$APP/Contents/Resources/"
-    echo "     $(basename "$RESOURCE_BUNDLE")"
+    # SwiftUI's Text() resolves localized strings from the app's main bundle,
+    # not from the nested SwiftPM resource bundle. Mirror the compiled .lproj
+    # folders so the packaged app follows the system language correctly.
+    for lproj in "$RESOURCE_BUNDLE"/Contents/Resources/*.lproj; do
+        [ -d "$lproj" ] || continue
+        rm -rf "$APP/Contents/Resources/$(basename "$lproj")"
+        cp -R "$lproj" "$APP/Contents/Resources/"
+    done
+    echo "     $(basename "$RESOURCE_BUNDLE") ($(ls "$RESOURCE_BUNDLE"/Contents/Resources | tr '\n' ' '))"
 else
     echo "warning: $RESOURCE_BUNDLE missing; the brand mark falls back to the app icon" >&2
 fi
@@ -158,7 +166,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleDevelopmentRegion</key>
-    <string>zh_CN</string>
+    <string>zh-Hans</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>zh-Hans</string>
+        <string>en</string>
+    </array>
     <key>CFBundleDisplayName</key>
     <string>flashCat</string>
     <key>CFBundleExecutable</key>

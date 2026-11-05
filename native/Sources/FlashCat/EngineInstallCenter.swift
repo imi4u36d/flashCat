@@ -112,7 +112,7 @@ final class EngineInstallCenter: ObservableObject {
                     owner.progressStep[id] = nil
                     owner.refreshInstalled()
                     owner.onChange?()
-                    owner.onToast?("\(id.displayName) \(release.version) 安装成功")
+                    owner.onToast?(L10n.format("%@ %@ 安装成功", id.displayName, release.version))
                     // Only a first install makes the engine the active one; an
                     // update must leave whatever the user was running alone.
                     if isFirstInstall { owner.onInstalled?(id) }
@@ -125,7 +125,7 @@ final class EngineInstallCenter: ObservableObject {
                     owner.phases[id] = .failed(message: error.localizedDescription)
                     owner.progress[id] = nil
                     owner.progressStep[id] = nil
-                    owner.onToast?("\(id.displayName) 安装失败：\(error.localizedDescription)")
+                    owner.onToast?(L10n.format("%@ 安装失败：%@", id.displayName, error.localizedDescription))
                     owner.onInstallFailed?(id)
                 }
             }
@@ -233,7 +233,7 @@ final class EngineInstallCenter: ObservableObject {
             do {
                 if try await installer.uninstall(id, version: version) { removed = true }
             } catch {
-                onToast?("删除 \(id.displayName) \(version) 失败：\(error.localizedDescription)")
+                onToast?(L10n.format("删除 %@ %@ 失败：%@", id.displayName, version, error.localizedDescription))
             }
         }
         refreshInstalled()
@@ -280,7 +280,7 @@ final class EngineInstallCenter: ObservableObject {
         guard building == nil, installer != nil else { return false }
         guard let repository = EnginePackBuildRunner.locateRepository() else {
             phases[id] = .failed(message: EnginePackBuildError.repositoryNotFound.localizedDescription)
-            onToast?("构建失败：\(EnginePackBuildError.repositoryNotFound.localizedDescription)")
+            onToast?(L10n.format("构建失败：%@", EnginePackBuildError.repositoryNotFound.localizedDescription))
             onInstallFailed?(id)
             return false
         }
@@ -333,7 +333,7 @@ final class EngineInstallCenter: ObservableObject {
                     owner.runningStepIndex[id] = nil
                     owner.clearProgress(id)
                     owner.phases[id] = .failed(message: error.localizedDescription)
-                    owner.onToast?("\(id.displayName) \(release.version) 构建失败：\(error.localizedDescription)")
+                    owner.onToast?(L10n.format("%@ %@ 构建失败：%@", id.displayName, release.version, error.localizedDescription))
                     owner.onInstallFailed?(id)
                 }
             }

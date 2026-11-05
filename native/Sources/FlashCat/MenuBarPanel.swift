@@ -326,23 +326,23 @@ struct MenuBarPanel: View {
             // 跨引擎跳过去的那一步本身就是一次真正的冷启动：把引擎自己的阶段和
             // 已等待秒数并进来。只写固定的 switchStage 时，一次正常推进的加载
             // 和卡死看起来完全一样。
-            var parts = ["切换中"]
-            if !state.switchStage.isEmpty { parts.append(state.switchStage) }
+            var parts = [L10n.t("切换中")]
+            if !state.switchStage.isEmpty { parts.append(L10n.t(state.switchStage)) }
             let stage = state.startupStage
             if !stage.isEmpty, stage != "就绪", stage != "已停止",
                stage != state.switchStage {
-                parts.append(stage)
+                parts.append(L10n.t(stage))
             }
-            parts.append("已等待 " + Self.clock(state.lifecycleSeconds))
+            parts.append(L10n.format("已等待 %@", Self.clock(state.lifecycleSeconds)))
             return parts.joined(separator: " · ")
         }
-        var parts = [state.serverState.rawValue]
+        var parts = [L10n.t(state.serverState.rawValue)]
         let stage = state.startupStage
         if !stage.isEmpty, stage != state.serverState.rawValue, stage != "就绪" {
-            parts.append(stage)
+            parts.append(L10n.t(stage))
         }
         if state.serverState == .starting {
-            parts.append("已等待 " + Self.clock(state.startupSeconds))
+            parts.append(L10n.format("已等待 %@", Self.clock(state.startupSeconds)))
         }
         return parts.joined(separator: " · ")
     }
@@ -375,7 +375,7 @@ struct MenuBarPanel: View {
                 Button {
                     running ? state.stopService() : state.startService()
                 } label: {
-                    Label(running ? "停止服务" : "启动服务",
+                    Label(L10n.t(running ? "停止服务" : "启动服务"),
                           systemImage: running ? "stop.fill" : "play.fill")
                         .font(.system(size: 12, weight: .semibold))
                         .frame(maxWidth: .infinity)
@@ -410,9 +410,9 @@ struct MenuBarPanel: View {
     }
 
     private static func countersText(_ stats: ServerStats) -> String {
-        var parts = ["完成 \(stats.requestsCompleted)", "失败 \(stats.requestsFailed)"]
-        if stats.activeRequests > 0 { parts.append("并发 \(stats.activeRequests)") }
-        if stats.queuedRequests > 0 { parts.append("排队 \(stats.queuedRequests)") }
+        var parts = [L10n.format("完成 %lld", stats.requestsCompleted), L10n.format("失败 %lld", stats.requestsFailed)]
+        if stats.activeRequests > 0 { parts.append(L10n.format("并发 %lld", stats.activeRequests)) }
+        if stats.queuedRequests > 0 { parts.append(L10n.format("排队 %lld", stats.queuedRequests)) }
         return parts.joined(separator: " · ")
     }
 }
@@ -431,7 +431,7 @@ private struct StatusPill: View {
                 .frame(width: 6, height: 6)
                 .shadow(color: tint.opacity(pulsing ? 0.9 : 0.45),
                         radius: pulsing ? 4 : 0)
-            Text(text)
+            Text(L10n.t(text))
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(tint)
         }
@@ -467,7 +467,7 @@ private struct MetricStrip: View {
 
     private func cell(_ label: String, _ value: String, unit: String?) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(label)
+            Text(L10n.t(label))
                 .font(.system(size: 9.5, weight: .semibold))
                 .foregroundStyle(Native.tertiary)
             HStack(alignment: .firstTextBaseline, spacing: 2) {
@@ -510,7 +510,7 @@ private struct Sparkline: View {
                     .font(.system(size: 9.5, weight: .semibold))
                     .foregroundStyle(Native.tertiary)
                 Spacer(minLength: 4)
-                Text(verbatim: "峰值 \(Format.compact(peak)) tok/s")
+                Text(L10n.format("峰值 %@ tok/s", Format.compact(peak)))
                     .font(.system(size: 9.5, design: .monospaced))
                     .foregroundStyle(Native.tertiary)
             }
@@ -578,7 +578,7 @@ private struct NoticeRow: View {
                     .foregroundStyle(tint)
                     .padding(.top, 1)
             }
-            Text(text)
+            Text(L10n.t(text))
                 .font(.system(size: 11.5))
                 .foregroundStyle(tint)
                 .fixedSize(horizontal: false, vertical: true)

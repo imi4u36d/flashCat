@@ -99,7 +99,7 @@ struct ConsoleView: View {
             Text("这个模型由 \(engine.displayName) 引擎驱动，先安装 \(engine.displayName) 才能切换到它。")
         }
         .alert("切换引擎？", isPresented: libraryUseShown, presenting: state.pendingLibraryUse) { request in
-            Button(request.needsDownload ? "切换并下载" : "切换并使用") { state.confirmLibraryUse() }
+            Button(L10n.t(request.needsDownload ? "切换并下载" : "切换并使用")) { state.confirmLibraryUse() }
             Button("取消", role: .cancel) { state.cancelLibraryUse() }
         } message: { request in
             Text("\(request.model) 属于 \(request.engine.displayName)，切换会先停掉 \(state.activeEngine.displayName)，再以这个模型启动 \(request.engine.displayName)。")
@@ -155,7 +155,7 @@ struct ConsoleView: View {
     private var modelSwitchMessage: String {
         let next = state.shortModelName(state.confirmingModelSwitch ?? "")
         let running = state.shortModelName(state.selectedModel)
-        return "将停止 \(running) 并加载 \(next)，切换期间引擎暂时无法应答。"
+        return L10n.format("将停止 %@ 并加载 %@，切换期间引擎暂时无法应答。", running, next)
     }
 
     private var engineInstallShown: Binding<Bool> {
@@ -299,7 +299,7 @@ private struct SidebarNavRow: View {
                     .frame(width: 24)
                     .symbolRenderingMode(.hierarchical)
                 if !collapsed {
-                    Text(page.rawValue)
+                    Text(L10n.t(page.rawValue))
                         .font(.system(size: 14.5, weight: active ? .semibold : .regular))
                         .foregroundStyle(active ? Console.text : Console.secondary)
                     Spacer(minLength: 4)
@@ -318,22 +318,24 @@ private struct SidebarNavRow: View {
             .frame(maxWidth: .infinity, alignment: collapsed ? .center : .leading)
             .background {
                 if active {
-                    RoundedRectangle(cornerRadius: collapsed ? 20 : 13, style: .continuous)
+                    // 选中态与设置页的分段按钮组保持一致：白色胶囊 + 细边 + 轻投影，
+                    // 不再使用会发灰的玻璃材质。
+                    Capsule()
+                        .fill(Console.glassSelected)
+                        .overlay(Capsule().strokeBorder(Console.glassStroke, lineWidth: 0.6))
+                        .shadow(color: Console.shadow.opacity(0.7), radius: 6, y: 2)
                         .frame(width: collapsed ? 40 : nil, height: collapsed ? 40 : nil)
-                        .glassEffect(.regular.interactive(),
-                                     in: RoundedRectangle(cornerRadius: collapsed ? 20 : 13, style: .continuous))
                         .matchedGeometryEffect(id: "nav.selection", in: namespace)
                 } else if hovering {
-                    RoundedRectangle(cornerRadius: collapsed ? 20 : 13, style: .continuous)
+                    Capsule()
+                        .fill(Console.glassGroup)
                         .frame(width: collapsed ? 40 : nil, height: collapsed ? 40 : nil)
-                        .glassEffect(.regular,
-                                     in: RoundedRectangle(cornerRadius: collapsed ? 20 : 13, style: .continuous))
                 }
             }
-            .contentShape(RoundedRectangle(cornerRadius: collapsed ? 20 : 13, style: .continuous))
+            .contentShape(Capsule())
         }
         .buttonStyle(.plainHit)
-        .help(page.rawValue)
+        .help(L10n.t(page.rawValue))
         .onHover { value in
             guard !reduceMotion else { hovering = value; return }
             withAnimation(Motion.quick) { hovering = value }
@@ -474,8 +476,8 @@ struct ConsoleTitlebar: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plainHit)
-        .help(state.showsSidebar ? "隐藏边栏（⌘\\）" : "显示边栏（⌘\\）")
-        .accessibilityLabel(state.showsSidebar ? "隐藏边栏" : "显示边栏")
+        .help(L10n.t(state.showsSidebar ? "隐藏边栏（⌘\\）" : "显示边栏（⌘\\）"))
+        .accessibilityLabel(L10n.t(state.showsSidebar ? "隐藏边栏" : "显示边栏"))
     }
 
 }

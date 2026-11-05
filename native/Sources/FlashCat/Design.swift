@@ -525,7 +525,7 @@ struct Tag: View {
                 Image(systemName: icon)
                     .font(.system(size: 8.5, weight: .bold))
             }
-            Text(text).font(.system(size: 10.5, weight: .semibold))
+            Text(L10n.t(text)).font(.system(size: 10.5, weight: .semibold))
         }
         .foregroundStyle(tone.foreground)
         .padding(.horizontal, 8)
@@ -541,7 +541,7 @@ struct Eyebrow: View {
     var color: Color = Native.tertiary
 
     var body: some View {
-        Text(text)
+        Text(L10n.t(text))
             .font(.system(size: 10.5, weight: .bold))
             .tracking(1.7)
             .foregroundStyle(color)
@@ -579,10 +579,10 @@ struct Card<Content: View>: View {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     VStack(alignment: .leading, spacing: 3) {
                         if let title {
-                            Text(title).font(Native.cardTitle)
+                            Text(L10n.t(title)).font(Native.cardTitle)
                         }
                         if let subtitle {
-                            Text(subtitle)
+                            Text(L10n.t(subtitle))
                                 .font(.system(size: 11))
                                 .foregroundStyle(Native.tertiary)
                         }
@@ -613,13 +613,13 @@ struct StatTile: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Text(label)
+                Text(L10n.t(label))
                     .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(Native.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 if !loading, let badge {
-                    Text(badge)
+                    Text(L10n.t(badge))
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(tint.opacity(0.9))
                 }
@@ -629,7 +629,7 @@ struct StatTile: View {
                 SkeletonBar(width: 86, height: 24, radius: 7, opacity: 0.10)
             } else {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(value)
+                    Text(L10n.t(value))
                         .font(.system(size: 26, weight: .bold, design: .monospaced))
                         .foregroundStyle(Native.metricNum)
                         .monospacedDigit()
@@ -653,7 +653,7 @@ struct StatTile: View {
             if loading {
                 SkeletonBar(width: 96, height: 8, radius: 4, opacity: 0.07)
             } else if let detail {
-                Text(detail)
+                Text(L10n.t(detail))
                     .font(.system(size: 10.5))
                     .foregroundStyle(Native.tertiary)
                     .lineLimit(1)
@@ -681,7 +681,7 @@ struct MetricCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Text(label)
+                Text(L10n.t(label))
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(hero ? Native.secondary : Native.secondary)
                     .lineLimit(1)
@@ -698,7 +698,7 @@ struct MetricCard: View {
                 SkeletonBar(width: 104, height: 30, radius: 7, opacity: 0.10)
             } else {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(value)
+                    Text(L10n.t(value))
                         .font(.system(size: hero ? 30 : 23, weight: .bold, design: .monospaced))
                         .monospacedDigit()
                         .foregroundStyle(Native.metricNum)
@@ -923,7 +923,7 @@ struct KeyValueRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(label)
+            Text(L10n.t(label))
                 .font(.system(size: 11.5))
                 .foregroundStyle(Native.secondary)
             Spacer(minLength: 8)
@@ -931,14 +931,14 @@ struct KeyValueRow: View {
                 SkeletonBar(width: 68, height: 9, opacity: 0.10)
                     .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1.5 }
             } else {
-                Text(value)
+                Text(L10n.t(value))
                     .font(mono ? Native.monoFont : Native.bodyFont)
                     .monospacedDigit()
                     .foregroundStyle(valueColor)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if let detail {
-                    Text(detail)
+                    Text(L10n.t(detail))
                         .font(.system(size: 10.5))
                         .foregroundStyle(Native.tertiary)
                         .lineLimit(1)
@@ -971,12 +971,12 @@ struct PageHeader<Actions: View>: View {
                 if let eyebrow {
                     Eyebrow(text: eyebrow)
                 }
-                Text(title)
+                Text(L10n.t(title))
                     .font(Native.pageTitle)
                     .tracking(-0.6)
                     .foregroundStyle(Native.label)
                 if let subtitle {
-                    Text(subtitle)
+                    Text(L10n.t(subtitle))
                         .font(.system(size: 12.5))
                         .foregroundStyle(Native.secondary)
                         .lineLimit(2)
@@ -1056,11 +1056,11 @@ struct EmptyHint: View {
                        colors: [Native.violet, Native.blue],
                        size: 54,
                        glyphScale: 0.4)
-            Text(title)
+            Text(L10n.t(title))
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Native.label)
             if let detail {
-                Text(detail)
+                Text(L10n.t(detail))
                     .font(.system(size: 11.5))
                     .foregroundStyle(Native.tertiary)
                     .multilineTextAlignment(.center)

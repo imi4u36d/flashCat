@@ -288,7 +288,7 @@ struct NativeSegmented<Value: Hashable>: View {
     private var picker: some View {
         Picker("", selection: $selection) {
             ForEach(Array(zip(options, labels)), id: \.0) { value, label in
-                Text(label).tag(value)
+                Text(L10n.t(label)).tag(value)
             }
         }
     }
@@ -339,7 +339,7 @@ struct ConsoleTag: View {
     var tone: TagTone = .neutral
 
     var body: some View {
-        Text(text)
+        Text(L10n.t(text))
             .font(.system(size: 10.5, weight: .medium))
             .foregroundStyle(tone.foreground)
             .padding(.horizontal, 8)
@@ -358,11 +358,11 @@ struct SpecTable: View {
         HStack(spacing: 0) {
             ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(item.label)
+                    Text(L10n.t(item.label))
                         .font(.system(size: 9.5, weight: .semibold))
                         .tracking(0.8)
                         .foregroundStyle(Console.tertiary)
-                    Text(item.value)
+                    Text(L10n.t(item.value))
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(Console.text)
                         .lineLimit(1)
@@ -396,7 +396,7 @@ struct StatusChip: View {
             Circle()
                 .fill(color)
                 .frame(width: 6, height: 6)
-            Text(text)
+            Text(L10n.t(text))
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(filled ? color : Console.secondary)
         }

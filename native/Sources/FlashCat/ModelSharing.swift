@@ -132,14 +132,17 @@ enum ModelSharing {
         // 草稿头只在这两个目录名下出现过（oMLX 的 DFlash2 目录、Splash 的 draft），
         // 单独的草稿头没有 tokenizer，扫不出来，只能顺着主模型找。
         let draft = ["draft", "dflash2"].first { manager.fileExists(atPath: path + "/" + $0 + "/config.json") }
+        let meta = EngineModelStore.meta(of: path)
         return ModelInfo(id: repo,
                          path: path,
-                         bytes: EngineModelStore.meta(of: path).bytes,
+                         bytes: meta.bytes,
                          origin: .local,
                          targetName: gguf.map { path + "/" + $0 } ?? path,
                          family: nil,
                          draftPath: draft.map { path + "/" + $0 },
-                         mmprojPath: mmproj.map { path + "/" + $0 })
+                         mmprojPath: mmproj.map { path + "/" + $0 },
+                         quantization: ModelQuantization.detect(in: gguf ?? repo)
+                             ?? meta.quantization)
     }
 
     // MARK: 链接

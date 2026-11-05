@@ -50,7 +50,7 @@ struct EngineConfigSheet: View {
                         .foregroundStyle(Native.label)
                     if isActive { Tag(text: "当前引擎", tone: .success) }
                 }
-                Text("\(installedVersion ?? "未安装") · 端口 \(portText.isEmpty ? "—" : portText)")
+                Text("\(installedVersion ?? L10n.t("未安装")) · 端口 \(portText.isEmpty ? "—" : portText)")
                     .font(.system(size: 11))
                     .foregroundStyle(Native.tertiary)
             }
@@ -145,11 +145,11 @@ struct EngineConfigSheet: View {
                         detail: String? = nil) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                Text(L10n.t(title))
                     .font(Native.bodyFont)
                     .foregroundStyle(Native.label)
                 if let detail {
-                    Text(detail)
+                    Text(L10n.t(detail))
                         .font(.system(size: 10))
                         .foregroundStyle(Native.tertiary)
                 }
@@ -167,7 +167,7 @@ struct EngineConfigSheet: View {
 
     private func textField(_ title: String, text: Binding<String>, placeholder: String) -> some View {
         HStack(spacing: 10) {
-            Text(title)
+            Text(L10n.t(title))
                 .font(Native.bodyFont)
                 .foregroundStyle(Native.label)
                 .frame(width: 110, alignment: .leading)
@@ -180,7 +180,7 @@ struct EngineConfigSheet: View {
 
     private func intField(_ title: String, value: Binding<Int?>, placeholder: String) -> some View {
         HStack(spacing: 10) {
-            Text(title)
+            Text(L10n.t(title))
                 .font(Native.bodyFont)
                 .foregroundStyle(Native.label)
                 .frame(width: 110, alignment: .leading)
@@ -216,7 +216,7 @@ struct EngineConfigSheet: View {
             state.switchEnginePort(engine, port: port)
         }
         Task { await state.engines?.controller(engine)?.reapplyTuning() }
-        state.toast("\(engine.displayName) 的配置已保存")
+        state.toast(L10n.format("%@ 的配置已保存", engine.displayName))
         dismiss()
     }
 }

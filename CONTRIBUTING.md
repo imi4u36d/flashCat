@@ -6,7 +6,7 @@ flashCat 把「装引擎、下模型、聊天、对外提供本地接口」收�
 
 | 需要 | 版本 |
 | --- | --- |
-| macOS | 26.4+（splash 原生引擎的硬性下限，不是可兼容项） |
+| macOS | 27.0+（应用下限：Liquid Glass 的 `.tabs` 需要 macOS 27 SDK；splash 引擎自身下限 26.4） |
 | Xcode / Swift | 6.x 工具链 |
 | SwiftLint / swift-format | 可选，`brew install swiftlint swift-format` |
 

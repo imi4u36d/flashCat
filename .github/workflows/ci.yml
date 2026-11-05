@@ -16,8 +16,9 @@ defaults:
 jobs:
   # Hard gate. These three must stay green from now on.
   build-and-test:
-    # Must be >= the floor in native/Package.swift (`platforms: [.macOS("26.4")]`).
-    runs-on: macos-26
+    # Must be >= the floor in native/Package.swift (`platforms: [.macOS("27.0")]`).
+    # The macOS 27 SDK only ships with the `xcode-27` runner image.
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4
 
@@ -74,7 +75,7 @@ jobs:
   # Advisory for now. Phase 2 of the roadmap turns these into hard gates once
   # the lint baseline files exist.
   lint:
-    runs-on: macos-26
+    runs-on: xcode-27
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -89,7 +90,7 @@ jobs:
           fi
 
   format:
-    runs-on: macos-26
+    runs-on: xcode-27
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4

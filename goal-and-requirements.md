@@ -18,7 +18,7 @@ Splash、oMLX、MTPLX、MLX-Serve、Strata 等本地推理引擎各自有端口�
 
 ## 受众
 
-单台 Apple Silicon Mac 上的个人用户，以开发者为主：他要本地推理，也要把本地推理当作 OpenAI / Claude 兼容的接口喂给自己的其他工具。系统门槛是 macOS 26.4——这是 splash 原生引擎的下限，不是可以往下兼容的选项。
+单台 Apple Silicon Mac 上的个人用户，以开发者为主：他要本地推理，也要把本地推理当作 OpenAI / Claude 兼容的接口喂给自己的其他工具。系统门槛是 macOS 27.0——界面用到 macOS 27 的 Liquid Glass 分段控件，splash 原生引擎自身的 26.4 下限已在其下。
 
 ## 能力
 

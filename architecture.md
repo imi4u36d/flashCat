@@ -47,7 +47,7 @@ graph TD
 
 代码已经在执行的规则，不是愿望。
 
-1. **`FlashCatKit` 不许引 UI。** 它只 `import` `Foundation` / `Network` / `CryptoKit`。这决定它能在无窗口的测试进程里跑——`FlashCatKitTests` 有 13 个测试文件、164 个测试函数，全部针对这一层。
+1. **`FlashCatKit` 不许引 UI。** 它只 `import` `Foundation` / `Network` / `CryptoKit`。这决定它能在无窗口的测试进程里跑——`FlashCatKitTests` 有 16 个测试文件、187 个测试函数，`FlashCatTests` 另有 12 个针对壳层纯函数的用例。
 2. **依赖单向。** `FlashCat` → `FlashCatKit`。Kit 里出现任何应用侧符号都是破坏。
 3. **端口段不重叠。** 默认端口由引擎 descriptor/manifest 声明：`splash 8000` / `omlx 8100` / `mtplx 8200` / `mlx-serve 8300` / `strata 8400`，可用范围默认是 `defaultPort...defaultPort+19`；分配器在段内跳过被占端口，段外放弃。
 4. **切换方式是能力，不是选项。** `omlx` 与 `mlx-serve` 是 `hot`，其余当前为 `restart`。应用只按 descriptor 声明的能力执行，不按引擎 id 猜测。
@@ -80,4 +80,5 @@ graph TD
 
 ## 已知限制
 
-- **应用层没有测试。** 13 个测试文件全部针对 `FlashCatKit`；`FlashCat` target（状态机、引擎启停、桥的分发逻辑）和 `WebUI/` 的网页本身没有任何自动化测试。改动这一层只能靠手工回归。
+- **应用层的测试仍然偏薄。** 187 个用例在 `FlashCatKit`，`FlashCatTests` 只覆盖从壳层沉淀出来的纯函数（`LogStore` 的尾部切片、快照的数值清洗、进程树的存活探测）。`AppState` 本身（状态机、引擎启停、桥的分发逻辑）没有单元测试，拆分它的原因之一就是让它可测，见 `CONTRIBUTING.md`。
+- **`WebUI/` 的保障靠渲染检查，不是单元测试。** `native/Tools/WebUIRenderCheck` 用真 `WKWebView` 加载 `index.html`、推一份快照，断言六个页面在「引擎运行中」和「引擎停止」两种状态下都能画出来，且控制台无报错、浮层开合不留白屏。它抓得住「页面空白」「脚本漏打包」「fixture 与 `WebSnapshot.swift` 脱节」，抓不住像素级错位；逐帧动画类的断言需要可见窗口（锁屏 / 无人值守的 CI 会标为 skip 并说明原因）。

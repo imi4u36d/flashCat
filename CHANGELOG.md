@@ -79,6 +79,8 @@
 
 - 版本收敛到根 `VERSION` + `scripts/version.sh`；CI 覆盖构建（warning 即错误）、测试、严格并发棘轮与 `VERSION` / tag 一致性。
 - 接入 SwiftLint、swift-format 与 EditorConfig；新增 `CONTRIBUTING.md`、`SECURITY.md` 与本 `CHANGELOG.md`。
+- 严格并发棘轮基线 33 → 36：新界面带来 3 条告警（两处 `PreferenceKey.defaultValue`、一处 `Binding` 的 setter），
+  记在基线上继续棘轮，后续修复时逐条下调。
 - 新增应用层测试目标 `Tests/FlashCatTests`。
 
 ## [1.4.2] - 2026-11-04

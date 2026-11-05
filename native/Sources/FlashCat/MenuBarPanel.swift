@@ -269,7 +269,7 @@ struct MenuBarPanel: View {
             )
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
         .help("点击复制接口地址")
     }
 
@@ -277,33 +277,42 @@ struct MenuBarPanel: View {
 
     @ViewBuilder
     private var runtimeBlock: some View {
-        switch state.serverState {
-        case .ready:
-            VStack(alignment: .leading, spacing: 8) {
-                MetricStrip(stats: state.stats)
-                if let peak = sparklinePeak {
-                    Sparkline(values: state.recentThroughput(window: 300).map(\.value),
-                              peak: peak,
-                              tint: accent)
-                }
-            }
-        case .starting, .stopping:
+        if state.isModelBusy {
+            // 进程在跑但权重还没就位（启动、切换、加载权重、预热）：指标卡
+            // 此刻没有意义，给一条带转圈的生命周期行。
             NoticeRow(symbol: nil,
                       text: stageText,
                       tint: Native.yellow,
                       showsSpinner: true)
-        case .failed:
-            NoticeRow(symbol: "exclamationmark.triangle.fill",
-                      text: state.failureMessage ?? "引擎异常，打开日志查看原因",
-                      tint: Native.red,
-                      showsSpinner: false)
-        case .stopped:
-            // 已停止且没选模型时才提示；正常停止态不再占一行横幅。
-            if state.selectedModel.isEmpty {
-                NoticeRow(symbol: "pause.circle",
-                          text: "还没有选择模型，在模型页选一个即可启动",
-                          tint: Native.secondary,
+        } else {
+            switch state.serverState {
+            case .ready:
+                VStack(alignment: .leading, spacing: 8) {
+                    MetricStrip(stats: state.stats)
+                    if let peak = sparklinePeak {
+                        Sparkline(values: state.recentThroughput(window: 300).map(\.value),
+                                  peak: peak,
+                                  tint: accent)
+                    }
+                }
+            case .starting, .stopping:
+                NoticeRow(symbol: nil,
+                          text: stageText,
+                          tint: Native.yellow,
+                          showsSpinner: true)
+            case .failed:
+                NoticeRow(symbol: "exclamationmark.triangle.fill",
+                          text: state.failureMessage ?? "引擎异常，打开日志查看原因",
+                          tint: Native.red,
                           showsSpinner: false)
+            case .stopped:
+                // 已停止且没选模型时才提示；正常停止态不再占一行横幅。
+                if state.selectedModel.isEmpty {
+                    NoticeRow(symbol: "pause.circle",
+                              text: "还没有选择模型，在模型页选一个即可启动",
+                              tint: Native.secondary,
+                              showsSpinner: false)
+                }
             }
         }
     }
@@ -324,7 +333,7 @@ struct MenuBarPanel: View {
                stage != state.switchStage {
                 parts.append(stage)
             }
-            parts.append("已等待 " + Self.clock(state.startupSeconds))
+            parts.append("已等待 " + Self.clock(state.lifecycleSeconds))
             return parts.joined(separator: " · ")
         }
         var parts = [state.serverState.rawValue]
@@ -395,7 +404,7 @@ struct MenuBarPanel: View {
                     .overlay(Capsule().stroke(Native.overlay(0.14), lineWidth: 0.8))
                     .contentShape(Capsule())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
             .help("退出 flashCat")
         }
     }

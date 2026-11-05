@@ -11,31 +11,43 @@ struct ConsoleView: View {
     @State private var showCommand = false
     @State private var showDownloads = false
     @State private var showHub = false
+    @State private var showFeedback = false
+    @State private var islandExpanded = false
     @AppStorage("sidebarWidth") private var sidebarWidth: Double = 200
 
     private var resolvedSidebarWidth: CGFloat {
         CGFloat(min(max(sidebarWidth, 180), 320))
     }
 
+    /// 展开时用用户拖出来的宽度，收起时是 76pt 图标栏。
+    /// 这里手写列宽而不是用 NavigationSplitView：系统侧栏列有最小宽度，
+    /// 收不到 76pt，收起后会留下一条两百多点的空白栏。
+    private var currentSidebarWidth: CGFloat {
+        state.showsSidebar ? resolvedSidebarWidth : Native.railWidth
+    }
+
     var body: some View {
         ZStack(alignment: .topLeading) {
-            ConsoleBackdrop(accent: state.section.keyColor)
-
             HStack(spacing: 0) {
-                if state.showsSidebar {
-                    ZStack(alignment: .trailing) {
-                        ConsoleSidebar(state: state, collapsed: false)
-                            .frame(width: resolvedSidebarWidth)
+                ZStack(alignment: .trailing) {
+                    ConsoleSidebar(state: state,
+                                   collapsed: !state.showsSidebar,
+                                   openFeedback: { showFeedback = true })
+                    if state.showsSidebar {
                         SidebarResizeHandle(width: $sidebarWidth)
                     }
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-                } else {
-                    ConsoleSidebar(state: state, collapsed: true)
-                        .frame(width: 76)
-                        .transition(.opacity)
                 }
+                .frame(width: currentSidebarWidth)
+                .background { SidebarMaterial() }
+                .overlay(alignment: .trailing) {
+                    Rectangle().fill(Console.sidebarEdge).frame(width: 1)
+                }
+                .clipped()
 
                 ZStack {
+                    // 画布只铺内容区，侧栏留给窗口背后的桌面透上来，
+                    // 侧栏玻璃因此能采到真实背景而不是同色渐变。
+                    ConsoleBackdrop(accent: state.section.keyColor)
                     pageContent
                         .id(state.section)
                         .transition(.opacity.combined(with: .offset(y: 8)))
@@ -43,9 +55,9 @@ struct ConsoleView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .animation(Motion.standard, value: state.section)
             }
-            .animation(.easeInOut(duration: 0.22), value: state.showsSidebar)
 
             ConsoleTitlebar(state: state,
+                            sidebarWidth: currentSidebarWidth,
                             openCommand: { showCommand = true },
                             openDownloads: { showDownloads = true })
                 .frame(height: Console.titlebarHeight)
@@ -53,18 +65,13 @@ struct ConsoleView: View {
         }
         .tint(Console.accent)
         .preferredColorScheme(preferredScheme)
-        .overlay(alignment: .bottom) {
-            if let message = state.toastMessage {
-                ToastView(message: message)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)).combined(with: .scale(scale: 0.96)))
-                    .onTapGesture { state.dismissToast() }
-            }
+        .overlay(alignment: .top) {
+            DynamicIslandLayer(state: state, expanded: $islandExpanded)
         }
-        .animation(Motion.entrance, value: state.toastMessage)
         .overlay {
-            if state.isPresentingLaunchPage || state.showsRecommendationPage {
+            if isShowingOnboarding {
                 LaunchPage(state: state)
-                    .transition(.opacity)
+                    .transition(.opacity.animation(Motion.pageCrossfade))
             }
         }
         .overlay {
@@ -78,6 +85,7 @@ struct ConsoleView: View {
         }
         .sheet(isPresented: $showDownloads) { DownloadCenterSheet(state: state) }
         .sheet(isPresented: $showHub) { HubSheet(state: state, engine: state.libraryEngine) }
+        .sheet(isPresented: $showFeedback) { FeedbackSheet(state: state) }
         .alert("切换模型？", isPresented: modelSwitchShown) {
             Button("取消", role: .cancel) { state.cancelModelSwitchRequest() }
             Button("停止并切换") { state.confirmModelSwitch() }
@@ -111,6 +119,12 @@ struct ConsoleView: View {
         }
     }
 
+    /// 引导页（首次推荐 / 引擎安装）是否盖住控制台。两个来源合成一个布尔，
+    /// 让淡出动画在任意一条离开路径上都能触发。
+    private var isShowingOnboarding: Bool {
+        state.isPresentingLaunchPage || state.showsRecommendationPage
+    }
+
     private var preferredScheme: ColorScheme? {
         switch theme.mode {
         case .system: return nil
@@ -141,7 +155,7 @@ struct ConsoleView: View {
     private var modelSwitchMessage: String {
         let next = state.shortModelName(state.confirmingModelSwitch ?? "")
         let running = state.shortModelName(state.selectedModel)
-        return "会先停止 \(running) 并卸载它的权重，再加载 \(next)。卸载到新模型就绪之间引擎无法应答；失败时会回滚到 \(running)。"
+        return "将停止 \(running) 并加载 \(next)，切换期间引擎暂时无法应答。"
     }
 
     private var engineInstallShown: Binding<Bool> {
@@ -160,18 +174,16 @@ struct ConsoleView: View {
 struct ConsoleSidebar: View {
     @ObservedObject var state: AppState
     var collapsed: Bool = false
+    var openFeedback: () -> Void = {}
 
     @Namespace private var selection
+    @State private var feedbackHovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            brand
-                .padding(.leading, collapsed ? 22 : 28)
-                .padding(.top, 60)
-                .padding(.bottom, 4)
-
             workspace
-                .padding(.horizontal, collapsed ? 8 : 14)
+                .padding(.horizontal, 14)
+                .padding(.top, 60)
 
             if !collapsed {
                 recents
@@ -179,24 +191,46 @@ struct ConsoleSidebar: View {
             }
 
             Spacer(minLength: 12)
+
+            feedbackRow
+                .padding(.horizontal, 14)
+                .padding(.bottom, 14)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Console.sidebar)
-        .overlay(alignment: .trailing) {
-            Rectangle().fill(Console.sidebarEdge).frame(width: 1)
-        }
         .animation(Motion.standard, value: state.section)
     }
 
-    private var brand: some View {
-        ZStack(alignment: .bottomTrailing) {
-            BrandMark(size: collapsed ? 30 : 36)
-            Circle()
-                .fill(Native.green)
-                .frame(width: 9, height: 9)
-                .overlay(Circle().stroke(Console.sidebar, lineWidth: 2))
-                .offset(x: 3, y: 3)
+    private var feedbackRow: some View {
+        Button(action: openFeedback) {
+            HStack(spacing: 11) {
+                Image(systemName: "bubble.left.and.bubble.right")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(Console.secondary)
+                    .frame(width: 24)
+                    .symbolRenderingMode(.hierarchical)
+                if !collapsed {
+                    Text("反馈")
+                        .font(.system(size: 14.5))
+                        .foregroundStyle(Console.secondary)
+                    Spacer(minLength: 4)
+                }
+            }
+            .padding(.horizontal, collapsed ? 0 : 12)
+            .frame(height: 44)
+            .frame(maxWidth: .infinity, alignment: collapsed ? .center : .leading)
+            .background {
+                if feedbackHovering {
+                    RoundedRectangle(cornerRadius: collapsed ? 20 : 13, style: .continuous)
+                        .frame(width: collapsed ? 40 : nil, height: collapsed ? 40 : nil)
+                        .glassEffect(.regular,
+                                     in: RoundedRectangle(cornerRadius: collapsed ? 20 : 13, style: .continuous))
+                }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: collapsed ? 20 : 13, style: .continuous))
         }
+        .buttonStyle(.plainHit)
+        .help("反馈与交流")
+        .onHover { value in withAnimation(Motion.quick) { feedbackHovering = value } }
     }
 
     private var workspace: some View {
@@ -261,7 +295,7 @@ private struct SidebarNavRow: View {
             HStack(spacing: 11) {
                 Image(systemName: page.symbol)
                     .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(active ? Console.accent : Console.secondary)
+                    .foregroundStyle(active ? Console.text : Console.secondary)
                     .frame(width: 24)
                     .symbolRenderingMode(.hierarchical)
                 if !collapsed {
@@ -284,22 +318,22 @@ private struct SidebarNavRow: View {
             .frame(maxWidth: .infinity, alignment: collapsed ? .center : .leading)
             .background {
                 if active {
-                    RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .fill(Console.cardStrong)
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                                .strokeBorder(Console.cardStroke, lineWidth: 0.8)
-                        }
-                        .shadow(color: Console.shadow, radius: 12, x: 0, y: 5)
+                    RoundedRectangle(cornerRadius: collapsed ? 20 : 13, style: .continuous)
+                        .frame(width: collapsed ? 40 : nil, height: collapsed ? 40 : nil)
+                        .glassEffect(.regular.interactive(),
+                                     in: RoundedRectangle(cornerRadius: collapsed ? 20 : 13, style: .continuous))
                         .matchedGeometryEffect(id: "nav.selection", in: namespace)
                 } else if hovering {
-                    RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .fill(Console.inset)
+                    RoundedRectangle(cornerRadius: collapsed ? 20 : 13, style: .continuous)
+                        .frame(width: collapsed ? 40 : nil, height: collapsed ? 40 : nil)
+                        .glassEffect(.regular,
+                                     in: RoundedRectangle(cornerRadius: collapsed ? 20 : 13, style: .continuous))
                 }
             }
-            .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: collapsed ? 20 : 13, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
+        .help(page.rawValue)
         .onHover { value in
             guard !reduceMotion else { hovering = value; return }
             withAnimation(Motion.quick) { hovering = value }
@@ -339,7 +373,7 @@ private struct SidebarRecentRow: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
         .onHover { value in withAnimation(Motion.quick) { hovering = value } }
     }
 }
@@ -348,14 +382,10 @@ private struct SidebarRecentRow: View {
 
 struct ConsoleTitlebar: View {
     @ObservedObject var state: AppState
+    /// 当前侧栏实际宽度。折叠按钮要贴在内容区左缘，而不是固定写在 x=82。
+    var sidebarWidth: CGFloat = 200
     var openCommand: () -> Void
     var openDownloads: () -> Void
-
-    @State private var hoveringEngine = false
-
-    private var rate: Double {
-        state.liveDecodeRate ?? state.stats?.decodeTokensPerSecond ?? 0
-    }
 
     private var downloadCount: Int {
         state.downloadTasks.count + (state.downloadingModel == nil ? 0 : 1)
@@ -364,8 +394,11 @@ struct ConsoleTitlebar: View {
     var body: some View {
         ZStack {
             HStack(spacing: 8) {
-                Color.clear.frame(width: 82, height: 1)
+                // 展开/收起时都让按钮跟着侧栏右缘走，只留 8pt 间距；
+                // 收起时图标栏已加宽到 96pt，红绿灯右侧留白足够，
+                // 折叠按钮不必再额外偏移。
                 sidebarToggle
+                    .padding(.leading, max(0, sidebarWidth - 8))
                 Spacer(minLength: 8)
                 Button(action: openCommand) {
                     HStack(spacing: 5) {
@@ -380,10 +413,11 @@ struct ConsoleTitlebar: View {
                     .foregroundStyle(Console.secondary)
                     .padding(.horizontal, 10)
                     .frame(height: 28)
-                    .background(Capsule().fill(Console.card.opacity(0.7)))
-                    .overlay(Capsule().strokeBorder(Console.cardStroke, lineWidth: 0.8))
+                    .background {
+                        LiquidGlassSurface(shape: Capsule(), interactive: true)
+                    }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.plainHit)
 
                 IconAction(systemName: state.theme.mode.resolvedIsDark ? "sun.max" : "moon",
                            help: "切换外观（⌘⇧A）") {
@@ -396,8 +430,9 @@ struct ConsoleTitlebar: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(Console.text.opacity(0.8))
                             .frame(width: 32, height: 32)
-                            .background(Circle().fill(Console.card.opacity(0.7)))
-                            .overlay(Circle().stroke(Console.cardStroke, lineWidth: 0.8))
+                            .background {
+                                LiquidGlassSurface(shape: Circle(), interactive: true)
+                            }
                         if downloadCount > 0 {
                             Text(verbatim: "\(downloadCount)")
                                 .font(.system(size: 8.5, weight: .bold, design: .monospaced))
@@ -409,77 +444,57 @@ struct ConsoleTitlebar: View {
                         }
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.plainHit)
                 .help("下载中心")
             }
             .padding(.horizontal, 16)
-
-            enginePill
         }
+        // 红绿灯整体下移 6pt 后，标题栏行也下移 6pt，二者仍然同轴，
+        // 同时离窗口上沿留出一点距离。
+        .frame(height: 32)
+        .padding(.top, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(WindowDragArea())
     }
 
-    /// macOS 26 原生玻璃按钮：系统 sidebar toggle 的样式与位置（红绿灯右侧 30pt）。
+    /// macOS 26 原生玻璃按钮：贴在侧栏右缘，和红绿灯同一水平线。
     private var sidebarToggle: some View {
         Button {
-            withAnimation(.smooth(duration: 0.28)) {
-                state.toggleSidebar()
-            }
+            // 动画统一由 AppState.toggleSidebar() 里的 withAnimation 驱动，
+            // 菜单栏、命令面板和这个按钮走同一条路径。
+            state.toggleSidebar()
         } label: {
             Image(systemName: "sidebar.left")
                 .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Console.text.opacity(0.8))
                 .frame(width: 30, height: 30)
+                .background {
+                    LiquidGlassSurface(shape: Circle(), interactive: true)
+                }
+                .contentShape(Circle())
         }
-        .buttonStyle(.glass)
-        .buttonBorderShape(.circle)
+        .buttonStyle(.plainHit)
         .help(state.showsSidebar ? "隐藏边栏（⌘\\）" : "显示边栏（⌘\\）")
         .accessibilityLabel(state.showsSidebar ? "隐藏边栏" : "显示边栏")
     }
 
-    private var enginePill: some View {
-        Button {
-            state.toggleService()
-        } label: {
-            HStack(spacing: 8) {
-                if state.isRunning {
-                    LiveDot(color: Console.ok, diameter: 6)
-                } else {
-                    Circle()
-                        .fill(Console.tertiary)
-                        .frame(width: 6, height: 6)
-                        .padding(.horizontal, 3)
-                }
-                Text(state.activeEngine.displayName)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(Console.text)
-                Text(state.isRunning ? "运行中" : state.serverState == .starting ? "启动中" : "已停止")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Console.secondary)
-                if state.isRunning {
-                    Rectangle().fill(Console.cardStroke).frame(width: 1, height: 12)
-                    Text("\(Format.compact(rate)) tok/s")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Console.secondary)
-                }
-                Image(systemName: state.isRunning ? "stop.fill" : "play.fill")
-                    .font(.system(size: 8.5, weight: .bold))
-                    .foregroundStyle(state.isRunning ? Native.red : Console.secondary)
-                    .opacity(hoveringEngine ? 1 : 0.45)
-            }
-            .padding(.horizontal, 13)
-            .frame(height: 30)
-            .background(Capsule().fill(Console.card.opacity(0.82)))
-            .overlay(Capsule().strokeBorder(Console.cardStroke, lineWidth: 0.8))
-            .shadow(color: Console.shadow.opacity(0.5), radius: 10, y: 3)
-        }
-        .buttonStyle(.plain)
-        .onHover { value in withAnimation(Motion.quick) { hoveringEngine = value } }
-        .disabled(state.isSwitchingModel || state.runtimeMissing != nil)
-        .help(state.isRunning ? "停止引擎" : "启动引擎")
-    }
 }
 
 // MARK: - Window chrome helpers
+
+/// 侧栏的原生 vibrancy 材质。窗口本身透明，用 `behindWindow` 让侧栏
+/// 采到桌面背景，而不是盖一层不透明的同色渐变。
+struct SidebarMaterial: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .sidebar
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+}
 
 struct WindowDragArea: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { DragView() }

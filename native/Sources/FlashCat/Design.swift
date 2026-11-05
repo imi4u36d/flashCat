@@ -126,7 +126,9 @@ enum Native {
     static let metricNumFont = Font.system(size: 30, weight: .bold, design: .monospaced)
 
     static let sidebarWidth: CGFloat = 204
-    static let railWidth: CGFloat = 76
+    // 收起后的图标栏。宽度要容得下红绿灯并留出右侧留白，
+    // 否则侧栏右缘会紧贴绿灯，标题栏看起来像被切掉了一角。
+    static let railWidth: CGFloat = 96
 }
 
 extension View {
@@ -184,17 +186,10 @@ struct GlassSurface: View {
     var elevated: Bool = true
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-        shape
-            .fill(tint == .clear ? Native.canvas : tint.opacity(0.10))
-            .overlay {
-                if tint != .clear {
-                    shape.fill(tint.opacity(0.06))
-                }
-            }
-            .overlay(
-                shape.strokeBorder(Native.hairline, lineWidth: 1)
-            )
+        LiquidGlassSurface(
+            shape: RoundedRectangle(cornerRadius: radius, style: .continuous),
+            tint: tint == .clear ? nil : tint.opacity(0.14)
+        )
     }
 }
 
@@ -206,6 +201,8 @@ enum Motion {
     static let quick = Animation.easeOut(duration: 0.14)
     static let standard = Animation.easeOut(duration: 0.22)
     static let entrance = Animation.spring(response: 0.34, dampingFraction: 0.86)
+    /// 引导页与控制台之间的交叉淡入淡出：比 `standard` 慢一点，让两侧都有过渡感。
+    static let pageCrossfade = Animation.easeInOut(duration: 0.36)
     static let pulse = Animation.easeInOut(duration: 1.6).repeatForever(autoreverses: true)
 }
 
@@ -254,21 +251,12 @@ struct HoverSurface<Content: View>: View {
         content()
             .padding(padding ?? 0)
             .background {
-                let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-                shape
-                    .fill(Native.canvas)
-                    .overlay {
-                        shape.fill(accent.opacity(active ? 0.055 : (hovering ? 0.022 : 0)))
-                    }
-                    .overlay {
-                        shape.strokeBorder(
-                            active ? accent.opacity(0.5)
-                                   : (hovering ? accent.opacity(0.26) : Native.hairline),
-                            lineWidth: 1)
-                    }
-                    .shadow(color: Native.panelShadow.opacity(hovering ? 1 : (active ? 0.7 : 0)),
-                            radius: hovering ? 14 : 8,
-                            y: hovering ? 5 : 2)
+                LiquidGlassSurface(
+                    shape: RoundedRectangle(cornerRadius: radius, style: .continuous),
+                    tint: active ? accent.opacity(0.20)
+                                 : (hovering ? accent.opacity(0.06) : nil),
+                    interactive: true
+                )
             }
             .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
             .onHover { value in
@@ -290,6 +278,20 @@ private struct HoverObserving<Content: View>: View {
         content(hovering)
             .onHover { hovering = $0 }
     }
+}
+
+/// `.plain` 的命中区修正版：把整块 label 背景都算作可点击区域。
+/// 原生 `.plain` 只按 label 实际绘制的字形算命中区，玻璃底和 padding
+/// 往往点不到，表现为「必须点到图标才会触发」。
+struct PlainHitButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .contentShape(Rectangle())
+    }
+}
+
+extension ButtonStyle where Self == PlainHitButtonStyle {
+    static var plainHit: PlainHitButtonStyle { PlainHitButtonStyle() }
 }
 
 /// 胶囊按钮。`light` 是墨色主胶囊（唯一主动作样式）；`glass` 是描边次级；
@@ -724,17 +726,11 @@ struct MetricCard: View {
         .padding(.horizontal, 15)
         .padding(.vertical, 12)
         .background {
-            let shape = RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous)
-            shape.fill(hero ? Native.accentSoft : Native.canvas)
-                .overlay {
-                    shape.fill(Native.accent.opacity(hovering ? 0.035 : 0))
-                }
-                .overlay {
-                    shape.strokeBorder(hero ? Native.accent.opacity(0.28)
-                                            : (hovering ? Native.accent.opacity(0.22) : Native.hairline),
-                                       lineWidth: 1)
-                }
-                .shadow(color: Native.panelShadow.opacity(hovering ? 0.9 : 0), radius: 10, y: 3)
+            LiquidGlassSurface(
+                shape: RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous),
+                tint: hero ? Native.accent.opacity(0.18)
+                           : (hovering ? Native.accent.opacity(0.06) : nil)
+            )
         }
         .onHover { value in
             withAnimation(Motion.quick) { hovering = value }
@@ -800,11 +796,8 @@ struct StatusStrip: View {
                 .transition(.opacity)
             }
         }
-        .background {
-            let shape = RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous)
-            shape.fill(Native.canvas)
-                .overlay { shape.strokeBorder(Native.hairline, lineWidth: 1) }
-        }
+        .glassEffect(.regular,
+                    in: RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous))
         .animation(.easeOut(duration: 0.16), value: statusText)
         .animation(.easeOut(duration: 0.16), value: failure)
     }
@@ -1021,11 +1014,10 @@ struct IconAction: View {
                 .foregroundStyle(active ? Color.white : Native.label.opacity(hovering ? 1 : 0.82))
                 .frame(width: 30, height: 30)
                 .background {
-                    Circle()
-                        .fill(active ? AnyShapeStyle(Native.accent)
-                                     : AnyShapeStyle(Native.overlay(hovering ? 0.12 : 0.07)))
+                    LiquidGlassSurface(shape: Circle(),
+                                       tint: active ? Native.accent : nil,
+                                       interactive: true)
                 }
-                .overlay(Circle().stroke(Native.hairline.opacity(active ? 0 : 1), lineWidth: 1))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -1046,11 +1038,9 @@ struct IconMenuLabel: View {
             .foregroundStyle(active ? Color.white : Native.label.opacity(0.82))
             .frame(width: 30, height: 30)
             .background {
-                Circle()
-                    .fill(active ? AnyShapeStyle(Native.accent)
-                                 : AnyShapeStyle(Native.overlay(0.07)))
+                LiquidGlassSurface(shape: Circle(),
+                                   tint: active ? Native.accent : nil)
             }
-            .overlay(Circle().stroke(Native.hairline.opacity(active ? 0 : 1), lineWidth: 1))
             .contentShape(Circle())
     }
 }
@@ -1097,10 +1087,7 @@ struct ToastView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .background(.ultraThinMaterial, in: Capsule())
-        .background(Capsule().fill(Native.toastFill))
-        .overlay(Capsule().stroke(Native.overlay(0.16), lineWidth: 0.8))
-        .shadow(color: Native.panelShadow, radius: 18, y: 8)
+        .glassEffect(.regular, in: Capsule())
         .padding(.bottom, 20)
     }
 }

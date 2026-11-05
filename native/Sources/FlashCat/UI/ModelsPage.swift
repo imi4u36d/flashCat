@@ -32,31 +32,37 @@ struct ModelsPage: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                topBar
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
-                    ForEach(entries) { entry in
-                        ModelCard(state: state,
-                                  entry: entry,
-                                  selected: isSelected(entry),
-                                  device: device,
-                                  remove: { removeTarget = entry })
+        VStack(alignment: .leading, spacing: 0) {
+            topBar
+                .padding(.horizontal, Console.contentPadding)
+                .padding(.top, 78)
+                .padding(.bottom, 18)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
+                        ForEach(entries) { entry in
+                            ModelCard(state: state,
+                                      entry: entry,
+                                      selected: isSelected(entry),
+                                      device: device,
+                                      remove: { removeTarget = entry })
+                        }
+                    }
+                    if entries.isEmpty {
+                        Text("没有匹配的模型")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Console.tertiary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 60)
                     }
                 }
-                if entries.isEmpty {
-                    Text("没有匹配的模型")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Console.tertiary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 60)
-                }
+                .padding(.horizontal, Console.contentPadding)
+                .padding(.top, 2)
+                .padding(.bottom, 26)
             }
-            .padding(.horizontal, Console.contentPadding)
-            .padding(.top, 78)
-            .padding(.bottom, 26)
+            .scrollIndicators(.never)
         }
-        .scrollIndicators(.never)
         .sheet(isPresented: $showingHub) { HubSheet(state: state, engine: scope.engine ?? engine) }
         .sheet(isPresented: $showingDownloads) { DownloadCenterSheet(state: state) }
         .alert("删除 \(removeTarget?.model.shortName ?? "")？",
@@ -76,35 +82,11 @@ struct ModelsPage: View {
 
     private var topBar: some View {
         HStack(spacing: 14) {
-            GamesSegmented(selection: $scope,
+            GlassFilterBar(selection: $scope,
                            options: [(ModelScope.all, "全部")]
-                               + EngineCatalog.allIDs.map { (ModelScope.engine($0), $0.displayName) })
-                .frame(maxWidth: 560)
-            .background(Capsule().fill(Console.card.opacity(0.72)))
-            .overlay(Capsule().strokeBorder(Console.cardStroke, lineWidth: 0.8))
-
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Console.tertiary)
-                TextField("搜索模型", text: $query)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12.5))
-                if !query.isEmpty {
-                    Button {
-                        query = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(Console.tertiary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 36)
-            .background(Capsule().fill(Console.card.opacity(0.72)))
-            .overlay(Capsule().strokeBorder(Console.cardStroke, lineWidth: 0.8))
-            .frame(maxWidth: 380)
+                               + EngineCatalog.allIDs.map { (ModelScope.engine($0), $0.displayName) },
+                           query: $query,
+                           placeholder: "搜索模型")
 
             Spacer(minLength: 0)
 
@@ -113,7 +95,7 @@ struct ModelsPage: View {
                 state.searchHub(state.hubQuery, sort: state.hubSort.rawValue,
                                 filter: state.hubFilter.rawValue, page: 0)
             } label: {
-                Label("模型广场", systemImage: "sparkle.magnifyingglass")
+                Text("模型广场")
             }
             .buttonStyle(.consoleSecondary)
 
@@ -130,10 +112,11 @@ struct ModelsPage: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Console.secondary)
                     .frame(width: 34, height: 34)
-                    .background(Circle().fill(Console.card.opacity(0.75)))
-                    .overlay(Circle().strokeBorder(Console.cardStroke, lineWidth: 0.8))
+                    .background {
+                        LiquidGlassSurface(shape: Circle(), interactive: true)
+                    }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
             .help("重新扫描")
         }
     }
@@ -161,7 +144,6 @@ private struct ModelCard: View {
     @State private var hovering = false
 
     private var model: ModelInfo { entry.model }
-    private var accent: Color { engineAccent(entry.engine) }
     private var task: ModelDownloadTask? {
         let key = ModelSharing.canonical(entry.id)
         return state.downloadTasks.first {
@@ -209,15 +191,12 @@ private struct ModelCard: View {
         }
         .padding(20)
         .background {
-            let shape = RoundedRectangle(cornerRadius: Console.cardRadius, style: .continuous)
-            shape
-                .fill(Console.card)
-                .overlay {
-                    shape.fill(LinearGradient(colors: [cardTint.opacity(selected ? 0.16 : 0.10), .clear],
-                                              startPoint: .topLeading, endPoint: .bottomTrailing))
-                }
-                .overlay { shape.strokeBorder(cardEdge, lineWidth: 1) }
-                .shadow(color: Console.shadow, radius: hovering ? 26 : 18, y: hovering ? 12 : 8)
+            LiquidGlassSurface(
+                shape: RoundedRectangle(cornerRadius: Console.cardRadius, style: .continuous),
+                tint: cardTint == .clear
+                    ? (hovering ? Console.accent.opacity(0.05) : nil)
+                    : cardTint.opacity(selected ? 0.18 : 0.10)
+            )
         }
         .onHover { value in withAnimation(Motion.quick) { hovering = value } }
         .contextMenu {
@@ -252,16 +231,15 @@ private struct ModelCard: View {
         return .clear
     }
 
-    private var cardEdge: Color {
-        if selected { return Console.accent.opacity(0.45) }
-        if activeFraction != nil || task != nil { return Console.warn.opacity(0.35) }
-        return Console.cardStroke
+    private var family: ModelFamily {
+        ModelFamily.resolve(id: model.id,
+                            hint: model.family,
+                            tags: entry.recommendation?.tags ?? [])
     }
 
     private var header: some View {
         HStack(spacing: 10) {
-            LetterTile(letter: String(entry.engine.displayName.prefix(1)).uppercased(),
-                       color: accent, size: 34)
+            ModelFamilyIcon(family: family, size: 34)
             VStack(alignment: .leading, spacing: 1) {
                 Text(entry.engine.displayName)
                     .font(.system(size: 14.5, weight: .semibold))
@@ -287,8 +265,9 @@ private struct ModelCard: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Console.secondary)
                     .frame(width: 28, height: 28)
-                    .background(Circle().fill(Console.glassFill))
-                    .overlay(Circle().strokeBorder(Console.glassStroke, lineWidth: 0.8))
+                    .background {
+                        LiquidGlassSurface(shape: Circle(), interactive: true)
+                    }
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -297,11 +276,8 @@ private struct ModelCard: View {
     }
 
     private var familyName: String {
-        let id = model.id.lowercased()
-        if id.contains("qwen") { return "Qwen" }
-        if id.contains("mimo") { return "Xiaomi MiMo" }
-        if id.contains("deepseek") { return "DeepSeek" }
-        if id.contains("llama") { return "Llama" }
+        if family != .other { return family.name }
+        if model.id.lowercased().contains("mimo") { return "Xiaomi MiMo" }
         if let family = model.family, !family.isEmpty, family != "GGUF", family != "MLX" { return family }
         return entry.recommendation?.tags.first ?? "本地权重"
     }

@@ -21,29 +21,45 @@ struct OverviewPage: View {
     }
 
     private var runningText: String {
-        state.isRunning ? "运行中" : state.serverState == .starting ? "启动中" : state.serverState == .failed ? "启动失败" : "已停止"
+        state.engineStageText
     }
 
+    private let columnGap: CGFloat = 18
+    private let sideColumnWidth: CGFloat = 340
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .top, spacing: 18) {
+        GeometryReader { proxy in
+            let topInset: CGFloat = 78
+            let bottomInset: CGFloat = 26
+            let availableHeight = max(proxy.size.height - topInset - bottomInset, 0)
+            // 概览要刚好铺满一屏：首屏区占约 30%，指标行保持固定高度，
+            // 底部图表行吃掉剩余空间，窗口变矮时也只有图表行收缩。
+            let heroHeight = min(max(availableHeight * 0.30, 220), 300)
+
+            VStack(alignment: .leading, spacing: columnGap) {
+                HStack(alignment: .top, spacing: columnGap) {
                     hero
                     gatewayCard
-                        .frame(width: 340)
+                        .frame(width: sideColumnWidth)
+                        .frame(maxHeight: .infinity, alignment: .top)
                 }
+                .frame(height: heroHeight)
+
                 metricsRow
-                HStack(alignment: .top, spacing: 18) {
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(alignment: .top, spacing: columnGap) {
                     decodeChart
                     recentRequests
-                        .frame(width: 340)
+                        .frame(width: sideColumnWidth)
+                        .frame(maxHeight: .infinity, alignment: .top)
                 }
+                .frame(maxHeight: .infinity)
             }
             .padding(.horizontal, Console.contentPadding)
-            .padding(.top, 78)
-            .padding(.bottom, 26)
+            .padding(.top, topInset)
+            .padding(.bottom, bottomInset)
         }
-        .scrollIndicators(.never)
     }
 
     // MARK: Hero
@@ -53,7 +69,8 @@ struct OverviewPage: View {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 6) {
                     Circle()
-                        .fill(state.isRunning ? Console.ok : Console.tertiary)
+                        .fill(state.canChat ? Console.ok
+                              : state.isModelBusy ? Console.warn : Console.tertiary)
                         .frame(width: 6, height: 6)
                     Text("\(state.activeEngine.displayName) · \(runningText)")
                         .font(.system(size: 11.5, weight: .medium))
@@ -138,19 +155,12 @@ struct OverviewPage: View {
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 22)
-        .frame(maxWidth: .infinity, minHeight: 250, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background {
-            let shape = RoundedRectangle(cornerRadius: Console.heroRadius, style: .continuous)
-            shape
-                .fill(LinearGradient(colors: [Color(console: 0xFFFBFE), Color(console: 0xFDF0F7)],
-                                     startPoint: .topLeading, endPoint: .bottomTrailing))
-                .overlay {
-                    RadialGradient(colors: [Color(console: 0xFFE3EF).opacity(0.65), .clear],
-                                   center: UnitPoint(x: 0.9, y: 0.1),
-                                   startRadius: 0, endRadius: 460)
-                }
-                .overlay { shape.strokeBorder(Console.cardStroke, lineWidth: 1) }
-                .shadow(color: Console.shadow, radius: 24, y: 10)
+            LiquidGlassSurface(
+                shape: RoundedRectangle(cornerRadius: Console.heroRadius, style: .continuous),
+                tint: Console.accent.opacity(0.10)
+            )
         }
     }
 
@@ -211,7 +221,10 @@ struct OverviewPage: View {
                         .font(.system(size: 10.5))
                         .foregroundStyle(Console.warn)
                 }
+
+                Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
@@ -248,7 +261,7 @@ struct OverviewPage: View {
                     .frame(width: 24, height: 24)
                     .background(Circle().fill(Console.inset))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
             .help("复制地址")
         }
         .padding(.horizontal, 10)
@@ -376,7 +389,7 @@ struct OverviewPage: View {
                             .font(.system(size: 11.5))
                             .foregroundStyle(Console.tertiary)
                     }
-                    .frame(height: 300)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     Chart(samples) { sample in
                         AreaMark(x: .value("时间", sample.at), y: .value("tok/s", sample.value))
@@ -399,11 +412,12 @@ struct OverviewPage: View {
                                 .foregroundStyle(Console.tertiary)
                         }
                     }
-                    .frame(height: 300)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var chartGrid: some View {
@@ -449,8 +463,7 @@ struct OverviewPage: View {
                                 .foregroundStyle(Console.tertiary)
                             Spacer(minLength: 0)
                         }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 250)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
                         VStack(spacing: 0) {
                             ForEach(Array(sessions.enumerated()), id: \.offset) { index, session in
@@ -463,9 +476,10 @@ struct OverviewPage: View {
                         }
                     }
                 }
-                .frame(minHeight: 330, alignment: .top)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
         }
+        .frame(maxHeight: .infinity)
     }
 
     private func requestRow(_ session: [String: Any]) -> some View {

@@ -74,6 +74,17 @@ enum Console {
     static let tiny = Font.system(size: 10.5)
     static let mono = Font.system(size: 11.5, design: .monospaced)
     static let metric = Font.system(size: 24, weight: .bold, design: .monospaced)
+
+    /// 日志级别色统一走控制台调色板，避免和页面其余状态色出现两套色阶。
+    static func levelColor(_ level: LogLevel) -> Color {
+        switch level {
+        case .error: return danger
+        case .warning: return warn
+        case .success: return ok
+        case .system: return info
+        case .info: return secondary
+        }
+    }
 }
 
 // MARK: - Page background
@@ -111,29 +122,12 @@ struct GlassCard<Content: View>: View {
         content()
             .padding(padding)
             .background {
-                let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
-                shape
-                    .fill(LinearGradient(
-                        colors: strong
-                            ? [Console.cardStrong, Console.card]
-                            : [Console.card, Console.card.opacity(0.82)],
-                        startPoint: .top, endPoint: .bottom))
-                    .overlay {
-                        if tint != .clear {
-                            shape.fill(LinearGradient(colors: [tint.opacity(0.16), tint.opacity(0.02)],
-                                                      startPoint: .topLeading, endPoint: .bottomTrailing))
-                        }
-                    }
-                    .overlay {
-                        // Games 式顶部高光：一条极淡的白，压在玻璃上边缘。
-                        shape.fill(LinearGradient(colors: [.white.opacity(0.30), .clear],
-                                                  startPoint: .top, endPoint: .center))
-                            .blendMode(.plusLighter)
-                    }
-                    .overlay {
-                        shape.strokeBorder(Console.glassStroke, lineWidth: 1)
-                    }
-                    .shadow(color: Console.shadow, radius: 26, x: 0, y: 12)
+                LiquidGlassSurface(
+                    shape: RoundedRectangle(cornerRadius: radius, style: .continuous),
+                    tint: tint == .clear
+                        ? (strong ? Console.ink.opacity(0.05) : nil)
+                        : tint.opacity(0.16)
+                )
             }
     }
 }
@@ -156,16 +150,12 @@ struct ConsolePillStyle: ButtonStyle {
         }
     }
 
-    private var background: AnyShapeStyle {
+    private var glassTint: Color? {
         switch tone {
-        case .primary:
-            return AnyShapeStyle(Console.ink)
-        case .danger:
-            return AnyShapeStyle(Native.red.opacity(0.12))
-        case .success, .secondary:
-            return AnyShapeStyle(Console.glassFill)
-        case .soft:
-            return AnyShapeStyle(Console.glassGroup)
+        case .primary: return Console.ink
+        case .danger: return Native.red.opacity(0.55)
+        case .success: return Console.ok.opacity(0.32)
+        case .secondary, .soft: return nil
         }
     }
 
@@ -175,17 +165,13 @@ struct ConsolePillStyle: ButtonStyle {
             .foregroundStyle(foreground)
             .padding(.horizontal, compact ? 11 : 14)
             .frame(height: compact ? 28 : 32)
-            .background(background, in: Capsule())
-            .overlay {
-                Capsule().strokeBorder(
-                    tone == .primary ? Color.white.opacity(0.10) : Console.glassStroke,
-                    lineWidth: 0.8)
+            .background {
+                LiquidGlassSurface(shape: Capsule(), tint: glassTint, interactive: true)
             }
-            .shadow(color: tone == .primary ? Console.shadow.opacity(0.5) : .clear,
-                    radius: 8, x: 0, y: 3)
             .opacity(isEnabled ? (configuration.isPressed ? 0.86 : 1) : 0.42)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(Motion.quick, value: configuration.isPressed)
+            .contentShape(Capsule())
     }
 }
 
@@ -220,7 +206,7 @@ struct GamesSegmented<Value: Hashable>: View {
                         }
                         .contentShape(Capsule())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.plainHit)
             }
         }
         .padding(3)
@@ -253,6 +239,7 @@ struct EngineColorButton: ButtonStyle {
             .overlay(Capsule().strokeBorder(.white.opacity(0.18), lineWidth: 0.8))
             .shadow(color: color.opacity(0.28), radius: 8, y: 3)
             .opacity(isEnabled ? (configuration.isPressed ? 0.86 : 1) : 0.42)
+            .contentShape(Capsule())
     }
 }
 
@@ -279,15 +266,31 @@ struct NativeSegmented<Value: Hashable>: View {
     }
 
     var body: some View {
+        Group {
+            if #available(macOS 27.0, *) {
+                // `.tabs` 是 macOS 27 的原生“标签式分段控件”，视觉上刻意区别
+                // 于普通 `.segmented` 值选择器：玻璃胶囊选中态、按压拖动选中、
+                // 系统动画都由 AppKit 绘制（Games app 用的就是这一种），
+                // 不能再叠 `.tint` 强调色。
+                picker.pickerStyle(.tabs)
+            } else {
+                picker.pickerStyle(.segmented)
+            }
+        }
+        .labelsHidden()
+        .controlSize(.large)
+        .frame(width: width)
+        // 系统 tabs/segmented 的轨道默认是圆角矩形；裁成胶囊，
+        // 才能得到 Games 那种整条两端全圆的形状。
+        .clipShape(Capsule())
+    }
+
+    private var picker: some View {
         Picker("", selection: $selection) {
             ForEach(Array(zip(options, labels)), id: \.0) { value, label in
                 Text(label).tag(value)
             }
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .controlSize(.regular)
-        .frame(width: width)
     }
 }
 

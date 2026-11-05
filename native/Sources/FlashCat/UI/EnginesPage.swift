@@ -92,10 +92,11 @@ struct EnginesPage: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Console.secondary)
                     .frame(width: 32, height: 32)
-                    .background(Circle().fill(Console.card.opacity(0.75)))
-                    .overlay(Circle().strokeBorder(Console.cardStroke, lineWidth: 0.8))
+                    .background {
+                        LiquidGlassSurface(shape: Circle(), interactive: true)
+                    }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
             .help("检查更新")
         }
     }
@@ -222,8 +223,17 @@ struct EnginesPage: View {
         if !installed {
             return StatusChip(text: "未安装", color: Console.tertiary)
         }
-        if active && state.isRunning {
+        if active, state.serverState == .ready {
             return StatusChip(text: "运行中", color: Console.ok, filled: true)
+        }
+        if active, state.serverState == .starting {
+            return StatusChip(text: "启动中", color: Console.warn, filled: true)
+        }
+        if active, state.serverState == .stopping {
+            return StatusChip(text: "停止中", color: Console.warn, filled: true)
+        }
+        if active, state.serverState == .failed {
+            return StatusChip(text: "异常", color: Console.warn, filled: true)
         }
         return StatusChip(text: "已停止", color: Console.tertiary)
     }
@@ -231,7 +241,7 @@ struct EnginesPage: View {
     private func currentText(_ id: EngineID, installed: Bool, isActive: Bool) -> String {
         guard installed else { return "等待安装" }
         if isActive, state.isRunning {
-            return state.serverState == .ready ? "进程已就绪" : (state.startupStage.isEmpty ? "启动中" : state.startupStage)
+            return state.canChat ? "进程已就绪" : state.engineStageText
         }
         return "进程未启动"
     }

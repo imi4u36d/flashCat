@@ -9,6 +9,15 @@ struct LogsPage: View {
     @State private var query = ""
     @State private var paused = false
     @State private var frozen: [LogLine] = []
+    @State private var expanded: Set<Int> = []
+    @State private var hoveredId: Int?
+
+    /// 展开详情里的完整时间，和行首的 HH:mm:ss 互补。
+    private static let fullDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter
+    }()
 
     private var lines: [LogLine] {
         let source = paused ? frozen : state.logs
@@ -31,26 +40,12 @@ struct LogsPage: View {
 
     private var topBar: some View {
         HStack(spacing: 14) {
-            GamesSegmented(selection: $level, options: LogsFilter.allCases.map { item in
-                (item, "\(item.label) \((paused ? frozen : state.logs).filter { item.matches($0.level) }.count)")
-            })
-            .frame(width: 330)
-            .background(Capsule().fill(Console.card.opacity(0.72)))
-            .overlay(Capsule().strokeBorder(Console.cardStroke, lineWidth: 0.8))
-
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Console.tertiary)
-                TextField("搜索", text: $query)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12.5))
-            }
-            .padding(.horizontal, 12)
-            .frame(height: 36)
-            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Console.card.opacity(0.72)))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Console.cardStroke, lineWidth: 0.8))
-            .frame(maxWidth: 380)
+            GlassFilterBar(selection: $level,
+                           options: LogsFilter.allCases.map { item in
+                               (item, "\(item.label) \((paused ? frozen : state.logs).filter { item.matches($0.level) }.count)")
+                           },
+                           query: $query,
+                           placeholder: "搜索")
 
             Spacer(minLength: 0)
 
@@ -61,10 +56,11 @@ struct LogsPage: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Console.secondary)
                     .frame(width: 32, height: 32)
-                    .background(Circle().fill(Console.card.opacity(0.7)))
-                    .overlay(Circle().strokeBorder(Console.cardStroke, lineWidth: 0.8))
+                    .background {
+                        LiquidGlassSurface(shape: Circle(), interactive: true)
+                    }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
             .disabled(lines.isEmpty)
             .help("复制筛选后的日志")
 
@@ -80,10 +76,11 @@ struct LogsPage: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Console.secondary)
                     .frame(width: 32, height: 32)
-                    .background(Circle().fill(Console.card.opacity(0.7)))
-                    .overlay(Circle().strokeBorder(Console.cardStroke, lineWidth: 0.8))
+                    .background {
+                        LiquidGlassSurface(shape: Circle(), interactive: true)
+                    }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
             .help("打开日志文件")
 
             Button {
@@ -100,10 +97,11 @@ struct LogsPage: View {
                     .foregroundStyle(Console.secondary)
                     .padding(.horizontal, 14)
                     .frame(height: 34)
-                    .background(Capsule().fill(Console.card.opacity(0.72)))
-                    .overlay(Capsule().strokeBorder(Console.cardStroke, lineWidth: 0.8))
+                    .background {
+                        LiquidGlassSurface(shape: Capsule(), interactive: true)
+                    }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
 
             Button {
                 state.clearLogs()
@@ -113,10 +111,11 @@ struct LogsPage: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Console.secondary)
                     .frame(width: 32, height: 32)
-                    .background(Circle().fill(Console.card.opacity(0.7)))
-                    .overlay(Circle().strokeBorder(Console.cardStroke, lineWidth: 0.8))
+                    .background {
+                        LiquidGlassSurface(shape: Circle(), interactive: true)
+                    }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
             .help("清空日志")
         }
     }
@@ -175,26 +174,123 @@ struct LogsPage: View {
     }
 
     private func row(_ line: LogLine) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text(Format.clock(line.time))
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(Console.tertiary)
-                .frame(width: 54, alignment: .leading)
-            Text(line.level.label)
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                .foregroundStyle(levelColor(line.level))
-                .frame(width: 32, alignment: .leading)
+        let tone = Console.levelColor(line.level)
+        let isExpanded = expanded.contains(line.id)
+        let isHovered = hoveredId == line.id
+        let highlighted = isHovered || isExpanded
+
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(Motion.standard) {
+                    if isExpanded { expanded.remove(line.id) } else { expanded.insert(line.id) }
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    Text(Format.clock(line.time))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Console.tertiary)
+                        .monospacedDigit()
+                        .frame(width: 56, alignment: .leading)
+
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(tone)
+                            .frame(width: 5, height: 5)
+                        Text(line.level.label)
+                            .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                            .tracking(0.5)
+                            .foregroundStyle(tone)
+                    }
+                    .padding(.horizontal, 6)
+                    .frame(width: 62, height: 17, alignment: .leading)
+                    .background {
+                        Capsule().fill(tone.opacity(line.level == .info ? 0.07 : 0.13))
+                    }
+
+                    Text(line.text)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(line.level == .error ? Console.danger : Console.text)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(Console.tertiary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .opacity(highlighted ? 1 : 0.3)
+                        .frame(width: 10)
+                }
+                .padding(.vertical, 4)
+                .padding(.horizontal, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plainHit)
+            .help(isExpanded ? "收起详情" : "展开详情")
+
+            if isExpanded {
+                detail(line)
+                    .padding(.leading, 74)
+                    .padding(.trailing, 8)
+                    .padding(.bottom, 8)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .background {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(highlighted ? Console.inset : .clear)
+        }
+        .onHover { hovering in
+            withAnimation(Motion.quick) {
+                if hovering {
+                    hoveredId = line.id
+                } else if hoveredId == line.id {
+                    hoveredId = nil
+                }
+            }
+        }
+    }
+
+    /// 展开后的详情：可换行的完整正文 + 元信息 + 单行复制。
+    private func detail(_ line: LogLine) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
             Text(line.text)
-                .font(.system(size: 11, design: .monospaced))
+                .font(.system(size: 11.5, design: .monospaced))
                 .foregroundStyle(Console.text)
                 .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 10) {
+                Label(Self.fullDateFormatter.string(from: line.time), systemImage: "clock")
+                Label("\(line.text.count) 字符", systemImage: "textformat.size")
+                Spacer(minLength: 0)
+                Button {
+                    state.copy(line.text, label: "已复制该行日志")
+                } label: {
+                    Label("复制", systemImage: "doc.on.doc")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Console.secondary)
+                        .padding(.horizontal, 8)
+                        .frame(height: 22)
+                        .background {
+                            Capsule().fill(Console.inset)
+                        }
+                }
+                .buttonStyle(.plainHit)
+            }
+            .font(.system(size: 10))
+            .foregroundStyle(Console.tertiary)
+            .labelStyle(.titleAndIcon)
         }
-        .padding(.vertical, 2)
-        .padding(.horizontal, 6)
+        .padding(10)
         .background {
-            RoundedRectangle(cornerRadius: 5)
-                .fill(line.level == .error ? Console.danger.opacity(0.06) : .clear)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Console.cardStrong.opacity(0.55))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Console.insetStroke, lineWidth: 1)
         }
     }
 }

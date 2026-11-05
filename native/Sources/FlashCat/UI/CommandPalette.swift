@@ -36,13 +36,9 @@ struct CommandPalette: View {
             }
             .frame(width: 560)
             .background {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Native.canvas)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .strokeBorder(Native.hairline, lineWidth: 1)
-                    }
-                    .shadow(color: Native.panelShadow.opacity(1.6), radius: 30, y: 14)
+                LiquidGlassSurface(
+                    shape: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                )
             }
             .padding(.top, 120)
             .frame(maxHeight: .infinity, alignment: .top)
@@ -216,7 +212,7 @@ struct CommandPalette: View {
         }
         list.append(CommandItem(id: "engine.toggle",
                                 title: state.isRunning ? "停止推理引擎" : "启动推理引擎",
-                                detail: "\(state.activeEngine.displayName) · \(state.isRunning ? "运行中" : "已停止")",
+                                detail: "\(state.activeEngine.displayName) · \(state.engineStageText)",
                                 icon: state.isRunning ? "stop.fill" : "play.fill",
                                 shortcut: nil) {
             state.toggleService()

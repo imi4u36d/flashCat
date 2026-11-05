@@ -84,7 +84,7 @@ struct ChatPage: View {
                     .foregroundStyle(Console.secondary)
                     .frame(width: 32, height: 32)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
             .popover(isPresented: $showsThreads, arrowEdge: .bottom) { threadList }
 
             Button {
@@ -134,7 +134,7 @@ struct ChatPage: View {
                         .padding(.vertical, 6)
                         .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.plainHit)
                 }
             }
             Divider().overlay(Console.insetStroke).padding(.vertical, 4)
@@ -143,7 +143,9 @@ struct ChatPage: View {
                 .padding(10)
         }
         .frame(width: 260)
-        .background(Console.card)
+        .background {
+            LiquidGlassSurface(shape: Rectangle())
+        }
     }
 
     // MARK: Transcript
@@ -191,11 +193,11 @@ struct ChatPage: View {
                             .font(.system(size: 10.5, weight: .semibold))
                             .padding(.horizontal, 12)
                             .frame(height: 28)
-                            .background(Capsule().fill(Console.cardStrong))
-                            .overlay(Capsule().strokeBorder(Console.cardStroke, lineWidth: 1))
-                            .shadow(color: Console.shadow, radius: 8, y: 2)
+                            .background {
+                                LiquidGlassSurface(shape: Capsule(), interactive: true)
+                            }
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.plainHit)
                     .padding(.bottom, 150)
                 }
             }
@@ -250,40 +252,32 @@ struct ChatPage: View {
                 .foregroundStyle(Console.secondary)
                 .padding(.horizontal, 14)
                 .frame(height: 32)
-                .background(Capsule().fill(Console.card.opacity(0.8)))
-                .overlay(Capsule().strokeBorder(Console.cardStroke, lineWidth: 0.9))
+                .background {
+                    LiquidGlassSurface(shape: Capsule(), interactive: true)
+                }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
     }
 
     // MARK: Composer
 
     private var composer: some View {
         VStack(spacing: 10) {
-            ZStack(alignment: .topLeading) {
-                if draft.isEmpty {
-                    Text("输入消息…  ⏎ 发送 · ⇧⏎ 换行")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Console.tertiary)
-                        .padding(.horizontal, 18)
-                        .padding(.top, 14)
-                        .allowsHitTesting(false)
+            // 用竖向 TextField 代替 TextEditor：没有自带滚动条，点击即可聚焦并显示光标。
+            TextField("", text: $draft, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .lineLimit(1...6)
+                .focused($composerFocused)
+                .disabled(!state.canChat || state.generating)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .onKeyPress(phases: .down) { press in
+                    guard press.key == .return else { return .ignored }
+                    if press.modifiers.contains(.shift) { return .ignored }
+                    send()
+                    return .handled
                 }
-                TextEditor(text: $draft)
-                    .font(.system(size: 13))
-                    .scrollContentBackground(.hidden)
-                    .focused($composerFocused)
-                    .disabled(!state.isRunning || state.generating)
-                    .frame(height: composerHeight)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .onKeyPress(phases: .down) { press in
-                        guard press.key == .return else { return .ignored }
-                        if press.modifiers.contains(.shift) { return .ignored }
-                        send()
-                        return .handled
-                    }
-            }
 
             HStack(spacing: 10) {
                 Menu {
@@ -300,7 +294,7 @@ struct ChatPage: View {
                     HStack(spacing: 5) {
                         Image(systemName: "sparkles")
                             .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Console.accent)
+                            .foregroundStyle(Console.secondary)
                         Text(state.selectedModel.isEmpty ? "选择模型" : state.shortModelName(state.selectedModel))
                             .font(.system(size: 11.5))
                             .lineLimit(1)
@@ -313,6 +307,7 @@ struct ChatPage: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
+                .tint(Console.secondary)
 
                 Button {
                     showsParameters = true
@@ -325,11 +320,39 @@ struct ChatPage: View {
                     }
                     .foregroundStyle(Console.secondary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.plainHit)
 
                 Menu {
-                    ForEach(ThinkingMode.allCases, id: \.self) { mode in
-                        Button(mode.label) { state.settings.setThinkingMode(mode) }
+                    Button {
+                        state.settings.setThinkingMode(.automatic)
+                    } label: {
+                        if state.settings.thinkingMode == .automatic {
+                            Label(ThinkingMode.automatic.label, systemImage: "checkmark")
+                        } else {
+                            Text(ThinkingMode.automatic.label)
+                        }
+                    }
+                    Button {
+                        state.settings.setThinkingMode(.off)
+                    } label: {
+                        if state.settings.thinkingMode == .off {
+                            Label(ThinkingMode.off.label, systemImage: "checkmark")
+                        } else {
+                            Text(ThinkingMode.off.label)
+                        }
+                    }
+                    Divider()
+                    ForEach(availableEfforts, id: \.self) { effort in
+                        Button {
+                            state.settings.setReasoningEffort(effort)
+                            state.settings.setThinkingMode(.on)
+                        } label: {
+                            if state.settings.thinkingMode == .on, state.settings.reasoningEffort == effort {
+                                Label(effort.label, systemImage: "checkmark")
+                            } else {
+                                Text(effort.label)
+                            }
+                        }
                     }
                 } label: {
                     HStack(spacing: 4) {
@@ -345,6 +368,7 @@ struct ChatPage: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
+                .tint(Console.secondary)
 
                 Spacer(minLength: 0)
 
@@ -362,20 +386,26 @@ struct ChatPage: View {
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(.white)
                             .frame(width: 38, height: 38)
-                            .background(Circle().fill(Native.red))
+                            .background {
+                                LiquidGlassSurface(shape: Circle(),
+                                                   tint: Native.red.opacity(0.75),
+                                                   interactive: true)
+                            }
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.plainHit)
                 } else {
                     Button(action: send) {
                         Image(systemName: "arrow.up")
                             .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(.white)
                             .frame(width: 38, height: 38)
-                            .background(Circle().fill(LinearGradient(colors: [Console.accent, Console.accentDeep],
-                                                                     startPoint: .top, endPoint: .bottom)))
-                            .shadow(color: Console.accent.opacity(0.35), radius: 10, y: 4)
+                            .background {
+                                LiquidGlassSurface(shape: Circle(),
+                                                   tint: Console.accent,
+                                                   interactive: true)
+                            }
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.plainHit)
                     .disabled(!canSend)
                     .opacity(canSend ? 1 : 0.45)
                 }
@@ -386,14 +416,11 @@ struct ChatPage: View {
         .padding(.vertical, 12)
         .frame(maxWidth: 780)
         .background {
-            let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
-            shape
-                .fill(Console.cardStrong)
-                .overlay { shape.strokeBorder(composerFocused ? Console.accent.opacity(0.35) : Console.cardStroke,
-                                              lineWidth: 1) }
-                .shadow(color: Console.shadow, radius: 24, y: 10)
+            LiquidGlassSurface(
+                shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
+                tint: nil
+            )
         }
-        .animation(Motion.quick, value: composerFocused)
     }
 
     private var thinkingLabel: String {
@@ -404,13 +431,19 @@ struct ChatPage: View {
         }
     }
 
-    private var composerHeight: CGFloat {
-        let lines = max(1, draft.components(separatedBy: "\n").count)
-        return min(110, max(30, CGFloat(lines) * 18 + 6))
+    /// 引擎会报出当前模型支持的思考等级；没报就退回内置全集。
+    private var availableEfforts: [ReasoningEffort] {
+        guard let tokens = state.controller?.status?.reasoningEfforts, !tokens.isEmpty else {
+            return ReasoningEffort.allCases
+        }
+        let mapped = tokens.compactMap { token in
+            ReasoningEffort.allCases.first { $0.token == token.lowercased() }
+        }
+        return mapped.isEmpty ? ReasoningEffort.allCases : mapped
     }
 
     private var canSend: Bool {
-        state.isRunning && !state.generating && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        state.canChat && !state.generating && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var conversationText: String {
@@ -422,7 +455,7 @@ struct ChatPage: View {
 
     private func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, state.isRunning, !state.generating else { return }
+        guard !text.isEmpty, state.canChat, !state.generating else { return }
         draft = ""
         state.send(text)
     }
@@ -518,7 +551,7 @@ private struct MessageRow: View {
                 }
                 .foregroundStyle(Console.tertiary)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.plainHit)
             if showsReasoning {
                 Text(reasoning)
                     .font(.system(size: 11.5))
@@ -554,7 +587,7 @@ private struct MessageRow: View {
                 } label: {
                     Image(systemName: "doc.on.doc").font(.system(size: 9.5))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.plainHit)
                 .foregroundStyle(Console.tertiary)
             }
         }

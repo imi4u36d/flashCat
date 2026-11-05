@@ -50,7 +50,7 @@ struct FlashCatApp: App {
             // 标准「显示 / 隐藏边栏」菜单位置与 ⌘\ 快捷键。
             CommandGroup(after: .sidebar) {
                 Button(state.showsSidebar ? "隐藏边栏" : "显示边栏") {
-                    withAnimation(.smooth(duration: 0.28)) { state.toggleSidebar() }
+                    state.toggleSidebar()
                 }
                 .keyboardShortcut("\\", modifiers: .command)
             }
@@ -84,6 +84,8 @@ struct FlashCatApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 常驻菜单栏项。必须由 AppDelegate 强引用持有，否则状态栏项会被回收。
     private var statusBar: StatusBarController?
+    /// 红绿灯的默认位置，只记录一次；重复 configure 不会把按钮越推越远。
+    private var trafficLightOrigins: [Int: NSPoint] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Apply the stored skin before anything paints: `nil` appearance means
@@ -103,6 +105,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 for target in NSApp.windows { self.configure(target) }
             }
+        }
+        // 缩放窗口时 AppKit 会重新排红绿灯，重新套一次偏移。
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didResizeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let window = note.object as? NSWindow else { return }
+            MainActor.assumeIsolated { self?.offsetTrafficLights(in: window) }
         }
         // 持久化的深色外观如果只在这里应用一次，窗口晚于 delegate 创建时会被
         // SwiftUI 的默认外观覆盖：图标显示深色、页面却是浅色。窗口每次成为
@@ -153,6 +164,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSSize(width: max(target.contentLayoutRect.width, MainWindowGeometry.defaultSize.width),
                        height: max(target.contentLayoutRect.height, MainWindowGeometry.defaultSize.height))
             )
+        }
+        offsetTrafficLights(in: target)
+    }
+
+    /// 红绿灯往右下挪 6pt，让自绘标题栏可以稍微离开窗口上沿，
+    /// 同时保持和红绿灯同一水平线。
+    private func offsetTrafficLights(in window: NSWindow) {
+        guard window.canBecomeMain, window is NSPanel == false else { return }
+        let types: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+        for (index, type) in types.enumerated() {
+            guard let button = window.standardWindowButton(type) else { continue }
+            if trafficLightOrigins[index] == nil {
+                trafficLightOrigins[index] = button.frame.origin
+            }
+            guard let origin = trafficLightOrigins[index] else { continue }
+            let dy: CGFloat = button.superview?.isFlipped == true ? 6 : -6
+            button.setFrameOrigin(NSPoint(x: origin.x + 6, y: origin.y + dy))
         }
     }
 

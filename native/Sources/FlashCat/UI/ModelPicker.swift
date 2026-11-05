@@ -14,7 +14,7 @@ struct ModelPickerButton<Label: View>: View {
         } label: {
             label()
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
         .popover(isPresented: $open, arrowEdge: .bottom) {
             ModelPickerPopover(state: state) { open = false }
         }
@@ -49,24 +49,37 @@ struct ModelPickerPopover: View {
         }
         .frame(width: 300)
         .frame(maxHeight: 380)
-        .background(Console.cardStrong)
     }
 
     private func row(_ model: EngineModel, engine: EngineID) -> some View {
         let selected = model.id == state.selectedModel && engine == state.activeEngine
+        let switching = state.switchingModel == model.id && engine == state.activeEngine
         return Button {
             state.applyModelFromAnyEngine(model.id, engine: engine)
             onPick()
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(selected ? Console.accent : Console.tertiary.opacity(0.5))
+                if switching {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.55)
+                        .frame(width: 11, height: 11)
+                } else {
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(selected ? Console.accent : Console.tertiary.opacity(0.5))
+                }
                 Text(state.shortModelName(model.id))
                     .font(.system(size: 12))
                     .foregroundStyle(Console.text)
                     .lineLimit(1)
                 Spacer(minLength: 4)
+                if switching {
+                    Text(state.switchStage.isEmpty ? "加载中" : state.switchStage)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Console.warn)
+                        .lineLimit(1)
+                }
             }
             .padding(.horizontal, 10)
             .frame(height: 30)
@@ -76,6 +89,6 @@ struct ModelPickerPopover: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
     }
 }

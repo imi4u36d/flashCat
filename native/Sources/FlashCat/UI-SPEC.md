@@ -20,7 +20,13 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 
 | 文件 | 职责 |
 | --- | --- |
-| `UI/ConsoleShell.swift` | 窗口根视图、标题栏、侧栏、页路由、全局确认弹窗与 toast |
+| `UI/ConsoleShell.swift` | 窗口根视图、标题栏、侧栏、页路由、全局确认弹窗与灵动岛层 |
+| `UI/DynamicIsland.swift` | 标题栏灵动岛：引擎状态、通知历史与引擎详情 |
+| `IslandNotice.swift` | 灵动岛通知的数据模型与信息 / 成功 / 警告 / 错误分类 |
+| `UI/FeedbackSheet.swift` | 反馈弹窗：QQ 群号、复制与拉起 QQ |
+| `UI/LiquidGlass.swift` | macOS 26 Liquid Glass 材质与玻璃按钮样式 |
+| `UI/ModelFamily.swift` | 模型家族识别与家族徽标 |
+| `UI/ModelCardText.swift` | Hugging Face 模型卡的 Markdown 清洗 |
 | `UI/CommandPalette.swift` | ⌘K 命令面板：页面跳转与常用动作 |
 | `UI/OverviewPage.swift` | 引擎状态、当前模型、六项实时指标、吞吐曲线、上下文与接口 |
 | `UI/ChatPage.swift` | 会话、流式消息、思考块、Markdown 正文、输入框与生成参数 |
@@ -38,20 +44,22 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 
 ## 窗口 chrome
 
-- **标题栏。** 一行 48pt：红绿灯留白、折叠边栏、当前引擎胶囊（状态点、名称、状态、实时 tok/s，点击启停）、
-  命令面板入口（⌘K）、外观切换（⌘⇧A）、下载中心（带任务徽标）。对应 1.3 起 WebUI 的 titlebar。
-- **侧栏。** 200pt 展开 / 76pt 图标档，收起按钮是 macOS 26 原生玻璃按钮（红绿灯右侧），
+- **标题栏。** 一行 48pt：红绿灯留白、折叠边栏、居中的灵动岛（引擎名、真实阶段、实时 tok/s 与启停；
+  通知到来时临时显示消息并计未读，点开原地展开通知历史或引擎详情）、命令面板入口（⌘K）、
+  外观切换（⌘⇧A）、下载中心（带任务徽标）。
+- **侧栏。** 200pt 展开 / 96pt 图标档，收起按钮是 macOS 26 原生玻璃按钮（红绿灯右侧），
   同时「显示」菜单与 ⌘\ 可用，右缘可拖动改宽（180–320，落盘到 `sidebarWidth`）；
-  工作区六页 + 最近对话 + 引擎卡（启停与切换）。
+  工作区六页 + 最近对话 + 引擎卡（启停与切换）+ 反馈入口。
 - **页面切换。** 220ms 淡入 + 8pt 上移；侧栏选中态用 `matchedGeometryEffect` 在行间滑动。
 - **动效。** `Motion.quick` 140ms 用于 hover/press，`Motion.standard` 220ms 用于页面与卡片状态，
   `Motion.entrance` 轻弹簧用于消息与 toast；`accessibilityReduceMotion` 下关闭位移动画。
 
 ## 控件
 
-- 视觉参考 macOS 26 的 Games app：主按钮是墨色/白色高对比胶囊，次按钮是半透明玻璃胶囊，
-  互斥按钮组是玻璃容器 + 白色选中胶囊（`GamesSegmented`，不用系统强调色）；
-  卡片是带顶部高光的玻璃面，菜单用玻璃 popover（如 `ModelPickerPopover`）。
+- 控件统一走 macOS 26 Liquid Glass：侧栏、标题栏按钮、命令面板、输入卡与浮层使用
+  `glassEffect`（`LiquidGlassSurface`），互斥按钮组用系统 `.segmented`（`NativeSegmented`）；
+  卡片也用同一层玻璃材质，但正文只靠排版分层，不在内容上再叠色。
+  菜单用系统玻璃 popover（如 `ModelPickerPopover`）。
 
 ## 快捷键
 
@@ -82,8 +90,9 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 
 ## 视觉语言
 
-- 画布是纯色（日间白 / 夜间暖石墨），卡片是 `GlassSurface`：面板色 + 1px 毛发描边。
-  没有玻璃渐变、没有网页式投影；投影只留给窗口级浮层。
+- 画布是纯色（日间白 / 夜间暖石墨），卡片与 chrome 使用 macOS 26 Liquid Glass
+  （`GlassSurface` / `GlassCard` → `glassEffect`）。窗口本身透明，内容区自铺画布，
+  侧栏玻璃因此能采到桌面；不再自绘玻璃渐变与投影。
 - 品牌色是日落橙红，只出现在主按钮、选中态、大读数与状态点；状态色是页面里
   饱和度最高的颜色。
 - 两副皮肤共享同一套语义 token（`Native` + `Theme.swift` 的 `NSColor.adaptive`），

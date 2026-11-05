@@ -35,7 +35,6 @@ struct HubSheet: View {
             footer
         }
         .frame(width: 1020, height: 700)
-        .background(Native.canvas)
         .onAppear {
             if state.hubResults.isEmpty {
                 state.searchHub("", sort: sort.rawValue, filter: filter.rawValue, page: 0)
@@ -99,7 +98,7 @@ struct HubSheet: View {
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 12)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.plainHit)
                             .foregroundStyle(Native.accent)
                             .disabled(state.hubLoading)
                         }
@@ -128,28 +127,25 @@ struct HubSheet: View {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundStyle(Native.tertiary)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.plainHit)
                 }
                 Button("搜索") { runSearch(page: 0) }
-                    .buttonStyle(ArcadePillStyle(tone: .light, compact: true))
+                    .buttonStyle(.consolePrimary)
                     .disabled(state.hubLoading)
             }
             .padding(.horizontal, 11)
             .frame(height: 34)
-            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Native.recess))
-            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(Native.hairline, lineWidth: 1))
+            .background {
+                LiquidGlassSurface(
+                    shape: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                )
+            }
 
             HStack(spacing: 8) {
-                Picker("", selection: $filter) {
-                    ForEach(HubFilter.allCases, id: \.self) { item in
-                        Text(filterLabel(item)).tag(item)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 190)
-                .onChange(of: filter) { _, _ in runSearch(page: 0) }
+                NativeSegmented(selection: $filter,
+                                options: HubFilter.allCases.map { ($0, filterLabel($0)) },
+                                width: 210)
+                    .onChange(of: filter) { _, _ in runSearch(page: 0) }
 
                 Spacer(minLength: 0)
 
@@ -164,9 +160,11 @@ struct HubSheet: View {
                             .font(.system(size: 11, weight: .medium))
                     }
                     .foregroundStyle(Native.secondary)
-                    .padding(.horizontal, 9)
-                    .frame(height: 24)
-                    .background(Capsule().fill(Native.overlay(0.06)))
+                    .padding(.horizontal, 11)
+                    .frame(height: 28)
+                    .background {
+                        LiquidGlassSurface(shape: Capsule(), interactive: true)
+                    }
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
@@ -219,7 +217,7 @@ struct HubSheet: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 300)
             Button("重试") { runSearch(page: 0) }
-                .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
+                .buttonStyle(.consoleSecondary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 32)
@@ -229,10 +227,13 @@ struct HubSheet: View {
         let selected = state.hubDetail?.id == model.id
         let local = state.repoIsLocal(model.id)
         let engineLabel = model.recommendedEngine
+        let family = ModelFamily.resolve(id: model.id, tags: model.tags)
         return Button {
             state.loadHubDetail(model.id)
         } label: {
             HStack(alignment: .top, spacing: 10) {
+                ModelFamilyIcon(family: family, size: 30)
+                    .padding(.top, 1)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(shortName(model.id))
                         .font(.system(size: 12.5, weight: .semibold))
@@ -275,7 +276,7 @@ struct HubSheet: View {
             .background(selected ? Native.accent.opacity(0.08) : Color.clear)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
     }
 
     private func shortName(_ id: String) -> String {
@@ -318,6 +319,8 @@ struct HubSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 10) {
+                    ModelFamilyIcon(family: ModelFamily.resolve(id: detail.id, tags: detail.tags),
+                                    size: 40)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(shortName(detail.id))
                             .font(.system(size: 18, weight: .bold))
@@ -359,6 +362,18 @@ struct HubSheet: View {
 
                 downloadBar(detail)
 
+                if let card = detail.modelCard, !card.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("模型卡")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Native.secondary)
+                        MarkdownView(text: ModelCardText.normalized(card))
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background { GlassSurface(radius: Native.radiusTile) }
+                }
+
                 if !detail.files.isEmpty {
                     VStack(alignment: .leading, spacing: 0) {
                         Text("文件")
@@ -395,21 +410,6 @@ struct HubSheet: View {
                     .background { GlassSurface(radius: Native.radiusTile) }
                 }
 
-                if let card = detail.modelCard, !card.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("模型卡")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(Native.secondary)
-                        Text(card)
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(Native.secondary)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background { GlassSurface(radius: Native.radiusTile) }
-                }
             }
             .padding(20)
         }
@@ -438,7 +438,7 @@ struct HubSheet: View {
                     state.section = .models
                     dismiss()
                 }
-                .buttonStyle(.arcadeGlass)
+                .buttonStyle(.consoleSecondary)
             } else {
                 Button {
                     state.downloadShared(detail.id, engines: [target])
@@ -446,7 +446,7 @@ struct HubSheet: View {
                 } label: {
                     Label("下载", systemImage: "arrow.down.circle")
                 }
-                .buttonStyle(.arcadePill)
+                .buttonStyle(.consolePrimary)
                 .disabled(busy)
             }
         }
@@ -470,14 +470,16 @@ struct HubSheet: View {
                     .font(Native.monoFont)
                     .onSubmit(downloadDirect)
                 Button("下载", action: downloadDirect)
-                    .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
+                    .buttonStyle(.consoleSecondary)
                     .disabled(directRepo.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             .padding(.horizontal, 10)
-            .frame(height: 30)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Native.recess))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(Native.hairline, lineWidth: 1))
+            .frame(height: 32)
+            .background {
+                LiquidGlassSurface(
+                    shape: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                )
+            }
             .frame(maxWidth: 360)
 
             Spacer(minLength: 8)
@@ -486,20 +488,14 @@ struct HubSheet: View {
                 Text("第 \(state.hubPage + 1) 页 · \(models.count) 条")
                     .font(.system(size: 10.5, design: .monospaced))
                     .foregroundStyle(Native.tertiary)
-                Button {
+                IconAction(systemName: "chevron.left", help: "上一页") {
                     runSearch(page: max(0, state.hubPage - 1))
-                } label: {
-                    Image(systemName: "chevron.left")
                 }
-                .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
                 .disabled(state.hubPage == 0 || state.hubLoading)
 
-                Button {
+                IconAction(systemName: "chevron.right", help: "下一页") {
                     runSearch(page: state.hubPage + 1)
-                } label: {
-                    Image(systemName: "chevron.right")
                 }
-                .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
                 .disabled(!state.hubHasMore || state.hubLoading)
             }
         }

@@ -925,7 +925,10 @@ final class EngineController {
     /// minutes — but republishing the snapshot each second is what makes the
     /// stage and the elapsed count move instead of freezing at one frame.
     private func refreshStartupTick() {
-        guard state == .starting else { return }
+        // 热切换时 state 已经是 .ready、权重却还在搬：健康探测可能先失败，
+        // 这里仍要每秒重发一次快照，否则「已等待」会停住，看起来又像卡死。
+        let stillLoading = state == .ready && startupStage != EngineStartupStage.ready.rawValue
+        guard state == .starting || stillLoading else { return }
         if process == nil { logs.pollFollow() }
         onChange()
     }

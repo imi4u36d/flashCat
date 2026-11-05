@@ -48,11 +48,10 @@ struct SettingsPage: View {
     private var appearanceCard: some View {
         SettingsCard {
             SettingsRow(title: "外观", detail: "跟随系统或固定外观") {
-                GamesSegmented(selection: Binding(
+                NativeSegmented(selection: Binding(
                     get: { state.theme.mode },
                     set: { state.theme.set($0) }),
-                    options: AppAppearance.allCases.map { ($0, $0.label) },
-                    width: 240)
+                    options: AppAppearance.allCases.map { ($0, $0.label) })
             }
         }
     }
@@ -125,11 +124,11 @@ struct SettingsPage: View {
                 Button { stepPort(id, by: 1) } label: {
                     Image(systemName: "chevron.up").font(.system(size: 7, weight: .bold))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.plainHit)
                 Button { stepPort(id, by: -1) } label: {
                     Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.plainHit)
             }
             .foregroundStyle(Console.tertiary)
         }
@@ -228,11 +227,10 @@ struct SettingsPage: View {
     private var thinkingCard: some View {
         SettingsCard {
             SettingsRow(title: "思考模式", detail: "回答前是否输出推理过程") {
-                GamesSegmented(selection: Binding(
+                NativeSegmented(selection: Binding(
                     get: { state.settings.thinkingMode },
                     set: { state.settings.setThinkingMode($0) }),
-                    options: ThinkingMode.allCases.map { ($0, $0.label) },
-                    width: 210)
+                    options: ThinkingMode.allCases.map { ($0, $0.label) })
             }
             Divider().overlay(Console.insetStroke)
             SettingsRow(title: "默认模型", detail: state.selectedModel.isEmpty ? "未选择" : state.selectedModel) {
@@ -266,11 +264,10 @@ struct SettingsPage: View {
             }
             Divider().overlay(Console.insetStroke)
             SettingsRow(title: "思考等级", detail: "等级由当前引擎提供") {
-                GamesSegmented(selection: Binding(
+                NativeSegmented(selection: Binding(
                     get: { state.settings.reasoningEffort },
                     set: { state.settings.setReasoningEffort($0) }),
-                    options: ReasoningEffort.allCases.map { ($0, $0.label) },
-                    width: 330)
+                    options: ReasoningEffort.allCases.map { ($0, $0.label) })
                     .disabled(state.settings.thinkingMode != .on)
             }
         }

@@ -61,6 +61,9 @@ final class AppState: ObservableObject {
     /// Stage the running switch is in ("卸载旧模型" / "加载新模型"). Shown in the
     /// switcher instead of a generic spinner so the wait is explainable.
     @Published private(set) var switchStage: String = ""
+    /// 本次切换开始的时间。热切换时引擎进程一直在跑，`busySince` 不会动，
+    /// 只靠它才能给「切换中 · 加载权重」配一个真正在走的等待时长。
+    private var switchStartedAt: Date?
     /// 每次切换领一个号，只有当代的结尾允许改「切换中」状态。被接管或被取消的
     /// 旧任务回来时代数已经不同，它就静默退出：既不会抹掉新切换的状态，也没人
     /// 能把界面永久留在「切换中」。
@@ -105,8 +108,12 @@ final class AppState: ObservableObject {
     private var streamMessageID = ""
     /// Persistent banner for errors that need the reader's attention.
     @Published var notice: String?
-    /// Transient bottom toast.
-    @Published var toastMessage: String?
+    /// 灵动岛上短暂展示的当前通知；过期后回到引擎状态。
+    @Published private(set) var islandNotice: IslandNotice?
+    /// 本次会话的通知历史，展开灵动岛后按时间倒序查看。
+    @Published private(set) var islandNotices: [IslandNotice] = []
+    /// 尚未展开查看的通知数量。
+    @Published private(set) var islandUnread = 0
     /// 侧边栏是否展开。折叠后留一条图标 rail，导航不消失；
     /// 状态落盘到 UserDefaults 的 `sidebarVisible`，重启后沿用上次的样子。
     @Published var showsSidebar: Bool
@@ -230,6 +237,9 @@ final class AppState: ObservableObject {
     private var supplementInFlight = false
     private var pauseRequested = false
     private var cancelRequested = false
+    /// 用户直接删掉了正在跑的那一行：停掉子进程后 `finishDownload` 要把
+    /// 任务行和半成品一起清掉，而不是像普通取消那样留一行「已暂停」。
+    private var removeRequested = false
     private var lastWatchBytes = 0
     private var lastWatchDate: Date?
     /// Bytes this transfer already had on disk when it (re)started. A resumed
@@ -380,8 +390,63 @@ final class AppState: ObservableObject {
     }
 
     var isSwitchingModel: Bool { switchingModel != nil }
+    /// The process exists. It says nothing about whether the weights are
+    /// resident — a starting/switching engine answers no chats yet.
     var isRunning: Bool { controller?.isRunning ?? false }
+    /// The engine's HTTP layer reports ready, which for hot-loading engines can
+    /// happen while the weights are still being mapped in.
     var isReady: Bool { controller?.isReady ?? false }
+
+    /// The model is not usable yet: launching, unloading, loading weights,
+    /// warming up, or waiting for memory. The lifecycle line and the chat
+    /// composer key off this instead of `isRunning`, which is true the moment
+    /// the process spawns.
+    var isModelBusy: Bool {
+        if isSwitchingModel || serverState == .starting || serverState == .stopping {
+            return true
+        }
+        return serverState == .ready && startupStage != EngineStartupStage.ready.rawValue
+    }
+
+    /// Only a ready engine with the requested weights really resident may take
+    /// a chat request. Sending during the load window is what used to surface
+    /// as a request error right after switching models.
+    var canChat: Bool {
+        !isSwitchingModel
+            && serverState == .ready
+            && isReady
+            && startupStage == EngineStartupStage.ready.rawValue
+    }
+
+    /// Lifecycle text for the title-bar pill and the overview: names the phase
+    /// the engine is really in, so a weight load never reads as 「运行中」.
+    var engineStageText: String {
+        if isSwitchingModel {
+            var parts = ["切换中"]
+            if !switchStage.isEmpty { parts.append(switchStage) }
+            let stage = startupStage
+            if !stage.isEmpty, stage != EngineStartupStage.ready.rawValue,
+               stage != "已停止", stage != switchStage {
+                parts.append(stage)
+            }
+            parts.append("已等待 " + Format.elapsed(lifecycleSeconds))
+            return parts.joined(separator: " · ")
+        }
+        if serverState == .ready {
+            let stage = startupStage
+            return stage == EngineStartupStage.ready.rawValue ? "运行中" : stage
+        }
+        var parts = [serverState.rawValue]
+        let stage = startupStage
+        if !stage.isEmpty, stage != serverState.rawValue,
+           stage != EngineStartupStage.ready.rawValue, stage != "已停止" {
+            parts.append(stage)
+        }
+        if serverState == .starting {
+            parts.append("已等待 " + Format.elapsed(startupSeconds))
+        }
+        return parts.joined(separator: " · ")
+    }
     var port: Int {
         controller?.port
             ?? EngineStore.shared.configuration(for: activeEngine).port
@@ -391,6 +456,13 @@ final class AppState: ObservableObject {
     /// Seconds the current start has been running; 0 while idle. The console
     /// pairs it with the stage so a slow weight load shows elapsed time.
     var startupSeconds: Int { controller?.busySeconds ?? 0 }
+    /// Elapsed seconds of the phase the UI is currently describing: the switch
+    /// timer while weights are being swapped, otherwise the engine start timer.
+    var lifecycleSeconds: Int {
+        guard isSwitchingModel else { return startupSeconds }
+        guard let switchStartedAt else { return 0 }
+        return max(0, Int(Date().timeIntervalSince(switchStartedAt)))
+    }
     var failureMessage: String? { controller?.failureMessage }
     var downloadProgress: Double? { controller?.downloadProgress }
     /// Non-nil when nothing can run yet. Every engine — splash included — is an
@@ -1186,6 +1258,7 @@ final class AppState: ObservableObject {
         // 停着的时候不再只换选择：跨引擎选模型同样意味着「现在就跑它」，
         // 所以界面直接进入「启动引擎」。
         switchingModel = model
+        switchStartedAt = Date()
         switchStage = wasRunning ? "停止旧引擎" : "启动引擎"
 
         switchTask = Task { [weak self] in
@@ -1339,6 +1412,7 @@ final class AppState: ObservableObject {
         let generation = switchGeneration
         let wasRunning = isRunning
         switchingModel = id
+        switchStartedAt = Date()
         switchStage = wasRunning ? "准备切换" : "启动引擎"
         switchTask = Task { [weak self] in
             guard let self, let controller = self.controller else {
@@ -1372,6 +1446,7 @@ final class AppState: ObservableObject {
         switchTask = nil
         switchGeneration &+= 1
         switchingModel = nil
+        switchStartedAt = nil
         switchStage = ""
         // 排队的模型 id 只属于这台引擎；换引擎/被接管之后它就指向另一份权重
         // 目录里的名字，留着只会在下一次收起时把别人的模型当成这台引擎的。
@@ -1410,6 +1485,7 @@ final class AppState: ObservableObject {
     private func finishModelSwitch(outcome: EngineController.ModelSwitchOutcome) {
         guard switchingModel != nil else { return }
         switchingModel = nil
+        switchStartedAt = nil
         switchStage = ""
         switch outcome {
         case .ready:
@@ -1465,8 +1541,15 @@ final class AppState: ObservableObject {
     func send(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty || generating { return }
-        if !isRunning {
-            notice = "推理服务未运行，请先启动服务"
+        guard canChat else {
+            if isRunning || isSwitchingModel {
+                let stage = startupStage
+                notice = stage.isEmpty || stage == "已停止"
+                    ? "模型还没有加载完成，请稍候"
+                    : "模型正在\(stage)，还不能对话，请稍候"
+            } else {
+                notice = "推理服务未运行，请先启动服务"
+            }
             return
         }
 
@@ -1499,10 +1582,19 @@ final class AppState: ObservableObject {
         let model = selectedModel
         let endpointPort = port
         let started = Date()
+        // 应用内对话直接连引擎端口，不经过网关；概览页的「最近请求」与会话
+        // 计数统一读 GatewayMeter，所以这里也要打点，否则对话页的请求在
+        // 概览里永远是 0 条。
+        let meterID = GatewayMeter.shared.begin(
+            model: model,
+            dialect: "chat",
+            promptTokens: TokenEstimator.promptTokens(
+                messages: turns.map { ["role": $0.role, "content": $0.content] }))
 
         Task {
             let result = await chatClient.send(port: endpointPort, model: model, turns: turns, options: options,
                 onDelta: { piece in
+                    GatewayMeter.shared.addTokens(meterID, TokenEstimator.fractional(piece))
                     Task { @MainActor in
                         let found = self.updateStreamingMessage { message in
                             if message.firstTokenSeconds == nil {
@@ -1519,6 +1611,7 @@ final class AppState: ObservableObject {
                     }
                 },
                 onReasoning: { piece in
+                    GatewayMeter.shared.addTokens(meterID, TokenEstimator.fractional(piece))
                     Task { @MainActor in
                         let found = self.updateStreamingMessage { message in
                             message.reasoning = (message.reasoning ?? "") + piece
@@ -1534,6 +1627,9 @@ final class AppState: ObservableObject {
                     }
                 },
                 onUsage: { usage in
+                    GatewayMeter.shared.noteUsage(meterID,
+                                                  promptTokens: usage.promptTokens,
+                                                  completionTokens: usage.completionTokens)
                     Task { @MainActor in
                         guard self.updateStreamingMessage({ $0.usage = usage }) else { return }
                         // 思考截断可见性：引擎按预算收束思考时，reasoning_tokens
@@ -1564,6 +1660,7 @@ final class AppState: ObservableObject {
             let elapsed = Date().timeIntervalSince(started)
             switch result {
             case .success(let text):
+                GatewayMeter.shared.finish(meterID)
                 self.updateStreamingMessage { message in
                     message.content = text
                     message.seconds = elapsed
@@ -1590,6 +1687,7 @@ final class AppState: ObservableObject {
                     }
                 }
             case .failure(let error):
+                GatewayMeter.shared.finish(meterID, failed: !isCancellation(error))
                 self.updateStreamingMessage { message in
                     if message.content.isEmpty {
                         message.content = "出错：\(error.message)"
@@ -1973,6 +2071,7 @@ final class AppState: ObservableObject {
         pendingSharedEngines = shared ?? []
         pauseRequested = false
         cancelRequested = false
+        removeRequested = false
         downloadSpeed = 0
         // Resume, not restart: a paused/failed row already recorded where the
         // transfer stood, and the Hub's partial files are still on disk. Seed
@@ -2258,8 +2357,22 @@ final class AppState: ObservableObject {
     }
 
     /// Remove a finished/failed/stale row from the center.
+    ///
+    /// Deleting the row of the transfer that is still running has to stop the
+    /// child as well: the progress watcher upserts the row every half second,
+    /// so merely dropping it from the list would make it reappear immediately.
     func removeTask(_ task: ModelDownloadTask) {
+        if let process = downloadProcess, process.isRunning,
+           downloadingModel == task.model, downloadingEngine == task.engine {
+            removeRequested = true
+            cancelRequested = true
+            downloadSpeed = 0
+            append(log: "==> 删除下载任务并停止传输：\(task.model)", engine: task.engine)
+            process.terminate()
+            return
+        }
         removeTask(engine: task.engine, model: task.model)
+        discardPartialDownload(task)
     }
 
     private func upsertTask(engine: EngineID, model: String, _ mutate: (inout ModelDownloadTask) -> Void) {
@@ -2393,6 +2506,18 @@ final class AppState: ObservableObject {
         }
         if cancelRequested {
             cancelRequested = false
+            if removeRequested {
+                // 用户点的是删除而不是暂停：行和半成品一起清掉。
+                removeRequested = false
+                let stale = ModelDownloadTask(engine: engine, model: model, status: .paused,
+                                              shared: sharedRepo == nil ? nil : sharedEngines)
+                removeTask(engine: engine, model: model)
+                discardPartialDownload(stale)
+                append(log: "==> 已删除下载任务 \(model)，半成品已清理", engine: engine)
+                toast("已从下载中心移除")
+                outcome = .cancelled
+                return
+            }
             // Keep the row as paused: the partial bytes and the marker are
             // still on disk, so the model card must keep showing that state
             // instead of flipping back to a clickable "下载". Removing the row
@@ -2465,18 +2590,38 @@ final class AppState: ObservableObject {
     // MARK: toasts
 
     func toast(_ message: String) {
-        toastMessage = message
+        let notice = IslandNotice(message: message)
+        islandNotice = notice
+        islandNotices.insert(notice, at: 0)
+        if islandNotices.count > 30 {
+            islandNotices.removeLast(islandNotices.count - 30)
+        }
+        islandUnread += 1
         toastWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            self?.toastMessage = nil
+            guard let self, self.islandNotice?.id == notice.id else { return }
+            self.islandNotice = nil
         }
         toastWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.6, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.2, execute: work)
     }
 
+    /// 收起灵动岛时清掉短暂通知，历史仍留在通知列表里。
     func dismissToast() {
         toastWork?.cancel()
-        toastMessage = nil
+        islandNotice = nil
+    }
+
+    /// 展开灵动岛即视为读过了所有通知。
+    func markIslandNoticesRead() {
+        islandUnread = 0
+    }
+
+    func clearIslandNotices() {
+        toastWork?.cancel()
+        islandNotice = nil
+        islandNotices.removeAll()
+        islandUnread = 0
     }
 
     // MARK: sidebar
@@ -2487,9 +2632,11 @@ final class AppState: ObservableObject {
     var sidebarAnimUntil = Date.distantPast
 
     func toggleSidebar() {
-        // 这里只翻状态，侧栏视图按它切换 216px 展开 / 76px 图标档
-        // 的宽度过渡，Swift 侧不再需要驱动任何布局动画。
-        showsSidebar.toggle()
+        // 侧栏列宽、收起按钮的横向位置和图标栏的裁切共用这一个动画事务，
+        // 从菜单栏、命令面板或标题栏按钮触发时表现一致。
+        withAnimation(.smooth(duration: 0.25)) {
+            showsSidebar.toggle()
+        }
         sidebarAnimUntil = Date().addingTimeInterval(0.35)
         UserDefaults.standard.set(showsSidebar, forKey: "sidebarVisible")
     }

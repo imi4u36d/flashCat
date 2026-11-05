@@ -152,6 +152,12 @@ final class GatewayMeter: @unchecked Sendable {
     private func applyUsage(_ id: Int, _ usage: [String: Any]) {
         let prompt = (usage["prompt_tokens"] as? Int) ?? (usage["input_tokens"] as? Int) ?? 0
         let completion = (usage["completion_tokens"] as? Int) ?? (usage["output_tokens"] as? Int) ?? 0
+        noteUsage(id, promptTokens: prompt, completionTokens: completion)
+    }
+
+    /// 应用内对话直接连引擎端口、不经过网关，但概览页的「最近请求」统一读
+    /// 这里，所以对话结束时把结构化 usage 也送进来校正计数。
+    func noteUsage(_ id: Int, promptTokens prompt: Int, completionTokens completion: Int) {
         guard prompt > 0 || completion > 0 else { return }
         lock.lock()
         defer { lock.unlock() }

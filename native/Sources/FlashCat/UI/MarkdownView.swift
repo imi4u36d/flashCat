@@ -50,7 +50,7 @@ struct MarkdownView: View {
                         Image(systemName: "doc.on.doc")
                             .font(.system(size: 9.5))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.plainHit)
                     .foregroundStyle(Native.tertiary)
                     .help("复制代码")
                 }

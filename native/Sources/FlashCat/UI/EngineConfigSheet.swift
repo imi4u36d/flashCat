@@ -33,7 +33,6 @@ struct EngineConfigSheet: View {
             footer
         }
         .frame(width: 580, height: 640)
-        .background(Native.canvas)
         .onAppear(perform: load)
     }
 

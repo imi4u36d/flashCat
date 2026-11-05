@@ -127,6 +127,12 @@ enum Format {
         return formatter.string(from: date)
     }
 
+    /// Elapsed time as `m:ss`, used by the lifecycle line while an engine loads.
+    static func elapsed(_ seconds: Int) -> String {
+        let value = max(0, seconds)
+        return String(format: "%d:%02d", value / 60, value % 60)
+    }
+
     static func relative(_ date: Date) -> String {
         let seconds = Int(Date().timeIntervalSince(date))
         if seconds < 60 { return "刚刚" }

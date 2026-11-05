@@ -127,7 +127,10 @@ final class ThemeController: ObservableObject {
 
     func apply(to window: NSWindow) {
         window.appearance = resolved
-        window.backgroundColor = Native.windowBackground
+        // 窗口本身透明，Liquid Glass 才能采到桌面；内容区自己铺不透明画布，
+        // 侧栏与标题栏则保持玻璃。两者共同决定最终的不透明范围。
+        window.isOpaque = false
+        window.backgroundColor = .clear
     }
 
     /// Keeps "跟随系统" honest: re-resolve when macOS flips, and (as a backstop

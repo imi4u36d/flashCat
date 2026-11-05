@@ -73,28 +73,20 @@ struct OverviewPage: View {
                     .padding(.top, 14)
 
                 HStack(spacing: 10) {
-                    Menu {
-                        modelMenuContent
-                    } label: {
+                    ModelPickerButton(state: state) {
                         HStack(spacing: 6) {
                             Image(systemName: "square.stack.3d.up.fill")
                                 .font(.system(size: 11, weight: .semibold))
                             Text("切换模型")
                                 .font(.system(size: 12.5, weight: .semibold))
                         }
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Console.inkForeground)
                         .padding(.horizontal, 15)
                         .frame(height: 34)
-                        .background {
-                            Capsule().fill(
-                                LinearGradient(colors: [Console.accent, Console.accentDeep],
-                                               startPoint: .topLeading, endPoint: .bottomTrailing))
-                        }
-                        .shadow(color: Console.accent.opacity(0.30), radius: 12, y: 5)
+                        .background(Capsule().fill(Console.ink))
+                        .overlay(Capsule().strokeBorder(.white.opacity(0.10), lineWidth: 0.8))
+                        .shadow(color: Console.shadow.opacity(0.6), radius: 8, y: 3)
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
                     .disabled(state.isSwitchingModel)
 
                     Button {

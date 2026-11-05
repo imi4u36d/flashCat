@@ -47,6 +47,13 @@ struct FlashCatApp: App {
                     NSWorkspace.shared.open(URL(fileURLWithPath: Paths.logFile))
                 }
             }
+            // 标准「显示 / 隐藏边栏」菜单位置与 ⌘\ 快捷键。
+            CommandGroup(after: .sidebar) {
+                Button(state.showsSidebar ? "隐藏边栏" : "显示边栏") {
+                    withAnimation(.smooth(duration: 0.28)) { state.toggleSidebar() }
+                }
+                .keyboardShortcut("\\", modifiers: .command)
+            }
             CommandMenu("页面") {
                 Button("概览") { state.section = .overview }.keyboardShortcut("1", modifiers: .command)
                 Button("对话") { state.section = .chat }.keyboardShortcut("2", modifiers: .command)
@@ -54,9 +61,7 @@ struct FlashCatApp: App {
                 Button("引擎") { state.section = .engines }.keyboardShortcut("4", modifiers: .command)
                 Button("日志") { state.section = .logs }.keyboardShortcut("5", modifiers: .command)
                 Button("设置") { state.section = .settings }.keyboardShortcut("6", modifiers: .command)
-                Divider()
-                Button(state.showsSidebar ? "折叠侧边栏" : "展开侧边栏") { state.toggleSidebar() }
-                    .keyboardShortcut("\\", modifiers: .command)
+
             }
         }
 

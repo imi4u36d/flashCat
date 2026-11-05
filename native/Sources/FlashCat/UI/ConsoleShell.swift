@@ -364,10 +364,8 @@ struct ConsoleTitlebar: View {
     var body: some View {
         ZStack {
             HStack(spacing: 8) {
-                Color.clear.frame(width: 86, height: 1)
-                IconAction(systemName: "sidebar.left", help: "折叠边栏（⌘\\）") {
-                    state.toggleSidebar()
-                }
+                Color.clear.frame(width: 82, height: 1)
+                sidebarToggle
                 Spacer(minLength: 8)
                 Button(action: openCommand) {
                     HStack(spacing: 5) {
@@ -419,6 +417,23 @@ struct ConsoleTitlebar: View {
             enginePill
         }
         .background(WindowDragArea())
+    }
+
+    /// macOS 26 原生玻璃按钮：系统 sidebar toggle 的样式与位置（红绿灯右侧 30pt）。
+    private var sidebarToggle: some View {
+        Button {
+            withAnimation(.smooth(duration: 0.28)) {
+                state.toggleSidebar()
+            }
+        } label: {
+            Image(systemName: "sidebar.left")
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 30, height: 30)
+        }
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
+        .help(state.showsSidebar ? "隐藏边栏（⌘\\）" : "显示边栏（⌘\\）")
+        .accessibilityLabel(state.showsSidebar ? "隐藏边栏" : "显示边栏")
     }
 
     private var enginePill: some View {

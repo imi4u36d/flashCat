@@ -44,6 +44,17 @@ enum Console {
     static let danger = Color.adaptive(dark: 0xF26B58, light: 0xC43A2F)
     static let info = Color.adaptive(dark: 0x6FA8F5, light: 0x2F6FD0)
 
+    static let glassFill = Color.adaptive(dark: 0xFFFFFF, light: 0xFFFFFF,
+                                          darkAlpha: 0.14, lightAlpha: 0.72)
+    static let glassGroup = Color.adaptive(dark: 0xFFFFFF, light: 0x000000,
+                                           darkAlpha: 0.08, lightAlpha: 0.045)
+    static let glassStroke = Color.adaptive(dark: 0xFFFFFF, light: 0x000000,
+                                            darkAlpha: 0.12, lightAlpha: 0.06)
+    static let glassSelected = Color.adaptive(dark: 0xFFFFFF, light: 0xFFFFFF,
+                                              darkAlpha: 0.22, lightAlpha: 0.96)
+    static let ink = Color.adaptive(dark: 0xF5F3F8, light: 0x1B1B20)
+    static let inkForeground = Color.adaptive(dark: 0x16151B, light: 0xFFFFFF)
+
     static let shadow = Color.adaptive(dark: 0x000000, light: 0x43506E,
                                        darkAlpha: 0.45, lightAlpha: 0.10)
 
@@ -102,7 +113,11 @@ struct GlassCard<Content: View>: View {
             .background {
                 let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
                 shape
-                    .fill(strong ? Console.cardStrong : Console.card)
+                    .fill(LinearGradient(
+                        colors: strong
+                            ? [Console.cardStrong, Console.card]
+                            : [Console.card, Console.card.opacity(0.82)],
+                        startPoint: .top, endPoint: .bottom))
                     .overlay {
                         if tint != .clear {
                             shape.fill(LinearGradient(colors: [tint.opacity(0.16), tint.opacity(0.02)],
@@ -110,9 +125,15 @@ struct GlassCard<Content: View>: View {
                         }
                     }
                     .overlay {
-                        shape.strokeBorder(Console.cardStroke, lineWidth: 1)
+                        // Games 式顶部高光：一条极淡的白，压在玻璃上边缘。
+                        shape.fill(LinearGradient(colors: [.white.opacity(0.30), .clear],
+                                                  startPoint: .top, endPoint: .center))
+                            .blendMode(.plusLighter)
                     }
-                    .shadow(color: Console.shadow, radius: 22, x: 0, y: 10)
+                    .overlay {
+                        shape.strokeBorder(Console.glassStroke, lineWidth: 1)
+                    }
+                    .shadow(color: Console.shadow, radius: 26, x: 0, y: 12)
             }
     }
 }
@@ -128,45 +149,84 @@ struct ConsolePillStyle: ButtonStyle {
 
     private var foreground: Color {
         switch tone {
-        case .primary, .danger, .success: return .white
-        case .secondary: return Console.text
-        case .soft: return Console.secondary
+        case .primary: return Console.inkForeground
+        case .danger: return Native.red
+        case .success: return Console.text
+        case .secondary, .soft: return Console.text
         }
     }
 
     private var background: AnyShapeStyle {
         switch tone {
         case .primary:
-            return AnyShapeStyle(LinearGradient(colors: [Console.accent, Console.accentDeep],
-                                                startPoint: .topLeading, endPoint: .bottomTrailing))
+            return AnyShapeStyle(Console.ink)
         case .danger:
-            return AnyShapeStyle(Native.red.opacity(0.14))
-        case .success:
-            return AnyShapeStyle(Native.green.opacity(0.16))
-        case .secondary:
-            return AnyShapeStyle(Console.inset)
+            return AnyShapeStyle(Native.red.opacity(0.12))
+        case .success, .secondary:
+            return AnyShapeStyle(Console.glassFill)
         case .soft:
-            return AnyShapeStyle(Console.inset.opacity(0.7))
+            return AnyShapeStyle(Console.glassGroup)
         }
     }
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: compact ? 11.5 : 12.5, weight: .semibold))
-            .foregroundStyle(tone == .danger ? Native.red : (tone == .success ? Native.green : foreground))
+            .foregroundStyle(foreground)
             .padding(.horizontal, compact ? 11 : 14)
-            .frame(height: compact ? 28 : 34)
+            .frame(height: compact ? 28 : 32)
             .background(background, in: Capsule())
             .overlay {
                 Capsule().strokeBorder(
-                    tone == .primary ? Color.white.opacity(0.22) : Console.insetStroke,
+                    tone == .primary ? Color.white.opacity(0.10) : Console.glassStroke,
                     lineWidth: 0.8)
             }
-            .shadow(color: tone == .primary ? Console.accent.opacity(0.28) : .clear,
-                    radius: 10, x: 0, y: 4)
+            .shadow(color: tone == .primary ? Console.shadow.opacity(0.5) : .clear,
+                    radius: 8, x: 0, y: 3)
             .opacity(isEnabled ? (configuration.isPressed ? 0.86 : 1) : 0.42)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(Motion.quick, value: configuration.isPressed)
+    }
+}
+
+/// Games app 风格的玻璃分段组：浅色/白色选中胶囊，未选中是灰字，选中态不用强调色。
+struct GamesSegmented<Value: Hashable>: View {
+    @Binding var selection: Value
+    var options: [(value: Value, label: String)]
+    var width: CGFloat? = nil
+
+    @Namespace private var pill
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(options, id: \.value) { option in
+                let active = selection == option.value
+                Button {
+                    withAnimation(.smooth(duration: 0.22)) { selection = option.value }
+                } label: {
+                    Text(option.label)
+                        .font(.system(size: 12.5, weight: active ? .semibold : .regular))
+                        .foregroundStyle(active ? Console.text : Console.secondary)
+                        .padding(.horizontal, 12)
+                        .frame(height: 28)
+                        .background {
+                            if active {
+                                Capsule()
+                                    .fill(Console.glassSelected)
+                                    .overlay(Capsule().strokeBorder(Console.glassStroke, lineWidth: 0.6))
+                                    .shadow(color: Console.shadow.opacity(0.7), radius: 6, y: 2)
+                                    .matchedGeometryEffect(id: "games.segment", in: pill)
+                            }
+                        }
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(Capsule().fill(Console.glassGroup))
+        .overlay(Capsule().strokeBorder(Console.glassStroke, lineWidth: 0.8))
+        .frame(width: width)
     }
 }
 

@@ -31,7 +31,7 @@ struct LogsPage: View {
 
     private var topBar: some View {
         HStack(spacing: 14) {
-            NativeSegmented(selection: $level, options: LogsFilter.allCases.map { item in
+            GamesSegmented(selection: $level, options: LogsFilter.allCases.map { item in
                 (item, "\(item.label) \((paused ? frozen : state.logs).filter { item.matches($0.level) }.count)")
             })
             .frame(width: 330)

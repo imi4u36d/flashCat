@@ -157,7 +157,7 @@ struct EnginesPage: View {
                         } label: {
                             Label("下载", systemImage: "arrow.down.circle.fill")
                         }
-                        .buttonStyle(ConsolePillStyle(tone: .primary))
+                        .buttonStyle(.consolePrimary)
                     } else if isActive {
                         Button {
                             state.toggleService()
@@ -165,7 +165,7 @@ struct EnginesPage: View {
                             Label(state.isRunning ? "停止" : "启动",
                                   systemImage: state.isRunning ? "stop.fill" : "play.fill")
                         }
-                        .buttonStyle(EngineColorButton(color: accent))
+                        .buttonStyle(.consolePrimary)
                         .disabled(state.isSwitchingModel)
                     } else {
                         Button {
@@ -173,7 +173,7 @@ struct EnginesPage: View {
                         } label: {
                             Label("启动", systemImage: "play.fill")
                         }
-                        .buttonStyle(EngineColorButton(color: accent))
+                        .buttonStyle(.consolePrimary)
                         .disabled(state.isSwitchingModel || busy)
                     }
 

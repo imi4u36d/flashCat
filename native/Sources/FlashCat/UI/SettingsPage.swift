@@ -48,7 +48,7 @@ struct SettingsPage: View {
     private var appearanceCard: some View {
         SettingsCard {
             SettingsRow(title: "外观", detail: "跟随系统或固定外观") {
-                NativeSegmented(selection: Binding(
+                GamesSegmented(selection: Binding(
                     get: { state.theme.mode },
                     set: { state.theme.set($0) }),
                     options: AppAppearance.allCases.map { ($0, $0.label) },
@@ -228,7 +228,7 @@ struct SettingsPage: View {
     private var thinkingCard: some View {
         SettingsCard {
             SettingsRow(title: "思考模式", detail: "回答前是否输出推理过程") {
-                NativeSegmented(selection: Binding(
+                GamesSegmented(selection: Binding(
                     get: { state.settings.thinkingMode },
                     set: { state.settings.setThinkingMode($0) }),
                     options: ThinkingMode.allCases.map { ($0, $0.label) },
@@ -266,7 +266,7 @@ struct SettingsPage: View {
             }
             Divider().overlay(Console.insetStroke)
             SettingsRow(title: "思考等级", detail: "等级由当前引擎提供") {
-                NativeSegmented(selection: Binding(
+                GamesSegmented(selection: Binding(
                     get: { state.settings.reasoningEffort },
                     set: { state.settings.setReasoningEffort($0) }),
                     options: ReasoningEffort.allCases.map { ($0, $0.label) },

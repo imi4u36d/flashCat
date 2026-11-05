@@ -76,8 +76,9 @@ struct ModelsPage: View {
 
     private var topBar: some View {
         HStack(spacing: 14) {
-            NativeSegmented(selection: $scope, options: [ModelScope.all] + EngineCatalog.allIDs.map { ModelScope.engine($0) },
-                            labels: ["全部"] + EngineCatalog.allIDs.map(\.displayName))
+            GamesSegmented(selection: $scope,
+                           options: [(ModelScope.all, "全部")]
+                               + EngineCatalog.allIDs.map { (ModelScope.engine($0), $0.displayName) })
                 .frame(maxWidth: 560)
             .background(Capsule().fill(Console.card.opacity(0.72)))
             .overlay(Capsule().strokeBorder(Console.cardStroke, lineWidth: 0.8))
@@ -286,7 +287,8 @@ private struct ModelCard: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Console.secondary)
                     .frame(width: 28, height: 28)
-                    .background(Circle().fill(Console.inset))
+                    .background(Circle().fill(Console.glassFill))
+                    .overlay(Circle().strokeBorder(Console.glassStroke, lineWidth: 0.8))
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)

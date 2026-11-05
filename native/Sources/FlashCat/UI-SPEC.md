@@ -40,7 +40,8 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 
 - **标题栏。** 一行 48pt：红绿灯留白、折叠边栏、当前引擎胶囊（状态点、名称、状态、实时 tok/s，点击启停）、
   命令面板入口（⌘K）、外观切换（⌘⇧A）、下载中心（带任务徽标）。对应 1.3 起 WebUI 的 titlebar。
-- **侧栏。** 216pt 展开 / 76pt 图标档，右缘可拖动改宽（180–320，落盘到 `sidebarWidth`）；
+- **侧栏。** 200pt 展开 / 76pt 图标档，收起按钮是 macOS 26 原生玻璃按钮（红绿灯右侧），
+  同时「显示」菜单与 ⌘\ 可用，右缘可拖动改宽（180–320，落盘到 `sidebarWidth`）；
   工作区六页 + 最近对话 + 引擎卡（启停与切换）。
 - **页面切换。** 220ms 淡入 + 8pt 上移；侧栏选中态用 `matchedGeometryEffect` 在行间滑动。
 - **动效。** `Motion.quick` 140ms 用于 hover/press，`Motion.standard` 220ms 用于页面与卡片状态，
@@ -48,9 +49,9 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 
 ## 控件
 
-- 互斥按钮组（引擎切换、日志级别、外观、思考模式与等级）统一使用 macOS 26 原生
-  `Picker(.segmented)`（`NativeSegmented`），由系统绘制 Liquid Glass 选中态；
-  其余主/次按钮仍用 `ConsolePillStyle` 以贴合 WebUI 的胶囊形。
+- 视觉参考 macOS 26 的 Games app：主按钮是墨色/白色高对比胶囊，次按钮是半透明玻璃胶囊，
+  互斥按钮组是玻璃容器 + 白色选中胶囊（`GamesSegmented`，不用系统强调色）；
+  卡片是带顶部高光的玻璃面，菜单用玻璃 popover（如 `ModelPickerPopover`）。
 
 ## 快捷键
 

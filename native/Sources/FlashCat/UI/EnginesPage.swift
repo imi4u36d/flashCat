@@ -164,26 +164,36 @@ private struct EngineCard: View {
     private var accent: Color { engineAccent(id) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            identityRow
-            Text(id.descriptor.summary)
-                .font(.system(size: 11.5))
-                .foregroundStyle(Native.secondary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-            capabilityRow
-            Hairline()
-            runtimeRow
-            upstreamRow
-            if busy { progressRow }
-            actionRow
+        HoverSurface(radius: Native.radiusPanel,
+                     accent: accent,
+                     active: isActive,
+                     padding: Native.cardPadding) {
+            VStack(alignment: .leading, spacing: 12) {
+                identityRow
+                Text(id.descriptor.summary)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Native.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                capabilityRow
+                Hairline()
+                runtimeRow
+                upstreamRow
+                if busy { progressRow }
+                actionRow
+            }
         }
-        .padding(Native.cardPadding)
-        .background { GlassSurface(radius: Native.radiusPanel) }
-        .overlay {
-            RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous)
-                .strokeBorder(isActive ? accent.opacity(0.5) : .clear, lineWidth: 1)
+        .overlay(alignment: .leading) {
+            if isActive {
+                Capsule()
+                    .fill(accent)
+                    .frame(width: 3)
+                    .padding(.vertical, 18)
+                    .padding(.leading, 2)
+                    .shadow(color: accent.opacity(0.55), radius: 4)
+            }
         }
+        .animation(Motion.standard, value: isActive)
     }
 
     private var identityRow: some View {

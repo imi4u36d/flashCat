@@ -6,10 +6,10 @@ import FlashCatKit
 struct ModelsPage: View {
     @ObservedObject var state: AppState
     let engine: EngineID
+    @Binding var showingHub: Bool
+    @Binding var showingDownloads: Bool
 
     @State private var filter: ModelsFilter = .all
-    @State private var showingHub = false
-    @State private var showingDownloads = false
     @State private var removeTarget: ModelLibraryEntry?
     @State private var device = DeviceProfile.current()
 
@@ -371,22 +371,19 @@ private struct ModelCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            header
-            tags
-            if entry.installed {
-                installedActions
-            } else {
-                downloadActions
+        HoverSurface(radius: Native.radiusPanel,
+                     accent: familyColor,
+                     active: selected,
+                     padding: Native.cardPadding) {
+            VStack(alignment: .leading, spacing: 10) {
+                header
+                tags
+                if entry.installed {
+                    installedActions
+                } else {
+                    downloadActions
+                }
             }
-        }
-        .padding(Native.cardPadding)
-        .background {
-            GlassSurface(radius: Native.radiusPanel)
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous)
-                .strokeBorder(selected ? Native.accent.opacity(0.55) : .clear, lineWidth: 1)
         }
     }
 
@@ -497,14 +494,34 @@ private struct ModelCard: View {
 
     private var installedActions: some View {
         HStack(spacing: 8) {
-            Button {
-                state.useModel(model.id, engine: entry.engine)
-            } label: {
-                Text(selected && entry.engine == state.activeEngine ? "已在使用" : "使用")
-                    .frame(maxWidth: .infinity)
+            if selected && entry.engine == state.activeEngine {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("正在使用")
+                        .font(.system(size: 12, weight: .semibold))
+                    Spacer(minLength: 0)
+                    Text(state.activeEngine.displayName)
+                        .font(Native.monoSmall)
+                        .foregroundStyle(Native.accent.opacity(0.75))
+                }
+                .foregroundStyle(Native.accent)
+                .padding(.horizontal, 12)
+                .frame(height: 32)
+                .frame(maxWidth: .infinity)
+                .background {
+                    Capsule().fill(Native.accent.opacity(0.10))
+                        .overlay(Capsule().strokeBorder(Native.accent.opacity(0.22), lineWidth: 0.8))
+                }
+            } else {
+                Button {
+                    state.useModel(model.id, engine: entry.engine)
+                } label: {
+                    Text("使用")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.arcadePill)
             }
-            .buttonStyle(.arcadePill)
-            .disabled(selected && entry.engine == state.activeEngine)
 
             if entry.engine == .omlx, !state.installedDraftIds(for: entry.engine).isEmpty {
                 draftMenu

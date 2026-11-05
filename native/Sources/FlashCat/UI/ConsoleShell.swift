@@ -9,43 +9,91 @@ import FlashCatKit
 /// 对象上，视图是它的纯函数。
 struct ConsoleView: View {
     @ObservedObject var state: AppState
+    @ObservedObject private var theme = AppState.shared.theme
+
+    @State private var showCommand = false
+    @State private var showDownloads = false
+    @State private var showHub = false
+    @AppStorage("sidebarWidth") private var sidebarWidth: Double = 216
+
+    private var resolvedSidebarWidth: CGFloat {
+        CGFloat(min(max(sidebarWidth, 180), 320))
+    }
 
     var body: some View {
-        ZStack(alignment: .leading) {
+        VStack(spacing: 0) {
+            ConsoleTitlebar(state: state,
+                            openCommand: { showCommand = true },
+                            openDownloads: { showDownloads = true })
+
             HStack(spacing: 0) {
                 if state.showsSidebar {
-                    ConsoleSidebar(state: state, collapsed: false)
-                        .frame(width: 216)
-                        .transition(.move(edge: .leading).combined(with: .opacity))
+                    ZStack(alignment: .trailing) {
+                        ConsoleSidebar(state: state, collapsed: false)
+                            .frame(width: resolvedSidebarWidth)
+                        SidebarResizeHandle(width: $sidebarWidth)
+                    }
+                    .transition(.move(edge: .leading).combined(with: .opacity))
                 } else {
                     ConsoleSidebar(state: state, collapsed: true)
                         .frame(width: 76)
                         .transition(.opacity)
                 }
 
-                VStack(spacing: 0) {
+                ZStack {
                     pageContent
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .id(state.section)
+                        .transition(.opacity.combined(with: .offset(y: 8)))
                 }
-                .background(Native.surface)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .animation(Motion.standard, value: state.section)
             }
             .animation(.easeInOut(duration: 0.22), value: state.showsSidebar)
         }
-        .background(Native.surface.ignoresSafeArea())
+        .background(PageBackdrop(accent: state.section.keyColor))
         .tint(Native.accent)
+        .preferredColorScheme(preferredScheme)
         .overlay(alignment: .bottom) {
             if let message = state.toastMessage {
                 ToastView(message: message)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .transition(.opacity.combined(with: .move(edge: .bottom)).combined(with: .scale(scale: 0.96)))
                     .onTapGesture { state.dismissToast() }
             }
         }
-        .animation(.easeOut(duration: 0.18), value: state.toastMessage)
+        .animation(Motion.entrance, value: state.toastMessage)
         .overlay {
             if state.isPresentingLaunchPage || state.showsRecommendationPage {
                 LaunchPage(state: state)
                     .transition(.opacity)
             }
+        }
+        .overlay {
+            if showCommand {
+                CommandPalette(state: state,
+                               openDownloads: { showDownloads = true },
+                               openHub: { showHub = true; state.section = .models },
+                               dismiss: { showCommand = false })
+                    .transition(.opacity)
+            }
+        }
+        .sheet(isPresented: $showDownloads) {
+            DownloadCenterSheet(state: state)
+        }
+        .sheet(isPresented: $showHub) {
+            HubSheet(state: state, engine: state.libraryEngine)
+        }
+        .background {
+            Group {
+                Button("") { showCommand = true }
+                    .keyboardShortcut("k", modifiers: .command)
+                Button("") {
+                    let dark = state.theme.mode.resolvedIsDark
+                    state.theme.set(dark ? .light : .dark)
+                }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+            }
+            .opacity(0)
+            .frame(width: 0, height: 0)
         }
         .animation(.easeOut(duration: 0.2), value: state.isPresentingLaunchPage || state.showsRecommendationPage)
         .alert("切换模型？", isPresented: modelSwitchShown) {
@@ -70,11 +118,22 @@ struct ConsoleView: View {
         }
     }
 
+    private var preferredScheme: ColorScheme? {
+        switch theme.mode {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+
     @ViewBuilder private var pageContent: some View {
         switch state.section {
         case .overview: OverviewPage(state: state)
         case .chat: ChatPage(state: state)
-        case .models: ModelsPage(state: state, engine: state.libraryEngine)
+        case .models: ModelsPage(state: state,
+                                 engine: state.libraryEngine,
+                                 showingHub: $showHub,
+                                 showingDownloads: $showDownloads)
         case .engines: EnginesPage(state: state, installs: state.installs)
         case .logs: LogsPage(state: state)
         case .settings: SettingsPage(state: state)
@@ -111,12 +170,14 @@ struct ConsoleSidebar: View {
     @ObservedObject var state: AppState
     var collapsed: Bool = false
 
+    @Namespace private var selection
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             brand
-                .padding(.horizontal, collapsed ? 12 : 14)
-                .padding(.top, 42)
-                .padding(.bottom, 14)
+                .padding(.horizontal, collapsed ? 10 : 14)
+                .padding(.top, 10)
+                .padding(.bottom, 12)
 
             if !collapsed {
                 Button {
@@ -143,7 +204,7 @@ struct ConsoleSidebar: View {
 
             if !collapsed {
                 recents
-                    .padding(.top, 14)
+                    .padding(.top, 16)
             }
 
             Spacer(minLength: 12)
@@ -153,12 +214,27 @@ struct ConsoleSidebar: View {
                 .padding(.bottom, 14)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Native.sidebar.ignoresSafeArea())
+        .background {
+            LinearGradient(colors: [Native.sidebar, Native.sidebar.opacity(0.92)],
+                           startPoint: .top, endPoint: .bottom)
+        }
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(Native.hairline.opacity(0.8))
+                .frame(width: 1)
+        }
+        .animation(Motion.standard, value: state.section)
     }
 
     private var brand: some View {
         HStack(spacing: 9) {
-            BrandMark(size: collapsed ? 30 : 34)
+            ZStack {
+                Circle()
+                    .fill(RadialGradient(colors: [Native.accent.opacity(0.22), .clear],
+                                         center: .center, startRadius: 2, endRadius: 26))
+                    .frame(width: 48, height: 48)
+                BrandMark(size: collapsed ? 28 : 32)
+            }
             if !collapsed {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("flashCat")
@@ -168,17 +244,9 @@ struct ConsoleSidebar: View {
                         .font(.system(size: 10))
                         .foregroundStyle(Native.tertiary)
                 }
-            }
-            Spacer(minLength: 0)
-            if !collapsed {
-                IconAction(systemName: "sidebar.left", help: "收起边栏（⌘\\）") {
-                    state.toggleSidebar()
-                }
-            }
-        }
-        .overlay(alignment: .leading) {
-            if collapsed {
-                EmptyView()
+                Spacer(minLength: 0)
+            } else {
+                Spacer(minLength: 0)
             }
         }
     }
@@ -187,59 +255,19 @@ struct ConsoleSidebar: View {
         VStack(spacing: 2) {
             if !collapsed {
                 Eyebrow(text: "工作区")
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 4)
+                    .padding(.horizontal, 9)
+                    .padding(.bottom, 5)
             }
             ForEach(Page.allCases) { page in
-                navRow(page)
-            }
-        }
-    }
-
-    private func navRow(_ page: Page) -> some View {
-        let active = state.section == page
-        return Button {
-            state.section = page
-        } label: {
-            HStack(spacing: 9) {
-                Image(systemName: page.symbol)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(active ? Native.accent : Native.secondary)
-                    .frame(width: 18)
-                if !collapsed {
-                    Text(page.rawValue)
-                        .font(.system(size: 12.5, weight: active ? .semibold : .regular))
-                        .foregroundStyle(active ? Native.label : Native.secondary)
-                    Spacer(minLength: 4)
-                    if page == .models, modelCount > 0 {
-                        Text(verbatim: "\(modelCount)")
-                            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(Native.tertiary)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(Native.overlay(0.06)))
-                    }
+                SidebarNavRow(page: page,
+                              active: state.section == page,
+                              collapsed: collapsed,
+                              badge: page == .models ? modelCount : 0,
+                              namespace: selection) {
+                    state.section = page
                 }
             }
-            .padding(.horizontal, collapsed ? 0 : 8)
-            .frame(height: 30)
-            .frame(maxWidth: collapsed ? .infinity : .infinity, alignment: collapsed ? .center : .leading)
-            .background {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(active ? Native.overlay(0.08) : Color.clear)
-            }
-            .overlay(alignment: .leading) {
-                if active {
-                    Capsule()
-                        .fill(Native.accent)
-                        .frame(width: 2.5, height: 14)
-                        .padding(.leading, 1)
-                }
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .buttonStyle(.plain)
-        .help(page.rawValue)
     }
 
     private var modelCount: Int {
@@ -249,46 +277,32 @@ struct ConsoleSidebar: View {
     }
 
     private var recents: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 1) {
             Eyebrow(text: "最近对话")
                 .padding(.horizontal, 10)
-                .padding(.bottom, 4)
+                .padding(.bottom, 5)
             ForEach(state.threads.prefix(6)) { thread in
-                Button {
+                SidebarRecentRow(title: thread.title,
+                                 active: state.currentThreadID == thread.id) {
                     state.openThread(thread)
                     state.section = .chat
-                } label: {
-                    HStack(spacing: 7) {
-                        Image(systemName: "clock")
-                            .font(.system(size: 9))
-                            .foregroundStyle(Native.tertiary.opacity(0.8))
-                        Text(thread.title)
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(state.currentThreadID == thread.id ? Native.label : Native.secondary)
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 10)
-                    .frame(height: 26)
-                    .background {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(state.currentThreadID == thread.id ? Native.overlay(0.06) : .clear)
-                    }
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .help(thread.title)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var engineCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                StatusDot(color: statusColor(state.serverState),
-                          diameter: 7,
-                          pulsing: state.isRunning)
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 7) {
+                if state.isRunning {
+                    LiveDot(color: statusColor(state.serverState), diameter: 7)
+                } else {
+                    Circle()
+                        .fill(statusColor(state.serverState))
+                        .frame(width: 7, height: 7)
+                        .padding(.horizontal, 3.5)
+                }
                 if !collapsed {
                     Text(state.activeEngine.displayName)
                         .font(.system(size: 12, weight: .semibold))
@@ -298,6 +312,8 @@ struct ConsoleSidebar: View {
                     Text(state.isRunning ? "运行中" : state.serverState == .starting ? "启动中" : "已停止")
                         .font(.system(size: 10))
                         .foregroundStyle(Native.tertiary)
+                } else {
+                    Spacer(minLength: 0)
                 }
             }
 
@@ -356,14 +372,317 @@ struct ConsoleSidebar: View {
                 .help(state.isRunning ? "停止引擎" : "启动引擎")
             }
         }
-        .padding(collapsed ? 8 : 10)
+        .padding(collapsed ? 9 : 11)
         .background {
-            RoundedRectangle(cornerRadius: Native.radiusTile, style: .continuous)
+            let shape = RoundedRectangle(cornerRadius: Native.radiusTile, style: .continuous)
+            shape
                 .fill(Native.canvas)
                 .overlay {
-                    RoundedRectangle(cornerRadius: Native.radiusTile, style: .continuous)
-                        .strokeBorder(Native.hairline, lineWidth: 1)
+                    shape.fill(statusColor(state.serverState).opacity(state.isRunning ? 0.055 : 0))
                 }
+                .overlay {
+                    shape.strokeBorder(state.isRunning
+                                       ? statusColor(state.serverState).opacity(0.28)
+                                       : Native.hairline,
+                                       lineWidth: 1)
+                }
+                .shadow(color: Native.panelShadow.opacity(state.isRunning ? 0.9 : 0),
+                        radius: 10, y: 3)
         }
+        .animation(Motion.standard, value: state.isRunning)
+    }
+}
+
+// MARK: - Sidebar rows
+
+private struct SidebarNavRow: View {
+    let page: Page
+    let active: Bool
+    let collapsed: Bool
+    let badge: Int
+    let namespace: Namespace.ID
+    let action: () -> Void
+
+    @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                Image(systemName: page.symbol)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(active ? page.keyColor : Native.secondary)
+                    .frame(width: 18)
+                    .symbolRenderingMode(.hierarchical)
+                if !collapsed {
+                    Text(page.rawValue)
+                        .font(.system(size: 12.5, weight: active ? .semibold : .regular))
+                        .foregroundStyle(active ? Native.label : Native.secondary)
+                    Spacer(minLength: 4)
+                    if badge > 0 {
+                        Text(verbatim: "\(badge)")
+                            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(active ? Native.accent : Native.tertiary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Native.overlay(active ? 0.08 : 0.05)))
+                    }
+                }
+            }
+            .padding(.horizontal, collapsed ? 0 : 9)
+            .frame(height: 31)
+            .frame(maxWidth: .infinity, alignment: collapsed ? .center : .leading)
+            .background {
+                if active {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(LinearGradient(colors: [page.keyColor.opacity(0.16),
+                                                      page.keyColor.opacity(0.05)],
+                                             startPoint: .leading, endPoint: .trailing))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(page.keyColor.opacity(0.20), lineWidth: 0.8)
+                        }
+                        .matchedGeometryEffect(id: "nav.selection", in: namespace)
+                } else if hovering {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Native.overlay(0.05))
+                }
+            }
+            .overlay(alignment: .leading) {
+                if active {
+                    Capsule()
+                        .fill(page.keyColor)
+                        .frame(width: 2.5, height: 15)
+                        .padding(.leading, 1)
+                        .shadow(color: page.keyColor.opacity(0.6), radius: 3)
+                }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help(page.rawValue)
+        .onHover { value in
+            guard !reduceMotion else { hovering = value; return }
+            withAnimation(Motion.quick) { hovering = value }
+        }
+        .animation(Motion.quick, value: active)
+    }
+}
+
+private struct SidebarRecentRow: View {
+    let title: String
+    let active: Bool
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: "clock")
+                    .font(.system(size: 9))
+                    .foregroundStyle(Native.tertiary.opacity(0.8))
+                Text(title)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(active ? Native.label : Native.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 27)
+            .background {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(active ? Native.overlay(0.07)
+                                 : (hovering ? Native.overlay(0.035) : Color.clear))
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help(title)
+        .onHover { value in
+            withAnimation(Motion.quick) { hovering = value }
+        }
+    }
+}
+
+
+// MARK: - Window chrome
+
+/// 拖拽空白处移动窗口：SwiftUI 的 hiddenTitleBar 窗口默认没有可拖区域。
+struct WindowDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { DragView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class DragView: NSView {
+        override var mouseDownCanMoveWindow: Bool { true }
+        override func mouseDown(with event: NSEvent) {
+            window?.performDrag(with: event)
+        }
+    }
+}
+
+/// 标题栏：折叠边栏、当前引擎、外观与下载中心。对应 WebUI 的 titlebar 一行。
+struct ConsoleTitlebar: View {
+    @ObservedObject var state: AppState
+    var openCommand: () -> Void
+    var openDownloads: () -> Void
+
+    @State private var hoveringEngine = false
+
+    private var rate: Double {
+        state.liveDecodeRate ?? state.stats?.decodeTokensPerSecond ?? 0
+    }
+
+    private var downloadCount: Int {
+        state.downloadTasks.count + (state.downloadingModel == nil ? 0 : 1)
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Color.clear.frame(width: 66, height: 1)
+
+            IconAction(systemName: "sidebar.left",
+                       help: state.showsSidebar ? "折叠边栏（⌘\\）" : "展开边栏（⌘\\）",
+                       active: false) {
+                state.toggleSidebar()
+            }
+
+            engineControl
+
+            Spacer(minLength: 8)
+
+            Button(action: openCommand) {
+                HStack(spacing: 5) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("命令")
+                        .font(.system(size: 11))
+                    Text("⌘K")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Native.tertiary)
+                }
+                .foregroundStyle(Native.secondary)
+                .padding(.horizontal, 10)
+                .frame(height: 26)
+                .background(Capsule().fill(Native.overlay(0.05)))
+                .overlay(Capsule().strokeBorder(Native.hairline, lineWidth: 0.8))
+            }
+            .buttonStyle(.plain)
+            .help("命令面板（⌘K）")
+
+            IconAction(systemName: state.theme.mode.resolvedIsDark ? "sun.max" : "moon",
+                       help: "切换外观（⌘⇧A）") {
+                state.theme.set(state.theme.mode.resolvedIsDark ? .light : .dark)
+            }
+
+            Button(action: openDownloads) {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: "arrow.down.circle")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Native.label.opacity(0.82))
+                        .frame(width: 30, height: 30)
+                        .background(Circle().fill(Native.overlay(0.07)))
+                        .overlay(Circle().stroke(Native.hairline, lineWidth: 1))
+                    if downloadCount > 0 {
+                        Text(verbatim: "\(downloadCount)")
+                            .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Native.accent))
+                            .offset(x: 4, y: -3)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .help("下载中心")
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 48)
+        .background {
+            Rectangle()
+                .fill(Native.surface.opacity(0.72))
+                .overlay(alignment: .bottom) {
+                    Rectangle().fill(Native.hairline.opacity(0.7)).frame(height: 1)
+                }
+                .background(WindowDragArea())
+        }
+    }
+
+    private var engineControl: some View {
+        Button {
+            state.toggleService()
+        } label: {
+            HStack(spacing: 7) {
+                if state.isRunning {
+                    LiveDot(color: statusColor(state.serverState), diameter: 6)
+                } else {
+                    Circle()
+                        .fill(statusColor(state.serverState))
+                        .frame(width: 6, height: 6)
+                        .padding(.horizontal, 3)
+                }
+                Text(state.activeEngine.displayName)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(Native.label)
+                Text(state.isRunning ? "运行中" : state.serverState == .starting ? "启动中" : "已停止")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Native.tertiary)
+                if state.isRunning {
+                    Rectangle()
+                        .fill(Native.hairline)
+                        .frame(width: 1, height: 11)
+                    Text("\(Format.compact(rate)) tok/s")
+                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Native.accent)
+                }
+                if hoveringEngine {
+                    Image(systemName: state.isRunning ? "stop.fill" : "play.fill")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(state.isRunning ? Native.red : Native.green)
+                }
+            }
+            .padding(.horizontal, 11)
+            .frame(height: 28)
+            .background(Capsule().fill(Native.overlay(hoveringEngine ? 0.09 : 0.05)))
+            .overlay(Capsule().strokeBorder(Native.hairline, lineWidth: 0.8))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { value in
+            withAnimation(Motion.quick) { hoveringEngine = value }
+        }
+        .disabled(state.isSwitchingModel || state.runtimeMissing != nil)
+        .help(state.isRunning ? "停止引擎" : "启动引擎")
+    }
+
+
+}
+
+
+/// 边栏右缘的拖拽手柄：宽度 180–320，落盘到 UserDefaults。
+struct SidebarResizeHandle: View {
+    @Binding var width: Double
+    @State private var startWidth: Double?
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.clear)
+            .frame(width: 7)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        let base = startWidth ?? width
+                        if startWidth == nil { startWidth = width }
+                        width = min(max(base + Double(value.translation.width), 180), 320)
+                    }
+                    .onEnded { _ in startWidth = nil }
+            )
+            .help("拖动调整边栏宽度")
     }
 }

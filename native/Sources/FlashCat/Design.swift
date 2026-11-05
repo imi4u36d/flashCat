@@ -27,6 +27,8 @@ enum Native {
     // Canvas —— 页面画布（纯白 / 暖石墨）。日间不带暖调：白就是白，
     // 卡片靠 1px 描边分层，不再靠米色底和白色面板的色差。
     static let surface = Color.adaptive(dark: 0x16130F, light: 0xFFFFFF)
+    /// 画布底部一档更沉的色，给页面一点纵向深度（不是玻璃，只是极小渐变）。
+    static let surfaceDeep = Color.adaptive(dark: 0x0F0D0B, light: 0xF6F6F8)
     // Panel —— 卡片面板（纯色，靠描边分层而非玻璃+投影）
     static let canvas = Color.adaptive(dark: 0x1E1A15, light: 0xFFFFFF)
     static let sidebar = Color.adaptive(dark: 0x1A1611, light: 0xF6F6F8)
@@ -138,15 +140,37 @@ extension View {
 
 // MARK: - Page backdrop
 
-/// Page backdrop: a single warm canvas — the instrument direction keeps the
-/// page quiet so status and numbers are the loudest elements.
+/// Page backdrop: a near-neutral vertical wash plus one soft accent glow in the
+/// top-trailing corner. The glow is at 4–8 % so it reads as light, not colour —
+/// status and numbers stay the loudest elements.
+struct PageBackdrop: View {
+    var accent: Color = Native.accent
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        ZStack {
+            LinearGradient(colors: [Native.surface, Native.surfaceDeep],
+                           startPoint: .top, endPoint: .bottom)
+            RadialGradient(colors: [accent.opacity(scheme == .dark ? 0.10 : 0.055), .clear],
+                           center: UnitPoint(x: 0.86, y: -0.12),
+                           startRadius: 0,
+                           endRadius: 640)
+            RadialGradient(colors: [Native.blue.opacity(scheme == .dark ? 0.05 : 0.028), .clear],
+                           center: UnitPoint(x: -0.05, y: 1.05),
+                           startRadius: 0,
+                           endRadius: 560)
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+}
+
+/// 旧调用点兼容：忽略颜色，只保留画布。
 struct ArcadeBackdrop: View {
     var colors: [Color]
 
     var body: some View {
-        Native.surface
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
+        PageBackdrop()
     }
 }
 
@@ -171,6 +195,86 @@ struct GlassSurface: View {
             .overlay(
                 shape.strokeBorder(Native.hairline, lineWidth: 1)
             )
+    }
+}
+
+// MARK: - Motion
+
+/// 统一的动效节奏。交互反馈 140 ms，页面/浮层 220 ms，入场用轻弹簧。
+/// 所有自定义动画都从这里取，避免每个视图各写一套时长。
+enum Motion {
+    static let quick = Animation.easeOut(duration: 0.14)
+    static let standard = Animation.easeOut(duration: 0.22)
+    static let entrance = Animation.spring(response: 0.34, dampingFraction: 0.86)
+    static let pulse = Animation.easeInOut(duration: 1.6).repeatForever(autoreverses: true)
+}
+
+/// 运行中的呼吸点：一圈向外扩散的淡光 + 实心点。比静态圆点更能表达「活着」，
+/// 但只在引擎真的运行时出现。
+struct LiveDot: View {
+    var color: Color = Native.green
+    var diameter: CGFloat = 8
+    @State private var expand = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(color.opacity(0.30))
+                .frame(width: diameter * 2, height: diameter * 2)
+                .scaleEffect(expand ? 1.0 : 0.45)
+                .opacity(expand ? 0 : 0.9)
+            Circle()
+                .fill(color)
+                .frame(width: diameter, height: diameter)
+                .shadow(color: color.opacity(0.55), radius: 3)
+        }
+        .frame(width: diameter * 2, height: diameter * 2)
+        .onAppear {
+            withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) {
+                expand = true
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// 可交互的卡片表面：hover 时轻微提亮、描边染上强调色并浮起 1–2 pt；
+/// `active` 用更强的强调色边与底色标记「当前」。动效服从 reduce-motion。
+struct HoverSurface<Content: View>: View {
+    var radius: CGFloat = Native.radiusPanel
+    var accent: Color = Native.accent
+    var active: Bool = false
+    var padding: CGFloat? = nil
+    @ViewBuilder var content: () -> Content
+
+    @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        content()
+            .padding(padding ?? 0)
+            .background {
+                let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+                shape
+                    .fill(Native.canvas)
+                    .overlay {
+                        shape.fill(accent.opacity(active ? 0.055 : (hovering ? 0.022 : 0)))
+                    }
+                    .overlay {
+                        shape.strokeBorder(
+                            active ? accent.opacity(0.5)
+                                   : (hovering ? accent.opacity(0.26) : Native.hairline),
+                            lineWidth: 1)
+                    }
+                    .shadow(color: Native.panelShadow.opacity(hovering ? 1 : (active ? 0.7 : 0)),
+                            radius: hovering ? 14 : 8,
+                            y: hovering ? 5 : 2)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .onHover { value in
+                guard !reduceMotion else { hovering = value; return }
+                withAnimation(Motion.quick) { hovering = value }
+            }
     }
 }
 
@@ -570,6 +674,7 @@ struct MetricCard: View {
     var hint: String? = nil
     var hero: Bool = false
     var loading: Bool = false
+    @State private var hovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -622,9 +727,17 @@ struct MetricCard: View {
             let shape = RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous)
             shape.fill(hero ? Native.accentSoft : Native.canvas)
                 .overlay {
-                    shape.strokeBorder(hero ? Native.accent.opacity(0.28) : Native.hairline,
+                    shape.fill(Native.accent.opacity(hovering ? 0.035 : 0))
+                }
+                .overlay {
+                    shape.strokeBorder(hero ? Native.accent.opacity(0.28)
+                                            : (hovering ? Native.accent.opacity(0.22) : Native.hairline),
                                        lineWidth: 1)
                 }
+                .shadow(color: Native.panelShadow.opacity(hovering ? 0.9 : 0), radius: 10, y: 3)
+        }
+        .onHover { value in
+            withAnimation(Motion.quick) { hovering = value }
         }
         .animation(.easeOut(duration: 0.2), value: loading)
     }
@@ -1067,4 +1180,29 @@ func healthTone(_ stats: ServerStats?) -> (label: String, tone: TagTone) {
     if stats.memoryPressure == "warning" { return ("内存偏高", .warning) }
     if let thermal = stats.thermal, thermal != "nominal" { return (stats.thermalText, .warning) }
     return ("正常", .success)
+}
+
+// MARK: - Page identity
+
+extension Page {
+    /// Two-stop key colour used by the sidebar selection, the page wash and the
+    /// empty-state illustration. The canvas itself stays neutral.
+    var keyColors: [Color] {
+        switch self {
+        case .overview:
+            return [Color(hex: 0xFF9F0A), Color(hex: 0xFF375F), Color(hex: 0x7B2CBF)]
+        case .chat:
+            return [Color(hex: 0x7C5CFF), Color(hex: 0x0A84FF), Color(hex: 0x00C7BE)]
+        case .models:
+            return [Color(hex: 0x30D158), Color(hex: 0x00C7BE), Color(hex: 0x0A84FF)]
+        case .engines:
+            return [Color(hex: 0x0A84FF), Color(hex: 0x30D158), Color(hex: 0x00C7BE)]
+        case .logs:
+            return [Color(hex: 0xFFD60A), Color(hex: 0xFF9F0A), Color(hex: 0xFF453A)]
+        case .settings:
+            return [Color(hex: 0x5E5CE6), Color(hex: 0xBF5AF2), Color(hex: 0xFF375F)]
+        }
+    }
+
+    var keyColor: Color { keyColors.first ?? Native.accent }
 }

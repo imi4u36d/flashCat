@@ -56,11 +56,15 @@ struct OverviewPage: View {
                     }
                 }
 
-                statusStrip
                 heroRow
                 metricsGrid
                 HStack(alignment: .top, spacing: Native.gap) {
                     throughputCard
+                    acceptanceCard
+                }
+
+                HStack(alignment: .top, spacing: Native.gap) {
+                    sessionsCard
                     VStack(spacing: Native.gap) {
                         contextCard
                         endpointCard
@@ -77,24 +81,15 @@ struct OverviewPage: View {
 
     // MARK: Status
 
-    private var statusStrip: some View {
-        StatusStrip(
-            dotColor: statusColor(state.serverState),
-            statusText: statusText,
-            pulsing: state.serverState == .starting || state.serverState == .stopping,
-            meta: statusMeta,
-            hint: state.isSwitchingModel ? state.switchStage : nil,
-            failure: state.failureMessage
-        )
-    }
-
     private var statusText: String {
         if state.isSwitchingModel {
             return "切换模型中 · \(state.switchStage.isEmpty ? "准备中" : state.switchStage)"
         }
         switch state.serverState {
         case .ready: return "运行中"
-        case .starting: return "启动中 · \(state.startupStage)"
+        case .starting:
+            let stage = state.startupStage
+            return stage == "启动中" || stage.isEmpty ? "启动中" : "启动中 · \(stage)"
         case .stopping: return "停止中"
         case .failed: return "启动失败"
         case .stopped: return "已停止"
@@ -122,39 +117,150 @@ struct OverviewPage: View {
     // MARK: Hero
 
     private var heroRow: some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Eyebrow(text: "CURRENT MODEL")
-                Text(modelTitle)
-                    .font(.system(size: 26, weight: .bold))
-                    .foregroundStyle(Native.label)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+        HStack(alignment: .center, spacing: 18) {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(spacing: 7) {
+                    if state.isRunning {
+                        LiveDot(color: statusColor(state.serverState), diameter: 7)
+                    } else {
+                        Circle()
+                            .fill(statusColor(state.serverState))
+                            .frame(width: 7, height: 7)
+                            .padding(.horizontal, 3.5)
+                    }
+                    Text(statusText)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Native.secondary)
+                        .contentTransition(.opacity)
+                    Text(verbatim: "·")
+                        .foregroundStyle(Native.tertiary.opacity(0.6))
+                    Text(verbatim: "\(state.activeEngine.displayName) \(state.engineVersion)")
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(Native.tertiary)
+                }
+
+                HStack(spacing: 8) {
+                    Text(modelTitle)
+                        .font(.system(size: 30, weight: .bold))
+                        .tracking(-0.6)
+                        .foregroundStyle(Native.label)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .contentTransition(.opacity)
+                    modelMenu
+                }
+
                 Text(state.selectedModel.isEmpty ? "在模型页选择一个本机权重" : state.selectedModel)
                     .font(Native.monoFont)
                     .foregroundStyle(Native.tertiary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .textSelection(.enabled)
+
+                HStack(spacing: 6) {
+                    Tag(text: "端口 \(state.port)", tone: .neutral, icon: "number")
+                    Tag(text: state.speculativeMode.headName.isEmpty ? "无投机解码" : state.speculativeMode.headName,
+                        tone: state.speculativeMode.headName.isEmpty ? .neutral : .accent,
+                        icon: "bolt.fill")
+                    if let window = state.contextWindowCeiling {
+                        Tag(text: "窗口 \(Format.tokens(window))", tone: .neutral)
+                    }
+                    if let started = stats?.startedAt, started > 0, state.isRunning {
+                        Tag(text: "已运行 \(elapsedText(since: started))", tone: .neutral, icon: "clock")
+                    }
+                }
+                .padding(.top, 2)
             }
+
             Spacer(minLength: 12)
-            VStack(alignment: .trailing, spacing: 4) {
+
+            VStack(alignment: .trailing, spacing: 5) {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(Format.compact(decodeRate))
-                        .font(.system(size: 34, weight: .bold, design: .monospaced))
+                        .font(.system(size: 42, weight: .bold, design: .monospaced))
                         .foregroundStyle(Native.metricNum)
                         .contentTransition(.numericText())
+                        .animation(Motion.standard, value: decodeRate)
                     Text("tok/s")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(Native.tertiary)
                 }
+                Sparkline(samples: Array(samples.suffix(48)),
+                          color: Native.accent)
+                    .frame(width: 132, height: 30)
+                    .opacity(samples.isEmpty ? 0.25 : 1)
                 Text("当前解码速度")
-                    .font(.system(size: 10.5))
+                    .font(.system(size: 10))
                     .foregroundStyle(Native.tertiary)
             }
         }
-        .padding(16)
-        .background { GlassSurface(radius: Native.radiusHero) }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 20)
+        .background {
+            let shape = RoundedRectangle(cornerRadius: Native.radiusHero, style: .continuous)
+            shape
+                .fill(LinearGradient(colors: [Native.canvas, Native.accentSoft.opacity(0.55)],
+                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+                .overlay {
+                    RadialGradient(colors: [Native.accent.opacity(0.10), .clear],
+                                   center: UnitPoint(x: 0.92, y: 0.05),
+                                   startRadius: 0, endRadius: 360)
+                }
+                .overlay {
+                    shape.fill(LinearGradient(colors: [.white.opacity(AppAppearance.isDark ? 0.03 : 0.5), .clear],
+                                              startPoint: .top, endPoint: .center))
+                }
+                .overlay {
+                    shape.strokeBorder(Native.hairline, lineWidth: 1)
+                }
+                .shadow(color: Native.panelShadow, radius: 18, y: 6)
+        }
+        .animation(Motion.standard, value: state.isRunning)
+        .overlay(alignment: .bottomLeading) {
+            if let failure = state.failureMessage {
+                Text(failure)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Native.red)
+                    .padding(.horizontal, 22)
+                    .padding(.bottom, 10)
+                    .transition(.opacity)
+            }
+        }
+    }
+
+    private var modelMenu: some View {
+        Menu {
+            ForEach(EngineCatalog.allIDs.filter { state.engineIsInstalled($0) }, id: \.self) { id in
+                let models = state.engineModels(for: id)
+                    .filter { !$0.hidden && !$0.helper && !ModelLibraryEntry.isDraftModel($0.id) }
+                if !models.isEmpty {
+                    Section(id.displayName) {
+                        ForEach(models) { model in
+                            Button {
+                                state.applyModelFromAnyEngine(model.id, engine: id)
+                            } label: {
+                                if model.id == state.selectedModel, id == state.activeEngine {
+                                    Label(state.shortModelName(model.id), systemImage: "checkmark")
+                                } else {
+                                    Text(state.shortModelName(model.id))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(Native.secondary)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(Native.overlay(0.06)))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("切换模型")
+        .disabled(state.isSwitchingModel)
     }
 
     // MARK: Metrics
@@ -290,6 +396,151 @@ struct OverviewPage: View {
 
     // MARK: Context + endpoint
 
+    private var acceptanceCard: some View {
+        let samples = state.recentAcceptance(window: 0)
+        let latest = samples.last?.value
+        return Card("DFlash2 接受率",
+                    subtitle: "最近两分钟的草稿接受率；没有采样时保持空态",
+                    trailing: latest.map { AnyView(
+                        Text("\(Int(($0 * 100).rounded()))%")
+                            .font(Native.monoSmall)
+                            .foregroundStyle(Native.secondary)
+                    ) }) {
+            if samples.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "percent")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(Native.tertiary.opacity(0.8))
+                    Text("生成一次带草稿加速的回复后，这里会显示接受率曲线")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Native.tertiary)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 168)
+            } else {
+                Chart(samples) { sample in
+                    AreaMark(x: .value("时间", sample.at),
+                             y: .value("接受率", sample.value))
+                        .interpolationMethod(.monotone)
+                        .foregroundStyle(
+                            LinearGradient(colors: [Native.mint.opacity(0.22), .clear],
+                                           startPoint: .top, endPoint: .bottom))
+                    LineMark(x: .value("时间", sample.at),
+                             y: .value("接受率", sample.value))
+                        .interpolationMethod(.monotone)
+                        .foregroundStyle(Native.mint)
+                        .lineStyle(StrokeStyle(lineWidth: 2))
+                }
+                .chartYScale(domain: 0...1)
+                .chartXAxis(.hidden)
+                .chartYAxis {
+                    AxisMarks(position: .leading, values: [0, 0.5, 1]) { value in
+                        AxisGridLine().foregroundStyle(Native.hairline)
+                        AxisValueLabel {
+                            if let raw = value.as(Double.self) {
+                                Text(verbatim: "\(Int(raw * 100))%")
+                                    .font(.system(size: 9.5, design: .monospaced))
+                                    .foregroundStyle(Native.tertiary)
+                            }
+                        }
+                    }
+                }
+                .frame(height: 168)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var sessionsCard: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            let sessions = GatewayMeter.shared.snapshot().suffix(6).reversed()
+            Card("会话", subtitle: "网关侧按请求打点：解码、首字与上下文") {
+                if sessions.isEmpty {
+                    HStack(spacing: 8) {
+                        Image(systemName: "point.3.connected.trianglepath.dotted")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Native.tertiary)
+                        Text("通过接口发送请求后，这里会逐条显示会话")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Native.tertiary)
+                        Spacer(minLength: 0)
+                    }
+                    .frame(height: 34)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(sessions.enumerated()), id: \.offset) { index, session in
+                            sessionRow(session)
+                            if index != sessions.count - 1 { Hairline() }
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .top)
+    }
+
+    private func sessionRow(_ session: [String: Any]) -> some View {
+        let state = session["state"] as? String ?? "decode"
+        let model = (session["model"] as? String) ?? "未命名"
+        let decode = session["decodeRate"] as? Double ?? 0
+        let prefill = session["prefillRate"] as? Double ?? 0
+        let ttft = session["ttft"] as? Double
+        let ctx = session["ctxTokens"] as? Int ?? 0
+        return HStack(spacing: 9) {
+            Circle()
+                .fill(sessionColor(state))
+                .frame(width: 6, height: 6)
+            Text(stateLabel(state))
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundStyle(sessionColor(state))
+                .frame(width: 52, alignment: .leading)
+            Text(shortModel(model))
+                .font(.system(size: 11.5))
+                .foregroundStyle(Native.label)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 8)
+            Text("\(Format.compact(decode)) tok/s")
+                .font(Native.monoSmall)
+                .foregroundStyle(Native.secondary)
+            Text("预 \(Format.compact(prefill))")
+                .font(Native.monoSmall)
+                .foregroundStyle(Native.tertiary)
+                .frame(width: 62, alignment: .trailing)
+            Text(ttft.map { String(format: "首字 %.0f ms", $0) } ?? "首字 —")
+                .font(Native.monoSmall)
+                .foregroundStyle(Native.tertiary)
+                .frame(width: 82, alignment: .trailing)
+            Text("\(Format.tokens(ctx)) ctx")
+                .font(Native.monoSmall)
+                .foregroundStyle(Native.tertiary)
+                .frame(width: 76, alignment: .trailing)
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func sessionColor(_ state: String) -> Color {
+        switch state {
+        case "decode": return Native.green
+        case "prefill": return Native.blue
+        case "failed": return Native.red
+        default: return Native.gray
+        }
+    }
+
+    private func stateLabel(_ state: String) -> String {
+        switch state {
+        case "decode": return "解码中"
+        case "prefill": return "预填充"
+        case "failed": return "失败"
+        default: return "已完成"
+        }
+    }
+
+    private func shortModel(_ id: String) -> String {
+        state.shortModelName(id)
+    }
+
     private var contextCard: some View {
         let used = state.contextUsedTokens
         let total = state.contextWindowCeiling ?? 0
@@ -376,5 +627,34 @@ struct OverviewPage: View {
                 .foregroundStyle(Native.tertiary)
                 .lineLimit(2)
         }
+    }
+}
+
+
+// MARK: - Sparkline
+
+/// 极小的趋势线：最近 48 个采样，没有数据时就是一条平线。
+private struct Sparkline: View {
+    let samples: [ThroughputSample]
+    var color: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let height = proxy.size.height
+            let peak = max(samples.map(\.value).max() ?? 1, 1)
+            let step = samples.count > 1 ? width / CGFloat(samples.count - 1) : width
+            Path { path in
+                for (index, sample) in samples.enumerated() {
+                    let x = CGFloat(index) * step
+                    let y = height - CGFloat(sample.value / peak) * (height - 4) - 2
+                    if index == 0 { path.move(to: CGPoint(x: x, y: y)) }
+                    else { path.addLine(to: CGPoint(x: x, y: y)) }
+                }
+            }
+            .stroke(color.opacity(samples.isEmpty ? 0.35 : 0.9),
+                    style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
+        }
+        .accessibilityHidden(true)
     }
 }

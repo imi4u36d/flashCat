@@ -28,6 +28,10 @@ struct HubSheet: View {
                 detailPane.frame(maxWidth: .infinity)
             }
             Hairline()
+            if !state.repoProbeRepo.isEmpty {
+                probeRow
+                Hairline()
+            }
             footer
         }
         .frame(width: 1020, height: 700)
@@ -503,11 +507,59 @@ struct HubSheet: View {
         .padding(.vertical, 12)
     }
 
+    private var probeRow: some View {
+        HStack(spacing: 8) {
+            if state.repoProbeLoading {
+                ProgressView().controlSize(.small)
+                Text("检查 \(state.repoProbeRepo)…")
+                    .font(Native.monoSmall)
+                    .foregroundStyle(Native.secondary)
+            } else if let error = state.repoProbeError, !error.isEmpty {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Native.orange)
+                Text(error)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Native.orange)
+                    .lineLimit(1)
+            } else if let probe = state.repoProbe {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Native.green)
+                Text(probe.id)
+                    .font(Native.monoSmall)
+                    .foregroundStyle(Native.secondary)
+                if let size = probe.sizeBytes, size > 0 {
+                    Tag(text: Format.size(Int(clamping: size)), tone: .neutral)
+                }
+                Tag(text: probe.recommendedEngine.label, tone: .accent)
+                if state.repoIsLocal(probe.id) {
+                    Tag(text: "已在本机", tone: .success)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Native.pagePadding)
+        .padding(.vertical, 6)
+        .background(Native.recess.opacity(0.6))
+        .task(id: directRepo) {
+            let repo = directRepo.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard repo.contains("/") else {
+                state.clearRepoProbe()
+                return
+            }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
+            state.probeRepo(repo)
+        }
+    }
+
     private func downloadDirect() {
         let repo = directRepo.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !repo.isEmpty else { return }
         state.downloadShared(repo, engines: [engine])
         directRepo = ""
+        state.clearRepoProbe()
         dismiss()
     }
 }

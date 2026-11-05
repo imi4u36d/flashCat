@@ -20,7 +20,8 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 
 | 文件 | 职责 |
 | --- | --- |
-| `UI/ConsoleShell.swift` | 窗口根视图、侧栏、页路由、全局确认弹窗与 toast |
+| `UI/ConsoleShell.swift` | 窗口根视图、标题栏、侧栏、页路由、全局确认弹窗与 toast |
+| `UI/CommandPalette.swift` | ⌘K 命令面板：页面跳转与常用动作 |
 | `UI/OverviewPage.swift` | 引擎状态、当前模型、六项实时指标、吞吐曲线、上下文与接口 |
 | `UI/ChatPage.swift` | 会话、流式消息、思考块、Markdown 正文、输入框与生成参数 |
 | `UI/MarkdownView.swift` | 对话正文的块级 Markdown 渲染（标题/列表/表格/代码/引用） |
@@ -34,6 +35,28 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 | `UI/SettingsPage.swift` | 外观、服务、网关、生成默认值、存储与关于 |
 | `UI/LaunchPage.swift` | 首次启动的硬件推荐与引擎安装 |
 | `Design.swift` / `Theme.swift` | 设计 token、组件与外观（`Native` / `AppAppearance`） |
+
+## 窗口 chrome
+
+- **标题栏。** 一行 48pt：红绿灯留白、折叠边栏、当前引擎胶囊（状态点、名称、状态、实时 tok/s，点击启停）、
+  命令面板入口（⌘K）、外观切换（⌘⇧A）、下载中心（带任务徽标）。对应 1.3 起 WebUI 的 titlebar。
+- **侧栏。** 216pt 展开 / 76pt 图标档，右缘可拖动改宽（180–320，落盘到 `sidebarWidth`）；
+  工作区六页 + 最近对话 + 引擎卡（启停与切换）。
+- **页面切换。** 220ms 淡入 + 8pt 上移；侧栏选中态用 `matchedGeometryEffect` 在行间滑动。
+- **动效。** `Motion.quick` 140ms 用于 hover/press，`Motion.standard` 220ms 用于页面与卡片状态，
+  `Motion.entrance` 轻弹簧用于消息与 toast；`accessibilityReduceMotion` 下关闭位移动画。
+
+## 快捷键
+
+| 键 | 动作 |
+| --- | --- |
+| ⌘K | 命令面板 |
+| ⌘1…⌘6 | 六个页面 |
+| ⌘\\ | 折叠 / 展开侧栏 |
+| ⌘⇧A | 切换浅色 / 深色 |
+| ⌘N | 新对话 |
+| ⌘↩ | 发送（对话输入框内回车也发送，⇧↩ 换行） |
+| esc | 关闭命令面板 / 浮层 |
 
 ## 状态与数据流
 

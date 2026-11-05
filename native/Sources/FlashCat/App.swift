@@ -94,10 +94,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // SwiftUI creates the window (and installs its toolbar) after the
         // delegate in some builds, so re-apply the chrome once layout settles.
-        for delay in [0.3, 1.0] {
+        for delay in [0.3, 1.0, 2.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 for target in NSApp.windows { self.configure(target) }
             }
+        }
+        // 持久化的深色外观如果只在这里应用一次，窗口晚于 delegate 创建时会被
+        // SwiftUI 的默认外观覆盖：图标显示深色、页面却是浅色。窗口每次成为
+        // key window 时再套一次，成本可以忽略。
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let window = note.object as? NSWindow else { return }
+            MainActor.assumeIsolated { self?.configure(window) }
         }
     }
 

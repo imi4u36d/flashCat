@@ -9,6 +9,7 @@ struct ChatPage: View {
     @State private var draft = ""
     @State private var showsParameters = false
     @State private var showsThreads = false
+    @State private var atBottom = true
     @FocusState private var composerFocused: Bool
 
     private var title: String {
@@ -67,6 +68,19 @@ struct ChatPage: View {
             }
             .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
             .help("生成参数")
+
+            Menu {
+                Button("复制整段对话") {
+                    state.copy(conversationText, label: "已复制整段对话")
+                }
+                .disabled(state.messages.isEmpty)
+                Button("清空当前对话") { state.newConversation() }
+            } label: {
+                IconMenuLabel(systemName: "ellipsis")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
 
             Button {
                 state.newConversation()
@@ -186,6 +200,7 @@ struct ChatPage: View {
                         ForEach(state.messages) { message in
                             MessageRow(state: state, message: message)
                                 .id(message.id)
+                                .transition(.opacity.combined(with: .offset(y: 10)))
                         }
                     }
                     Color.clear.frame(height: 1).id("bottom")
@@ -194,27 +209,56 @@ struct ChatPage: View {
                 .padding(.vertical, 20)
                 .frame(maxWidth: 900)
                 .frame(maxWidth: .infinity)
+                .animation(Motion.entrance, value: state.messages.count)
             }
             .scrollIndicators(.never)
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentOffset.y + geometry.containerSize.height
+                    >= geometry.contentSize.height - 70
+            } action: { _, bottom in
+                if atBottom != bottom {
+                    withAnimation(Motion.quick) { atBottom = bottom }
+                }
+            }
             .onChange(of: state.messages.count) { _, _ in
-                scroll(proxy, animated: true)
+                scroll(proxy, animated: true, force: true)
             }
             .onChange(of: state.messages.last?.content.count ?? 0) { _, _ in
-                if state.generating { scroll(proxy, animated: false) }
+                if state.generating, atBottom { scroll(proxy, animated: false) }
             }
             .onChange(of: state.currentThreadID) { _, _ in
-                scroll(proxy, animated: false)
+                scroll(proxy, animated: false, force: true)
             }
-            .onAppear { scroll(proxy, animated: false) }
+            .onAppear { scroll(proxy, animated: false, force: true) }
+            .overlay(alignment: .bottom) {
+                if !atBottom {
+                    Button {
+                        scroll(proxy, animated: true, force: true)
+                    } label: {
+                        Label("回到最新", systemImage: "arrow.down")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .padding(.horizontal, 11)
+                            .frame(height: 26)
+                            .background(Capsule().fill(Native.canvas))
+                            .overlay(Capsule().strokeBorder(Native.hairline, lineWidth: 1))
+                            .shadow(color: Native.panelShadow, radius: 8, y: 2)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.bottom, 10)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+            }
         }
     }
 
-    private func scroll(_ proxy: ScrollViewProxy, animated: Bool) {
+    private func scroll(_ proxy: ScrollViewProxy, animated: Bool, force: Bool = false) {
+        guard force || atBottom else { return }
         if animated {
-            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
+            withAnimation(Motion.standard) { proxy.scrollTo("bottom", anchor: .bottom) }
         } else {
             proxy.scrollTo("bottom", anchor: .bottom)
         }
+        atBottom = true
     }
 
     private var emptyState: some View {
@@ -246,25 +290,42 @@ struct ChatPage: View {
     private var composer: some View {
         VStack(spacing: 8) {
             HStack(alignment: .bottom, spacing: 10) {
-                TextField(composerPlaceholder,
-                          text: $draft,
-                          axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .lineLimit(1...6)
-                    .focused($composerFocused)
-                    .disabled(!state.isRunning || state.generating)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
-                    .background {
-                        RoundedRectangle(cornerRadius: 11, style: .continuous)
-                            .fill(Native.recess)
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                    .strokeBorder(composerFocused ? Native.accent.opacity(0.5) : Native.hairline,
-                                                  lineWidth: 1)
-                            }
+                ZStack(alignment: .topLeading) {
+                    if draft.isEmpty {
+                        Text(composerPlaceholder)
+                            .font(.system(size: 13))
+                            .foregroundStyle(Native.tertiary)
+                            .padding(.horizontal, 13)
+                            .padding(.top, 10)
+                            .allowsHitTesting(false)
                     }
+                    TextEditor(text: $draft)
+                        .font(.system(size: 13))
+                        .scrollContentBackground(.hidden)
+                        .focused($composerFocused)
+                        .disabled(!state.isRunning || state.generating)
+                        .frame(height: composerHeight)
+                        .onKeyPress(phases: .down) { press in
+                            guard press.key == .return else { return .ignored }
+                            if press.modifiers.contains(.shift) { return .ignored }
+                            send()
+                            return .handled
+                        }
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 4)
+                .background {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill(Native.recess)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                .strokeBorder(composerFocused ? Native.accent.opacity(0.55) : Native.hairline,
+                                              lineWidth: composerFocused ? 1.2 : 1)
+                        }
+                        .shadow(color: composerFocused ? Native.accent.opacity(0.16) : .clear,
+                                radius: 10, y: 2)
+                }
+                .animation(Motion.quick, value: composerFocused)
 
                 if state.generating {
                     Button {
@@ -331,6 +392,11 @@ struct ChatPage: View {
         .background(Native.surface)
     }
 
+    private var composerHeight: CGFloat {
+        let lines = max(1, draft.components(separatedBy: "\n").count)
+        return min(120, max(36, CGFloat(lines) * 18 + 8))
+    }
+
     private var composerPlaceholder: String {
         state.isRunning
             ? "给 \(state.activeEngine.displayName) 发一条消息…"
@@ -361,7 +427,12 @@ struct ChatPage: View {
 private struct MessageRow: View {
     @ObservedObject var state: AppState
     let message: ChatMessage
-    @State private var showsReasoning = false
+    @State private var manualThinking: Bool?
+    @State private var caretVisible = false
+
+    private var showsReasoning: Bool {
+        manualThinking ?? (message.streaming && message.content.isEmpty)
+    }
 
     private var isUser: Bool { message.role == "user" }
 
@@ -433,30 +504,47 @@ private struct MessageRow: View {
             }
             .padding(.vertical, 4)
         } else {
-            MarkdownView(text: message.content)
-                .padding(.horizontal, 13)
-                .padding(.vertical, 10)
-                .background {
-                    RoundedRectangle(cornerRadius: 13, style: .continuous)
-                        .fill(Native.overlay(0.035))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                                .strokeBorder(Native.hairline, lineWidth: 1)
-                        }
+            ZStack(alignment: .bottomTrailing) {
+                MarkdownView(text: message.content)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 10)
+                    .background {
+                        RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .fill(Native.overlay(0.035))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                                    .strokeBorder(message.streaming ? Native.accent.opacity(0.22) : Native.hairline,
+                                                  lineWidth: 1)
+                            }
+                    }
+                if message.streaming {
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(Native.accent)
+                        .frame(width: 6, height: 14)
+                        .padding(.trailing, 14)
+                        .padding(.bottom, 14)
+                        .opacity(caretVisible ? 1 : 0.15)
+                        .animation(.easeInOut(duration: 0.55).repeatForever(autoreverses: true),
+                                   value: caretVisible)
+                        .onAppear { caretVisible = true }
                 }
+            }
         }
     }
 
     private func reasoningBlock(_ reasoning: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Button {
-                withAnimation(.easeOut(duration: 0.15)) { showsReasoning.toggle() }
+                withAnimation(Motion.standard) { manualThinking = !showsReasoning }
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: showsReasoning ? "chevron.down" : "chevron.right")
                         .font(.system(size: 8, weight: .bold))
                     Text(thinkingLabel)
                         .font(.system(size: 10.5, weight: .medium))
+                    if message.streaming {
+                        LiveDot(color: Native.accent, diameter: 4)
+                    }
                 }
                 .foregroundStyle(Native.tertiary)
             }

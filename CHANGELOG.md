@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+### 界面
+- 补齐 WebUI 的窗口 chrome 与交互：48pt 标题栏（折叠边栏、当前引擎胶囊含实时 tok/s 与启停、
+  ⌘K 命令面板、外观切换、下载中心徽标）、可拖动调宽的侧栏、页面切换淡入。
+- ⌘K 命令面板：六页跳转、启停引擎、新对话、生成参数、下载中心、模型广场、切换外观、折叠边栏；
+  ↑↓ 选择、↵ 执行、esc 关闭。
+- 概览：品牌渐变 hero（模型切换菜单、实时速率与迷你曲线）、DFlash2 接受率曲线、
+  网关按请求打点的会话网格（解码/预填充/首字/上下文）。
+- 对话：回车发送、⇧回车换行、滚动离底时浮出「回到最新」、思考块流式自动展开/首字后自动折叠、
+  生成中的光标与呼吸点、输入框聚焦光环。
+- 模型/引擎卡片 hover 抬升、当前项强调色描边；「正在使用」状态替代禁用按钮；
+  模型广场支持手填 owner/repo 的预检（体积、归属引擎、是否已在本机）。
+- 设置页可直接切换默认模型（按引擎分组）。
+- 动效统一到 `Motion`（140/220ms + 轻弹簧），并服从 reduce-motion；持久化的深色外观在启动时即时生效。
+
 ### 变更
 - **界面回到纯原生。** 六个页面、启动页、下载中心、模型广场、引擎配置与对话参数全部改为 SwiftUI / AppKit 视图（`Sources/FlashCat/UI/`），直接读写 `AppState`：没有 `WKWebView`、没有快照桥、没有 token 级 IPC。删除了 `WebViewShell.swift`（1350 行）、整个 `WebUI/`（14 个 ES module + 8 份 CSS + `bundle.js`，约 2.8 万行）、esbuild 工具链（`package.json` / `package-lock.json` / `node_modules`）、`webui-render-check` 测试台与 CI 的 webui job。
 - 视觉方向改为 macOS 原生「仪器化」语言：纯色画布 + 1px 描边分层、等宽读数、系统控件；设计 token 与组件全部来自 `Design.swift` / `Theme.swift`。

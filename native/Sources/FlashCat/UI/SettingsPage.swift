@@ -211,11 +211,43 @@ struct SettingsPage: View {
                 }
                 Hairline()
                 settingRow("默认模型", detail: "新对话启动时选中的权重") {
-                    Text(state.selectedModel.isEmpty ? "未选择" : state.shortModelName(state.selectedModel))
-                        .font(Native.monoFont)
+                    Menu {
+                        ForEach(EngineCatalog.allIDs.filter { state.engineIsInstalled($0) }, id: \.self) { id in
+                            let models = state.engineModels(for: id)
+                                .filter { !$0.hidden && !$0.helper && !ModelLibraryEntry.isDraftModel($0.id) }
+                            if !models.isEmpty {
+                                Section(id.displayName) {
+                                    ForEach(models) { model in
+                                        Button {
+                                            state.applyModelFromAnyEngine(model.id, engine: id)
+                                        } label: {
+                                            if model.id == state.selectedModel, id == state.activeEngine {
+                                                Label(state.shortModelName(model.id), systemImage: "checkmark")
+                                            } else {
+                                                Text(state.shortModelName(model.id))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Text(state.selectedModel.isEmpty ? "未选择" : state.shortModelName(state.selectedModel))
+                                .font(.system(size: 11.5))
+                                .lineLimit(1)
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.system(size: 7.5, weight: .bold))
+                        }
                         .foregroundStyle(Native.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                        .padding(.horizontal, 10)
+                        .frame(height: 26)
+                        .background(Capsule().fill(Native.overlay(0.06)))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+
                     Button("去模型页") { state.section = .models }
                         .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
                 }

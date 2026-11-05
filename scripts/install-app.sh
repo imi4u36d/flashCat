@@ -17,6 +17,13 @@ VERSION="${VERSION:-$("$ROOT/scripts/version.sh")}"
 
 EXE_NAME="flashCat"
 
+# LaunchServices keeps an entry per bundle path, not per identifier. Two copies
+# of com.zhuo.flashCat on disk (the installed app plus a backup or the staging
+# bundle) let Spotlight, the Dock or `open -b` resolve to the older one — the
+# exact way an outdated build reappears after an update. Every install therefore
+# unregisters everything else and registers the copy in $PREFIX last.
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+
 # dist/flashCat.app is the staging bundle; after an install it is parked in
 # dist/.build/ so nobody double-clicks a second copy of the app.
 APP="${1:-}"
@@ -113,6 +120,12 @@ else
         || echo "warning: could not verify or re-sign the bundle" >&2
 fi
 
+# 6a. LaunchServices: the installed bundle is the only one allowed to answer
+#     for com.zhuo.flashCat. Staging and backup copies are unregistered here.
+"$LSREGISTER" -u "$APP" >/dev/null 2>&1 || true
+[ -n "$BACKUP" ] && "$LSREGISTER" -u "$BACKUP" >/dev/null 2>&1 || true
+"$LSREGISTER" -f "$TARGET" >/dev/null 2>&1 || true
+
 # 6. Report what landed.
 INSTALLED_VERSION="$(plutil -extract CFBundleShortVersionString raw "$TARGET/Contents/Info.plist" 2>/dev/null || echo unknown)"
 SIZE="$(du -sh "$TARGET" | cut -f1)"
@@ -122,13 +135,21 @@ INSTALL_OK=1
 # 6b. Bookkeeping only, now that the new bundle is in place: drop older
 #     backups. Never fatal — a leftover backup costs disk, a missing app costs
 #     the install.
-if [ -n "$BACKUP" ]; then
-    for old in "$PREFIX"/.flashCat-previous-*.app; do
-        [ -e "$old" ] || continue
-        [ "$old" = "$BACKUP" ] && continue
-        rm -rf "$old" 2>/dev/null || echo "note: could not remove old backup $old"
-    done
+if [ -n "$BACKUP" ] && [ -d "$BACKUP" ]; then
+    # Keep the rollback copy outside $PREFIX and outside Spotlight's index, so
+    # it can never be launched in place of the installed app.
+    BACKUP_DIR="$HOME/Library/Application Support/flashCat/backups"
+    if mkdir -p "$BACKUP_DIR" 2>/dev/null && mv "$BACKUP" "$BACKUP_DIR/" 2>/dev/null; then
+        echo "     previous install kept at $BACKUP_DIR/$(basename "$BACKUP")"
+    else
+        rm -rf "$BACKUP" 2>/dev/null || echo "note: could not remove old backup $BACKUP"
+    fi
 fi
+for old in "$PREFIX"/.flashCat-previous-*.app; do
+    [ -e "$old" ] || continue
+    "$LSREGISTER" -u "$old" >/dev/null 2>&1 || true
+    rm -rf "$old" 2>/dev/null || echo "note: could not remove old backup $old"
+done
 
 if [ "${LAUNCH:-0}" = "1" ]; then
     open "$TARGET"

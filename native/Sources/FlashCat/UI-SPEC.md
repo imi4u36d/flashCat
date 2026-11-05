@@ -57,7 +57,7 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 ## 控件
 
 - 控件统一走 macOS 26 Liquid Glass：侧栏、标题栏按钮、命令面板、输入卡与浮层使用
-  `glassEffect`（`LiquidGlassSurface`），互斥按钮组用系统 `.segmented`（`NativeSegmented`）；
+  `glassEffect`（`LiquidGlassSurface`），互斥按钮组用系统 `.tabs` 分段控件（`NativeSegmented`）；
   卡片也用同一层玻璃材质，但正文只靠排版分层，不在内容上再叠色。
   菜单用系统玻璃 popover（如 `ModelPickerPopover`）。
 

@@ -1,26 +1,15 @@
 import SwiftUI
-import AppKit
 
-/// 侧栏反馈入口的集中配置。群号留空时弹窗会显示「待配置」，填好后即可复制。
+/// 侧栏反馈入口的集中配置。
 enum FeedbackConfig {
     static let qqGroupName = "flashCat 用户群"
-    static let qqGroupNumber = ""
-    static let qqJoinURL = ""
+    static let qqGroupNumber = "931794134"
 }
 
-/// 反馈弹窗：展示 QQ 群号，支持一键复制和拉起 QQ。
+/// 反馈弹窗：展示 QQ 群号并支持一键复制。
 struct FeedbackSheet: View {
     @ObservedObject var state: AppState
     @Environment(\.dismiss) private var dismiss
-
-    private var hasGroupNumber: Bool {
-        !FeedbackConfig.qqGroupNumber.isEmpty
-    }
-
-    private var joinURL: URL? {
-        guard !FeedbackConfig.qqJoinURL.isEmpty else { return nil }
-        return URL(string: FeedbackConfig.qqJoinURL)
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -71,7 +60,6 @@ struct FeedbackSheet: View {
             }
 
             groupNumberCard
-            actions
         }
         .padding(.horizontal, Native.pagePadding)
         .padding(.vertical, 24)
@@ -104,20 +92,18 @@ struct FeedbackSheet: View {
                 Text("QQ 群号")
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(Native.tertiary)
-                Text(hasGroupNumber ? FeedbackConfig.qqGroupNumber : "群号待配置")
+                Text(FeedbackConfig.qqGroupNumber)
                     .font(.system(size: 20, weight: .bold, design: .monospaced))
-                    .foregroundStyle(hasGroupNumber ? Native.label : Native.tertiary)
+                    .foregroundStyle(Native.label)
                     .textSelection(.enabled)
             }
             Spacer(minLength: 8)
-            if hasGroupNumber {
-                Button {
-                    state.copy(FeedbackConfig.qqGroupNumber, label: "已复制 QQ 群号")
-                } label: {
-                    Label("复制", systemImage: "doc.on.doc")
-                }
-                .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
+            Button {
+                state.copy(FeedbackConfig.qqGroupNumber, label: "已复制 QQ 群号")
+            } label: {
+                Label("复制", systemImage: "doc.on.doc")
             }
+            .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -132,25 +118,6 @@ struct FeedbackSheet: View {
         }
     }
 
-    private var actions: some View {
-        HStack(spacing: 10) {
-            if let joinURL {
-                Button("加入 QQ 群") {
-                    NSWorkspace.shared.open(joinURL)
-                }
-                .buttonStyle(ArcadePillStyle(tone: .light))
-            } else if hasGroupNumber {
-                Button("复制群号") {
-                    state.copy(FeedbackConfig.qqGroupNumber, label: "已复制 QQ 群号")
-                }
-                .buttonStyle(ArcadePillStyle(tone: .light))
-            }
-
-            Button("打开 QQ") { openQQ() }
-                .buttonStyle(ArcadePillStyle(tone: .glass))
-        }
-    }
-
     private var footer: some View {
         HStack(spacing: 6) {
             Image(systemName: "lightbulb")
@@ -162,12 +129,5 @@ struct FeedbackSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, Native.pagePadding)
         .padding(.vertical, 12)
-    }
-
-    private func openQQ() {
-        guard let url = URL(string: "mqq://") else { return }
-        if !NSWorkspace.shared.open(url) {
-            state.toast("没有找到 QQ，请先安装")
-        }
     }
 }

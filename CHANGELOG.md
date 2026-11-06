@@ -37,6 +37,17 @@
   缺占位参数时脚本把应用的 pid 当成引擎，引擎一起来就 SIGINT 了 flashCat 自己。
 - **下载列表出现空位。** 同一条模型在「全部」页按引擎各出现一次，`ForEach` 拿到重复 id
   会让懒加载网格留白；列表身份现在带上引擎。
+- **预填充读数虚高两个数量级。** `prompt_tokens` 是整段上下文，但同一会话的第二轮几乎全部
+  命中引擎的前缀缓存，这些 token 根本没被重新前向。现在从 usage 的
+  `prompt_tokens_details.cached_tokens`（Anthropic 方言为 `input_tokens_details.cached_tokens`）
+  扣掉命中量，全命中时不报预填充、回落到引擎实时计数；几路并发改为各路速率相加，
+  不再拿 token 总和除以耗时总和。
+- **agent 会话一直显示 0 tok/s。** 工具调用的回复大头在 `delta.tool_calls[*].function.arguments`，
+  而打点只读了 `delta.content`。正文、思考、工具调用名与参数现在一起计入生成量。
+- **消息下方的总平均退化成估算。** 收尾判断可能早于异步投递的 `onUsage` 执行，
+  现在直接读引擎终值 `lastUsage`。
+- `EngineLiveRates` 的每个计数改为单独可选：引擎少报一项时其余读数仍可用，
+  不再因为缺一个 histogram 就把整台引擎的速率一起丢掉。
 - **切壁纸后玻璃层留残影。** 透明窗口在壁纸或外观切换后不会自动重画，
   现在监听壁纸变更并重排一次；画布改由不透明底色承载，桌面透出交给全窗口的视觉效果层。
 - 灵动岛收起态只留标题与一行信息，详细状态与速度收进展开后的详情，胶囊不再被撑得过长。
@@ -68,7 +79,8 @@
   `README` 的系统一栏、`Package.swift` 的 `platforms`。
 - strict-concurrency 棘轮基线从 36 降到 25（网关遥测文档改为 `@unchecked Sendable`、
   外观实例复用等），`ci.yml` 里的说明随之更新。
-- 新增 `GatewayModelRoutingTests`（模型归属与跨引擎准备）、`ModelFamilyTests`、
+- 新增 `GatewayModelRoutingTests`（模型归属与跨引擎准备）、`GatewayMeterTests`（工具调用与
+  双方言缓存字段）、`EngineLiveRatesTests`（差分、计数清零、缺字段）、`ModelFamilyTests`、
   `ModelLibraryTests`、`DecodeRateTotalTests`，以及 `LocalizationTests` 三条契约：
   每个中文词条都有英文译文；快捷键文案与 `keyboardShortcut` 同源；
   界面文案在两种语言下都能解析（英文不得回显中文，中文必须回显源文案）。

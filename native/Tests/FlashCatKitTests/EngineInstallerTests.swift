@@ -26,6 +26,24 @@ final class EngineInstallerTests: XCTestCase {
 
     // MARK: - Install
 
+    func testReleaseKnowsWhetherItsSourceExists() throws {
+        let missing = EnginePackRelease(version: "0.7.2",
+                                        url: "file:///tmp/\(UUID().uuidString).tar.gz",
+                                        sha256: String(repeating: "a", count: 64))
+        XCTAssertFalse(missing.hasAvailableSource)
+
+        let remote = EnginePackRelease(version: "0.7.2",
+                                       url: "https://example.invalid/omlx-0.7.2.tar.gz",
+                                       sha256: String(repeating: "a", count: 64))
+        XCTAssertTrue(remote.hasAvailableSource)
+
+        let local = workDirectory.appendingPathComponent("omlx-0.7.2.tar.gz")
+        XCTAssertTrue(FileManager.default.createFile(atPath: local.path, contents: Data()))
+        let present = EnginePackRelease(version: "0.7.2", url: local.absoluteString,
+                                        sha256: String(repeating: "a", count: 64))
+        XCTAssertTrue(present.hasAvailableSource)
+    }
+
     func testInstallsFromLocalArchive() async throws {
         let archive = try makeArchive(version: "0.7.2", topLevelDirectory: "omlx-0.7.2")
         let checksum = try sha256Hex(of: archive)

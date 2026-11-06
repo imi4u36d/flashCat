@@ -60,6 +60,9 @@ final class EngineController {
     private(set) var model: String = ""
     private(set) var failureMessage: String?
     private(set) var busySince: Date?
+    /// 正在搬权重的起点。`busySince` 是进程的起点：引擎已经跑了几个小时、模型又被
+    /// 重新加载时，用它算「加载权重」的秒数会给出几个小时。只在加载期间非 nil。
+    private var hotLoadSince: Date?
 
     private var process: Process?
     /// pid of a server we did not spawn but are driving (a listener left behind by
@@ -71,7 +74,12 @@ final class EngineController {
     /// oMLX applies MTP/DFlash through its own settings API, once per run.
     private var tuningApplied = false
     private var pollTimer: Timer?
+    /// mlx-serve 只报累计计数器，实时速率要靠相邻两次轮询差分。每个引擎进程
+    /// 一份基线；换进程时清掉，否则会把上一轮的计数当起点。
+    private var liveRates = EngineLiveRates()
     private var pollInFlight = false
+    /// 空闲时隔一次轮询；非空闲立即归零，恢复每秒刷新。
+    private var idlePollCounter = 0
     private var isStopping = false
     private var lastError: String?
     /// Moves `.starting` out of limbo when the engine neither binds its port nor
@@ -83,6 +91,12 @@ final class EngineController {
     /// Log id the current start began at: history from earlier sessions must
     /// not name this run's stage.
     private var stageBaseline = 0
+    /// 阶段与下载进度都从日志尾部推导；UI 一帧内可能问多次，按日志 id 缓存，
+    /// 避免每帧都复制 40/60 行再跑一遍正则。
+    private var stageLogCache: (latest: Int, baseline: Int, stage: String)?
+    private var downloadProgressCache: (latest: Int, value: Double?)?
+    /// oMLX 的思考等级是模型静态属性，没必要每秒都去 `/v1/models/status` 问一次。
+    private var reasoningEffortsCache: (model: String, at: Date, efforts: [String]?)?
     private var lineBuffers = [Data(), Data()]
     /// Model the reader asked for. Hot engines load it without a restart, so it
     /// is tracked separately from whatever the engine happens to have loaded.
@@ -156,10 +170,16 @@ final class EngineController {
         // The stage comes from the engine's own lines only: the app's banner
         // echoes the whole command line, `--max-context` included, and names no
         // phase — scanning it reported a stage for a server that had exited.
+        let latest = logs.latestId
+        if let cached = stageLogCache, cached.latest == latest, cached.baseline == stageBaseline {
+            return cached.stage
+        }
         let recent = logs.tail(60)
             .filter { $0.id > stageBaseline && $0.level != .system }
             .map(\.text)
-        return EngineStartupStage.derive(from: recent).rawValue
+        let stage = EngineStartupStage.derive(from: recent).rawValue
+        stageLogCache = (latest, stageBaseline, stage)
+        return stage
     }
 
     /// Seconds the current start has been running, nil while idle. The console
@@ -170,14 +190,28 @@ final class EngineController {
         return max(0, Int(Date().timeIntervalSince(busySince)))
     }
 
+    /// Seconds the current weight load has been running, nil when no load is in
+    /// flight. 热加载引擎的 HTTP 壳子先绿、权重后到，那一段等待也要能报秒数。
+    var weightLoadSeconds: Int? {
+        guard let hotLoadSince else { return nil }
+        return max(0, Int(Date().timeIntervalSince(hotLoadSince)))
+    }
+
     var downloadProgress: Double? {
+        let latest = logs.latestId
+        if let cached = downloadProgressCache, cached.latest == latest {
+            return cached.value
+        }
+        var value: Double?
         for line in logs.tail(40).reversed() {
             if let match = TextPattern.firstMatch("(\\d{1,3}(?:\\.\\d)?)%", line.text),
-               let value = Double(match[0]) {
-                return min(max(value, 0), 100)
+               let parsed = Double(match[0]) {
+                value = min(max(parsed, 0), 100)
+                break
             }
         }
-        return nil
+        downloadProgressCache = (latest, value)
+        return value
     }
 
     // MARK: start / stop
@@ -194,6 +228,10 @@ final class EngineController {
     /// assembly/target pair. Other engines take a model identifier.
     func start(localModel: ModelInfo? = nil, requestedModel: String? = nil) async {
         if process != nil || preparing { return }
+        // 「已等待」从点下启动这一刻起表。准备阶段（下载 draft 草稿、等端口）
+        // 也算同一次等待：之前要等进程真的拉起来才记起点，几 GB 的预下载全程
+        // 显示「已等待 0:00」，之后又开始从零数，计数器看起来像坏了。
+        busySince = Date()
         var localModel = localModel
         if let prepareForStart {
             preparing = true
@@ -206,8 +244,12 @@ final class EngineController {
             switch await prepareForStart(localModel) {
             case .ready(let refreshed):
                 // Stopped while the preparation ran: the engines page already
-                // said 已停止 and must stay that way.
-                guard attempt == stopRequests else { return }
+                // said 已停止 and must stay that way. 没有进程在跑，等待计时
+                // 也到此为止，下一次启动重新起表。
+                guard attempt == stopRequests else {
+                    busySince = nil
+                    return
+                }
                 localModel = refreshed ?? localModel
             case .failed(let message):
                 // Nothing was launched, so the engines page must show why the
@@ -224,6 +266,7 @@ final class EngineController {
         runModel = localModel
         guard let claimed = await claimPort(plan.model) else {
             state = .failed
+            busySince = nil
             onChange()
             return
         }
@@ -263,8 +306,11 @@ final class EngineController {
             failureMessage = nil
             stats = nil
             status = nil
+            liveRates.reset()
             isStopping = false
-            busySince = Date()
+            // 起点在 start() 开头已经记过：这里再记一次会把预下载和等端口的
+            // 那几分钟抹掉，「已等待」当着读者的面跳回 0:00。
+            if busySince == nil { busySince = Date() }
             startReader(stdout, index: 0)
             startReader(stderr, index: 1)
             startPolling()
@@ -273,6 +319,7 @@ final class EngineController {
         } catch {
             logs.close()
             state = .failed
+            busySince = nil
             failureMessage = "无法启动服务：\(error)"
             onChange()
         }
@@ -393,6 +440,8 @@ final class EngineController {
     private func fail(_ message: String) {
         state = .failed
         failureMessage = message
+        // 失败后没有东西再「等待」了：留着起点，下一次启动还会继承这段旧时间。
+        if process == nil { busySince = nil }
         onChange()
     }
 
@@ -423,6 +472,9 @@ final class EngineController {
         stopRequests += 1
         if process == nil {
             state = .stopped
+            // 已经不在跑了（典型是点「停止」时还在准备阶段）：等待计时收掉，
+            // 否则下一次启动的「已等待」会从这一次点下启动的时间算起。
+            busySince = nil
             onChange()
             return
         }
@@ -625,7 +677,12 @@ final class EngineController {
     private func spawnNativeWatchdog(enginePid: Int32) {
         let task = Process()
         task.launchPath = "/bin/sh"
+        // `sh -c script name a b c` assigns `name` to `$0`, not `$1`. Without
+        // this placeholder the script's `$1/$2/$3` shift by one: it would treat
+        // the app's pid as the engine and the empty marker as the app, then
+        // SIGINT flashCat itself the moment the engine starts.
         task.arguments = ["-c", Self.nativeWatchdogScript,
+                          "flashcat-watchdog",
                           String(enginePid),
                           String(ProcessInfo.processInfo.processIdentifier),
                           packMarkerDirectory]
@@ -781,6 +838,7 @@ final class EngineController {
         logs.close()
         stats = nil
         status = nil
+        liveRates.reset()
         busySince = nil
         let wasStopping = isStopping
         isStopping = false
@@ -867,7 +925,7 @@ final class EngineController {
     }
 
     /// Give the launch a budget. `descriptor.startupTimeout` already encodes
-    /// how slow each engine is (oMLX 180 s, splash 300 s, strata 1800 s), so
+    /// how slow each engine is (oMLX 180 s, splash 660 s, strata 1800 s), so
     /// reusing it keeps the promise the engine page makes about wait times.
     private func startStartupDeadline(for task: Process) {
         startupWatchdog?.cancel()
@@ -883,12 +941,41 @@ final class EngineController {
         }
     }
 
+    /// 用累计计数器的差分补上引擎不直接上报的实时速率（目前是 mlx-serve）。
+    /// 别的引擎没有这些键，`observe` 返回空读数，不会覆盖它们自己的口径。
+    private func applyLiveRates(to parsed: inout EngineStatus) {
+        let reading = liveRates.observe(parsed, at: Date())
+        if let decode = reading.decode, decode > 0 {
+            parsed.decodeTokensPerSecond = decode
+            parsed.decodeRateIsLive = true
+        }
+        if let prefill = reading.prefill, prefill > 0 {
+            parsed.prefillTokensPerSecond = prefill
+            parsed.prefillRateIsLive = true
+        }
+    }
+
     private func poll() async {
         if pollInFlight || process == nil { return }
         pollInFlight = true
         defer { pollInFlight = false }
 
-        guard await probeHealth() else {
+        // 已就绪、无排队/在跑请求、也不在加载权重时隔秒轮询；一旦忙起来
+        // 立刻恢复每秒一次。空闲时少一半健康探测和 telemetry 请求。
+        let idle = state == .ready
+            && !switchInFlight
+            && (stats?.activeRequests ?? 0) == 0
+            && (stats?.queuedRequests ?? 0) == 0
+            && startupStage == EngineStartupStage.ready.rawValue
+        if idle {
+            idlePollCounter += 1
+            if idlePollCounter % 2 == 0 { return }
+        } else {
+            idlePollCounter = 0
+        }
+
+        let health = await probeHealth()
+        guard health.ready else {
             // 503 while the weights load and the kernels warm: there is no
             // status document to read yet, but the console still has to tick —
             // the stage comes from the engine's log and the elapsed count from
@@ -906,10 +993,11 @@ final class EngineController {
         }
         await applyTuningIfNeeded()
         await ensureDesiredModelLoaded()
-        let documents = await collectTelemetry()
+        let documents = await collectTelemetry(healthResponse: health.response)
         guard !documents.isEmpty else { return }
         var parsed = EngineStatusParser.parse(documents: documents, fallbackState: .ready)
         await adoptEngineReportedEfforts(into: &parsed)
+        applyLiveRates(to: &parsed)
         status = parsed
         stats = ServerStats(engineStatus: parsed, previous: stats)
         if process == nil { logs.pollFollow() }
@@ -933,14 +1021,16 @@ final class EngineController {
         onChange()
     }
 
-    private func probeHealth() async -> Bool {
+    /// 同时把健康响应带回去：telemetry 里的 health 源通常跟这里是同一个
+    /// 端点，复用它就不用每秒再 GET 一次。
+    private func probeHealth() async -> (ready: Bool, response: HTTPResponse?) {
         guard let response = await HTTP.get(port: port, path: healthPath, timeout: 1.5) else {
-            return false
+            return (false, nil)
         }
         let ready = manifest.health.readyStatus
-        if response.status == ready { return true }
-        if let loading = manifest.health.loadingStatus, response.status == loading { return true }
-        return false
+        if response.status == ready { return (true, response) }
+        if let loading = manifest.health.loadingStatus, response.status == loading { return (true, response) }
+        return (false, response)
     }
 
     private func fetchJSON(path: String) async -> [String: Any]? {
@@ -952,7 +1042,7 @@ final class EngineController {
 
     /// Fetch every declared telemetry source. Descriptors decide what matters;
     /// the controller only knows how to GET JSON and merge the result.
-    private func collectTelemetry() async -> [EngineTelemetryDocument] {
+    private func collectTelemetry(healthResponse: HTTPResponse? = nil) async -> [EngineTelemetryDocument] {
         var sources = descriptor.telemetry
         if !sources.contains(where: { $0.role == .health }) {
             let format: EngineTelemetryFormat
@@ -962,13 +1052,39 @@ final class EngineController {
             }
             sources.append(EngineTelemetrySource(role: .health, path: healthPath, format: format))
         }
-        var documents: [EngineTelemetryDocument] = []
-        for source in sources {
-            if let json = await fetchJSON(path: source.path) {
-                documents.append(EngineTelemetryDocument(source: source, json: json))
-            }
+        // 各端点互不依赖，并发拉取；返回时按 sources 原顺序还原，解析层
+        // 的合并顺序保持稳定。以前串行等待，一个慢端点会拖住整轮轮询。
+        // 健康探测已经拿到的 2xx 文档直接复用，不再为同一个端点发第二次请求。
+        var prefetched: [String: [String: Any]] = [:]
+        if let healthResponse, (200..<300).contains(healthResponse.status),
+           let object = try? JSONSerialization.jsonObject(with: healthResponse.body),
+           let json = object as? [String: Any] {
+            prefetched[healthPath] = json
         }
-        return documents
+        let port = self.port
+        return await withTaskGroup(of: (Int, EngineTelemetryDocument?).self) { group in
+            for (index, source) in sources.enumerated() {
+                if let json = prefetched[source.path] {
+                    let document = EngineTelemetryDocument(source: source, json: json)
+                    group.addTask { (index, document) }
+                    continue
+                }
+                group.addTask {
+                    guard let response = await HTTP.get(port: port, path: source.path, timeout: 1.8),
+                          (200..<300).contains(response.status),
+                          let object = try? JSONSerialization.jsonObject(with: response.body),
+                          let json = object as? [String: Any] else {
+                        return (index, nil)
+                    }
+                    return (index, EngineTelemetryDocument(source: source, json: json))
+                }
+            }
+            var byIndex: [Int: EngineTelemetryDocument] = [:]
+            for await (index, document) in group {
+                if let document { byIndex[index] = document }
+            }
+            return sources.indices.compactMap { byIndex[$0] }
+        }
     }
 
     /// oMLX 把每个模型支持的思考等级放在 `/v1/models/status` 的
@@ -978,11 +1094,16 @@ final class EngineController {
     private func adoptEngineReportedEfforts(into parsed: inout EngineStatus) async {
         guard descriptor.adapter == .omlx else { return }
         guard let wanted = parsed.model ?? desiredModel, !wanted.isEmpty else { return }
+        if let cached = reasoningEffortsCache, cached.model == wanted,
+           Date().timeIntervalSince(cached.at) < 30 {
+            if let efforts = cached.efforts { parsed.reasoningEfforts = efforts }
+            return
+        }
         guard let document = await fetchJSON(path: "/v1/models/status") else { return }
         let entries = (document["models"] as? [[String: Any]]) ?? []
-        guard let entry = entries.first(where: { ($0["id"] as? String) == wanted }),
-              let efforts = entry["reasoning_efforts"] as? [String], !efforts.isEmpty else { return }
-        parsed.reasoningEfforts = efforts
+        let efforts = entries.first(where: { ($0["id"] as? String) == wanted })?["reasoning_efforts"] as? [String]
+        reasoningEffortsCache = (wanted, Date(), efforts)
+        if let efforts, !efforts.isEmpty { parsed.reasoningEfforts = efforts }
     }
 
     // MARK: model switching
@@ -1130,7 +1251,11 @@ final class EngineController {
     private func loadModelHot(_ target: String) async -> Bool {
         guard loadInFlight != target else { return false }
         loadInFlight = target
-        defer { loadInFlight = nil }
+        hotLoadSince = Date()
+        defer {
+            hotLoadSince = nil
+            loadInFlight = nil
+        }
         // ServerState has no loading case on purpose: the switch stage text
         // owns the "加载中" presentation for both engine kinds.
         // Weight loads are slow (tens of seconds for 27B); the poller keeps the
@@ -1396,6 +1521,20 @@ struct HTTPResponse {
 }
 
 enum HTTP {
+    /// 复用同一个会话。以前每个请求都新建 `URLSession` 再 `invalidate`，
+    /// 每秒的健康探测加上多个 telemetry 端点会不断创建/销毁连接池和线程。
+    /// 会话本身是线程安全的，超时改用 request 级的 `timeoutInterval`。
+    private static let session: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.waitsForConnectivity = false
+        configuration.httpMaximumConnectionsPerHost = 8
+        // 资源级超时必须覆盖最长的请求：热加载一个 27B 模型会传 600s，
+        // 这里若设得比它小，per-request timeout 再大也会被会话提前掐断。
+        configuration.timeoutIntervalForRequest = 60
+        configuration.timeoutIntervalForResource = 1800
+        return URLSession(configuration: configuration)
+    }()
+
     /// Loopback JSON GET with a hard timeout. `URLSession` is replaced by a
     /// delegate-configured session so a wedged engine cannot hang the poller.
     static func get(port: Int, path: String, timeout: TimeInterval) async -> HTTPResponse? {
@@ -1436,12 +1575,6 @@ enum HTTP {
             request.httpBody = body
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = timeout
-        configuration.timeoutIntervalForResource = timeout
-        configuration.waitsForConnectivity = false
-        let session = URLSession(configuration: configuration)
-        defer { session.finishTasksAndInvalidate() }
         do {
             let (data, response) = try await session.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0

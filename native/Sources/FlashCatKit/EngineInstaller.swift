@@ -40,6 +40,17 @@ public struct EnginePackRelease: Codable, Sendable, Equatable {
         release.url = resolved.absoluteURL.absoluteString
         return release
     }
+
+    /// Whether the archive this entry names can actually be opened now.
+    ///
+    /// A bundled index resolves its relative entries against the app bundle,
+    /// where no archives ship: those entries become `file://` URLs that do not
+    /// exist and must not be offered as downloads. Remote entries are trusted
+    /// until the install actually fetches them.
+    public var hasAvailableSource: Bool {
+        guard let parsed = URL(string: url), parsed.isFileURL else { return true }
+        return FileManager.default.fileExists(atPath: parsed.path)
+    }
 }
 
 public struct EnginePackIndex: Codable, Sendable, Equatable {

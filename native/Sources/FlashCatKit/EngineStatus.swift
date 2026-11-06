@@ -10,6 +10,14 @@ public struct EngineStatus: Sendable, Equatable {
     public var loadedModels: [String]
     public var decodeTokensPerSecond: Double?
     public var prefillTokensPerSecond: Double?
+    /// 上面两个速率是不是引擎按「此刻真在做多少」量出来的。
+    ///
+    /// 各引擎口径不同：mlx-serve 用 `generation_tokens_live` 差分（真实时），
+    /// splash 的 `decode_tokens_per_second` 也是实时值；oMLX 的
+    /// `avg_generation_tps` 是从开机起的累计均值，只在请求结束时跳一格。
+    /// 上层据此决定该用引擎的真实计数，还是回落到网关/应用内的请求级估计。
+    public var decodeRateIsLive: Bool
+    public var prefillRateIsLive: Bool
     public var draftAcceptance: Double?
     public var ttftMilliseconds: Double?
     public var activeRequests: Int
@@ -37,6 +45,8 @@ public struct EngineStatus: Sendable, Equatable {
                 loadedModels: [String] = [],
                 decodeTokensPerSecond: Double? = nil,
                 prefillTokensPerSecond: Double? = nil,
+                decodeRateIsLive: Bool = false,
+                prefillRateIsLive: Bool = false,
                 draftAcceptance: Double? = nil,
                 ttftMilliseconds: Double? = nil,
                 activeRequests: Int = 0,
@@ -57,6 +67,8 @@ public struct EngineStatus: Sendable, Equatable {
         self.loadedModels = loadedModels
         self.decodeTokensPerSecond = decodeTokensPerSecond
         self.prefillTokensPerSecond = prefillTokensPerSecond
+        self.decodeRateIsLive = decodeRateIsLive
+        self.prefillRateIsLive = prefillRateIsLive
         self.draftAcceptance = draftAcceptance
         self.ttftMilliseconds = ttftMilliseconds
         self.activeRequests = activeRequests

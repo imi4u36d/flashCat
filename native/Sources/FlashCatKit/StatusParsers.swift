@@ -1,6 +1,8 @@
 import Foundation
 
-public struct EngineTelemetryDocument {
+/// 不可变的遥测文档：`json` 是解析后的字典，创建后只读。并发拉取时需要在
+/// 任务之间传递，语义上安全，因此显式声明 `@unchecked Sendable`。
+public struct EngineTelemetryDocument: @unchecked Sendable {
     public let source: EngineTelemetrySource
     public let json: [String: Any]
 
@@ -74,6 +76,10 @@ public enum EngineStatusParser {
         if !next.loadedModels.isEmpty { result.loadedModels = next.loadedModels }
         if let value = next.decodeTokensPerSecond, value > 0 { result.decodeTokensPerSecond = value }
         if let value = next.prefillTokensPerSecond, value > 0 { result.prefillTokensPerSecond = value }
+        // 实时标记取「或」：任何一个来源能给出真实时读数，上层就该信它。
+        // 数值本身仍按「先到先得、非零覆盖」合并，标记不能被后来的累计均值洗掉。
+        result.decodeRateIsLive = result.decodeRateIsLive || next.decodeRateIsLive
+        result.prefillRateIsLive = result.prefillRateIsLive || next.prefillRateIsLive
         if let value = next.draftAcceptance { result.draftAcceptance = value }
         if let value = next.ttftMilliseconds { result.ttftMilliseconds = value }
         if next.activeRequests > 0 || result.activeRequests == 0 { result.activeRequests = next.activeRequests }
@@ -388,6 +394,32 @@ public enum EngineStatusParser {
            let sum = JSONValue.digNumber(json, "histograms.time_to_first_token_seconds.sum") {
             result.ttftMilliseconds = sum / Double(count) * 1000
         }
+        // 速率不在这里算：解析器是无状态纯函数，而实时速度只能靠相邻两次
+        // 采样差分。把原始计数交给 `EngineLiveRates`，由轮询侧喂时间。
+        // 这些键同时说明了「这台引擎能提供真实时读数」，上层据此决定取数顺序。
+        if let decode = JSONValue.digNumber(json, "gauges.generation_tokens_live") {
+            result.extras[EngineRateCounters.decodeLive] = decode
+        }
+        if let prefillLive = JSONValue.digNumber(json, "gauges.prefill_tokens_live") {
+            result.extras[EngineRateCounters.prefillLive] = prefillLive
+        }
+        if let prefillTokens = JSONValue.digNumber(json, "counters.prefill_tokens_total") {
+            result.extras[EngineRateCounters.prefillTokens] = prefillTokens
+        }
+        if let prefillSeconds = JSONValue.digNumber(json, "histograms.prefill_time_seconds.sum") {
+            result.extras[EngineRateCounters.prefillSeconds] = prefillSeconds
+        }
+        if let prefilling = JSONValue.digNumber(json, "gauges.requests_prefilling") {
+            result.extras[EngineRateCounters.prefilling] = prefilling
+        }
+        // 前缀缓存的量级：用于解释「同一个会话的第二轮为什么不该按整段
+        // 上下文算预填充」，也让诊断时能看出缓存是否真的生效。
+        if let cached = JSONValue.digNumber(json, "counters.prefix_cache_tokens_total") {
+            result.extras["total_cached_tokens"] = cached
+        }
+        if let prompt = JSONValue.digNumber(json, "counters.prompt_tokens_total") {
+            result.extras["prompt_tokens_total"] = prompt
+        }
         return result
     }
 
@@ -438,6 +470,7 @@ public enum EngineStatusParser {
         result.model = JSONValue.digString(json, "engine.model")
         result.maximumContextTokens = JSONValue.digInt(json, "engine.max_context")
         result.decodeTokensPerSecond = JSONValue.digNumber(json, "live.tok_s")
+        if result.decodeTokensPerSecond != nil { result.decodeRateIsLive = true }
         result.prefillTokensPerSecond = JSONValue.digNumber(json, "live.prefill_tok_s_mean")
         result.activeRequests = JSONValue.digInt(json, "live.running") ?? 0
         result.queuedRequests = (JSONValue.digInt(json, "live.queued") ?? 0)

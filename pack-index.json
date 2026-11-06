@@ -3,6 +3,14 @@
   "engines": {
     "mlx-serve": [
       {
+        "version": "26.11.2",
+        "url": "mlx-serve-26.11.2-arm64-macos26.4.tar.gz",
+        "sha256": "59664345789d95548876efef5f85dc8984d271f3fad744840ad43530a0ee82fb",
+        "bytes": 102997754,
+        "minMacOS": "26.4",
+        "notes": ""
+      },
+      {
         "version": "26.11.1",
         "url": "mlx-serve-26.11.1-arm64-macos26.4.tar.gz",
         "sha256": "845261dcf046c8d895acba3e50fbec71bdaee9252246d73cf05505f3a6a19826",
@@ -41,6 +49,14 @@
     ],
     "splash": [
       {
+        "version": "1.6.0",
+        "url": "splash-1.6.0-arm64-macos26.0.tar.gz",
+        "sha256": "756926681beb5a776eab7c45eb90cbc196c7d2a532dd590bdf2127589d63419b",
+        "bytes": 81020855,
+        "minMacOS": "26.0",
+        "notes": ""
+      },
+      {
         "version": "1.5.0",
         "url": "splash-1.5.0-arm64-macos26.0.tar.gz",
         "sha256": "7fe9731ba927b497fdb38f3a49f72255f36d3effce351ae255d0165052d74896",
@@ -66,6 +82,14 @@
       }
     ],
     "strata": [
+      {
+        "version": "0.2.11",
+        "url": "strata-0.2.11-arm64-macos15.0.tar.gz",
+        "sha256": "a31862af38087f29cafc25d212e400b90168c21ac477dd3eb2252a8210b5eb39",
+        "bytes": 54562741,
+        "minMacOS": "15.0",
+        "notes": ""
+      },
       {
         "version": "0.2.10",
         "url": "strata-0.2.10-arm64-macos15.0.tar.gz",

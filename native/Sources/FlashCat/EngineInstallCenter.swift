@@ -78,7 +78,10 @@ final class EngineInstallCenter: ObservableObject {
             let index = try await installer.loadIndex()
             var result: [EngineID: [EnginePackRelease]] = [:]
             for id in EngineCatalog.allIDs {
-                result[id] = index.releases(for: id)
+                // 随包的索引只有相对文件名，解析后指向 .app 旁边并不存在的
+                // 归档。这样的条目不能拿来下载：留着它只会让“下载”走到
+                // 本地文件检查然后失败，而不是改用 GitHub 上的上游版本。
+                result[id] = index.releases(for: id).filter(\.hasAvailableSource)
             }
             releases = result
             indexError = nil
@@ -89,6 +92,21 @@ final class EngineInstallCenter: ObservableObject {
 
     func install(_ release: EnginePackRelease, for id: EngineID, afterBuild: Bool = false) {
         guard phases[id]?.isBusy != true, let installer else { return }
+        // 索引条目失效（典型情况：随包索引指向的归档没有随应用分发）时，
+        // 不再停在本机文件检查上，而是改用上游 GitHub 的版本构建安装。
+        guard release.hasAvailableSource else {
+            if !afterBuild, case .update(_, let upstreamRelease) = upstream[id] {
+                onToast?(L10n.format("%@ 的安装包不在本机，改为从 GitHub 构建 %@",
+                                     id.displayName, upstreamRelease.version))
+                _ = buildAndInstall(upstreamRelease, for: id)
+            } else {
+                let message = L10n.format("下载源不可用：%@", release.url)
+                phases[id] = .failed(message: message)
+                onToast?(L10n.format("%@ 安装失败：%@", id.displayName, message))
+                onInstallFailed?(id)
+            }
+            return
+        }
         let isFirstInstall = (installed[id] ?? []).isEmpty
         phases[id] = .resolving
         progress[id] = Self.installProgress(.resolving, afterBuild: afterBuild)
@@ -266,7 +284,69 @@ final class EngineInstallCenter: ObservableObject {
         upstreamCheckedAt = Date()
     }
 
+    /// 只检查一个引擎的更新，供引擎卡上的更新按钮使用——比整页刷新少发
+    /// 几次 GitHub 请求，也更不容易撞上未登录接口的限额。
+    func checkUpstream(for id: EngineID, force: Bool = false) async {
+        if !force, let checkedAt = upstreamCheckedAt,
+           Date().timeIntervalSince(checkedAt) < 6 * 3600, upstream[id] != nil {
+            return
+        }
+        refreshInstalled()
+        do {
+            let release = try await checker.latest(for: id)
+            upstreamReleases[id] = release
+            upstream[id] = EngineUpstreamComparison.status(installed: installed[id] ?? [], release: release)
+            upstreamCheckedAt = Date()
+        } catch {
+            upstream[id] = .unavailable(error.localizedDescription)
+        }
+    }
+
     // MARK: Build from source
+
+    /// Installs an engine from the newest upstream GitHub release instead of a
+    /// prebuilt archive in `pack-index.json`: flashCat does not redistribute the
+    /// engine binaries, so the upstream release is the only source that is
+    /// always current. Reuses the cached release from the version check when one
+    /// exists, otherwise asks GitHub once before building.
+    @discardableResult
+    func installFromUpstream(_ id: EngineID) async -> Bool {
+        guard building == nil, installer != nil else { return false }
+
+        phases[id] = .resolving
+        progress[id] = 0
+        progressStep[id] = "检查上游版本"
+
+        let release: EngineUpstreamRelease
+        if let cached = upstreamReleases[id] {
+            release = cached
+        } else {
+            do {
+                release = try await checker.latest(for: id)
+                upstreamReleases[id] = release
+                upstream[id] = EngineUpstreamComparison.status(installed: installed[id] ?? [],
+                                                              release: release)
+            } catch {
+                phases[id] = .failed(message: error.localizedDescription)
+                progress[id] = nil
+                progressStep[id] = nil
+                onToast?(L10n.format("%@ 获取上游版本失败：%@", id.displayName, error.localizedDescription))
+                onInstallFailed?(id)
+                return false
+            }
+        }
+
+        let started = buildAndInstall(release, for: id)
+        // `buildAndInstall` reports its own failures except the "another build is
+        // running" guard; that one must still release whatever was waiting here.
+        if !started, phases[id] == .resolving {
+            phases[id] = .failed(message: "另一个引擎正在构建")
+            progress[id] = nil
+            progressStep[id] = nil
+            onInstallFailed?(id)
+        }
+        return started
+    }
 
     /// Builds the runtime pack for `release` on this machine and installs it.
     /// The three engines have different sources, so the plan differs per engine

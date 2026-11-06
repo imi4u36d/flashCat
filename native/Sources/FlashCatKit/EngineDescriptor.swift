@@ -311,7 +311,10 @@ public enum EngineCatalog {
             id: .splash, displayName: "Splash",
             summary: "单模型 GGUF 运行时，专注 DFlash2 投机解码与视觉。",
             accentColor: "#D26A20", adapter: .splash,
-            defaultPort: 8000, minMacOS: "26.0", startupTimeout: 300, switchMode: .restart,
+            // Splash 自己的 supervision 给「spawn → Ready（含模型加载与预热）」
+            // 的预算是 600 秒（server/supervision.py）。应用这一侧不能更短，
+            // 否则大型 MoE 还在预热就被按 300 秒判超时，表现就是卡在「预热」。
+            defaultPort: 8000, minMacOS: "26.0", startupTimeout: 660, switchMode: .restart,
             capabilities: [.chat, .streaming, .vision, .reasoning, .singleModel, .draft],
             modelLayout: .nested,
             license: "Apache-2.0", upstreamRepository: "incoai/splash"),

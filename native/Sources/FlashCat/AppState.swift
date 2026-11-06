@@ -2056,7 +2056,8 @@ final class AppState: ObservableObject {
                 onUsage: { usage in
                     GatewayMeter.shared.noteUsage(meterID,
                                                   promptTokens: usage.promptTokens,
-                                                  completionTokens: usage.completionTokens)
+                                                  completionTokens: usage.completionTokens,
+                                                  cachedPromptTokens: usage.cachedPromptTokens)
                     Task { @MainActor in
                         guard self.updateStreamingMessage({ $0.usage = usage }) else { return }
                         // 思考截断可见性：引擎按预算收束思考时，reasoning_tokens
@@ -2091,7 +2092,9 @@ final class AppState: ObservableObject {
                 self.updateStreamingMessage { message in
                     message.content = text
                     message.seconds = elapsed
-                    var tokens = message.usage?.completionTokens ?? 0
+                    let finalUsage = chatClient.lastUsage
+                    if finalUsage.completionTokens > 0 { message.usage = finalUsage }
+                    var tokens = finalUsage.completionTokens
                     if tokens == 0 {
                         // Streaming responses often omit usage; fall back to the
                         // accumulated fraction-weighted estimate so the message

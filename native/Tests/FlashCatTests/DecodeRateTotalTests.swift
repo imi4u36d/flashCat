@@ -28,4 +28,21 @@ final class DecodeRateTotalTests: XCTestCase {
         XCTAssertEqual(AppState.totalDecodeRate(gateway: 0, live: nil, engine: nil), 0)
         XCTAssertEqual(AppState.totalDecodeRate(gateway: 0, live: 0, engine: 0), 0)
     }
+
+    /// 引擎的实时计数覆盖所有会话（包括直连引擎端口、网关看不见的 agent
+    /// 请求），比网关的按请求聚合更接近「总解码」。以前这种场景会显示 0.00：
+    /// 网关没有打点，引擎的 `generation_tokens_live` 又没被解析。
+    func testLiveEngineCounterBeatsGatewayEstimate() {
+        XCTAssertEqual(AppState.totalDecodeRate(gateway: 44.1, live: nil, engine: 81.6,
+                                                engineIsLive: true),
+                       81.6, accuracy: 0.001)
+    }
+
+    /// 累计均值不算实时：oMLX 的 avg_generation_tps 只在请求结束时跳一格，
+    /// 生成过程中它不动，不能让网关的按请求读数让位。
+    func testCumulativeEngineReportStillLosesToGateway() {
+        XCTAssertEqual(AppState.totalDecodeRate(gateway: 44.1, live: nil, engine: 81.6,
+                                                engineIsLive: false),
+                       44.1, accuracy: 0.001)
+    }
 }

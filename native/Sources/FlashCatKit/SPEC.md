@@ -52,3 +52,5 @@ depends-on: [flashcat-manifest-contract]
 - **oMLX 的管理 API 挂在 `/admin` 下**（上游 `APIRouter(prefix="/admin")`）。按朴素的 `/api/...` 写法请求会 404，即使模型已经加载。
 - **已装版本的目录里，只有用户根下的可删。** 判定按路径分量标准化后比较：`~/…/engines/x` 命中 `~/…/engines`，但 `~/…/engines-copy/x` 不命中。
 - **索引条目相对索引自身解析。** 索引可能来自 https，也可能是随包的或本地的一份 `file://`；同一份索引要在别的机器上也能用，条目就只能写相对索引位置的路径。相对条目在 `loadIndex` 解码时按拿到这份索引的那个地址解析（重定向之后算数——`/latest/pack-index.json` 转到 `/v1.4.1/…` 时，归档就放在后者旁边）；已经是绝对地址的条目原样通过；`install` 在碰网络之前就拒掉仍不是绝对的地址，因为那种地址只会在 `URLSession` 里无声失败。应用内「打包引擎」跑完 `make-pack-release.sh` / `make-pack-index.sh` 直接读 `.release.json` 就装，那份文件同样写相对名，`loadRelease` 按该文件所在目录解析——否则刚构建完的包装不上，而同一份 `.release.json` 还会被写回索引。
+
+- **实时速率由累计计数差分得出，不猜。** mlx-serve 的 `/metrics.json` 只给 `generation_tokens_live`、`prefill_tokens_live`、`prefill_tokens_total` 与 `prefill_time_seconds` 这些原始量；`EngineLiveRates` 用相邻两次采样差分，得到真实的解码 / 预填充速度。预填充的分子只含真正前向的 token，分母只含预填充耗时，前缀缓存恢复的部分两边都不进——否则同一会话第二轮的读数会被放大两个数量级。解析器保持无状态，只把计数放进 `extras`；时间由轮询侧注入。

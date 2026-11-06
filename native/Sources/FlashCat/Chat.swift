@@ -8,6 +8,9 @@ struct ChatTurn {
 struct ChatUsage: Equatable {
     var promptTokens: Int = 0
     var completionTokens: Int = 0
+    /// 命中前缀缓存、没有真正前向的提示词 token。算预填充速度时要扣掉，
+    /// 否则同一会话的第二轮会把整段上下文都当成刚算过。
+    var cachedPromptTokens: Int = 0
     /// usage.completion_tokens_details.reasoning_tokens —— 思考流的 token 数。
     /// 引擎按思考预算收束思考时，该值正好等于预算，可据此判定"思考被截断"。
     var reasoningTokens: Int?
@@ -72,6 +75,9 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
     /// 这不应算失败——思考块还得留在对话里给人看。
     private var reasoned = false
     private var usage = ChatUsage()
+    /// 本次流结束后引擎报告的 usage。`onUsage` 走的是主线程任务，收尾判断
+    /// 可能先于它执行；直接读这份终值，消息下方那个总平均就不会退化成估算。
+    private(set) var lastUsage = ChatUsage()
     private var status = 0
     private var transportError: Error?
 
@@ -141,6 +147,7 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
         raw = ""
         reasoned = false
         usage = ChatUsage()
+        lastUsage = ChatUsage()
         status = 0
         transportError = nil
         pendingDelta = ""
@@ -186,6 +193,7 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
             onStatus("失败")
             return .failure(ChatError(message: "服务没有返回内容"))
         }
+        lastUsage = usage
         onUsage(usage)
         onStatus("完成")
         return .success(text)
@@ -246,6 +254,9 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
         if let used = json["usage"] as? [String: Any] {
             usage.promptTokens = Self.intValue(used["prompt_tokens"])
             usage.completionTokens = Self.intValue(used["completion_tokens"])
+            if let details = used["prompt_tokens_details"] as? [String: Any] {
+                usage.cachedPromptTokens = Self.intValue(details["cached_tokens"])
+            }
             if let details = used["completion_tokens_details"] as? [String: Any] {
                 let reasoning = Self.intValue(details["reasoning_tokens"])
                 if reasoning > 0 { usage.reasoningTokens = reasoning }

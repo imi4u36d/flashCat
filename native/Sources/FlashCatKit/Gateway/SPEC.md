@@ -58,3 +58,5 @@ depends-on: [flashcat-kit]
 **会话级读数在网关侧统计，不在引擎侧。** 引擎层没有 per-session 指标：splash 只报累计的 `decode_output_tokens / decode_wall_ms`，oMLX 只给聚合吞吐和一个在跑计数，MTPLX 更极端——串行到连「有几路在排队」都不报（排队被算进了在跑）。唯一知道每个请求何时进来、首个 token 何时到达、一共吐了多少字的地方就是网关本身，所以概览页的「会话」网格取数于此。
 
 因此 `GatewayMeter` 的线程模型也是被这个职责决定的：转发跑在非主 actor 上，打点密度是每 250 ms 一格，所以它是用 `NSLock` 保护的普通类，而不是 `@MainActor` 的 `ObservableObject`；读侧只做一次快照，不做增量订阅。
+
+**预填充的分子只算真正前向过的 token。** 会话第二轮的 `prompt_tokens` 几乎全是命中前缀缓存的上下文，引擎并没有重新计算它们；用整段 token 除以首字耗时，读数会随上下文长度线性虚高（108K 上下文实测能到几十万 tok/s）。网关从 usage 的 `prompt_tokens_details.cached_tokens`（Anthropic 方言为 `input_tokens_details.cached_tokens`）扣掉命中量，全命中时不报预填充，交给引擎自己的实时计数。工具调用的 `function.arguments` 同样计入生成量——agent 会话的大头在那里，不数就会永远显示 0 tok/s。

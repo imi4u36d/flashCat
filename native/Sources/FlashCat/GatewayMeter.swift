@@ -33,6 +33,9 @@ final class GatewayMeter: @unchecked Sendable {
         var promptTokens: Int
         /// 小数累计，避免逐片四舍五入把短分片抹掉；末帧 usage 会覆盖它。
         var completionTokens: Double
+        /// usage 里报告的「命中前缀缓存、没有真正前向」的提示词 token。
+        /// 预填充速度的分子必须把它扣掉。
+        var cachedPromptTokens: Int
         var firstTokenAt: Date?
         var finishedAt: Date?
         var failed: Bool
@@ -62,6 +65,7 @@ final class GatewayMeter: @unchecked Sendable {
                                 startedAt: Date(),
                                 promptTokens: promptTokens,
                                 completionTokens: 0,
+                                cachedPromptTokens: 0,
                                 firstTokenAt: nil,
                                 finishedAt: nil,
                                 failed: false,
@@ -113,15 +117,14 @@ final class GatewayMeter: @unchecked Sendable {
     // MARK: 上报解码
 
     /// 吃一个 OpenAI 形状的 SSE 分片：`delta.content` / `delta.reasoning*` 都算生成，
+    /// 工具调用（`delta.tool_calls[*].function.arguments`）也算——agent 客户端的
+    /// 回复大头就是工具参数，不数它的话 agent 会话在概览里永远是 0 tok/s。
     /// 末尾带 `usage` 的那一片用来校正估算值。
     func ingest(_ id: Int, chunk: [String: Any]) {
         if let choices = chunk["choices"] as? [[String: Any]], let first = choices.first {
             let delta = first["delta"] as? [String: Any] ?? first["message"] as? [String: Any]
             if let delta {
-                var text = ""
-                for key in ["content", "reasoning_content", "reasoning"] {
-                    if let value = delta[key] as? String { text += value }
-                }
+                let text = Self.generatedText(delta)
                 if !text.isEmpty {
                     addTokens(id, TokenEstimator.fractional(text))
                 }
@@ -139,9 +142,7 @@ final class GatewayMeter: @unchecked Sendable {
         var text = ""
         if let choices = object["choices"] as? [[String: Any]], let first = choices.first {
             let message = first["message"] as? [String: Any] ?? [:]
-            for key in ["content", "reasoning_content", "reasoning"] {
-                if let value = message[key] as? String { text += value }
-            }
+            text = Self.generatedText(message)
         }
         let tokens = TokenEstimator.fractional(text)
         if tokens > 0 { addTokens(id, tokens) }
@@ -149,20 +150,57 @@ final class GatewayMeter: @unchecked Sendable {
         finish(id)
     }
 
+    /// 一段增量里所有「模型真的生成出来的文字」：正文、思考、工具调用名与参数。
+    /// 内部可见，便于在没有引擎的测试里钉住工具调用这一类分片。
+    static func generatedText(_ payload: [String: Any]) -> String {
+        var text = ""
+        for key in ["content", "reasoning_content", "reasoning", "thinking"] {
+            if let value = payload[key] as? String { text += value }
+        }
+        if let calls = payload["tool_calls"] as? [[String: Any]] {
+            for call in calls {
+                guard let function = call["function"] as? [String: Any] else { continue }
+                if let name = function["name"] as? String { text += name }
+                if let arguments = function["arguments"] as? String { text += arguments }
+            }
+        }
+        return text
+    }
+
     private func applyUsage(_ id: Int, _ usage: [String: Any]) {
         let prompt = (usage["prompt_tokens"] as? Int) ?? (usage["input_tokens"] as? Int) ?? 0
         let completion = (usage["completion_tokens"] as? Int) ?? (usage["output_tokens"] as? Int) ?? 0
-        noteUsage(id, promptTokens: prompt, completionTokens: completion)
+        noteUsage(id,
+                  promptTokens: prompt,
+                  completionTokens: completion,
+                  cachedPromptTokens: Self.cachedTokens(usage))
+    }
+
+    /// 前缀缓存命中量。OpenAI 方言是 `prompt_tokens_details.cached_tokens`，
+    /// Anthropic 方言是 `input_tokens_details.cached_tokens`；网关拿到的是
+    /// 引擎的 OpenAI 形状响应，两种都读一遍以防中间层换皮。
+    static func cachedTokens(_ usage: [String: Any]) -> Int {
+        for key in ["prompt_tokens_details", "input_tokens_details"] {
+            if let details = usage[key] as? [String: Any],
+               let cached = details["cached_tokens"] as? Int {
+                return max(0, cached)
+            }
+        }
+        return 0
     }
 
     /// 应用内对话直接连引擎端口、不经过网关，但概览页的「最近请求」统一读
     /// 这里，所以对话结束时把结构化 usage 也送进来校正计数。
-    func noteUsage(_ id: Int, promptTokens prompt: Int, completionTokens completion: Int) {
+    func noteUsage(_ id: Int,
+                   promptTokens prompt: Int,
+                   completionTokens completion: Int,
+                   cachedPromptTokens cached: Int = 0) {
         guard prompt > 0 || completion > 0 else { return }
         lock.lock()
         defer { lock.unlock() }
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
         if prompt > 0 { sessions[index].promptTokens = prompt }
+        if cached > 0 { sessions[index].cachedPromptTokens = min(cached, sessions[index].promptTokens) }
         // 引擎报的 completion_tokens 含思考 token，比流式估算更准，所以用来
         // 校正「一共吐了多少字」。但它绝不能回灌到速率估计或历史曲线里：
         // 旧实现把差额一次性塞进当前 250ms 桶，末帧必然炸出一个尖峰，
@@ -183,6 +221,24 @@ final class GatewayMeter: @unchecked Sendable {
         let prefillRate: Double?
     }
 
+    /// 单条请求的预填充速度：分子只算真正前向过的 token。
+    ///
+    /// `promptTokens` 是整段提示词（本轮上下文），但同一会话的第二轮几乎全部
+    /// 命中了引擎的前缀缓存。用整段 token 除以首字耗时，会把「缓存恢复」当成
+    /// 「预填充计算」，读数随上下文长度线性虚高（108K 上下文实测能到几十万
+    /// tok/s）。引擎在 usage 里已经告诉我们多少 token 是缓存命中的，扣掉它；
+    /// 全命中时没有可测的前向速度，返回 nil 让上层回落到引擎的真实计数。
+    private static func prefillRate(_ session: Session) -> Double? {
+        guard let first = session.firstTokenAt, session.promptTokens > 0 else { return nil }
+        let ttft = first.timeIntervalSince(session.startedAt)
+        guard ttft > 0.05 else { return nil }
+        let forwarded = session.cachedPromptTokens > 0
+            ? session.promptTokens - session.cachedPromptTokens
+            : session.promptTokens
+        guard forwarded > 0 else { return nil }
+        return Double(forwarded) / ttft
+    }
+
     /// 在跑会话的合计解码速率；没有在跑的就用刚结束（linger 内）的会话
     /// 全程均值，避免收尾瞬间读数突然归零。
     func overview() -> Overview {
@@ -201,28 +257,15 @@ final class GatewayMeter: @unchecked Sendable {
             decodeRate = active.reduce(0) { $0 + $1.meter.rate(at: now) }
         }
 
-        // 预填充：优先把在跑会话按「总提示词 / 总首字耗时」加权，单路时
-        // 就是它自己的读数；空闲时取最近一条有首字记录的请求。
-        let running = active.compactMap { session -> (tokens: Int, seconds: TimeInterval)? in
-            guard let first = session.firstTokenAt, session.promptTokens > 0 else { return nil }
-            let ttft = first.timeIntervalSince(session.startedAt)
-            return ttft > 0.05 ? (session.promptTokens, ttft) : nil
-        }
+        // 预填充：在跑会话各自算「真正前向的 token / 首字耗时」再相加——和解码
+        // 一样，几路并发要报合计，不能拿 token 总和除以耗时总和（那会把两路
+        // 并发的读数算成单路）。空闲时沿用最近一条有首字记录的请求。
+        let running = active.compactMap(Self.prefillRate)
         let prefillRate: Double?
         if !running.isEmpty {
-            let tokens = running.reduce(0) { $0 + $1.tokens }
-            let seconds = running.reduce(0) { $0 + $1.seconds }
-            prefillRate = seconds > 0 ? Double(tokens) / seconds : nil
+            prefillRate = running.reduce(0, +)
         } else {
-            let recent = sessions.last { session in
-                guard let first = session.firstTokenAt, session.promptTokens > 0 else { return false }
-                return first.timeIntervalSince(session.startedAt) > 0.05
-            }
-            prefillRate = recent.flatMap { session -> Double? in
-                guard let first = session.firstTokenAt else { return nil }
-                let ttft = first.timeIntervalSince(session.startedAt)
-                return ttft > 0.05 ? Double(session.promptTokens) / ttft : nil
-            }
+            prefillRate = sessions.last { $0.firstTokenAt != nil }.flatMap(Self.prefillRate)
         }
         return Overview(decodeRate: decodeRate, prefillRate: prefillRate)
     }
@@ -261,10 +304,7 @@ final class GatewayMeter: @unchecked Sendable {
             let rate = session.finishedAt == nil
                 ? session.meter.rate(at: now)
                 : session.meter.averageRate()
-            let prefillRate: Double = {
-                guard let ttft, ttft > 0.05, session.promptTokens > 0 else { return 0 }
-                return Double(session.promptTokens) / ttft
-            }()
+            let prefillRate = Self.prefillRate(session) ?? 0
             // 概览的「最近请求」只显示状态/模型/速率，不需要 180 点历史。
             // `historyPoints <= 0` 时直接跳过，避免每秒为几行 UI 计算上千个点。
             var history: [Double] = []

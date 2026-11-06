@@ -41,12 +41,14 @@ public struct EngineLiveRates {
         }
     }
 
+    /// 每个字段都单独可选：某个引擎版本少报一项时，其余读数仍然可用，
+    /// 不能因为缺一个 histogram 就把整台引擎的速率一起丢掉。
     private struct Sample {
         let at: Date
-        let decodeTokens: Double
-        let prefillLiveTokens: Double
-        let prefillTokens: Double
-        let prefillSeconds: Double
+        let decodeTokens: Double?
+        let prefillLiveTokens: Double?
+        let prefillTokens: Double?
+        let prefillSeconds: Double?
         let running: Int
         let prefilling: Int
     }
@@ -70,7 +72,8 @@ public struct EngineLiveRates {
             return Reading()
         }
         // 引擎重启会把这些计数清零。基线跟着换，别把「变小」算成负速率。
-        if let previous, sample.prefillTokens < previous.prefillTokens {
+        if let previous, let current = sample.prefillTokens, let last = previous.prefillTokens,
+           current < last {
             lastPrefill = nil
         }
         defer { previous = sample }
@@ -81,22 +84,28 @@ public struct EngineLiveRates {
             // 轮询间隔通常在 1~2 秒；太短会把计数器量化成尖峰，太长（休眠/卡顿）
             // 算出来的只是平均值而不是当前速度。
             if elapsed >= 0.2, elapsed <= 30 {
-                if sample.running > 0, sample.decodeTokens >= last.decodeTokens {
-                    let delta = sample.decodeTokens - last.decodeTokens
+                if sample.running > 0,
+                   let current = sample.decodeTokens, let lastDecode = last.decodeTokens,
+                   current >= lastDecode {
+                    let delta = current - lastDecode
                     if delta > 0 { reading.decode = delta / elapsed }
                 }
                 if sample.prefilling > 0,
-                   sample.prefillLiveTokens >= last.prefillLiveTokens,
-                   sample.prefillLiveTokens > 0 {
-                    let delta = sample.prefillLiveTokens - last.prefillLiveTokens
+                   let current = sample.prefillLiveTokens,
+                   let lastLive = last.prefillLiveTokens,
+                   current > 0, current >= lastLive {
+                    let delta = current - lastLive
                     if delta > 0 { reading.prefill = delta / elapsed }
                 }
                 // 完成的请求：分子只含真正前向的 token，分母只含预填充耗时。
                 // 缓存恢复的 token 与恢复耗时都不在这两个计数器里。
-                if sample.prefillTokens > last.prefillTokens,
-                   sample.prefillSeconds > last.prefillSeconds {
-                    let deltaTokens = sample.prefillTokens - last.prefillTokens
-                    let deltaSeconds = sample.prefillSeconds - last.prefillSeconds
+                if let currentTokens = sample.prefillTokens,
+                   let currentSeconds = sample.prefillSeconds,
+                   let lastTokens = last.prefillTokens,
+                   let lastSeconds = last.prefillSeconds,
+                   currentTokens > lastTokens, currentSeconds > lastSeconds {
+                    let deltaTokens = currentTokens - lastTokens
+                    let deltaSeconds = currentSeconds - lastSeconds
                     if deltaSeconds > 0 { reading.prefill = deltaTokens / deltaSeconds }
                 }
             }
@@ -110,10 +119,12 @@ public struct EngineLiveRates {
     }
 
     private static func sample(from status: EngineStatus, at now: Date) -> Sample? {
-        guard let decode = status.extras[EngineRateCounters.decodeLive],
-              let prefillLive = status.extras[EngineRateCounters.prefillLive],
-              let prefillTokens = status.extras[EngineRateCounters.prefillTokens],
-              let prefillSeconds = status.extras[EngineRateCounters.prefillSeconds]
+        let decode = status.extras[EngineRateCounters.decodeLive]
+        let prefillLive = status.extras[EngineRateCounters.prefillLive]
+        let prefillTokens = status.extras[EngineRateCounters.prefillTokens]
+        let prefillSeconds = status.extras[EngineRateCounters.prefillSeconds]
+        // 这台引擎不报任何一项：交给别的口径，不要把「没有数据」说成 0。
+        guard decode != nil || prefillTokens != nil || prefillSeconds != nil || prefillLive != nil
         else { return nil }
         return Sample(at: now,
                       decodeTokens: decode,

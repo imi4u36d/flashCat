@@ -198,6 +198,31 @@ final class StatusParserTests: XCTestCase {
         XCTAssertEqual(status.ttftMilliseconds ?? 0, 200, accuracy: 0.001)
     }
 
+    /// 速率相关的原始计数必须原样带出来：解析器不差分，但轮询侧要有东西可差。
+    func testMLXServeMetricsExposeCountersForLiveRates() {
+        let metrics = EngineTelemetrySource(role: .metrics, path: "/metrics.json", format: .prometheusJSON)
+        let status = EngineStatusParser.parse(documents: [
+            EngineTelemetryDocument(source: metrics, json: [
+                "counters": ["prefill_tokens_total": 88_000,
+                             "prompt_tokens_total": 16_100_000,
+                             "prefix_cache_tokens_total": 16_000_000],
+                "gauges": ["requests_running": 1,
+                           "generation_tokens_live": 36_000,
+                           "prefill_tokens_live": 0,
+                           "requests_prefilling": 0],
+                "histograms": ["prefill_time_seconds": ["count": 214, "sum": 66.5]],
+            ]),
+        ])
+        XCTAssertEqual(status.extras[EngineRateCounters.decodeLive], 36_000)
+        XCTAssertEqual(status.extras[EngineRateCounters.prefillLive], 0)
+        XCTAssertEqual(status.extras[EngineRateCounters.prefillTokens], 88_000)
+        XCTAssertEqual(status.extras[EngineRateCounters.prefillSeconds], 66.5)
+        XCTAssertEqual(status.extras["total_cached_tokens"], 16_000_000)
+        // 解析器本身不报速率，也还谈不上「实时」；标记由轮询侧差分后打上。
+        XCTAssertNil(status.decodeTokensPerSecond)
+        XCTAssertFalse(status.decodeRateIsLive)
+    }
+
     // MARK: Strata
 
     func testStrataMetricsMapLiveAndTotals() {

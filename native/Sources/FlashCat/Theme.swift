@@ -73,6 +73,9 @@ final class ThemeController: ObservableObject {
     /// no longer following `nil` (see `resolved`), so it has to listen.
     private var themeObserver: NSObjectProtocol?
     private var activationObserver: NSObjectProtocol?
+    /// 桌面壁纸变化没有一个稳定的公开通知名，但系统实际会广播这个；
+    /// 监听它只是为了在壁纸切换后强制窗口重画，避免透明/玻璃层留下残影。
+    private var desktopObserver: NSObjectProtocol?
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -84,6 +87,9 @@ final class ThemeController: ObservableObject {
     deinit {
         if let themeObserver { DistributedNotificationCenter.default().removeObserver(themeObserver) }
         if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) }
+        if let desktopObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(desktopObserver)
+        }
     }
 
     func set(_ value: AppAppearance) {
@@ -100,11 +106,18 @@ final class ThemeController: ObservableObject {
     /// already draws until the next activation change, which is why "跟随系统"
     /// used to take effect only after clicking outside the app. A concrete value
     /// repaints on assignment, in either direction.
+    /// 复用的外观实例。每次切换都新建 `NSAppearance(name:)` 会迫使窗口
+    /// 重新解析整棵树，窗口从后台回到前台时甚至会让 SwiftUI 重排一次，
+    /// 表现为界面整体上移。这里固定两个实例，只在真正换皮肤时赋值。
+    private static let aquaAppearance = NSAppearance(named: .aqua)
+    private static let darkAppearance = NSAppearance(named: .darkAqua)
+    private static let canvasColor = NSColor.adaptive(dark: 0x14131A, light: 0xEAEEF7)
+
     private var resolved: NSAppearance? {
         switch mode {
-        case .light: return NSAppearance(named: .aqua)
-        case .dark: return NSAppearance(named: .darkAqua)
-        case .system: return NSAppearance(named: AppAppearance.systemIsDark ? .darkAqua : .aqua)
+        case .light: return Self.aquaAppearance
+        case .dark: return Self.darkAppearance
+        case .system: return AppAppearance.systemIsDark ? Self.darkAppearance : Self.aquaAppearance
         }
     }
 
@@ -126,11 +139,22 @@ final class ThemeController: ObservableObject {
     var resolvedAppearance: NSAppearance? { resolved }
 
     func apply(to window: NSWindow) {
-        window.appearance = resolved
-        // 窗口本身透明，Liquid Glass 才能采到桌面；内容区自己铺不透明画布，
-        // 侧栏与标题栏则保持玻璃。两者共同决定最终的不透明范围。
-        window.isOpaque = false
-        window.backgroundColor = .clear
+        let appearance = resolved
+        if window.appearance !== appearance {
+            window.appearance = appearance
+        }
+        // 没有自定义图片时，透明度滑杆代表「透出桌面」。此时窗口需要非不透明，
+        // 但必须由全窗口的 NSVisualEffectView 兜底（见 DesktopBackdrop），
+        // 否则切换壁纸/外观后会残留旧画面。有图片时保持不透明画布，
+        // 避免桌面和图片叠在一起。
+        let revealsDesktop = BackgroundSettings.shared.revealsDesktop
+        if window.isOpaque == revealsDesktop {
+            window.isOpaque = !revealsDesktop
+        }
+        let targetColor: NSColor = revealsDesktop ? .clear : Self.canvasColor
+        if window.backgroundColor != targetColor {
+            window.backgroundColor = targetColor
+        }
     }
 
     /// Keeps "跟随系统" honest: re-resolve when macOS flips, and (as a backstop
@@ -150,11 +174,29 @@ final class ThemeController: ObservableObject {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshSystemAppearance() }
         }
+        desktopObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSNotification.Name("NSWorkspaceDesktopImageChangedNotification"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshWindowSurface() }
+        }
     }
 
     private func refreshSystemAppearance() {
         guard mode == .system else { return }
         apply()
+    }
+
+    /// 壁纸切换后让主窗口重新解析外观并重排一次，清掉窗口服务器留下的旧画面。
+    private func refreshWindowSurface() {
+        for window in NSApp.windows where window.canBecomeMain {
+            apply(to: window)
+            window.contentView?.needsLayout = true
+            window.contentView?.needsDisplay = true
+            window.contentView?.layoutSubtreeIfNeeded()
+            window.contentView?.displayIfNeeded()
+        }
     }
 }
 

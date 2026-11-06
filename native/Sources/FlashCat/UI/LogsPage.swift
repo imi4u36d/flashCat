@@ -7,6 +7,8 @@ struct LogsPage: View {
     @ObservedObject var state: AppState
     @State private var level: LogsFilter = .all
     @State private var query = ""
+    /// 输入框里的搜索词停顿后再用于过滤，避免每次按键都扫一遍几千行日志。
+    @State private var appliedQuery = ""
     @State private var paused = false
     @State private var frozen: [LogLine] = []
     @State private var expanded: Set<Int> = []
@@ -19,108 +21,151 @@ struct LogsPage: View {
         return formatter
     }()
 
-    private var lines: [LogLine] {
+    /// 一次遍历同时得到「按级别计数」和「按级别 + 搜索词过滤后的行」。
+    /// 以前 body 里会多次求值 `lines`，每求值一次就全表过滤一遍，还要为
+    /// 四个级别各扫一次日志。
+    private struct Display {
+        var lines: [LogLine] = []
+        var counts: [LogsFilter: Int] = [:]
+    }
+
+    private func display() -> Display {
         let source = paused ? frozen : state.logs
-        return source.filter { line in
-            guard level.matches(line.level) else { return false }
-            guard !query.isEmpty else { return true }
-            return line.text.localizedCaseInsensitiveContains(query)
+        let level = self.level
+        let query = self.appliedQuery
+        var result = Display()
+        result.lines.reserveCapacity(source.count)
+        for line in source {
+            result.counts[.all, default: 0] += 1
+            switch line.level {
+            case .warning: result.counts[.warning, default: 0] += 1
+            case .error: result.counts[.error, default: 0] += 1
+            default: result.counts[.info, default: 0] += 1
+            }
+            guard level.matches(line.level) else { continue }
+            if !query.isEmpty, !line.text.localizedCaseInsensitiveContains(query) { continue }
+            result.lines.append(line)
         }
+        return result
     }
 
     var body: some View {
+        let data = display()
         VStack(alignment: .leading, spacing: 14) {
-            topBar
-            console
+            topBar(data)
+            console(data)
         }
         .padding(.horizontal, Console.contentPadding)
         .padding(.top, 78)
         .padding(.bottom, 22)
-    }
-
-    private var topBar: some View {
-        HStack(spacing: 14) {
-            GlassFilterBar(selection: $level,
-                           options: LogsFilter.allCases.map { item in
-                               (item, "\(item.label) \((paused ? frozen : state.logs).filter { item.matches($0.level) }.count)")
-                           },
-                           query: $query,
-                           placeholder: "搜索")
-
-            Spacer(minLength: 0)
-
-            Button {
-                state.copy(lines.map(\.text).joined(separator: "\n"), label: "已复制筛选后的日志")
-            } label: {
-                Image(systemName: "doc.on.doc")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Console.secondary)
-                    .frame(width: 32, height: 32)
-                    .background {
-                        LiquidGlassSurface(shape: Circle(), interactive: true)
-                    }
-            }
-            .buttonStyle(.plainHit)
-            .disabled(lines.isEmpty)
-            .help("复制筛选后的日志")
-
-            Button {
-                let path = Paths.logFile
-                guard Paths.fileExists(path) else {
-                    state.toast("日志文件尚未创建")
-                    return
-                }
-                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
-            } label: {
-                Image(systemName: "doc.text")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Console.secondary)
-                    .frame(width: 32, height: 32)
-                    .background {
-                        LiquidGlassSurface(shape: Circle(), interactive: true)
-                    }
-            }
-            .buttonStyle(.plainHit)
-            .help("打开日志文件")
-
-            Button {
-                if paused {
-                    paused = false
-                    frozen = []
-                } else {
-                    frozen = state.logs
-                    paused = true
-                }
-            } label: {
-                Label(L10n.t(paused ? "继续" : "暂停"), systemImage: paused ? "play.fill" : "pause.fill")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Console.secondary)
-                    .padding(.horizontal, 14)
-                    .frame(height: 34)
-                    .background {
-                        LiquidGlassSurface(shape: Capsule(), interactive: true)
-                    }
-            }
-            .buttonStyle(.plainHit)
-
-            Button {
-                state.clearLogs()
-                frozen = []
-            } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Console.secondary)
-                    .frame(width: 32, height: 32)
-                    .background {
-                        LiquidGlassSurface(shape: Circle(), interactive: true)
-                    }
-            }
-            .buttonStyle(.plainHit)
-            .help("清空日志")
+        .task(id: query) {
+            if query == appliedQuery { return }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            guard !Task.isCancelled else { return }
+            appliedQuery = query
         }
     }
 
-    private var console: some View {
+    private func topBar(_ data: Display) -> some View {
+        // 窄窗口下过滤条和右侧动作放不进一行，自动折成上下两行。
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 14) {
+                filterBar(data)
+                Spacer(minLength: 0)
+                actionButtons(data)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                filterBar(data)
+                HStack(spacing: 14) {
+                    Spacer(minLength: 0)
+                    actionButtons(data)
+                }
+            }
+        }
+    }
+
+    private func filterBar(_ data: Display) -> some View {
+        GlassFilterBar(selection: $level,
+                       options: LogsFilter.allCases.map { item in
+                           (item, "\(item.label) (\(data.counts[item] ?? 0))")
+                       },
+                       query: $query,
+                       placeholder: "搜索")
+    }
+
+    @ViewBuilder
+    private func actionButtons(_ data: Display) -> some View {
+        Button {
+            state.copy(data.lines.map(\.text).joined(separator: "\n"), label: "已复制筛选后的日志")
+        } label: {
+            Image(systemName: "doc.on.doc")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Console.secondary)
+                .frame(width: 32, height: 32)
+                .background {
+                    LiquidGlassSurface(shape: Circle(), interactive: true)
+                }
+        }
+        .buttonStyle(.plainHit)
+        .disabled(data.lines.isEmpty)
+        .help("复制筛选后的日志")
+
+        Button {
+            let path = Paths.logFile
+            guard Paths.fileExists(path) else {
+                state.toast("日志文件尚未创建")
+                return
+            }
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+        } label: {
+            Image(systemName: "doc.text")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Console.secondary)
+                .frame(width: 32, height: 32)
+                .background {
+                    LiquidGlassSurface(shape: Circle(), interactive: true)
+                }
+        }
+        .buttonStyle(.plainHit)
+        .help("打开日志文件")
+
+        Button {
+            if paused {
+                paused = false
+                frozen = []
+            } else {
+                frozen = state.logs
+                paused = true
+            }
+        } label: {
+            Label(L10n.t(paused ? "继续" : "暂停"), systemImage: paused ? "play.fill" : "pause.fill")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Console.secondary)
+                .padding(.horizontal, 14)
+                .frame(height: 34)
+                .background {
+                    LiquidGlassSurface(shape: Capsule(), interactive: true)
+                }
+        }
+        .buttonStyle(.plainHit)
+
+        Button {
+            state.clearLogs()
+            frozen = []
+        } label: {
+            Image(systemName: "trash")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Console.secondary)
+                .frame(width: 32, height: 32)
+                .background {
+                    LiquidGlassSurface(shape: Circle(), interactive: true)
+                }
+        }
+        .buttonStyle(.plainHit)
+        .help("清空日志")
+    }
+
+    private func console(_ data: Display) -> some View {
         ScrollViewReader { proxy in
             GlassCard(padding: 0, content: {
                 VStack(spacing: 0) {
@@ -136,7 +181,7 @@ struct LogsPage: View {
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundStyle(Console.tertiary)
                         Spacer(minLength: 0)
-                        Text("\(lines.count) 行")
+                        Text("\(data.lines.count) 行")
                             .font(.system(size: 10.5, design: .monospaced))
                             .foregroundStyle(Console.tertiary)
                     }
@@ -147,14 +192,14 @@ struct LogsPage: View {
 
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 1) {
-                            if lines.isEmpty {
+                            if data.lines.isEmpty {
                                 Text("启动服务后，引擎日志会实时出现在这里")
                                     .font(.system(size: 11.5))
                                     .foregroundStyle(Console.tertiary)
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 40)
                             } else {
-                                ForEach(lines) { line in
+                                ForEach(data.lines) { line in
                                     row(line).id(line.id)
                                 }
                             }
@@ -163,7 +208,7 @@ struct LogsPage: View {
                         .padding(12)
                     }
                     .scrollIndicators(.never)
-                    .onChange(of: lines.count) { _, _ in
+                    .onChange(of: data.lines.count) { _, _ in
                         guard !paused else { return }
                         proxy.scrollTo("logBottom", anchor: .bottom)
                     }
@@ -186,7 +231,7 @@ struct LogsPage: View {
                 }
             } label: {
                 HStack(spacing: 10) {
-                    Text(Format.clock(line.time))
+                    Text(line.clockText)
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(Console.tertiary)
                         .monospacedDigit()
@@ -233,7 +278,7 @@ struct LogsPage: View {
                     .padding(.leading, 74)
                     .padding(.trailing, 8)
                     .padding(.bottom, 8)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
             }
         }
         .background {

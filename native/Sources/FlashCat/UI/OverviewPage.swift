@@ -6,10 +6,13 @@ import FlashCatKit
 /// 概览：按 WebUI 版式——左 hero + 右 API 网关，中间四张指标卡，底部总解码与最近请求。
 struct OverviewPage: View {
     @ObservedObject var state: AppState
+    @ObservedObject var chat: ChatStore
     @ObservedObject private var gateway = GatewayController.shared
 
     private var stats: ServerStats? { state.stats }
-    private var samples: [ThroughputSample] { state.recentThroughput(window: 0) }
+    /// 图表标题是「最近 60 秒」，数据也应按 60 秒取。以前传 0 会把 30 分钟的
+    /// 全部样本（生成中约 3600 个点）交给 Swift Charts，每秒整图重绘一次。
+    private var samples: [ThroughputSample] { state.recentThroughput(window: 60) }
     private var peak: Double { max(samples.map(\.value).max() ?? 0, 1) }
 
     private var modelTitle: String {
@@ -17,7 +20,10 @@ struct OverviewPage: View {
     }
 
     private var decodeRate: Double {
-        state.liveDecodeRate ?? stats?.decodeTokensPerSecond ?? 0
+        // 概览要的是「所有请求合起来」的解码速度，不是某一路：应用内对话生成时，
+        // 外部客户端可能正同时经网关跑请求。这里统一读聚合值（网关按请求打点，
+        // 已包含应用内这一路），曲线采样也来自同一个口径。
+        state.totalDecodeRate
     }
 
     private var runningText: String {
@@ -29,37 +35,66 @@ struct OverviewPage: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let topInset: CGFloat = 78
-            let bottomInset: CGFloat = 26
-            let availableHeight = max(proxy.size.height - topInset - bottomInset, 0)
-            // 概览要刚好铺满一屏：首屏区占约 30%，指标行保持固定高度，
-            // 底部图表行吃掉剩余空间，窗口变矮时也只有图表行收缩。
-            let heroHeight = min(max(availableHeight * 0.30, 220), 300)
+            // 窄窗口下双栏会把两侧压到不可读，改为可滚动的单栏布局。
+            if proxy.size.width < Console.compactContentWidth {
+                compactLayout
+            } else {
+                wideLayout(proxy)
+            }
+        }
+    }
 
+    /// 窄窗口：所有分区纵向排列，由滚动承载高度。
+    private var compactLayout: some View {
+        ScrollView {
             VStack(alignment: .leading, spacing: columnGap) {
-                HStack(alignment: .top, spacing: columnGap) {
-                    hero
-                    gatewayCard
-                        .frame(width: sideColumnWidth)
-                        .frame(maxHeight: .infinity, alignment: .top)
-                }
-                .frame(height: heroHeight)
-
-                metricsRow
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack(alignment: .top, spacing: columnGap) {
-                    decodeChart
-                    recentRequests
-                        .frame(width: sideColumnWidth)
-                        .frame(maxHeight: .infinity, alignment: .top)
-                }
-                .frame(maxHeight: .infinity)
+                hero
+                gatewayCard
+                metricsRow(compact: true)
+                decodeChart
+                    .frame(height: 260)
+                recentRequests
+                    .frame(height: 340)
             }
             .padding(.horizontal, Console.contentPadding)
-            .padding(.top, topInset)
-            .padding(.bottom, bottomInset)
+            .padding(.top, 78)
+            .padding(.bottom, 26)
         }
+        .scrollIndicators(.never)
+    }
+
+    /// 宽窗口：保持原本刚好铺满一屏的版式。
+    private func wideLayout(_ proxy: GeometryProxy) -> some View {
+        let topInset: CGFloat = 78
+        let bottomInset: CGFloat = 26
+        let availableHeight = max(proxy.size.height - topInset - bottomInset, 0)
+        // 概览要刚好铺满一屏：首屏区占约 30%，指标行保持固定高度，
+        // 底部图表行吃掉剩余空间，窗口变矮时也只有图表行收缩。
+        let heroHeight = min(max(availableHeight * 0.30, 220), 300)
+
+        return VStack(alignment: .leading, spacing: columnGap) {
+            HStack(alignment: .top, spacing: columnGap) {
+                hero
+                gatewayCard
+                    .frame(width: sideColumnWidth)
+                    .frame(maxHeight: .infinity, alignment: .top)
+            }
+            .frame(height: heroHeight)
+
+            metricsRow(compact: false)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(alignment: .top, spacing: columnGap) {
+                decodeChart
+                recentRequests
+                    .frame(width: sideColumnWidth)
+                    .frame(maxHeight: .infinity, alignment: .top)
+            }
+            .frame(maxHeight: .infinity)
+        }
+        .padding(.horizontal, Console.contentPadding)
+        .padding(.top, topInset)
+        .padding(.bottom, bottomInset)
     }
 
     // MARK: Hero
@@ -156,16 +191,11 @@ struct OverviewPage: View {
         .padding(.horizontal, 24)
         .padding(.vertical, 22)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background {
-            LiquidGlassSurface(
-                shape: RoundedRectangle(cornerRadius: Console.heroRadius, style: .continuous),
-                tint: Console.accent.opacity(0.10)
-            )
-        }
+        .consoleCardSurface(tint: Console.accent.opacity(0.10))
     }
 
     private var sessionCount: Int {
-        GatewayMeter.shared.snapshot().count
+        GatewayMeter.shared.sessionCount()
     }
 
     @ViewBuilder private var modelMenuContent: some View {
@@ -273,33 +303,48 @@ struct OverviewPage: View {
 
     // MARK: Metrics
 
-    private var metricsRow: some View {
-        HStack(spacing: 18) {
-            metricCard(icon: "square.stack.3d.up.fill", tint: Console.accent,
-                       title: "当前上下文", tag: "CTX",
-                       value: Format.tokens(state.contextUsedTokens),
-                       unit: state.contextWindowCeiling.map { "/ \(shortTokens($0))" } ?? "/ —",
-                       hint: state.isRunning ? "本会话已用" : "引擎未运行",
-                       bars: nil)
-            metricCard(icon: "timer", tint: Console.warn,
-                       title: "首字延迟", tag: "TTFT",
-                       value: ttftText,
-                       unit: "ms",
-                       hint: state.isRunning ? "从请求到首个 token" : "引擎未运行",
-                       bars: [0.12, 0.16, 0.14, 0.18, 0.15, 0.17, 0.13, 0.16, 0.14, 0.18])
-            metricCard(icon: "arrow.up.circle.fill", tint: Color(console: 0x7C5CFF),
-                       title: "预填充", tag: "PREFILL",
-                       value: prefillText,
-                       unit: "tok/s",
-                       hint: state.isRunning ? "长提示词处理速度" : "引擎未运行",
-                       bars: [0.10, 0.14, 0.12, 0.16, 0.13, 0.15, 0.11, 0.16, 0.12, 0.14])
-            metricCard(icon: "memorychip", tint: Console.info,
-                       title: "内存压力", tag: "MEM",
-                       value: memoryPercentText,
-                       unit: "%",
-                       hint: state.isRunning ? "统一内存占用" : "引擎未运行",
-                       bars: [0.08, 0.10, 0.09, 0.11, 0.10, 0.12, 0.09, 0.11, 0.10, 0.08])
+    @ViewBuilder
+    private func metricsRow(compact: Bool) -> some View {
+        if compact {
+            // 自适应列宽：常见窄窗口下是两列，再窄自动落成一列。
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 18, alignment: .top)],
+                      alignment: .leading,
+                      spacing: 18) {
+                metricCards
+            }
+        } else {
+            HStack(spacing: 18) {
+                metricCards
+            }
         }
+    }
+
+    @ViewBuilder
+    private var metricCards: some View {
+        metricCard(icon: "square.stack.3d.up.fill", tint: Console.accent,
+                   title: "当前上下文", tag: "CTX",
+                   value: Format.tokens(state.contextUsedTokens),
+                   unit: state.contextWindowCeiling.map { "/ \(shortTokens($0))" } ?? "/ —",
+                   hint: state.isRunning ? "本会话已用" : "引擎未运行",
+                   bars: nil)
+        metricCard(icon: "timer", tint: Console.warn,
+                   title: "首字延迟", tag: "TTFT",
+                   value: ttftText,
+                   unit: "ms",
+                   hint: state.isRunning ? "从请求到首个 token" : "引擎未运行",
+                   bars: [0.12, 0.16, 0.14, 0.18, 0.15, 0.17, 0.13, 0.16, 0.14, 0.18])
+        metricCard(icon: "arrow.up.circle.fill", tint: Color(console: 0x7C5CFF),
+                   title: "预填充", tag: "PREFILL",
+                   value: prefillText,
+                   unit: "tok/s",
+                   hint: state.isRunning ? "长提示词处理速度" : "引擎未运行",
+                   bars: [0.10, 0.14, 0.12, 0.16, 0.13, 0.15, 0.11, 0.16, 0.12, 0.14])
+        metricCard(icon: "memorychip", tint: Console.info,
+                   title: "内存压力", tag: "MEM",
+                   value: memoryPercentText,
+                   unit: "%",
+                   hint: state.isRunning ? "统一内存占用" : "引擎未运行",
+                   bars: [0.08, 0.10, 0.09, 0.11, 0.10, 0.12, 0.09, 0.11, 0.10, 0.08])
     }
 
     private func metricCard(icon: String, tint: Color, title: String, tag: String,
@@ -347,7 +392,13 @@ struct OverviewPage: View {
     }
 
     private var prefillText: String {
-        guard let value = stats?.prefillTokensPerSecond, value > 0 else { return "—" }
+        // 引擎真的按「本轮前向过的 token」量过的数优先，其次才是网关的
+        // 按请求聚合。应用自己按「整段提示词 / 首字耗时」估出来的口径已经废弃：
+        // 第二轮几乎全命中前缀缓存，分子里大部分 token 根本没被前向，
+        // 两者一除能把读数放大两个数量级。
+        let engine = stats.flatMap { $0.prefillRateIsLive ? $0.prefillTokensPerSecond : nil }
+        let value = engine ?? state.gatewayPrefillRate ?? stats?.prefillTokensPerSecond
+        guard let value, value > 0 else { return "—" }
         return Format.compact(value)
     }
 
@@ -443,7 +494,7 @@ struct OverviewPage: View {
 
     private var recentRequests: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
-            let sessions = GatewayMeter.shared.snapshot().suffix(6).reversed()
+            let sessions = GatewayMeter.shared.snapshot(historyPoints: 0, limit: 6).reversed()
             GlassCard(padding: 18) {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {

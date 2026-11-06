@@ -90,12 +90,12 @@ struct DownloadCenterSheet: View {
                     .buttonStyle(ConsolePillStyle(tone: .secondary, compact: true))
             }
             Meter(fraction: fraction, tint: Console.accent)
-            Text("\(Int((fraction * 100).rounded()))%")
+            Text(verbatim: fraction.formatted(.percent.precision(.fractionLength(0))))
                 .font(Native.monoSmall)
                 .foregroundStyle(Console.tertiary)
         }
         .padding(12)
-        .background { rowBackground(tint: Console.accentSoft) }
+        .consoleCardSurface(tint: Console.accent.opacity(0.10))
     }
 
     private func taskRow(_ task: ModelDownloadTask) -> some View {
@@ -129,16 +129,7 @@ struct DownloadCenterSheet: View {
             .help("移除任务并清理半成品")
         }
         .padding(12)
-        .background { rowBackground(tint: Console.inset) }
-    }
-
-    private func rowBackground(tint: Color) -> some View {
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(tint)
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Console.insetStroke, lineWidth: 0.8)
-            }
+        .consoleCardSurface()
     }
 
     private func statusLabel(_ task: ModelDownloadTask) -> String {

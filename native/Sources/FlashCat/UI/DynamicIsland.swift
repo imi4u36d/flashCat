@@ -23,7 +23,7 @@ struct DynamicIslandLayer: View {
     }
 
     private func collapse() {
-        withAnimation(Motion.entrance) { expanded = false }
+        withAnimation(Motion.island) { expanded = false }
     }
 }
 
@@ -36,6 +36,10 @@ struct DynamicIsland: View {
     /// 收起态的实测内容宽度。用真实宽度做插值，展开/收起才能像灵动岛一样连续变形，
     /// 而不是先跳到固定宽度再淡入。
     @State private var summaryWidth: CGFloat = 0
+
+    /// 鼠标悬停时的「果冻」缩放：先弹到略大，再回落到一个轻微的放大值。
+    @State private var hoverScale: CGFloat = 1
+    @State private var hoverResetTask: Task<Void, Never>?
 
     /// 灵动岛自己的语义色：深色模式是黑底白字，浅色模式是浅玻璃底深色字。
     private var ink: Color {
@@ -55,10 +59,18 @@ struct DynamicIsland: View {
     }
 
     private var rate: Double {
-        state.liveDecodeRate ?? state.stats?.decodeTokensPerSecond ?? 0
+        // 引擎能给出真实时计数时优先用它：它覆盖所有会话（含直连引擎端口的
+        // agent 请求），不会被「应用内这一路」或「上一轮请求的均值」带偏。
+        if state.stats?.decodeRateIsLive == true,
+           let engine = state.stats?.decodeTokensPerSecond, engine > 0 {
+            return engine
+        }
+        return state.liveDecodeRate ?? state.stats?.decodeTokensPerSecond ?? 0
     }
 
     private var hasNotices: Bool { !state.islandNotices.isEmpty }
+
+    private var showsNotice: Bool { state.islandNotice != nil }
 
     /// 收起态宽度：摘要实测宽度 + 2 段间距 + 右侧控件 + 左右内边距，
     /// 并限制在展开宽度以内，内容再长也不会把胶囊撑成一条。
@@ -100,17 +112,41 @@ struct DynamicIsland: View {
         }
         .clipShape(shape)
         .shadow(color: islandShadow, radius: 18, y: 8)
+        .scaleEffect(hoverScale)
         .contentShape(shape)
+        .onHover(perform: handleHover)
+        .onDisappear { hoverResetTask?.cancel() }
         .onChange(of: expanded) { _, value in
             if value { state.markIslandNoticesRead() }
         }
         .onChange(of: state.islandNotices.count) { _, _ in
             if expanded { state.markIslandNoticesRead() }
         }
-        .animation(Motion.entrance, value: expanded)
+        .animation(Motion.island, value: expanded)
+        .animation(Motion.island, value: showsNotice)
         .animation(Motion.entrance, value: summaryWidth)
         .animation(Motion.entrance, value: state.islandNotice?.id)
         .animation(Motion.entrance, value: state.islandNotices)
+    }
+
+    // MARK: - Hover
+
+    /// 鼠标移入时先快速放大（低阻尼弹簧会自然过冲），随后回落到轻微放大；
+    /// 移出时再弹回原尺寸，做出果冻般「放大—回弹」的手感。
+    private func handleHover(_ inside: Bool) {
+        hoverResetTask?.cancel()
+
+        guard inside else {
+            withAnimation(Motion.island) { hoverScale = 1 }
+            return
+        }
+
+        withAnimation(Motion.island) { hoverScale = 1.035 }
+        hoverResetTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled else { return }
+            withAnimation(Motion.island) { hoverScale = 1.012 }
+        }
     }
 
     // MARK: - Collapsed
@@ -122,7 +158,7 @@ struct DynamicIsland: View {
                 .contentShape(Rectangle())
                 .onTapGesture {
                     guard !expanded else { return }
-                    withAnimation(Motion.entrance) { expanded = true }
+                    withAnimation(Motion.island) { expanded = true }
                 }
 
             Spacer(minLength: 0)
@@ -130,31 +166,52 @@ struct DynamicIsland: View {
             trailingControl
         }
         .padding(.horizontal, 12)
-        .frame(height: 32)
+        .padding(.vertical, showsNotice ? 6 : 0)
+        .frame(minHeight: 32)
         .contentShape(Capsule())
     }
 
-    /// 引擎状态和通知消息共用同一块空间，切换时做淡出/缩放/轻微模糊，
-    /// 同时把实测宽度交给外层做弹簧插值。
+    /// 收起态只保留标题与信息两行：有通知时是通知标题 + 正文，否则是引擎名。
+    /// 详细状态、速度留到展开后的 detail 里，避免胶囊被撑得过长。
     private var summaryContent: some View {
         ZStack(alignment: .leading) {
             if let notice = state.islandNotice {
                 HStack(spacing: 8) {
                     noticeBadge(notice.kind, size: 18)
-                    Text(notice.message)
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(ink)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .frame(maxWidth: 320, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(L10n.t(notice.title))
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(ink)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Text(notice.message)
+                            .font(.system(size: 11))
+                            .foregroundStyle(ink.opacity(0.6))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .frame(maxWidth: 320, alignment: .leading)
                     if state.islandUnread > 1 {
                         unreadBadge
                     }
                 }
                 .transition(summaryTransition)
             } else {
-                HStack(spacing: 8) {
-                    engineSummary
+                HStack(spacing: 6) {
+                    engineDot
+                    Text(state.activeEngine.displayName)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(ink)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                    Text(state.engineStageText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(ink.opacity(0.5))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if state.islandUnread > 0 {
+                        unreadBadge
+                    }
                 }
                 .transition(summaryTransition)
             }
@@ -174,34 +231,13 @@ struct DynamicIsland: View {
         .animation(Motion.entrance, value: state.islandNotice?.id)
     }
 
-    @ViewBuilder
-    private var engineSummary: some View {
-        engineDot
-        Text(state.activeEngine.displayName)
-            .font(.system(size: 12.5, weight: .semibold))
-            .foregroundStyle(ink)
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-        Text(state.engineStageText)
-            .font(.system(size: 11.5))
-            .foregroundStyle(state.isModelBusy ? Console.warn : ink.opacity(0.58))
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .frame(maxWidth: 220, alignment: .leading)
-            .contentTransition(.opacity)
-        if state.canChat {
-            Rectangle()
-                .fill(ink.opacity(0.16))
-                .frame(width: 1, height: 12)
-            Text("\(Format.compact(rate)) tok/s")
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundStyle(ink.opacity(0.72))
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-        }
-        if state.islandUnread > 0 {
-            unreadBadge
-        }
+    /// 灵动岛里的模型生命周期指示灯：加载中一律黄色，成功绿色，失败红色，
+    /// 停止灰色。和菜单栏面板、概览页共用同一套语义色。
+    private var lifecycleTint: Color {
+        if state.serverState == .failed { return Console.danger }
+        if state.canChat { return Console.ok }
+        if state.isModelBusy { return Console.warn }
+        return ink.opacity(0.32)
     }
 
     @ViewBuilder
@@ -211,17 +247,12 @@ struct DynamicIsland: View {
                 .controlSize(.small)
                 .scaleEffect(0.55)
                 .frame(width: 10, height: 10)
-                .tint(ink.opacity(0.8))
-        } else if state.canChat {
-            Circle()
-                .fill(Console.ok)
-                .frame(width: 6, height: 6)
-                .shadow(color: Console.ok.opacity(0.8), radius: 3)
-                .padding(.horizontal, 2)
+                .tint(Console.warn)
         } else {
             Circle()
-                .fill(ink.opacity(0.32))
+                .fill(lifecycleTint)
                 .frame(width: 6, height: 6)
+                .shadow(color: state.canChat ? Console.ok.opacity(0.8) : .clear, radius: 3)
                 .padding(.horizontal, 2)
         }
     }
@@ -230,7 +261,7 @@ struct DynamicIsland: View {
     private var trailingControl: some View {
         if expanded {
             Button {
-                withAnimation(Motion.entrance) { expanded = false }
+                withAnimation(Motion.island) { expanded = false }
             } label: {
                 Image(systemName: "chevron.up")
                     .font(.system(size: 9.5, weight: .bold))
@@ -242,7 +273,7 @@ struct DynamicIsland: View {
             .help("收起")
         } else if state.islandNotice != nil {
             Button {
-                withAnimation(Motion.entrance) { expanded = true }
+                withAnimation(Motion.island) { expanded = true }
             } label: {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9.5, weight: .bold))
@@ -385,9 +416,13 @@ struct DynamicIsland: View {
                 .padding(.top, 1)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(notice.message)
-                    .font(.system(size: 12, weight: .medium))
+                Text(L10n.t(notice.title))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(ink.opacity(0.92))
+                    .lineLimit(1)
+                Text(notice.message)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(ink.opacity(0.68))
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
                 Text(Format.relative(notice.date))
@@ -404,7 +439,6 @@ struct DynamicIsland: View {
     private var engineDetail: some View {
         VStack(spacing: 9) {
             detailRow("模型", state.selectedModel.isEmpty ? "—" : state.shortModelName(state.selectedModel))
-            detailRow("状态", state.engineStageText)
             detailRow("接口", "127.0.0.1:\(state.port)")
             detailRow("版本", state.engineVersion)
             detailRow("实时速度", state.canChat ? "\(Format.compact(rate)) tok/s" : "—")
@@ -443,7 +477,7 @@ struct DynamicIsland: View {
 
             footerButton("日志") {
                 state.section = .logs
-                withAnimation(Motion.entrance) { expanded = false }
+                withAnimation(Motion.island) { expanded = false }
             }
             footerButton(state.isRunning ? "停止" : "启动",
                          tint: state.isRunning ? Console.danger : Console.ok) {

@@ -121,10 +121,19 @@ enum Format {
         return String(format: "%.2f", value)
     }
 
-    static func clock(_ date: Date) -> String {
+    /// `DateFormatter` 的创建成本远高于格式化本身；日志每写一行都会走到这里，
+    /// 复用同一个实例（并用锁保护，日志也来自子进程读取线程）。
+    private static let clockFormatterLock = NSLock()
+    private static let clockFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
-        return formatter.string(from: date)
+        return formatter
+    }()
+
+    static func clock(_ date: Date) -> String {
+        clockFormatterLock.lock()
+        defer { clockFormatterLock.unlock() }
+        return clockFormatter.string(from: date)
     }
 
     /// Elapsed time as `m:ss`, used by the lifecycle line while an engine loads.
@@ -133,14 +142,18 @@ enum Format {
         return String(format: "%d:%02d", value / 60, value % 60)
     }
 
+    private static let relativeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM-dd HH:mm"
+        return formatter
+    }()
+
     static func relative(_ date: Date) -> String {
         let seconds = Int(Date().timeIntervalSince(date))
         if seconds < 60 { return "刚刚" }
         if seconds < 3600 { return "\(seconds / 60) 分钟前" }
         if seconds < 86400 { return "\(seconds / 3600) 小时前" }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MM-dd HH:mm"
-        return formatter.string(from: date)
+        return relativeFormatter.string(from: date)
     }
 }
 

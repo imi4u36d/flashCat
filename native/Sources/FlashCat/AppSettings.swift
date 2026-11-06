@@ -23,32 +23,38 @@ enum ThinkingMode: Int, CaseIterable {
 }
 
 enum ReasoningEffort: Int, CaseIterable {
-    case minimal = 0
+    // 等级范围固定为 低 / 中 / 高 / 极高；rawValue 保留原值以兼容旧偏好。
     case low = 1
     case medium = 2
     case high = 3
     case xhigh = 4
-    case max = 5
 
     var label: String {
         switch self {
-        case .minimal: return "最少"
         case .low: return "低"
         case .medium: return "中"
         case .high: return "高"
         case .xhigh: return "极高"
-        case .max: return "最大"
         }
     }
 
     var token: String {
         switch self {
-        case .minimal: return "minimal"
         case .low: return "low"
         case .medium: return "medium"
         case .high: return "high"
         case .xhigh: return "xhigh"
-        case .max: return "max"
+        }
+    }
+
+    /// 把落盘的整数还原成等级。旧版本存过的 minimal(0) / max(5) 收敛到
+    /// 新范围的两端，`AppSettings` 和 `@AppStorage` 观察者共用这一套规则。
+    static func stored(_ raw: Int) -> ReasoningEffort {
+        if let value = ReasoningEffort(rawValue: raw) { return value }
+        switch raw {
+        case 0: return .low
+        case 5: return .xhigh
+        default: return .medium
         }
     }
 }
@@ -125,11 +131,10 @@ final class AppSettings {
     func setThinkingMode(_ value: ThinkingMode) { defaults.set(value.rawValue, forKey: "thinkingMode") }
 
     var reasoningEffort: ReasoningEffort {
-        // integer(forKey:) is 0 for an absent key, which would read as .minimal;
-        // the product default is .medium.
-        guard let stored = defaults.object(forKey: "reasoningEffort") as? Int,
-              let value = ReasoningEffort(rawValue: stored) else { return .medium }
-        return value
+        // 缺省时按产品默认 .medium；旧版本存过的 minimal(0) / max(5) 收敛到
+        // 新范围的两端，避免升级后跳回 .medium。
+        guard let stored = defaults.object(forKey: "reasoningEffort") as? Int else { return .medium }
+        return ReasoningEffort.stored(stored)
     }
     func setReasoningEffort(_ value: ReasoningEffort) { defaults.set(value.rawValue, forKey: "reasoningEffort") }
 

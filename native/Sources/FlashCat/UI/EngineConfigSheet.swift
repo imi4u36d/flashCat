@@ -33,6 +33,7 @@ struct EngineConfigSheet: View {
             footer
         }
         .frame(width: 580, height: 640)
+        .sheetCanvas()
         .onAppear(perform: load)
     }
 

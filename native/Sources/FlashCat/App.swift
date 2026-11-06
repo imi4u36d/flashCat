@@ -3,7 +3,9 @@ import AppKit
 
 private enum MainWindowGeometry {
     static let defaultSize = NSSize(width: 1280, height: 820)
-    static let minimumSize = NSSize(width: 760, height: 600)
+    /// 页面在窄窗口下会切成单栏纵向排布，因此可以把下限继续放低；
+    /// 再小则侧栏和标题栏控件会互相挤压。
+    static let minimumSize = NSSize(width: 680, height: 560)
 }
 
 @main
@@ -12,6 +14,8 @@ struct FlashCatApp: App {
     // Scene 层的 `if state.isPresentingLaunchPage` 依赖这里的状态订阅：
     // 普通 let 不会让 SwiftUI 重新求值 body，点击「开始使用」就永远切不进控制台。
     @ObservedObject private var state = AppState.shared
+    // 没设置壁纸时，透明度/模糊控制的是窗口透出的桌面。
+    @ObservedObject private var background = BackgroundSettings.shared
 
     var body: some Scene {
         Window("flashCat", id: "main") {
@@ -28,18 +32,15 @@ struct FlashCatApp: App {
             }
             CommandGroup(after: .newItem) {
                 Button("打开对话") { state.section = .chat }
-                    .keyboardShortcut("o", modifiers: .command)
                 Button("新建对话") { state.newConversation() }
                     .keyboardShortcut("n", modifiers: .command)
             }
             CommandMenu("服务") {
                 Button("启动服务") { state.startService() }
-                    .keyboardShortcut("s", modifiers: [.command, .shift])
                     .disabled(state.isRunning)
                 Button("停止服务") { state.stopService() }
                     .disabled(!state.isRunning)
                 Button("重启服务") { state.restartService() }
-                    .keyboardShortcut("r", modifiers: [.command, .shift])
                     .disabled(!state.isRunning)
                 Divider()
                 Button("复制接口地址") { state.copy(state.endpointURL, label: "接口地址已复制") }
@@ -53,15 +54,23 @@ struct FlashCatApp: App {
                     state.toggleSidebar()
                 }
                 .keyboardShortcut("\\", modifiers: .command)
+                Button("切换浅色 / 深色") {
+                    state.theme.set(state.theme.mode.resolvedIsDark ? .light : .dark)
+                }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
             }
             CommandMenu("页面") {
-                Button("概览") { state.section = .overview }.keyboardShortcut("1", modifiers: .command)
-                Button("对话") { state.section = .chat }.keyboardShortcut("2", modifiers: .command)
-                Button("模型") { state.section = .models }.keyboardShortcut("3", modifiers: .command)
-                Button("引擎") { state.section = .engines }.keyboardShortcut("4", modifiers: .command)
-                Button("日志") { state.section = .logs }.keyboardShortcut("5", modifiers: .command)
-                Button("设置") { state.section = .settings }.keyboardShortcut("6", modifiers: .command)
-
+                Button("命令面板") {
+                    NotificationCenter.default.post(name: .flashCatOpenCommandPalette, object: nil)
+                }
+                .keyboardShortcut("k", modifiers: .command)
+                Divider()
+                Button("概览") { state.section = .overview }
+                Button("对话") { state.section = .chat }
+                Button("模型") { state.section = .models }
+                Button("引擎") { state.section = .engines }
+                Button("日志") { state.section = .logs }
+                Button("设置") { state.section = .settings }
             }
         }
 
@@ -73,6 +82,10 @@ struct FlashCatApp: App {
         ConsoleView(state: state)
             .frame(minWidth: MainWindowGeometry.minimumSize.width,
                    minHeight: MainWindowGeometry.minimumSize.height)
+            .background {
+                DesktopBackdrop(blur: background.blur)
+                    .ignoresSafeArea()
+            }
             .overlay(MainWindow.bridge())
             // 原生视图自己排标题栏那一行（红绿灯留白 + 侧栏折叠手柄），
             // 因此要吃掉安全区，让内容从窗口最顶端开始画。
@@ -227,6 +240,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             state.prepareForTermination()
             await state.engines?.shutdownEngines()
             state.finishTermination()
+            // 历史/当前会话改为后台写盘，退出前把队列排空。
+            state.history.flushPendingWrites()
+            state.conversation.flushPendingWrites()
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

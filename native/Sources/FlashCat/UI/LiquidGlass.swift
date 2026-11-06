@@ -39,6 +39,87 @@ extension View {
     }
 }
 
+/// 悬浮玻璃面板：导航列这类「浮在画布上」的整块容器使用。
+///
+/// 相比 `LiquidGlassSurface`，它额外补了三层在原生玻璃上做不出来的细节：
+/// 一层极淡的半透明底色（区分深浅色）、1px 的折射边缘光和内外两圈柔和投影，
+/// 让面板与右侧主视口之间形成明确的层次，而不是一块贴死的侧栏。
+struct LiquidGlassPanel<Content: View>: View {
+    var radius: CGFloat = 26
+    @ViewBuilder var content: () -> Content
+
+    @Environment(\.colorScheme) private var scheme
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: radius, style: .continuous)
+    }
+
+    private var rim: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color.white.opacity(scheme == .dark ? 0.34 : 0.90),
+                Color.white.opacity(scheme == .dark ? 0.05 : 0.12),
+                Color.white.opacity(scheme == .dark ? 0.22 : 0.48),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    var body: some View {
+        content()
+            .background {
+                ZStack {
+                    shape
+                        .fill(.clear)
+                        .glassEffect(.regular, in: shape)
+
+                    // 极淡的白/黑罩色：日间提亮玻璃，夜间压暗，避免材质发灰。
+                    shape.fill(
+                        scheme == .dark
+                            ? Color.black.opacity(0.14)
+                            : Color.white.opacity(0.08)
+                    )
+                }
+                // 投影只挂在玻璃底板这一层，避免文字和图标也被阴影描边。
+                .compositingGroup()
+                .shadow(color: .black.opacity(scheme == .dark ? 0.50 : 0.16),
+                        radius: 30, x: 0, y: 16)
+                .shadow(color: .black.opacity(scheme == .dark ? 0.28 : 0.06),
+                        radius: 4, x: 0, y: 1)
+            }
+            .overlay {
+                // 边缘高光 + 内侧一圈更细的折射线。
+                shape.strokeBorder(rim, lineWidth: 1)
+                shape.inset(by: 1)
+                    .strokeBorder(Color.white.opacity(scheme == .dark ? 0.08 : 0.35),
+                                  lineWidth: 0.6)
+            }
+    }
+}
+
+/// 弹层画布：日间纯白、夜间近黑。
+///
+/// 内容区必须保持不透明：整页半透明玻璃会削弱文字对比度，也让滚动时
+/// 底层内容透上来。玻璃只留给标题栏控件、搜索框和卡片这类「浮在画布上」
+/// 的元素，画布本身保持纯色。
+struct SheetCanvas: View {
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        (scheme == .dark ? Color(console: 0x100F15) : Color.white)
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+    }
+}
+
+extension View {
+    /// 给弹层铺纯白画布，替代系统默认的偏灰奶白窗口底色。
+    func sheetCanvas() -> some View {
+        background { SheetCanvas() }
+    }
+}
+
 /// 玻璃分段控件。`embedded` 为 true 时不画自己的轨道，直接坐进外层玻璃胶囊。
 struct GlassSegmented<Value: Hashable>: View {
     @Binding var selection: Value
@@ -134,14 +215,17 @@ struct GlassSegmented<Value: Hashable>: View {
 }
 
 private struct SegmentFrameKey: PreferenceKey {
-    static var defaultValue: [Int: CGRect] = [:]
+    static let defaultValue: [Int: CGRect] = [:]
 
     static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
         value.merge(nextValue(), uniquingKeysWith: { $1 })
     }
 }
 
-/// 一行玻璃胶囊：分段选项 + 分隔线 + 搜索框，合成一个整体。
+/// 一行筛选栏：原生玻璃分段控件 + 独立玻璃搜索按钮。
+///
+/// 分段部分直接复用 `NativeSegmented`，与设置页、模型广场保持同一套系统
+/// Liquid Glass 外观（按住拖动时由 AppKit 绘制大块玻璃选中态）。
 struct GlassFilterBar<Value: Hashable>: View {
     @Binding var selection: Value
     var options: [(value: Value, label: String)]
@@ -153,8 +237,10 @@ struct GlassFilterBar<Value: Hashable>: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
-            GlassSegmented(selection: $selection, options: options, embedded: true)
+        HStack(spacing: 10) {
+            // 与设置页、模型广场保持同一套原生分段控件，按住拖动时由系统
+            // 绘制 macOS 27 的大块 Liquid Glass 选中态。
+            NativeSegmented(selection: $selection, options: options)
 
             if searching {
                 HStack(spacing: 6) {
@@ -176,8 +262,9 @@ struct GlassFilterBar<Value: Hashable>: View {
                         .buttonStyle(.plainHit)
                     }
                 }
-                .padding(.leading, 2)
-                .frame(width: maxSearchWidth)
+                .padding(.horizontal, 10)
+                .frame(width: maxSearchWidth, height: 34)
+                .background { LiquidGlassSurface(shape: Capsule()) }
                 .transition(.opacity.combined(with: .move(edge: .trailing)))
             } else {
                 Button {
@@ -186,17 +273,13 @@ struct GlassFilterBar<Value: Hashable>: View {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(Console.secondary)
-                        .frame(width: 26, height: 26)
+                        .frame(width: 34, height: 34)
+                        .background { LiquidGlassSurface(shape: Circle(), interactive: true) }
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plainHit)
                 .help(placeholder)
             }
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 34)
-        .background {
-            LiquidGlassSurface(shape: Capsule())
         }
         .animation(.smooth(duration: 0.22), value: searching)
         .onAppear { searching = !query.isEmpty }

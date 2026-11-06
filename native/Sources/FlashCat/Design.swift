@@ -201,6 +201,8 @@ enum Motion {
     static let quick = Animation.easeOut(duration: 0.14)
     static let standard = Animation.easeOut(duration: 0.22)
     static let entrance = Animation.spring(response: 0.34, dampingFraction: 0.86)
+    /// 灵动岛展开/收起专用：阻尼更低，收尾时会轻微过冲再回弹，像真机灵动岛。
+    static let island = Animation.spring(response: 0.38, dampingFraction: 0.72)
     /// 引导页与控制台之间的交叉淡入淡出：比 `standard` 慢一点，让两侧都有过渡感。
     static let pageCrossfade = Animation.easeInOut(duration: 0.36)
     static let pulse = Animation.easeInOut(duration: 1.6).repeatForever(autoreverses: true)
@@ -362,6 +364,7 @@ extension ButtonStyle where Self == ArcadePillStyle {
 struct ArcadeIcon: View {
     var symbol: String
     var colors: [Color]
+    var brandAsset: String? = nil
     var size: CGFloat = 28
     var glyphScale: CGFloat = 0.46
     var glow: Bool = true
@@ -377,10 +380,21 @@ struct ArcadeIcon: View {
                                startPoint: .top,
                                endPoint: .center)
             )
-            Image(systemName: symbol)
-                .font(.system(size: size * glyphScale, weight: .semibold))
-                .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.28), radius: 1.5, x: 0, y: 1)
+            if let brandAsset, let artwork = BrandGlyph.image(named: brandAsset) {
+                Image(nsImage: artwork)
+                    .renderingMode(.template)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .foregroundStyle(.white)
+                    .frame(width: size * 0.58, height: size * 0.58)
+                    .shadow(color: .black.opacity(0.28), radius: 1.5, x: 0, y: 1)
+            } else {
+                Image(systemName: symbol)
+                    .font(.system(size: size * glyphScale, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.28), radius: 1.5, x: 0, y: 1)
+            }
         }
         .frame(width: size, height: size)
         .overlay(
@@ -389,6 +403,54 @@ struct ArcadeIcon: View {
                                startPoint: .top, endPoint: .bottom),
                 lineWidth: 0.8)
         )
+    }
+}
+
+/// 品牌字形资源：Lobe Icons 的 PNG 以 alpha 遮罩保存，渲染时统一染成白色。
+@MainActor
+enum BrandGlyph {
+    private static var cache: [String: NSImage] = [:]
+    private static var artworkCache: [String: NSImage] = [:]
+
+    static func image(named name: String) -> NSImage? {
+        guard let original = load(named: name, cache: &artworkCache) else { return nil }
+        if let cached = cache[name] { return cached }
+        original.isTemplate = true
+        cache[name] = original
+        return original
+    }
+
+    /// 原始配色的品牌图，用于引擎官方 app icon，不能当模板染色。
+    static func artwork(named name: String) -> NSImage? {
+        load(named: name, cache: &artworkCache)
+    }
+
+    private static func load(named name: String, cache: inout [String: NSImage]) -> NSImage? {
+        if let cached = cache[name] { return cached }
+
+        let bundleName = "FlashCat_FlashCat.bundle"
+        var roots: [URL] = []
+        if let resources = Bundle.main.resourceURL { roots.append(resources) }
+        if let executable = Bundle.main.executableURL?.deletingLastPathComponent() {
+            roots.append(executable)
+        }
+        roots.append(Bundle.main.bundleURL)
+
+        var url: URL?
+        for root in roots {
+            let bundleURL = root.appendingPathComponent(bundleName)
+            if let resources = Bundle(url: bundleURL),
+               let found = resources.url(forResource: name, withExtension: "png") {
+                url = found
+                break
+            }
+        }
+        if url == nil {
+            url = Bundle.main.url(forResource: name, withExtension: "png")
+        }
+        guard let url, let artwork = NSImage(contentsOf: url) else { return nil }
+        cache[name] = artwork
+        return artwork
     }
 }
 
@@ -579,12 +641,14 @@ struct Card<Content: View>: View {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     VStack(alignment: .leading, spacing: 3) {
                         if let title {
-                            Text(L10n.t(title)).font(Native.cardTitle)
+                            Text(L10n.t(title))
+                                .font(Native.cardTitle)
+                                .foregroundStyle(Console.text)
                         }
                         if let subtitle {
                             Text(L10n.t(subtitle))
                                 .font(.system(size: 11))
-                                .foregroundStyle(Native.tertiary)
+                                .foregroundStyle(Console.tertiary)
                         }
                     }
                     Spacer(minLength: 8)
@@ -594,7 +658,7 @@ struct Card<Content: View>: View {
             content
         }
         .padding(padded ? Native.cardPadding : 0)
-        .background { GlassSurface(radius: Native.radiusPanel, tint: tint) }
+        .consoleCardSurface(tint: tint == .clear ? nil : tint.opacity(0.16))
     }
 }
 

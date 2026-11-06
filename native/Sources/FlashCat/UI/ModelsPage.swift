@@ -14,6 +14,8 @@ struct ModelsPage: View {
     @State private var removeTarget: ModelLibraryEntry?
     @State private var device = DeviceProfile.current()
 
+    private static let scrollTopAnchor = "models.scroll.top"
+
     private var entries: [ModelLibraryEntry] {
         let base: [ModelLibraryEntry]
         switch scope {
@@ -23,12 +25,27 @@ struct ModelsPage: View {
             base = state.libraryEntries(for: id)
         }
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !text.isEmpty else { return base }
-        return base.filter { "\($0.model.shortName) \($0.model.id)".lowercased().contains(text) }
+        let filtered = text.isEmpty
+            ? base
+            : base.filter { "\($0.model.shortName) \($0.model.id)".lowercased().contains(text) }
+        // 使用中的模型置顶，其次是已下载的，最后是待下载的；组内保持原顺序。
+        return filtered.enumerated()
+            .sorted { lhs, rhs in
+                let l = rank(lhs.element), r = rank(rhs.element)
+                return l == r ? lhs.offset < rhs.offset : l < r
+            }
+            .map(\.element)
+    }
+
+    private func rank(_ entry: ModelLibraryEntry) -> Int {
+        if isSelected(entry) { return 0 }
+        if entry.installed { return 1 }
+        return 2
     }
 
     private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: 440, maximum: 720), spacing: 18, alignment: .top)]
+        // 单列也能在窄内容区完整显示，宽窗口再自动并排。
+        [GridItem(.adaptive(minimum: 300, maximum: 720), spacing: 18, alignment: .top)]
     }
 
     var body: some View {
@@ -38,30 +55,44 @@ struct ModelsPage: View {
                 .padding(.top, 78)
                 .padding(.bottom, 18)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
-                        ForEach(entries) { entry in
-                            ModelCard(state: state,
-                                      entry: entry,
-                                      selected: isSelected(entry),
-                                      device: device,
-                                      remove: { removeTarget = entry })
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        Color.clear
+                            .frame(height: 0)
+                            .id(Self.scrollTopAnchor)
+
+                        LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
+                            ForEach(entries, id: \.identity) { entry in
+                                ModelCard(state: state,
+                                          entry: entry,
+                                          selected: isSelected(entry),
+                                          device: device,
+                                          remove: { removeTarget = entry })
+                            }
+                        }
+                        if entries.isEmpty {
+                            Text("没有匹配的模型")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Console.tertiary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 60)
                         }
                     }
-                    if entries.isEmpty {
-                        Text("没有匹配的模型")
-                            .font(.system(size: 12))
-                            .foregroundStyle(Console.tertiary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 60)
+                    .padding(.horizontal, Console.contentPadding)
+                    .padding(.top, 2)
+                    .padding(.bottom, 26)
+                }
+                .scrollIndicators(.never)
+                // 切换引擎后内容高度会骤减；不回到顶部时滚动位置可能落在
+                // 新内容之外，整页看起来是空白的。必须等这一帧布局完成再定位：
+                // 同步 scrollTo 用的还是旧内容的高度，滚完仍然停在空白区。
+                .onChange(of: scope) { _, _ in
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(Self.scrollTopAnchor, anchor: .top)
                     }
                 }
-                .padding(.horizontal, Console.contentPadding)
-                .padding(.top, 2)
-                .padding(.bottom, 26)
             }
-            .scrollIndicators(.never)
         }
         .sheet(isPresented: $showingHub) { HubSheet(state: state, engine: scope.engine ?? engine) }
         .sheet(isPresented: $showingDownloads) { DownloadCenterSheet(state: state) }
@@ -141,8 +172,6 @@ private struct ModelCard: View {
     let device: DeviceProfile
     let remove: () -> Void
 
-    @State private var hovering = false
-
     private var model: ModelInfo { entry.model }
     private var task: ModelDownloadTask? {
         let key = ModelSharing.canonical(entry.id)
@@ -158,16 +187,16 @@ private struct ModelCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             header
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(displayTitle)
-                    .font(.system(size: 25, weight: .bold))
+                    .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(Console.text)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(model.id)
-                    .font(.system(size: 11.5, design: .monospaced))
+                    .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Console.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -181,25 +210,20 @@ private struct ModelCard: View {
             tags
             HStack(spacing: 8) {
                 Image(systemName: "memorychip")
-                    .font(.system(size: 10.5, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Console.tertiary)
                 Text(memoryText)
-                    .font(.system(size: 11.5))
+                    .font(.system(size: 11))
                     .foregroundStyle(Console.secondary)
                 Spacer(minLength: 0)
                 action
             }
         }
-        .padding(20)
-        .background {
-            LiquidGlassSurface(
-                shape: RoundedRectangle(cornerRadius: Console.cardRadius, style: .continuous),
-                tint: cardTint == .clear
-                    ? (hovering ? Console.accent.opacity(0.05) : nil)
-                    : cardTint.opacity(selected ? 0.18 : 0.10)
-            )
-        }
-        .onHover { value in withAnimation(Motion.quick) { hovering = value } }
+        .padding(18)
+        .consoleCardSurface(tint: cardTint == .clear
+                                ? nil
+                                : cardTint.opacity(selected ? 0.18 : 0.10),
+                            interactive: cardTint == .clear)
         .contextMenu {
             if !model.path.isEmpty {
                 Button("在 Finder 中显示") {
@@ -254,13 +278,13 @@ private struct ModelCard: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            ModelFamilyIcon(family: family, size: 34)
+            ModelFamilyIcon(family: family, size: 30)
             VStack(alignment: .leading, spacing: 1) {
                 Text(entry.engine.displayName)
-                    .font(.system(size: 14.5, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Console.text)
                 Text(familyName)
-                    .font(.system(size: 10.5))
+                    .font(.system(size: 10))
                     .foregroundStyle(Console.tertiary)
             }
             Spacer(minLength: 0)
@@ -292,15 +316,14 @@ private struct ModelCard: View {
 
     private var familyName: String {
         if family != .other { return family.name }
-        if model.id.lowercased().contains("mimo") { return "Xiaomi MiMo" }
         if let family = model.family, !family.isEmpty, family != "GGUF", family != "MLX" { return family }
         return entry.recommendation?.tags.first ?? "本地权重"
     }
 
     private var tags: some View {
-        FlowLayout(spacing: 5, lineSpacing: 5) {
+        FlowLayout(spacing: 4, lineSpacing: 4) {
             ForEach(tagTexts.prefix(5), id: \.self) { tag in
-                ConsoleTag(text: tag)
+                ConsoleTag(text: tag, fontSize: 10)
             }
         }
     }
@@ -332,14 +355,14 @@ private struct ModelCard: View {
             Button {
                 state.pauseDownload()
             } label: {
-                Label(L10n.format("下载 %lld%%", Int((fraction * 100).rounded())), systemImage: "pause.fill")
+                Label(L10n.format("下载 %@", fraction.formatted(.percent.precision(.fractionLength(0)))), systemImage: "pause.fill")
             }
             .buttonStyle(ConsolePillStyle(tone: .secondary))
         } else if let task {
             Button {
                 state.resumeDownload(task)
             } label: {
-                Label(task.status == .paused ? L10n.format("继续 %lld%%", Int((task.fraction ?? 0) * 100)) : L10n.t("重试"),
+                Label(task.status == .paused ? L10n.format("继续 %@", (task.fraction ?? 0).formatted(.percent.precision(.fractionLength(0)))) : L10n.t("重试"),
                       systemImage: "play.fill")
             }
             .buttonStyle(ConsolePillStyle(tone: .secondary))
@@ -347,13 +370,13 @@ private struct ModelCard: View {
             if selected {
                 HStack(spacing: 6) {
                     Image(systemName: "waveform")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 10.5, weight: .semibold))
                     Text("使用中")
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(.system(size: 11.5, weight: .semibold))
                 }
                 .foregroundStyle(Console.accent)
-                .padding(.horizontal, 14)
-                .frame(height: 34)
+                .padding(.horizontal, 12)
+                .frame(height: 32)
                 .background(Capsule().fill(Console.accent.opacity(0.12)))
                 .overlay(Capsule().strokeBorder(Console.accent.opacity(0.25), lineWidth: 0.8))
             } else {

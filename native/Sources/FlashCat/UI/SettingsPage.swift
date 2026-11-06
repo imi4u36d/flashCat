@@ -5,32 +5,68 @@ import FlashCatKit
 /// 设置页：按 WebUI 版式——左右两列卡片，行内即改即生效。
 struct SettingsPage: View {
     @ObservedObject var state: AppState
+    @ObservedObject private var background = BackgroundSettings.shared
     @State private var ports: [String: String] = [:]
     @State private var gatewayPort = ""
     @State private var cachePath = ""
+    /// 思考设置走 `@AppStorage` 而不是本地镜像：`AppSettings` 不是
+    /// ObservableObject，只写 UserDefaults 不会触发 SwiftUI 重新求值。
+    /// 观察这两个键之后，聊天浮层滑杆与这里的分段控件才能互相同步。
+    @AppStorage("thinkingMode") private var storedThinkingMode = ThinkingMode.automatic.rawValue
+    @AppStorage("reasoningEffort") private var storedReasoningEffort = ReasoningEffort.medium.rawValue
+
+    private var thinkingMode: ThinkingMode {
+        ThinkingMode(rawValue: storedThinkingMode) ?? .automatic
+    }
+
+    private var reasoningEffort: ReasoningEffort {
+        ReasoningEffort.stored(storedReasoningEffort)
+    }
 
     var body: some View {
-        ScrollView {
-            HStack(alignment: .top, spacing: 18) {
-                VStack(spacing: 18) {
-                    appearanceCard
-                    launchCard
-                    portsCard
-                    cacheCard
-                }
-                VStack(spacing: 18) {
-                    gatewayCard
-                    thinkingCard
-                    infoCard
+        GeometryReader { proxy in
+            ScrollView {
+                // 窄窗口下两列会互相挤压，改为单列依次排布并交给滚动承载。
+                if proxy.size.width < Console.compactContentWidth {
+                    VStack(alignment: .leading, spacing: 18) {
+                        leftColumn
+                        rightColumn
+                    }
+                    .padding(.horizontal, Console.contentPadding)
+                    .padding(.top, 78)
+                    .padding(.bottom, 26)
+                } else {
+                    HStack(alignment: .top, spacing: 18) {
+                        leftColumn
+                        rightColumn
+                    }
+                    .padding(.horizontal, Console.contentPadding)
+                    .padding(.top, 78)
+                    .padding(.bottom, 26)
                 }
             }
-            .padding(.horizontal, Console.contentPadding)
-            .padding(.top, 78)
-            .padding(.bottom, 26)
+            .scrollIndicators(.never)
         }
-        .scrollIndicators(.never)
         .onAppear(perform: load)
         .onChange(of: state.activeEngine) { _, _ in load() }
+    }
+
+    private var leftColumn: some View {
+        VStack(spacing: 18) {
+            appearanceCard
+            backgroundCard
+            launchCard
+            portsCard
+            cacheCard
+        }
+    }
+
+    private var rightColumn: some View {
+        VStack(spacing: 18) {
+            gatewayCard
+            thinkingCard
+            infoCard
+        }
     }
 
     private func load() {
@@ -52,6 +88,69 @@ struct SettingsPage: View {
                     get: { state.theme.mode },
                     set: { state.theme.set($0) }),
                     options: AppAppearance.allCases.map { ($0, $0.label) })
+            }
+        }
+    }
+
+    private var backgroundCard: some View {
+        SettingsCard {
+            SettingsRow(title: "自定义背景",
+                        detail: background.isEnabled ? "使用自定义图片作为画布背景" : "选择一张图片作为画布背景") {
+                HStack(spacing: 8) {
+                    if background.isEnabled {
+                        if let image = background.image {
+                            Image(nsImage: image)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 32, height: 32)
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .strokeBorder(Console.insetStroke, lineWidth: 0.8)
+                                }
+                        }
+                        Button("更换") { background.chooseImage() }
+                            .buttonStyle(.consoleSoft)
+                            .fixedSize()
+                        Button("移除") { background.clear() }
+                            .buttonStyle(.consoleDanger)
+                            .fixedSize()
+                    } else {
+                        Button("选择图片") { background.chooseImage() }
+                            .buttonStyle(.consoleSecondary)
+                            .fixedSize()
+                    }
+                }
+            }
+            Divider().overlay(Console.insetStroke)
+            SettingsRow(title: "APP 透明度",
+                        detail: background.isEnabled
+                            ? "数值越高图片越清晰；会自动柔化以保证可读性"
+                            : "数值越高越透出桌面；会自动柔化以保证可读性") {
+                HStack(spacing: 10) {
+                    Slider(value: $background.opacity, in: 0...1)
+                        .frame(width: 150)
+                        .tint(Console.accent)
+                    Text(verbatim: background.opacity.formatted(.percent.precision(.fractionLength(0))))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Console.tertiary)
+                        .frame(width: 36, alignment: .trailing)
+                }
+            }
+            Divider().overlay(Console.insetStroke)
+            SettingsRow(title: "背景模糊",
+                        detail: background.isEnabled
+                            ? "数值越高背景越柔和，文字越清晰"
+                            : "数值越高桌面越柔和，文字越清晰") {
+                HStack(spacing: 10) {
+                    Slider(value: $background.blur, in: 0...40)
+                        .frame(width: 150)
+                        .tint(Console.accent)
+                    Text("\(Int(background.blur.rounded()))pt")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Console.tertiary)
+                        .frame(width: 36, alignment: .trailing)
+                }
             }
         }
     }
@@ -156,7 +255,7 @@ struct SettingsPage: View {
                     TextField("默认使用 HF_HUB_CACHE", text: $cachePath)
                         .textFieldStyle(.plain)
                         .font(.system(size: 11, design: .monospaced))
-                        .frame(width: 220)
+                        .frame(minWidth: 120, idealWidth: 200, maxWidth: 220)
                         .padding(.horizontal, 9)
                         .frame(height: 28)
                         .background(RoundedRectangle(cornerRadius: 8).fill(Console.inset))
@@ -165,6 +264,7 @@ struct SettingsPage: View {
                         state.toast("缓存目录已保存")
                     }
                     .buttonStyle(.consoleSoft)
+                    .fixedSize()
                 }
             }
         }
@@ -228,8 +328,11 @@ struct SettingsPage: View {
         SettingsCard {
             SettingsRow(title: "思考模式", detail: "回答前是否输出推理过程") {
                 NativeSegmented(selection: Binding(
-                    get: { state.settings.thinkingMode },
-                    set: { state.settings.setThinkingMode($0) }),
+                    get: { thinkingMode },
+                    set: {
+                        storedThinkingMode = $0.rawValue
+                        state.settings.setThinkingMode($0)
+                    }),
                     options: ThinkingMode.allCases.map { ($0, $0.label) })
             }
             Divider().overlay(Console.insetStroke)
@@ -265,10 +368,13 @@ struct SettingsPage: View {
             Divider().overlay(Console.insetStroke)
             SettingsRow(title: "思考等级", detail: "等级由当前引擎提供") {
                 NativeSegmented(selection: Binding(
-                    get: { state.settings.reasoningEffort },
-                    set: { state.settings.setReasoningEffort($0) }),
+                    get: { reasoningEffort },
+                    set: {
+                        storedReasoningEffort = $0.rawValue
+                        state.settings.setReasoningEffort($0)
+                    }),
                     options: ReasoningEffort.allCases.map { ($0, $0.label) })
-                    .disabled(state.settings.thinkingMode != .on)
+                    .disabled(thinkingMode != .on)
             }
         }
     }
@@ -290,9 +396,12 @@ struct SettingsPage: View {
                     .buttonStyle(.consoleSecondary)
             }
             Divider().overlay(Console.insetStroke)
-            SettingsRow(title: "恢复默认", detail: "外观、启动与网关设置") {
+            SettingsRow(title: "恢复默认", detail: "外观、背景、启动与网关设置") {
                 Button("恢复") {
                     state.theme.set(.system)
+                    background.clear()
+                    background.opacity = 0.35
+                    background.blur = 18
                     state.settings.setAutoStart(false)
                     state.settings.setGatewayEnabled(true)
                     state.resetChatParameters()
@@ -323,7 +432,8 @@ struct SettingsPage: View {
         .padding(.vertical, 13)
     }
 
-    private var device: DeviceProfile { DeviceProfile.current() }
+    /// 芯片/内存/磁盘在会话内基本不变，不必每次重绘都跑一遍 sysctl + statfs。
+    @State private var device = DeviceProfile.current()
 
     private var appVersion: String {
         (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "—"

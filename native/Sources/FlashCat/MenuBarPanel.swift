@@ -6,14 +6,14 @@ import FlashCatKit
 
 /// 系统菜单栏里的状态图标：**只画猫头轮廓，不带任何底色**。
 ///
-/// 之前这里直接绘制 `BrandMark.artwork`（应用图标原画），那张 PNG 自带
-/// 渐变圆角方块，缩到 18pt 放进菜单栏就成了一个彩色小色块 —— 也就是
-/// 看起来"图标还有背景"的原因。菜单栏的惯例是单色剪影 + 模板渲染，
-/// 由系统按菜单栏明暗自动上色，因此这里改成手绘贝塞尔路径：
+/// 造型取自应用图标：宽脸颊、尖耳朵的猫头，额头留一道闪电负形。
+/// 菜单栏的惯例是单色剪影 + 模板渲染，由系统按菜单栏明暗自动上色，
+/// 因此这里用手绘贝塞尔路径而不是 `BrandMark.artwork`（那张 PNG 自带
+/// 渐变，缩到 18pt 会变成一个彩色小色块）。
 ///
-///   · 运行中 → 实心猫头
+///   · 运行中 → 实心猫头 + 闪电镂空
 ///   · 启动/停止中 → 半透明实心（过渡态）
-///   · 已停止 → 描边猫头
+///   · 已停止 → 描边猫头（闪电同样描边）
 ///   · 异常 → 描边猫头 + 右下角小圆点（告警标记）
 ///
 /// `isTemplate = true` 是关键：系统只取 alpha 通道当蒙版，浅色菜单栏画黑、
@@ -54,9 +54,14 @@ enum MenuBarIcon {
 
     @MainActor
     private static func draw(state: ServerState, in rect: NSRect) {
+        // 造型在 18 单位画布里的垂直范围是 2.9…16.9（下巴到耳尖），重心偏上 0.9，
+        // 直接铺满会让耳尖顶到菜单栏上沿，看起来比系统图标高一截。
+        // 整体下移，让剪影在画布里垂直居中；告警点用绝对坐标，不受影响。
+        let glyphRect = rect.offsetBy(dx: 0, dy: -rect.width * 0.05)
+
         // 模板图只看 alpha，颜色取黑即可。
-        let glyph = headPath(in: rect)
-        let strokeWidth = rect.width * 0.082
+        let glyph = glyphPath(in: glyphRect)
+        let strokeWidth = rect.width * 0.075
 
         switch state {
         case .ready:
@@ -65,19 +70,21 @@ enum MenuBarIcon {
 
         case .starting, .stopping:
             // 过渡态：同一形状压暗，读作"正在变化"，不靠动画在菜单栏里闪烁。
-            NSColor.black.withAlphaComponent(0.42).setFill()
+            NSColor.black.withAlphaComponent(0.40).setFill()
             glyph.fill()
 
         case .stopped:
             glyph.lineWidth = strokeWidth
             glyph.lineJoinStyle = .round
+            glyph.lineCapStyle = .round
             NSColor.black.withAlphaComponent(0.92).setStroke()
             glyph.stroke()
 
         case .failed:
             glyph.lineWidth = strokeWidth
             glyph.lineJoinStyle = .round
-            NSColor.black.withAlphaComponent(0.5).setStroke()
+            glyph.lineCapStyle = .round
+            NSColor.black.withAlphaComponent(0.50).setStroke()
             glyph.stroke()
 
             // 右下角告警点：先挖出一圈透明间隙，点才不会和描边粘在一起。
@@ -96,7 +103,16 @@ enum MenuBarIcon {
         }
     }
 
-    /// 猫头剪影：低耳、圆角、底部收圆，缩到 18pt 仍然是一个能认出的猫头。
+    /// 猫头 + 额头的闪电。两条子路径用 even-odd 规则合成，
+    /// 实心态下闪电是透明镂空，描边态下则和猫头一起被勾出轮廓。
+    private static func glyphPath(in rect: NSRect) -> NSBezierPath {
+        let path = headPath(in: rect)
+        path.append(boltPath(in: rect))
+        path.windingRule = .evenOdd
+        return path
+    }
+
+    /// 猫头剪影：低耳、圆润宽脸颊、底部收圆，缩到 18pt 仍然是一个能认出的猫头。
     /// 单条闭合路径，填充和描边共用，描边时不会出现耳朵接缝。
     private static func headPath(in rect: NSRect) -> NSBezierPath {
         let scale = rect.width / 18
@@ -105,36 +121,50 @@ enum MenuBarIcon {
         }
 
         let path = NSBezierPath()
-        path.move(to: point(1.4, 6.8))
-        path.line(to: point(1.4, 10.3))
-        // 左耳外侧上坡
-        path.curve(to: point(4.1, 16.3),
-                   controlPoint1: point(1.4, 12.1),
-                   controlPoint2: point(2.4, 15.1))
-        // 左耳内侧下坡
-        path.curve(to: point(6.9, 12.7),
-                   controlPoint1: point(5.1, 16.9),
-                   controlPoint2: point(6.4, 14.5))
+        path.move(to: point(1.2, 6.9))
+        path.line(to: point(1.2, 10.5))
+        // 左耳外侧上坡，收在尖耳尖上
+        path.curve(to: point(3.9, 16.9),
+                   controlPoint1: point(1.2, 12.4),
+                   controlPoint2: point(2.4, 15.5))
+        // 左耳内侧下坡（直线让耳尖保持锐利，和应用图标一致）
+        path.line(to: point(7.0, 12.8))
         // 双耳之间的头顶
-        path.line(to: point(11.1, 12.7))
+        path.line(to: point(11.0, 12.8))
         // 右耳内侧上坡
-        path.curve(to: point(13.9, 16.3),
-                   controlPoint1: point(11.6, 14.5),
-                   controlPoint2: point(12.9, 16.9))
+        path.line(to: point(14.1, 16.9))
         // 右耳外侧下坡
-        path.curve(to: point(16.6, 10.3),
-                   controlPoint1: point(15.6, 15.1),
-                   controlPoint2: point(16.6, 12.1))
-        path.line(to: point(16.6, 6.8))
+        path.curve(to: point(16.8, 10.5),
+                   controlPoint1: point(15.6, 15.5),
+                   controlPoint2: point(16.8, 12.4))
+        path.line(to: point(16.8, 6.9))
         // 右下角
-        path.curve(to: point(13.1, 3.2),
-                   controlPoint1: point(16.6, 4.8),
-                   controlPoint2: point(15.1, 3.2))
-        path.line(to: point(4.9, 3.2))
+        path.curve(to: point(13.2, 2.9),
+                   controlPoint1: point(16.8, 4.7),
+                   controlPoint2: point(15.1, 2.9))
+        path.line(to: point(4.8, 2.9))
         // 左下角
-        path.curve(to: point(1.4, 6.8),
-                   controlPoint1: point(2.9, 3.2),
-                   controlPoint2: point(1.4, 4.8))
+        path.curve(to: point(1.2, 6.9),
+                   controlPoint1: point(2.9, 2.9),
+                   controlPoint2: point(1.2, 4.7))
+        path.close()
+        return path
+    }
+
+    /// 额头闪电：与应用图标上的奶油色闪电同向，缩到 18pt 仍能读出来。
+    private static func boltPath(in rect: NSRect) -> NSBezierPath {
+        let scale = rect.width / 18
+        func point(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
+            NSPoint(x: rect.minX + x * scale, y: rect.minY + y * scale)
+        }
+
+        let path = NSBezierPath()
+        path.move(to: point(10.4, 12.0))
+        path.line(to: point(7.9, 8.6))
+        path.line(to: point(9.3, 8.6))
+        path.line(to: point(8.4, 5.6))
+        path.line(to: point(11.0, 9.3))
+        path.line(to: point(9.5, 9.3))
         path.close()
         return path
     }
@@ -152,79 +182,131 @@ struct MenuBarPanel: View {
     /// 承载，所以不依赖 `\.openWindow` 环境值。
     var onOpenMainWindow: () -> Void = { MainWindow.show() }
 
+    /// 取自应用图标的粉橙渐变，只出现在品牌光晕、接口图标和主按钮上。
+    private static let brandPink = Console.accent
+    private static let brandOrange = Color(console: 0xFF8A4F)
+    private static let brandGradient = LinearGradient(
+        colors: [brandPink, brandOrange],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
+
     private var running: Bool { state.isRunning }
-    private var accent: Color { statusColor(state.serverState) }
     private var busy: Bool { state.serverState == .starting || state.serverState == .stopping }
+
+    /// 状态色使用控制台调色板，和主界面的状态胶囊保持一致。
+    private var statusTint: Color {
+        switch state.serverState {
+        case .ready: return Console.ok
+        case .starting, .stopping: return Console.warn
+        case .failed: return Console.danger
+        case .stopped: return Console.tertiary
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            Hairline().padding(.top, 11)
+            divider.padding(.top, 11)
 
-            modelBlock
+            modelCard
                 .padding(.top, 12)
 
             runtimeBlock
-                .padding(.top, 12)
+                .padding(.top, 10)
 
             actions
                 .padding(.top, 12)
-            Hairline().padding(.top, 11)
+            divider.padding(.top, 12)
 
             footer
                 .padding(.top, 9)
         }
         .padding(.horizontal, 14)
-        .padding(.top, 13)
-        .padding(.bottom, 11)
-        .frame(width: 336)
+        .padding(.top, 14)
+        .padding(.bottom, 12)
+        .frame(width: 348)
+        .background(alignment: .topLeading) {
+            // 顶部一层极淡的粉橙光晕，呼应 app icon；不改变 popover 的系统材质。
+            RadialGradient(colors: [Self.brandPink.opacity(0.14), .clear],
+                           center: .topLeading,
+                           startRadius: 0,
+                           endRadius: 190)
+                .frame(height: 150)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private var divider: some View {
+        Rectangle()
+            .fill(Console.insetStroke)
+            .frame(height: 1)
     }
 
     // MARK: 顶部状态行
 
     private var header: some View {
-        HStack(spacing: 8) {
-            BrandMark(size: 21, glow: false)
-            Text("flashCat")
-                .font(.system(size: 12.5, weight: .semibold))
-                .foregroundStyle(Native.label)
-            Text(verbatim: "\(state.activeEngine.displayName) \(state.engineVersion)")
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundStyle(Native.tertiary)
+        HStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .fill(LinearGradient(colors: [Self.brandPink.opacity(0.18),
+                                                  Self.brandOrange.opacity(0.10)],
+                                         startPoint: .topLeading,
+                                         endPoint: .bottomTrailing))
+                    .frame(width: 38, height: 38)
+                BrandMark(size: 29, glow: false)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("flashCat")
+                    .font(.system(size: 14.5, weight: .semibold))
+                    .foregroundStyle(Console.text)
+                HStack(spacing: 4) {
+                    Text(state.activeEngine.displayName)
+                    Text("·")
+                    Text(state.engineVersion)
+                }
+                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(Console.tertiary)
                 .lineLimit(1)
+            }
+
             Spacer(minLength: 6)
-            StatusPill(text: state.serverState.rawValue, tint: accent, pulsing: busy)
+            StatusPill(text: state.serverState.rawValue, tint: statusTint, pulsing: busy)
         }
     }
 
     // MARK: 当前模型
 
-    private var modelBlock: some View {
-        VStack(alignment: .leading, spacing: 6) {
+    private var modelCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text("当前模型")
                     .font(.system(size: 9.5, weight: .bold))
                     .tracking(1.5)
-                    .foregroundStyle(Native.tertiary)
+                    .foregroundStyle(Console.tertiary)
                 Spacer(minLength: 4)
                 if let info = state.selectedModelInfo {
                     Text(verbatim: info.sizeText)
                         .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Native.tertiary)
+                        .foregroundStyle(Console.tertiary)
                         .lineLimit(1)
                 }
             }
 
             Text(modelTitle)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 16.5, weight: .semibold))
                 .tracking(-0.2)
-                .foregroundStyle(state.selectedModel.isEmpty ? Native.tertiary : Native.label)
+                .foregroundStyle(state.selectedModel.isEmpty ? Console.tertiary : Console.text)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .help(modelTitle)
 
             endpointRow
         }
+        .padding(12)
+        .consoleCardSurface()
     }
 
     private var modelTitle: String {
@@ -250,22 +332,22 @@ struct MenuBarPanel: View {
             HStack(spacing: 7) {
                 Image(systemName: "link")
                     .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(accent.opacity(state.isRunning ? 0.95 : 0.5))
+                    .foregroundStyle(Self.brandPink.opacity(state.isRunning ? 0.95 : 0.5))
                 Text(state.endpointURL)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(Native.secondary)
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(Console.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 Image(systemName: "doc.on.doc")
                     .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(Native.tertiary)
+                    .foregroundStyle(Console.tertiary)
             }
             .padding(.horizontal, 9)
-            .frame(height: 27)
-            .background(Native.recess, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .frame(height: 28)
+            .background(Console.inset, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Native.hairline, lineWidth: 0.8)
+                    .stroke(Console.insetStroke, lineWidth: 0.8)
             )
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
@@ -277,79 +359,53 @@ struct MenuBarPanel: View {
 
     @ViewBuilder
     private var runtimeBlock: some View {
-        if state.isModelBusy {
-            // 进程在跑但权重还没就位（启动、切换、加载权重、预热）：指标卡
-            // 此刻没有意义，给一条带转圈的生命周期行。
-            NoticeRow(symbol: nil,
-                      text: stageText,
-                      tint: Native.yellow,
-                      showsSpinner: true)
-        } else {
-            switch state.serverState {
-            case .ready:
-                VStack(alignment: .leading, spacing: 8) {
-                    MetricStrip(stats: state.stats)
-                    if let peak = sparklinePeak {
-                        Sparkline(values: state.recentThroughput(window: 300).map(\.value),
-                                  peak: peak,
-                                  tint: accent)
-                    }
-                }
-            case .starting, .stopping:
+        VStack(alignment: .leading, spacing: 8) {
+            if state.isModelBusy {
+                // 进程在跑但权重还没就位（启动、切换、加载权重、预热）：给一条
+                // 带转圈的生命周期行；下面的读数条保留，只是暂时没有数据。
                 NoticeRow(symbol: nil,
                           text: stageText,
-                          tint: Native.yellow,
+                          tint: Console.warn,
                           showsSpinner: true)
-            case .failed:
-                NoticeRow(symbol: "exclamationmark.triangle.fill",
-                          text: state.failureMessage ?? "引擎异常，打开日志查看原因",
-                          tint: Native.red,
-                          showsSpinner: false)
-            case .stopped:
-                // 已停止且没选模型时才提示；正常停止态不再占一行横幅。
-                if state.selectedModel.isEmpty {
-                    NoticeRow(symbol: "pause.circle",
-                              text: "还没有选择模型，在模型页选一个即可启动",
-                              tint: Native.secondary,
+            } else {
+                switch state.serverState {
+                case .ready:
+                    EmptyView()
+                case .starting, .stopping:
+                    NoticeRow(symbol: nil,
+                              text: stageText,
+                              tint: Console.warn,
+                              showsSpinner: true)
+                case .failed:
+                    NoticeRow(symbol: "exclamationmark.triangle.fill",
+                              text: state.failureMessage ?? "引擎异常，打开日志查看原因",
+                              tint: Console.danger,
                               showsSpinner: false)
+                case .stopped:
+                    // 已停止且没选模型时才提示；正常停止态不再占一行横幅。
+                    if state.selectedModel.isEmpty {
+                        NoticeRow(symbol: "pause.circle",
+                                  text: "还没有选择模型，在模型页选一个即可启动",
+                                  tint: Console.secondary,
+                                  showsSpinner: false)
+                    }
                 }
             }
-        }
-    }
 
-    /// "启动中 · 预热 · 已等待 3:20". The state name is only followed by a stage
-    /// that says something it does not — never as 「启动中 · 启动中」 — and a
-    /// start always carries its elapsed time, because the engine can spend
-    /// minutes warming up without printing a line.
-    private var stageText: String {
-        if state.isSwitchingModel {
-            // 跨引擎跳过去的那一步本身就是一次真正的冷启动：把引擎自己的阶段和
-            // 已等待秒数并进来。只写固定的 switchStage 时，一次正常推进的加载
-            // 和卡死看起来完全一样。
-            var parts = [L10n.t("切换中")]
-            if !state.switchStage.isEmpty { parts.append(L10n.t(state.switchStage)) }
-            let stage = state.startupStage
-            if !stage.isEmpty, stage != "就绪", stage != "已停止",
-               stage != state.switchStage {
-                parts.append(L10n.t(stage))
+            // 读数条常驻：没有实时数据时显示「—」，面板不会因为停止或加载而少一截。
+            MetricStrip(stats: state.serverState == .ready ? state.stats : nil)
+            if state.serverState == .ready, let peak = sparklinePeak {
+                Sparkline(values: state.recentThroughput(window: 300).map(\.value),
+                          peak: peak,
+                          tint: Self.brandPink)
             }
-            parts.append(L10n.format("已等待 %@", Self.clock(state.lifecycleSeconds)))
-            return parts.joined(separator: " · ")
         }
-        var parts = [L10n.t(state.serverState.rawValue)]
-        let stage = state.startupStage
-        if !stage.isEmpty, stage != state.serverState.rawValue, stage != "就绪" {
-            parts.append(L10n.t(stage))
-        }
-        if state.serverState == .starting {
-            parts.append(L10n.format("已等待 %@", Self.clock(state.startupSeconds)))
-        }
-        return parts.joined(separator: " · ")
     }
 
-    private static func clock(_ seconds: Int) -> String {
-        String(format: "%d:%02d", seconds / 60, seconds % 60)
-    }
+    /// "启动中 · 预热 · 已等待 3:20". 和灵动岛、概览共用 `engineStageText`：
+    /// 三个地方的措辞和秒数以前是三份拷贝，改一处就漏两处（灵动岛的计时停下时，
+    /// 菜单栏还在按另一套规则算）。
+    private var stageText: String { state.engineStageText }
 
     private var sparklinePeak: Double? {
         let samples = state.recentThroughput(window: 300).map(\.value)
@@ -368,19 +424,41 @@ struct MenuBarPanel: View {
                 } label: {
                     Label("取消等待", systemImage: "xmark.circle")
                         .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Console.text)
                         .frame(maxWidth: .infinity)
+                        .frame(height: 36)
+                        .background(Capsule().fill(Console.inset))
+                        .overlay(Capsule().strokeBorder(Console.insetStroke, lineWidth: 0.8))
+                        .contentShape(Capsule())
                 }
-                .buttonStyle(.arcadeGlass)
+                .buttonStyle(.plainHit)
             } else {
                 Button {
                     running ? state.stopService() : state.startService()
                 } label: {
                     Label(L10n.t(running ? "停止服务" : "启动服务"),
                           systemImage: running ? "stop.fill" : "play.fill")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(running ? Console.danger : .white)
                         .frame(maxWidth: .infinity)
+                        .frame(height: 36)
+                        .background {
+                            if running {
+                                Capsule()
+                                    .fill(Console.danger.opacity(0.10))
+                                    .overlay(Capsule().strokeBorder(Console.danger.opacity(0.24),
+                                                                   lineWidth: 0.8))
+                            } else {
+                                Capsule()
+                                    .fill(Self.brandGradient)
+                                    .overlay(Capsule().strokeBorder(.white.opacity(0.18),
+                                                                   lineWidth: 0.8))
+                                    .shadow(color: Self.brandPink.opacity(0.30), radius: 8, y: 3)
+                            }
+                        }
+                        .contentShape(Capsule())
                 }
-                .buttonStyle(running ? .arcadeGlass : .arcadeAccent)
+                .buttonStyle(.plainHit)
             }
         }
     }
@@ -389,24 +467,32 @@ struct MenuBarPanel: View {
         HStack(spacing: 8) {
             if let stats = state.stats {
                 Text(Self.countersText(stats))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(Native.tertiary)
+                    .font(.system(size: 9.5, design: .monospaced))
+                    .foregroundStyle(Console.tertiary)
+                    .lineLimit(1)
             }
             Spacer(minLength: 4)
-            Button {
-                NSApp.terminate(nil)
-            } label: {
-                Label("退出 flashCat", systemImage: "power")
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .padding(.horizontal, 10)
-                    .frame(height: 22)
-                    .background(Native.overlay(0.10), in: Capsule())
-                    .overlay(Capsule().stroke(Native.overlay(0.14), lineWidth: 0.8))
-                    .contentShape(Capsule())
-            }
-            .buttonStyle(.plainHit)
-            .help("退出 flashCat")
+            footerButton("主窗口", symbol: "macwindow") { onOpenMainWindow() }
+                .help("打开主窗口")
+            footerButton("退出", symbol: "power") { NSApp.terminate(nil) }
+                .help("退出 flashCat")
         }
+    }
+
+    private func footerButton(_ title: String,
+                              symbol: String,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(L10n.t(title), systemImage: symbol)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(Console.secondary)
+                .padding(.horizontal, 9)
+                .frame(height: 24)
+                .background(Capsule().fill(Console.inset))
+                .overlay(Capsule().strokeBorder(Console.insetStroke, lineWidth: 0.8))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plainHit)
     }
 
     private static func countersText(_ stats: ServerStats) -> String {
@@ -436,8 +522,9 @@ private struct StatusPill: View {
                 .foregroundStyle(tint)
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 3.5)
-        .background(tint.opacity(0.12), in: Capsule())
+        .padding(.vertical, 4)
+        .background(tint.opacity(0.10), in: Capsule())
+        .overlay(Capsule().strokeBorder(tint.opacity(0.18), lineWidth: 0.8))
         .fixedSize()
     }
 }
@@ -451,36 +538,42 @@ private struct MetricStrip: View {
     var body: some View {
         HStack(spacing: 0) {
             cell("解码", value(stats?.decodeTokensPerSecond.map { Format.compact($0) }), unit: "tok/s")
-            VHairline()
+            divider
             cell("首字", value(stats?.ttftMilliseconds.map { "\(Int($0))" }), unit: "ms")
-            VHairline()
+            divider
             cell("内存", value(stats?.memoryBytes.map { Format.bytes($0) }), unit: nil)
         }
-        .background(Native.recess, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(Console.inset, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Native.hairline, lineWidth: 0.8)
+                .strokeBorder(Console.insetStroke, lineWidth: 0.8)
         )
         // 读数条高度锁死：窗口高度被撑开时它也不跟着变高。
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var divider: some View {
+        Rectangle()
+            .fill(Console.insetStroke)
+            .frame(width: 1)
     }
 
     private func cell(_ label: String, _ value: String, unit: String?) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(L10n.t(label))
                 .font(.system(size: 9.5, weight: .semibold))
-                .foregroundStyle(Native.tertiary)
+                .foregroundStyle(Console.tertiary)
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(value)
                     .font(.system(size: 14.5, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Native.label)
+                    .foregroundStyle(Console.text)
                     .monospacedDigit()
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
                 if let unit {
                     Text(unit)
                         .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Native.tertiary)
+                        .foregroundStyle(Console.tertiary)
                 }
             }
         }
@@ -508,11 +601,11 @@ private struct Sparkline: View {
             HStack(spacing: 5) {
                 Text("近 5 分钟吞吐")
                     .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(Native.tertiary)
+                    .foregroundStyle(Console.tertiary)
                 Spacer(minLength: 4)
                 Text(L10n.format("峰值 %@ tok/s", Format.compact(peak)))
                     .font(.system(size: 9.5, design: .monospaced))
-                    .foregroundStyle(Native.tertiary)
+                    .foregroundStyle(Console.tertiary)
             }
             GeometryReader { proxy in
                 let size = proxy.size
@@ -562,7 +655,7 @@ private struct Sparkline: View {
 private struct NoticeRow: View {
     var symbol: String?
     let text: String
-    var tint: Color = Native.secondary
+    var tint: Color = Console.secondary
     var showsSpinner: Bool = false
 
     var body: some View {
@@ -570,6 +663,7 @@ private struct NoticeRow: View {
             if showsSpinner {
                 ProgressView()
                     .controlSize(.small)
+                    .tint(tint)
                     .scaleEffect(0.68)
                     .frame(width: 12, height: 12)
             } else if let symbol {
@@ -587,10 +681,10 @@ private struct NoticeRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
         .padding(.vertical, 9)
-        .background(Native.recess, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(Console.inset, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Native.hairline, lineWidth: 0.8)
+                .strokeBorder(Console.insetStroke, lineWidth: 0.8)
         )
     }
 }

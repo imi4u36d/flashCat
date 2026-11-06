@@ -6,6 +6,7 @@ import SwiftUI
 /// 免得同一个仓库在不同地方显示成不同的家族。
 enum ModelFamily: String, CaseIterable {
     case qwen
+    case mimo
     case deepseek
     case llama
     case mistral
@@ -30,8 +31,9 @@ enum ModelFamily: String, CaseIterable {
         return .other
     }
 
+    /// 精确品牌词先于泛化词：`MiMo-V2.6-Qwen-9B` 属于小米，不应落到 Qwen。
     private static let detectionOrder: [ModelFamily] = [
-        .qwen, .deepseek, .llama, .mistral, .gemma, .phi, .gpt,
+        .mimo, .qwen, .deepseek, .llama, .mistral, .gemma, .phi, .gpt,
         .nemotron, .granite, .glm, .kimi, .flux, .liquid, .minimax,
     ]
 
@@ -42,6 +44,7 @@ enum ModelFamily: String, CaseIterable {
     private var keywords: [String] {
         switch self {
         case .qwen: return ["qwen"]
+        case .mimo: return ["mimo"]
         case .deepseek: return ["deepseek"]
         case .llama: return ["llama", "meta-llama"]
         case .mistral: return ["mistral", "mixtral", "devstral"]
@@ -62,6 +65,7 @@ enum ModelFamily: String, CaseIterable {
     var name: String {
         switch self {
         case .qwen: return "Qwen"
+        case .mimo: return "Xiaomi MiMo"
         case .deepseek: return "DeepSeek"
         case .llama: return "Llama"
         case .mistral: return "Mistral"
@@ -82,6 +86,7 @@ enum ModelFamily: String, CaseIterable {
     var symbol: String {
         switch self {
         case .qwen: return "cloud.fill"
+        case .mimo: return "brain.head.profile"
         case .deepseek: return "water.waves"
         case .llama: return "hare.fill"
         case .mistral: return "wind"
@@ -99,9 +104,19 @@ enum ModelFamily: String, CaseIterable {
         }
     }
 
+    /// Lobe Icons 里的品牌字形（`Resources/brand-*.png`）；没有的品牌回落到 SF Symbol。
+    var brandAsset: String? {
+        switch self {
+        case .qwen: return "brand-qwen"
+        case .mimo: return "brand-mimo"
+        default: return nil
+        }
+    }
+
     var colors: [Color] {
         switch self {
-        case .qwen: return [Native.violet, Native.blue]
+        case .qwen: return [Color.adaptive(dark: 0x2F5BFF, light: 0x082DFF), Native.indigo]
+        case .mimo: return [Color.adaptive(dark: 0x3A3A3C, light: 0x1B1B1E), Color(hex: 0x000000)]
         case .deepseek: return [Native.blue, Native.indigo]
         case .llama: return [Native.blue, Native.teal]
         case .mistral: return [Native.orange, Native.yellow]
@@ -128,6 +143,7 @@ struct ModelFamilyIcon: View {
     var body: some View {
         ArcadeIcon(symbol: family.symbol,
                    colors: family.colors,
+                   brandAsset: family.brandAsset,
                    size: size,
                    glyphScale: 0.46,
                    glow: false)

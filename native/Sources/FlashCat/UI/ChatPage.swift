@@ -5,19 +5,27 @@ import FlashCatKit
 /// 对话页：按 WebUI 版式——顶部模型行、居中空态、悬浮输入卡。
 struct ChatPage: View {
     @ObservedObject var state: AppState
+    @ObservedObject var chat: ChatStore
 
     @State private var draft = ""
     @State private var showsParameters = false
     @State private var showsThreads = false
     @State private var atBottom = true
     @State private var keyMonitor: Any?
+    /// 超长对话只渲染最近这些消息，往上翻时再按批放出来。
+    @State private var messageLimit = 80
     @FocusState private var composerFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
             header
             transcript
         }
+        // 页面切换时外层用 transition 重新插入视图。这里显式铺满可用空间，
+        // 保证 ScrollView 拿到确定高度；否则懒加载列表可能量到 0 高度，
+        // 整页只剩顶部模型行，看起来就是空白。
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(.top, 60)
         .overlay(alignment: .bottom) {
             composer
@@ -68,7 +76,7 @@ struct ChatPage: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            .disabled(state.generating)
+            .disabled(chat.generating)
 
             Text("\(Format.tokens(state.contextUsedTokens)) / \(state.contextWindowCeiling.map { shortTokens($0) } ?? "—")")
                 .font(.system(size: 10.5, design: .monospaced))
@@ -109,13 +117,13 @@ struct ChatPage: View {
                 .foregroundStyle(Console.secondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-            if state.threads.isEmpty {
+            if chat.threads.isEmpty {
                 Text("还没有保存的对话")
                     .font(.system(size: 11))
                     .foregroundStyle(Console.tertiary)
                     .padding(12)
             } else {
-                ForEach(state.threads) { thread in
+                ForEach(chat.threads) { thread in
                     Button {
                         state.openThread(thread)
                         showsThreads = false
@@ -150,15 +158,41 @@ struct ChatPage: View {
 
     // MARK: Transcript
 
+    private var visibleMessages: [ChatMessage] {
+        guard chat.messages.count > messageLimit else { return chat.messages }
+        return Array(chat.messages.suffix(messageLimit))
+    }
+
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 18) {
-                    if state.messages.isEmpty {
-                        emptyState
-                    } else {
-                        ForEach(state.messages) { message in
-                            MessageRow(state: state, message: message)
+                    if !chat.messages.isEmpty {
+                        if chat.messages.count > visibleMessages.count {
+                            Button {
+                                let anchor = visibleMessages.first?.id
+                                messageLimit += 80
+                                if let anchor {
+                                    DispatchQueue.main.async {
+                                        proxy.scrollTo(anchor, anchor: .top)
+                                    }
+                                }
+                            } label: {
+                                Label("加载更早的 \(min(80, chat.messages.count - visibleMessages.count)) 条",
+                                      systemImage: "arrow.up")
+                                    .font(.system(size: 11.5, weight: .medium))
+                                    .padding(.horizontal, 14)
+                                    .frame(height: 30)
+                            }
+                            .buttonStyle(.consoleSoft)
+                            .frame(maxWidth: .infinity)
+                        }
+                        ForEach(visibleMessages) { message in
+                            MessageRow(message: message,
+                                       modelName: message.model.map(state.shortModelName)
+                                           ?? state.activeEngine.displayName,
+                                       startupStage: chat.chatStartupStage)
+                                .equatable()
                                 .id(message.id)
                                 .transition(.opacity.combined(with: .offset(y: 10)))
                         }
@@ -169,7 +203,8 @@ struct ChatPage: View {
                 .padding(.top, 8)
                 .frame(maxWidth: 820)
                 .frame(maxWidth: .infinity)
-                .animation(Motion.entrance, value: state.messages.count)
+                .id("top")
+                .animation(Motion.entrance, value: chat.messages.count)
             }
             .scrollIndicators(.never)
             .onScrollGeometryChange(for: Bool.self) { geometry in
@@ -178,12 +213,50 @@ struct ChatPage: View {
             } action: { _, bottom in
                 if atBottom != bottom { withAnimation(Motion.quick) { atBottom = bottom } }
             }
-            .onChange(of: state.messages.count) { _, _ in scroll(proxy, animated: true, force: true) }
-            .onChange(of: state.messages.last?.content.count ?? 0) { _, _ in
-                if state.generating, atBottom { scroll(proxy, animated: false) }
+            .onChange(of: chat.messages.count) { _, count in
+                // 换会话 / 清空后内容高度骤变，等这一帧布局完成再定位，
+                // 否则会滚到尚不存在的旧位置。
+                DispatchQueue.main.async {
+                    if count == 0 {
+                        atBottom = true
+                        proxy.scrollTo("top", anchor: .top)
+                    } else {
+                        scroll(proxy, animated: true, force: true)
+                    }
+                }
             }
-            .onChange(of: state.currentThreadID) { _, _ in scroll(proxy, animated: false, force: true) }
-            .onAppear { scroll(proxy, animated: false, force: true) }
+            .onChange(of: chat.messages.last?.content.count ?? 0) { _, _ in
+                if chat.generating, atBottom { scroll(proxy, animated: false) }
+            }
+            .onChange(of: state.currentThreadID) { _, _ in
+                messageLimit = 80
+                DispatchQueue.main.async {
+                    if chat.messages.isEmpty {
+                        atBottom = true
+                        proxy.scrollTo("top", anchor: .top)
+                    } else {
+                        scroll(proxy, animated: false, force: true)
+                    }
+                }
+            }
+            .onAppear {
+                // 切页回来时 ChatPage 会重建，LazyVStack 此刻还没量出高度。
+                // 必须等这一帧布局完成再滚到底；在 onAppear 里同步 scrollTo
+                // 会把滚动位置落到内容之外，整块对话区看起来就是空白。
+                if chat.messages.isEmpty {
+                    atBottom = true
+                } else {
+                    DispatchQueue.main.async {
+                        scroll(proxy, animated: false, force: true)
+                    }
+                }
+            }
+            .overlay {
+                // 空会话只留一句问候，压在输入卡上方的视觉中心。
+                if chat.messages.isEmpty {
+                    emptyState
+                }
+            }
             .overlay(alignment: .bottom) {
                 if !atBottom {
                     Button {
@@ -214,49 +287,14 @@ struct ChatPage: View {
         atBottom = true
     }
 
+    /// 空会话只留一句问候：不放品牌图、副标题与快捷提示，
+    /// 输入卡上方只有这一行字，页面安静，也更快把视线交回输入框。
     private var emptyState: some View {
-        VStack(spacing: 14) {
-            Spacer(minLength: 24)
-            ZStack {
-                Circle()
-                    .fill(RadialGradient(colors: [Console.accent.opacity(0.28), .clear],
-                                         center: .center, startRadius: 4, endRadius: 56))
-                    .frame(width: 120, height: 120)
-                BrandMark(size: 76)
-            }
-            Text("把推理留在这台 Mac 上")
-                .font(.system(size: 30, weight: .bold))
-                .foregroundStyle(Console.text)
-            Text("当前由 **\(state.activeEngine.displayName)** 加载 **\(state.selectedModel.isEmpty ? "未选择模型" : state.shortModelName(state.selectedModel))**。数据不出本机，离线也能用。")
-                .font(.system(size: 13.5))
-                .foregroundStyle(Console.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 560)
-            HStack(spacing: 10) {
-                suggestion("用三句话介绍本地大模型的优势")
-                suggestion("总结这段对话的要点")
-            }
-            .padding(.top, 6)
-            Spacer(minLength: 120)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func suggestion(_ text: String) -> some View {
-        Button {
-            draft = text
-            composerFocused = true
-        } label: {
-            Text(L10n.t(text))
-                .font(.system(size: 12))
-                .foregroundStyle(Console.secondary)
-                .padding(.horizontal, 14)
-                .frame(height: 32)
-                .background {
-                    LiquidGlassSurface(shape: Capsule(), interactive: true)
-                }
-        }
-        .buttonStyle(.plainHit)
+        Text("需要我为你做些什么?")
+            .font(.system(size: 36, weight: .regular))
+            .foregroundStyle(Console.text)
+            .multilineTextAlignment(.center)
+            .padding(.bottom, 96)
     }
 
     // MARK: Composer
@@ -269,9 +307,20 @@ struct ChatPage: View {
                 .font(.system(size: 13))
                 .lineLimit(1...6)
                 .focused($composerFocused)
-                .disabled(!state.canChat || state.generating)
+                .disabled(chat.generating)
                 .padding(.horizontal, 10)
-                .padding(.vertical, 6)
+                // 聚焦时输入区向上扩展一块，让正在编辑的输入卡比空闲态更高。
+                .padding(.top, composerFocused ? 24 : 6)
+                .padding(.bottom, 6)
+                // 让文字框四周的留白区域也可点击聚焦，避免点到边缘没有光标。
+                .background {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            guard !chat.generating else { return }
+                            composerFocused = true
+                        }
+                }
                 .onKeyPress(phases: .down) { press in
                     guard press.key == .return else { return .ignored }
                     if press.modifiers.contains(.shift) { return .ignored }
@@ -280,95 +329,17 @@ struct ChatPage: View {
                 }
 
             HStack(spacing: 10) {
-                Menu {
-                    ForEach(EngineCatalog.allIDs.filter { state.engineIsInstalled($0) }, id: \.self) { id in
-                        Section(id.displayName) {
-                            ForEach(state.engineModels(for: id).filter { !$0.hidden && !$0.helper }) { model in
-                                Button(state.shortModelName(model.id)) {
-                                    state.applyModelFromAnyEngine(model.id, engine: id)
-                                }
-                            }
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Console.secondary)
-                        Text(L10n.t(state.selectedModel.isEmpty ? "选择模型" : state.shortModelName(state.selectedModel)))
-                            .font(.system(size: 11.5))
-                            .lineLimit(1)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 7.5, weight: .bold))
-                            .foregroundStyle(Console.tertiary)
-                    }
-                    .foregroundStyle(Console.secondary)
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .tint(Console.secondary)
-
                 Button {
                     showsParameters = true
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "slider.horizontal.3")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("参数")
-                            .font(.system(size: 11.5))
-                    }
-                    .foregroundStyle(Console.secondary)
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Console.secondary)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plainHit)
-
-                Menu {
-                    Button {
-                        state.settings.setThinkingMode(.automatic)
-                    } label: {
-                        if state.settings.thinkingMode == .automatic {
-                            Label(ThinkingMode.automatic.label, systemImage: "checkmark")
-                        } else {
-                            Text(ThinkingMode.automatic.label)
-                        }
-                    }
-                    Button {
-                        state.settings.setThinkingMode(.off)
-                    } label: {
-                        if state.settings.thinkingMode == .off {
-                            Label(ThinkingMode.off.label, systemImage: "checkmark")
-                        } else {
-                            Text(ThinkingMode.off.label)
-                        }
-                    }
-                    Divider()
-                    ForEach(availableEfforts, id: \.self) { effort in
-                        Button {
-                            state.settings.setReasoningEffort(effort)
-                            state.settings.setThinkingMode(.on)
-                        } label: {
-                            if state.settings.thinkingMode == .on, state.settings.reasoningEffort == effort {
-                                Label(effort.label, systemImage: "checkmark")
-                            } else {
-                                Text(effort.label)
-                            }
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "brain")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("思考 · \(thinkingLabel)")
-                            .font(.system(size: 11.5))
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 7.5, weight: .bold))
-                    }
-                    .foregroundStyle(Console.secondary)
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .tint(Console.secondary)
+                .help("生成参数")
 
                 Spacer(minLength: 0)
 
@@ -378,14 +349,16 @@ struct ChatPage: View {
                         .foregroundStyle(Console.tertiary)
                 }
 
-                if state.generating {
+                ChatModelThinkingControl(state: state, chat: chat)
+
+                if chat.generating {
                     Button {
                         state.cancelGeneration()
                     } label: {
                         Image(systemName: "stop.fill")
-                            .font(.system(size: 12, weight: .bold))
+                            .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(.white)
-                            .frame(width: 38, height: 38)
+                            .frame(width: 30, height: 30)
                             .background {
                                 LiquidGlassSurface(shape: Circle(),
                                                    tint: Native.red.opacity(0.75),
@@ -396,9 +369,9 @@ struct ChatPage: View {
                 } else {
                     Button(action: send) {
                         Image(systemName: "arrow.up")
-                            .font(.system(size: 13, weight: .bold))
+                            .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(.white)
-                            .frame(width: 38, height: 38)
+                            .frame(width: 30, height: 30)
                             .background {
                                 LiquidGlassSurface(shape: Circle(),
                                                    tint: Console.accent,
@@ -415,39 +388,16 @@ struct ChatPage: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .frame(maxWidth: 780)
-        .background {
-            LiquidGlassSurface(
-                shape: RoundedRectangle(cornerRadius: 18, style: .continuous),
-                tint: nil
-            )
-        }
-    }
-
-    private var thinkingLabel: String {
-        switch state.settings.thinkingMode {
-        case .automatic: return "自动"
-        case .off: return "关闭"
-        case .on: return state.settings.reasoningEffort.label
-        }
-    }
-
-    /// 引擎会报出当前模型支持的思考等级；没报就退回内置全集。
-    private var availableEfforts: [ReasoningEffort] {
-        guard let tokens = state.controller?.status?.reasoningEfforts, !tokens.isEmpty else {
-            return ReasoningEffort.allCases
-        }
-        let mapped = tokens.compactMap { token in
-            ReasoningEffort.allCases.first { $0.token == token.lowercased() }
-        }
-        return mapped.isEmpty ? ReasoningEffort.allCases : mapped
+        .consoleCardSurface()
+        .animation(reduceMotion ? nil : Motion.standard, value: composerFocused)
     }
 
     private var canSend: Bool {
-        state.canChat && !state.generating && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !chat.generating && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var conversationText: String {
-        state.messages
+        chat.messages
             .filter { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .map { "\($0.role == "user" ? "你" : "AI")\n\($0.content)" }
             .joined(separator: "\n\n")
@@ -455,7 +405,7 @@ struct ChatPage: View {
 
     private func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, state.canChat, !state.generating else { return }
+        guard !text.isEmpty, !chat.generating else { return }
         draft = ""
         state.send(text)
     }
@@ -463,11 +413,22 @@ struct ChatPage: View {
 
 // MARK: - Message row
 
-private struct MessageRow: View {
-    @ObservedObject var state: AppState
+private struct MessageRow: View, Equatable {
+    /// 行内需要的状态由父视图算好传入，配合 `Equatable` 让未变化的旧消息
+    /// 在流式期间跳过 body 求值。
     let message: ChatMessage
+    let modelName: String
+    let startupStage: String?
     @State private var manualThinking: Bool?
     @State private var caretVisible = false
+    @State private var copied = false
+    @State private var copyResetTask: Task<Void, Never>?
+
+    nonisolated static func == (lhs: MessageRow, rhs: MessageRow) -> Bool {
+        lhs.message == rhs.message
+            && lhs.modelName == rhs.modelName
+            && lhs.startupStage == rhs.startupStage
+    }
 
     private var isUser: Bool { message.role == "user" }
     private var showsReasoning: Bool {
@@ -497,11 +458,11 @@ private struct MessageRow: View {
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
-                        Text(message.model.map(state.shortModelName) ?? state.activeEngine.displayName)
+                        Text(modelName)
                             .font(.system(size: 10.5, weight: .semibold))
                             .foregroundStyle(Console.secondary)
                         if message.streaming {
-                            Text("生成中")
+                            Text(startupStage == nil ? "生成中" : "启动中")
                                 .font(.system(size: 9.5))
                                 .foregroundStyle(Console.accent)
                         }
@@ -512,13 +473,13 @@ private struct MessageRow: View {
                     if message.content.isEmpty {
                         HStack(spacing: 6) {
                             ProgressView().controlSize(.small)
-                            Text(L10n.t(message.reasoning?.isEmpty == false ? "思考中…" : "等待首个 token…"))
+                            Text(L10n.t(placeholderText))
                                 .font(.system(size: 11.5))
                                 .foregroundStyle(Console.tertiary)
                         }
                     } else {
                         ZStack(alignment: .bottomTrailing) {
-                            MarkdownView(text: message.content)
+                            MarkdownView(text: message.content, caching: !message.streaming)
                             if message.streaming {
                                 RoundedRectangle(cornerRadius: 1.5)
                                     .fill(Console.accent)
@@ -573,6 +534,12 @@ private struct MessageRow: View {
         return "思考过程"
     }
 
+    /// 引擎还没就绪时优先显示启动阶段，就绪后才回到「思考中 / 等待首个 token」。
+    private var placeholderText: String {
+        if let stage = startupStage, !stage.isEmpty { return stage }
+        return message.reasoning?.isEmpty == false ? "思考中…" : "等待首个 token…"
+    }
+
     private var footer: some View {
         HStack(spacing: 10) {
             if let rate = message.rateText { Text(rate) }
@@ -582,17 +549,32 @@ private struct MessageRow: View {
             }
             Spacer(minLength: 4)
             if !message.streaming {
-                Button {
-                    state.copy(message.content, label: "已复制回答")
-                } label: {
-                    Image(systemName: "doc.on.doc").font(.system(size: 9.5))
+                Button(action: copyAnswer) {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 9.5, weight: copied ? .semibold : .regular))
+                        .contentTransition(.symbolEffect(.replace))
                 }
                 .buttonStyle(.plainHit)
-                .foregroundStyle(Console.tertiary)
+                .foregroundStyle(copied ? Console.accent : Console.tertiary)
+                .help(copied ? "已复制" : "复制回答")
+                .animation(Motion.quick, value: copied)
             }
         }
         .font(.system(size: 9.5, design: .monospaced))
         .foregroundStyle(Console.tertiary)
+    }
+
+    /// 复制成功只让按钮短暂变成对号，不弹通知，避免打断连续选取与复制。
+    private func copyAnswer() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(message.content, forType: .string)
+        copyResetTask?.cancel()
+        withAnimation(Motion.quick) { copied = true }
+        copyResetTask = Task {
+            try? await Task.sleep(for: .seconds(1.2))
+            guard !Task.isCancelled else { return }
+            withAnimation(Motion.quick) { copied = false }
+        }
     }
 }
 
@@ -604,93 +586,127 @@ struct ChatParametersSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("生成参数")
-                        .font(.system(size: 15, weight: .semibold))
-                    Text("这些默认值会随每条消息一起发送")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Console.tertiary)
-                }
-                Spacer(minLength: 8)
-                IconAction(systemName: "xmark", help: "关闭") { dismiss() }
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
-            Divider().overlay(Console.insetStroke)
+            header
+            Hairline()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    GlassCard(padding: 16) {
-                        VStack(spacing: 14) {
-                            slider("温度", value: state.settings.temperature, range: 0...2,
-                                   format: "%.2f") { state.settings.setTemperature($0) }
-                            slider("top-p", value: state.settings.topP, range: 0...1,
-                                   format: "%.2f") { state.settings.setTopP($0) }
-                            HStack(spacing: 10) {
-                                Text("最大输出")
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(Console.secondary)
-                                    .frame(width: 70, alignment: .leading)
-                                TextField("模型上限", text: Binding(
-                                    get: { state.settings.maxTokens > 0 ? String(state.settings.maxTokens) : "" },
-                                    set: { state.settings.setMaxTokens(Int($0) ?? 0) }))
-                                    .textFieldStyle(.roundedBorder)
-                                    .font(.system(size: 11.5, design: .monospaced))
-                                    .frame(width: 110)
-                                Text("生效 \(state.effectiveMaxTokens)")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(Console.tertiary)
-                                Spacer(minLength: 0)
-                            }
-                        }
-                    }
-                    GlassCard(padding: 16) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("系统提示")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(Console.text)
-                            TextEditor(text: Binding(
-                                get: { state.settings.systemPrompt },
-                                set: { state.settings.setSystemPrompt($0) }))
-                                .font(.system(size: 12))
-                                .scrollContentBackground(.hidden)
-                                .frame(height: 100)
-                                .padding(6)
-                                .background(RoundedRectangle(cornerRadius: 9).fill(Console.inset))
-                        }
-                    }
+                VStack(alignment: .leading, spacing: Native.gap) {
+                    samplingCard
+                    systemPromptCard
                 }
-                .padding(20)
+                .padding(Native.pagePadding)
             }
             .scrollIndicators(.never)
-            Divider().overlay(Console.insetStroke)
-            HStack(spacing: 10) {
-                Button("恢复默认") { state.resetChatParameters() }
-                    .buttonStyle(.consoleSoft)
-                Spacer(minLength: 0)
-                Button("完成") { dismiss() }
-                    .buttonStyle(.consolePrimary)
-                    .keyboardShortcut(.defaultAction)
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+
+            Hairline()
+            footer
         }
         .frame(width: 500, height: 500)
-        .background(Console.cardStrong)
+        .sheetCanvas()
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("生成参数")
+                    .font(Native.cardTitle)
+                    .foregroundStyle(Native.label)
+                Text("这些默认值会随每条消息一起发送")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Native.tertiary)
+            }
+            Spacer(minLength: 8)
+            IconAction(systemName: "xmark", help: "关闭") { dismiss() }
+        }
+        .padding(.horizontal, Native.pagePadding)
+        .padding(.vertical, 14)
+    }
+
+    /// 采样参数：玻璃卡里放两行滑杆和一个托底凹槽的数字输入。
+    private var samplingCard: some View {
+        Card("采样", subtitle: "每条消息都会带上这组默认值") {
+            VStack(spacing: 14) {
+                slider("温度", value: state.settings.temperature, range: 0...2,
+                       format: "%.2f") { state.settings.setTemperature($0) }
+                slider("top-p", value: state.settings.topP, range: 0...1,
+                       format: "%.2f") { state.settings.setTopP($0) }
+                HStack(spacing: 10) {
+                    Text("最大输出")
+                        .font(Native.bodyFont)
+                        .foregroundStyle(Native.secondary)
+                        .frame(width: 72, alignment: .leading)
+                    TextField("模型上限", text: Binding(
+                        get: { state.settings.maxTokens > 0 ? String(state.settings.maxTokens) : "" },
+                        set: { state.settings.setMaxTokens(Int($0) ?? 0) }))
+                        .textFieldStyle(.plain)
+                        .font(Native.monoFont)
+                        .padding(.horizontal, 9)
+                        .frame(height: 26)
+                        .background {
+                            RoundedRectangle(cornerRadius: Native.radiusSmall, style: .continuous)
+                                .fill(Native.recess)
+                        }
+                        .overlay {
+                            RoundedRectangle(cornerRadius: Native.radiusSmall, style: .continuous)
+                                .strokeBorder(Native.hairline, lineWidth: 0.8)
+                        }
+                        .frame(width: 120)
+                    Text("生效 \(state.effectiveMaxTokens)")
+                        .font(Native.monoSmall)
+                        .foregroundStyle(Native.tertiary)
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+    }
+
+    /// 系统提示：玻璃卡 + 凹槽文本域，让长文本仍保持可读的非玻璃底。
+    private var systemPromptCard: some View {
+        Card("系统提示", subtitle: "作为系统消息置于每段对话之前") {
+            TextEditor(text: Binding(
+                get: { state.settings.systemPrompt },
+                set: { state.settings.setSystemPrompt($0) }))
+                .font(Native.bodyFont)
+                .foregroundStyle(Native.label)
+                .scrollContentBackground(.hidden)
+                .frame(height: 120)
+                .padding(6)
+                .background {
+                    RoundedRectangle(cornerRadius: Native.radiusTile, style: .continuous)
+                        .fill(Native.recess)
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: Native.radiusTile, style: .continuous)
+                        .strokeBorder(Native.hairline, lineWidth: 0.8)
+                }
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 10) {
+            Button("恢复默认") { state.resetChatParameters() }
+                .buttonStyle(.arcadeGlass)
+            Spacer(minLength: 0)
+            Button("完成") { dismiss() }
+                .buttonStyle(.arcadePill)
+                .keyboardShortcut(.defaultAction)
+        }
+        .padding(.horizontal, Native.pagePadding)
+        .padding(.vertical, 12)
     }
 
     private func slider(_ label: String, value: Double, range: ClosedRange<Double>,
                         format: String, set: @escaping (Double) -> Void) -> some View {
         HStack(spacing: 10) {
             Text(L10n.t(label))
-                .font(.system(size: 12))
-                .foregroundStyle(Console.secondary)
-                .frame(width: 70, alignment: .leading)
+                .font(Native.bodyFont)
+                .foregroundStyle(Native.secondary)
+                .frame(width: 72, alignment: .leading)
             Slider(value: Binding(get: { value }, set: set), in: range)
+                .tint(Native.accent)
             Text(String(format: format, value))
-                .font(.system(size: 10.5, design: .monospaced))
-                .foregroundStyle(Console.tertiary)
+                .font(Native.monoSmall)
+                .foregroundStyle(Native.tertiary)
                 .frame(width: 40, alignment: .trailing)
         }
     }

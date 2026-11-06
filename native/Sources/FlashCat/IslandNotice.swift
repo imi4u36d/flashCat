@@ -47,16 +47,31 @@ struct IslandNotice: Identifiable, Equatable {
             case .error: return "xmark"
             }
         }
+
+        /// 没有显式标题时的兜底标题，按通知类型取一个通用名称。
+        var defaultTitle: String {
+            switch self {
+            case .info: return "提示"
+            case .success: return "成功"
+            case .warning: return "警告"
+            case .error: return "错误"
+            }
+        }
     }
 
     let id: UUID
     let kind: Kind
+    let title: String
     let message: String
     let date: Date
 
-    init(message: String, kind: Kind? = nil, date: Date = Date()) {
+    init(title: String,
+         message: String,
+         kind: Kind? = nil,
+         date: Date = Date()) {
         self.id = UUID()
         self.kind = kind ?? Kind(message: message)
+        self.title = title
         self.message = message
         self.date = date
     }

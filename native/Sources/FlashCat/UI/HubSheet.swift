@@ -35,6 +35,7 @@ struct HubSheet: View {
             footer
         }
         .frame(width: 1020, height: 700)
+        .sheetCanvas()
         .onAppear {
             if state.hubResults.isEmpty {
                 state.searchHub("", sort: sort.rawValue, filter: filter.rawValue, page: 0)
@@ -72,7 +73,7 @@ struct HubSheet: View {
             searchBar
             Hairline()
             ScrollView {
-                LazyVStack(spacing: 0) {
+                LazyVStack(spacing: 10) {
                     if state.hubLoading && models.isEmpty {
                         loadingRows
                     } else if let error = state.hubError, models.isEmpty {
@@ -85,7 +86,6 @@ struct HubSheet: View {
                     } else {
                         ForEach(models) { model in
                             resultRow(model)
-                            Hairline()
                         }
                         if state.hubHasMore {
                             Button {
@@ -97,13 +97,19 @@ struct HubSheet: View {
                                     .font(.system(size: 12, weight: .medium))
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 12)
+                                    .background {
+                                        LiquidGlassSurface(shape: Capsule())
+                                    }
                             }
                             .buttonStyle(.plainHit)
                             .foregroundStyle(Native.accent)
                             .disabled(state.hubLoading)
+                            .padding(.top, 2)
                         }
                     }
                 }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 12)
             }
             .scrollIndicators(.never)
         }
@@ -224,59 +230,20 @@ struct HubSheet: View {
     }
 
     private func resultRow(_ model: HubModel) -> some View {
-        let selected = state.hubDetail?.id == model.id
-        let local = state.repoIsLocal(model.id)
-        let engineLabel = model.recommendedEngine
-        let family = ModelFamily.resolve(id: model.id, tags: model.tags)
-        return Button {
+        HubModelRowCard(
+            model: model,
+            selected: state.hubDetail?.id == model.id,
+            local: state.repoIsLocal(model.id),
+            shortName: shortName(model.id),
+            sizeText: {
+                guard let size = model.sizeBytes, size > 0 else { return nil }
+                return Format.size(Int(clamping: size))
+            }(),
+            memoryText: model.memoryRange.map(memoryRangeText),
+            downloadsText: downloadsText(model.downloads)
+        ) {
             state.loadHubDetail(model.id)
-        } label: {
-            HStack(alignment: .top, spacing: 10) {
-                ModelFamilyIcon(family: family, size: 30)
-                    .padding(.top, 1)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(shortName(model.id))
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(Native.label)
-                        .lineLimit(1)
-                    Text(model.id)
-                        .font(Native.monoSmall)
-                        .foregroundStyle(Native.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    HStack(spacing: 5) {
-                        Tag(text: engineLabel.label,
-                            tone: engineLabel.id == "none" ? .neutral : .accent)
-                        if let quantization = model.quantization {
-                            Tag(text: quantization, tone: .neutral)
-                        }
-                        if local { Tag(text: "已在本机", tone: .success, icon: "checkmark") }
-                    }
-                }
-                Spacer(minLength: 4)
-                VStack(alignment: .trailing, spacing: 4) {
-                    if let size = model.sizeBytes, size > 0 {
-                        Text(Format.size(Int(clamping: size)))
-                            .font(Native.monoSmall)
-                            .foregroundStyle(Native.secondary)
-                    }
-                    if let memory = model.memoryRange {
-                        Text(memoryRangeText(memory))
-                            .font(.system(size: 10))
-                            .foregroundStyle(Native.tertiary)
-                    }
-                    Text(downloadsText(model.downloads))
-                        .font(.system(size: 10))
-                        .foregroundStyle(Native.tertiary)
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selected ? Native.accent.opacity(0.08) : Color.clear)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plainHit)
     }
 
     private func shortName(_ id: String) -> String {
@@ -290,8 +257,14 @@ struct HubSheet: View {
     }
 
     private func downloadsText(_ value: Int) -> String {
-        if value >= 1_000_000 { return L10n.format("%.1fM 下载", Double(value) / 1_000_000) }
-        if value >= 1000 { return L10n.format("%.0fK 下载", Double(value) / 1000) }
+        if value >= 1_000_000 {
+            let millions = (Double(value) / 1_000_000).formatted(.number.precision(.fractionLength(1)))
+            return L10n.format("%@M 下载", millions)
+        }
+        if value >= 1000 {
+            let thousands = (Double(value) / 1000).formatted(.number.precision(.fractionLength(0)))
+            return L10n.format("%@K 下载", thousands)
+        }
         return L10n.format("%lld 下载", value)
     }
 
@@ -557,5 +530,97 @@ struct HubSheet: View {
         directRepo = ""
         state.clearRepoProbe()
         dismiss()
+    }
+}
+
+/// 模型广场左侧的结果卡。
+///
+/// 纯白画布上单独一层玻璃会发灰、压低正文对比度，所以卡片把玻璃压在
+/// 一层足够白的面板上，再用细描边勾出边界；选中态才用强调色底 + 色边。
+private struct HubModelRowCard: View {
+    let model: HubModel
+    let selected: Bool
+    let local: Bool
+    let shortName: String
+    let sizeText: String?
+    let memoryText: String?
+    let downloadsText: String
+    let action: () -> Void
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: Console.cardRadius, style: .continuous)
+    }
+
+    private var family: ModelFamily {
+        ModelFamily.resolve(id: model.id, tags: model.tags)
+    }
+
+    private var engine: (id: String, label: String) { model.recommendedEngine }
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 11) {
+                    ModelFamilyIcon(family: family, size: 36)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(shortName)
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundStyle(Native.label)
+                            .lineLimit(1)
+                        Text(model.id)
+                            .font(Native.monoSmall)
+                            .foregroundStyle(Native.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer(minLength: 6)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(selected ? Native.accent : Native.tertiary.opacity(0.6))
+                        .padding(.top, 4)
+                }
+
+                HStack(spacing: 5) {
+                    Tag(text: engine.label,
+                        tone: engine.id == "none" ? .neutral : .accent)
+                    if let quantization = model.quantization {
+                        Tag(text: quantization, tone: .neutral)
+                    }
+                    if local {
+                        Tag(text: "已在本机", tone: .success, icon: "checkmark")
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                HStack(spacing: 14) {
+                    if let sizeText {
+                        metric("externaldrive", sizeText)
+                    }
+                    if let memoryText {
+                        metric("memorychip", memoryText)
+                    }
+                    Spacer(minLength: 4)
+                    metric("arrow.down", downloadsText)
+                }
+            }
+            .padding(13)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .consoleCardSurface(tint: selected ? Console.accent.opacity(0.10) : nil,
+                                interactive: !selected)
+            .contentShape(shape)
+        }
+        .buttonStyle(.plainHit)
+    }
+
+    private func metric(_ symbol: String, _ text: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: symbol)
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundStyle(Native.tertiary)
+            Text(text)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(Native.secondary)
+                .lineLimit(1)
+        }
     }
 }

@@ -2,13 +2,16 @@ import SwiftUI
 import AppKit
 import FlashCatKit
 
-/// 引擎页：按 WebUI 版式——顶部运行时统计，下面是整行引擎卡。
+/// 引擎页：顶部是运行时总览（当前引擎 + 安装/更新统计），
+/// 下面用自适应网格排布引擎卡；卡片内部改成左右两栏，
+/// 说明和能力标签在左、接口与版本在右，尽量把横向空间吃满。
 struct EnginesPage: View {
     @ObservedObject var state: AppState
     @ObservedObject var installs: EngineInstallCenter
 
     @State private var configuring: EngineID?
     @State private var pendingRemoval: EngineID?
+    @State private var checking: Set<EngineID> = []
 
     private var installedCount: Int {
         EngineCatalog.allIDs.filter { state.engineIsInstalled($0) }.count
@@ -18,19 +21,30 @@ struct EnginesPage: View {
         state.isRunning ? 1 : 0
     }
 
+    private var columns: [GridItem] {
+        // 固定两列：引擎卡数量不多，两列比自适应更稳定。
+        [GridItem(.flexible(), spacing: 16, alignment: .top),
+         GridItem(.flexible(), spacing: 16, alignment: .top)]
+    }
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                header
-                ForEach(EngineCatalog.allIDs, id: \.self) { id in
-                    engineRow(id)
+        VStack(alignment: .leading, spacing: 0) {
+            header
+                .padding(.horizontal, Console.contentPadding)
+                .padding(.top, 78)
+                .padding(.bottom, 22)
+
+            ScrollView {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 16) {
+                    ForEach(EngineCatalog.allIDs, id: \.self) { id in
+                        engineCard(id)
+                    }
                 }
+                .padding(.horizontal, Console.contentPadding)
+                .padding(.bottom, 26)
             }
-            .padding(.horizontal, Console.contentPadding)
-            .padding(.top, 78)
-            .padding(.bottom, 26)
+            .scrollIndicators(.never)
         }
-        .scrollIndicators(.never)
         .task {
             installs.refreshInstalled()
             await installs.loadIndexIfNeeded()
@@ -101,119 +115,140 @@ struct EnginesPage: View {
         }
     }
 
-    private func engineRow(_ id: EngineID) -> some View {
+    // MARK: - Engine cards
+
+    private func engineCard(_ id: EngineID) -> some View {
         let installed = state.engineIsInstalled(id)
         let isActive = state.activeEngine == id
         let versions = installs.installed[id] ?? []
         let phase = installs.phases[id] ?? .idle
         let busy = phase.isBusy || installs.building == id
         let accent = engineAccent(id)
-        let port = EngineStore.shared.configuration(for: id).port ?? id.defaultPort
+        let newer = installs.upstream[id]?.newerRelease
 
-        return GlassCard(padding: 20) {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(alignment: .top, spacing: 18) {
-                    LetterTile(letter: String(id.displayName.prefix(1)).uppercased(),
-                               color: accent, size: 52)
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 10) {
+        // 卡片保持无底色：引擎是否正在运行由状态胶囊表达，不再给整张卡染色。
+        return GlassCard(padding: 16) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
+                    EngineGlyph(id: id, color: accent, size: 42)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 8) {
                             Text(id.displayName)
-                                .font(.system(size: 22, weight: .semibold))
+                                .font(.system(size: 16.5, weight: .semibold))
                                 .foregroundStyle(Console.text)
+                                .lineLimit(1)
                             statusChip(installed: installed, active: isActive, busy: busy)
+                            Spacer(minLength: 0)
                         }
-                        Text(verbatim: "v\(versions.last ?? "—")  ·  :\(port)")
-                            .font(.system(size: 11.5, design: .monospaced))
-                            .foregroundStyle(Console.tertiary)
-                        Text(id.descriptor.summary)
-                            .font(.system(size: 13))
-                            .foregroundStyle(Console.secondary)
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.top, 2)
-                        HStack(spacing: 6) {
-                            ForEach(id.descriptor.capabilities.prefix(3), id: \.rawValue) { capability in
-                                ConsoleTag(text: capability.displayName)
-                            }
-                        }
-                        .padding(.top, 2)
                     }
-                    Spacer(minLength: 16)
 
-                    column("当前", value: currentText(id, installed: installed, isActive: isActive))
-                    column("接口", value: installed ? "127.0.0.1:\(port)" : "端口 \(port)")
-                    column("状态", value: statusText(installed: installed, busy: busy))
+                    HStack(spacing: 6) {
+                        if installed {
+                            EngineIconButton(systemImage: "arrow.clockwise",
+                                             help: updateHelp(id),
+                                             tint: newer != nil ? accent : Console.secondary) {
+                                performUpdateAction(id)
+                            }
+                            .disabled(busy || checking.contains(id))
+                        }
+                        EngineIconButton(systemImage: "slider.horizontal.3", help: "配置") {
+                            configuring = id
+                        }
+                        .disabled(versions.isEmpty)
+                        EngineIconButton(systemImage: "trash", help: "删除", tint: Native.red) {
+                            pendingRemoval = id
+                        }
+                        .disabled(busy || versions.isEmpty || (isActive && state.isRunning))
+                    }
                 }
 
+                // 能力标签与版本读数分列左右，去掉重复的描述与接口信息。
+                HStack(alignment: .top, spacing: 16) {
+                    FlowLayout(spacing: 5, lineSpacing: 5) {
+                        ForEach(id.descriptor.capabilities.prefix(5), id: \.rawValue) { capability in
+                            ConsoleTag(text: capability.displayName)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    VStack(alignment: .leading, spacing: 7) {
+                        metaRow("版本", versions.last ?? "未安装")
+                    }
+                    .frame(width: 148, alignment: .leading)
+                    .padding(.vertical, 2)
+                }
+
+                Rectangle()
+                    .fill(Console.insetStroke)
+                    .frame(height: 1)
+
                 HStack(spacing: 10) {
-                    Spacer(minLength: 0)
                     if busy {
-                        ProgressRing(fraction: installs.progress[id] ?? 0, tint: accent, size: 24, lineWidth: 3)
-                        Text(installs.progressStep[id] ?? phase.label)
+                        ProgressRing(fraction: installs.progress[id] ?? 0,
+                                     tint: accent, size: 20, lineWidth: 3)
+                        Text(L10n.t(installs.progressStep[id] ?? phase.label))
                             .font(.system(size: 11))
                             .foregroundStyle(Console.secondary)
-                    } else if !installed {
+                            .lineLimit(1)
+                    } else if let newer {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(accent)
+                        Text(L10n.format("可更新至 %@", newer.version))
+                            .font(.system(size: 11))
+                            .foregroundStyle(Console.secondary)
+                            .lineLimit(1)
+                    } else {
+                        Text(installed ? installSummary(id, versions: versions)
+                             : L10n.t("首次安装会从 GitHub 构建"))
+                            .font(.system(size: 11))
+                            .foregroundStyle(Console.tertiary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    if !busy && newer != nil {
+                        Button("更新") { performUpdateAction(id) }
+                            .buttonStyle(.consolePrimary)
+                            .disabled(checking.contains(id))
+                    }
+
+                    if !busy && !installed {
                         Button {
                             install(id)
                         } label: {
                             Label("下载", systemImage: "arrow.down.circle.fill")
                         }
                         .buttonStyle(.consolePrimary)
-                    } else if isActive {
-                        Button {
-                            state.toggleService()
-                        } label: {
-                            Label(L10n.t(state.isRunning ? "停止" : "启动"),
-                                  systemImage: state.isRunning ? "stop.fill" : "play.fill")
-                        }
-                        .buttonStyle(.consolePrimary)
-                        .disabled(state.isSwitchingModel)
-                    } else {
-                        Button {
-                            Task { @MainActor in await state.switchEngine(id) }
-                        } label: {
-                            Label("启动", systemImage: "play.fill")
-                        }
-                        .buttonStyle(.consolePrimary)
-                        .disabled(state.isSwitchingModel || busy)
                     }
-
-                    Button("配置") { configuring = id }
-                        .buttonStyle(.consoleSecondary)
-                        .disabled(versions.isEmpty)
-
-                    Button {
-                        pendingRemoval = id
-                    } label: {
-                        Label("删除", systemImage: "trash")
-                    }
-                    .buttonStyle(.consoleDanger)
-                    .disabled(busy || versions.isEmpty || (isActive && state.isRunning))
                 }
-            }
-        }
-        .overlay(alignment: .leading) {
-            if isActive {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(accent)
-                    .frame(width: 3)
-                    .padding(.vertical, 22)
-                    .padding(.leading, 2)
             }
         }
     }
 
-    private func column(_ label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private func metaRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(L10n.t(label))
-                .font(.system(size: 11))
+                .font(.system(size: 9.5, weight: .semibold))
+                .tracking(0.4)
                 .foregroundStyle(Console.tertiary)
+                .frame(width: 26, alignment: .leading)
             Text(L10n.t(value))
-                .font(.system(size: 12))
+                .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(Console.text)
                 .lineLimit(1)
+                .truncationMode(.middle)
         }
-        .frame(width: 112, alignment: .leading)
+    }
+
+    private func installSummary(_ id: EngineID, versions: [String]) -> String {
+        guard !versions.isEmpty else { return L10n.t("未安装") }
+        if versions.count > 1 {
+            return L10n.format("已安装 %lld 个版本", versions.count)
+        }
+        return L10n.t("已安装")
     }
 
     private func statusChip(installed: Bool, active: Bool, busy: Bool) -> some View {
@@ -238,34 +273,101 @@ struct EnginesPage: View {
         return StatusChip(text: "已停止", color: Console.tertiary)
     }
 
-    private func currentText(_ id: EngineID, installed: Bool, isActive: Bool) -> String {
-        guard installed else { return "等待安装" }
-        if isActive, state.isRunning {
-            return state.canChat ? "进程已就绪" : state.engineStageText
+    private func updateHelp(_ id: EngineID) -> String {
+        if let release = installs.upstream[id]?.newerRelease {
+            return L10n.format("更新到 %@", release.version)
         }
-        return "进程未启动"
+        return "检查更新"
     }
 
-    private func statusText(installed: Bool, busy: Bool) -> String {
-        if busy { return "安装中" }
-        guard installed else { return "未下载" }
-        return "待机"
+    private func performUpdateAction(_ id: EngineID) {
+        if installs.upstream[id]?.newerRelease != nil {
+            Task { @MainActor in
+                _ = await installs.installFromUpstream(id)
+            }
+        } else {
+            guard !checking.contains(id) else { return }
+            checking.insert(id)
+            Task { @MainActor in
+                await installs.checkUpstream(for: id, force: true)
+                checking.remove(id)
+            }
+        }
     }
 
     private func install(_ id: EngineID) {
-        if let latest = installs.releases[id]?.max(by: { EngineVersionOrder.isNewer($1.version, than: $0.version) }) {
-            installs.install(latest, for: id)
+        guard installs.building == nil else {
+            state.toast(L10n.format("正在构建 %@，完成后再试", installs.building?.displayName ?? L10n.t("引擎")))
             return
         }
-        if case .update(_, let release) = installs.upstream[id] {
-            guard installs.building == nil else {
-                state.toast(L10n.format("正在构建 %@，完成后再试", installs.building?.displayName ?? L10n.t("引擎")))
-                return
+        // Build from the engine's newest GitHub release. The bundled pack index
+        // cannot serve archives (flashCat does not redistribute engine binaries),
+        // so downloading a pack would resolve to a missing local file.
+        Task { @MainActor in
+            _ = await installs.installFromUpstream(id)
+        }
+    }
+}
+
+/// 引擎官方图标：优先使用上游仓库的 app icon，找不到时回落到字母占位块。
+private struct EngineGlyph: View {
+    let id: EngineID
+    var color: Color
+    var size: CGFloat = 42
+
+    var body: some View {
+        Group {
+            if let asset = engineArtwork(id), let image = BrandGlyph.artwork(named: asset) {
+                Image(nsImage: image)
+                    .renderingMode(.original)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: size * 0.26, style: .continuous))
+            } else {
+                LetterTile(letter: String(id.displayName.prefix(1)).uppercased(),
+                           color: color, size: size)
             }
-            _ = installs.buildAndInstall(release, for: id)
-            return
         }
-        state.toast(L10n.format("暂时没有 %@ 的可用安装版本", id.displayName))
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
+func engineArtwork(_ id: EngineID) -> String? {
+    switch id {
+    case .splash: return "engine-splash"
+    case .omlx: return "engine-omlx"
+    case .mtplx: return "engine-mtplx"
+    case .mlxServe: return "engine-mlxserve"
+    case .strata: return "engine-strata"
+    default: return nil
+    }
+}
+
+/// 引擎卡上的圆形图标按钮：配置、删除、检查/安装更新都只用图标，
+/// 不占按钮文字宽度。禁用时整体降透明度。
+private struct EngineIconButton: View {
+    let systemImage: String
+    let help: String
+    var tint: Color = Console.secondary
+    let action: () -> Void
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 30, height: 30)
+                .background {
+                    LiquidGlassSurface(shape: Circle(), interactive: true)
+                }
+        }
+        .buttonStyle(.plainHit)
+        .opacity(isEnabled ? 1 : 0.4)
+        .help(help)
     }
 }
 

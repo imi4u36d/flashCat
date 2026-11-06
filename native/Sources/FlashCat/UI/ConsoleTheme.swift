@@ -65,6 +65,9 @@ enum Console {
     static let sidebarWidth: CGFloat = 200
     static let titlebarHeight: CGFloat = 54
     static let contentPadding: CGFloat = 24
+    /// 内容区宽度低于这个值时，多栏页面切换为单栏纵向排布。
+    /// 侧栏展开时对应约 1180pt 的窗口宽度，缩放窗口时页面会先于内容被挤坏前重排。
+    static let compactContentWidth: CGFloat = 980
 
     // Type
     static let heroTitle = Font.system(size: 30, weight: .bold)
@@ -92,11 +95,40 @@ enum Console {
 struct ConsoleBackdrop: View {
     var accent: Color = Console.accent
     @Environment(\.colorScheme) private var scheme
+    @ObservedObject private var background = BackgroundSettings.shared
 
     var body: some View {
         ZStack {
+            // 画布始终保留原来的渐变与页面强调色，自定义图片只是叠在渐变之上，
+            // 不会改动页面、玻璃卡片和文字的观感。没有图片时，渐变按「APP 透明度」
+            // 让出桌面：0 = 完全不透明，1 = 完全透出桌面。
             LinearGradient(colors: [Console.backgroundTop, Console.backgroundBottom],
                            startPoint: .topLeading, endPoint: .bottomTrailing)
+                .opacity(background.image == nil ? 1 - background.desktopReveal : 1)
+
+            if let image = background.image {
+                // 用透明视图定尺寸、图片只做 overlay：避免 `scaledToFill` 的图片把
+                // 画布撑高，进而把整个界面顶上去。
+                Color.clear
+                    .overlay {
+                        Image(nsImage: image)
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFill()
+                            // 柔化：保留照片质感，又不让细节和高对比线条
+                            // 直接和侧栏、页面文字抢视觉。半径可在设置里调整。
+                            .blur(radius: background.blur)
+                            .scaleEffect(1.1)
+                    }
+                    .clipped()
+
+                // 无论图片多清晰，都盖一层画布渐变保底，保证文字始终有足够对比度。
+                // 「APP 透明度」越高，这层越淡，但不会完全消失。
+                LinearGradient(colors: [Console.backgroundTop, Console.backgroundBottom],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .opacity(max(1 - background.opacity, scheme == .dark ? 0.42 : 0.36))
+            }
+
             RadialGradient(colors: [accent.opacity(scheme == .dark ? 0.12 : 0.10), .clear],
                            center: UnitPoint(x: 0.82, y: -0.05),
                            startRadius: 0, endRadius: 700)
@@ -109,11 +141,56 @@ struct ConsoleBackdrop: View {
     }
 }
 
-// MARK: - Glass card
+// MARK: - Card surface
+
+/// 全应用唯一的卡片表面。模型页的模型卡是基准：20pt 连续圆角 + Liquid Glass，
+/// 选中或悬停时只叠一层很淡的强调色，不再另加实心底色、描边或投影。
+///
+/// 这里只管“表面”，不管尺寸：卡片的内边距、整体大小与内容排版仍由调用方决定。
+private struct ConsoleCardSurfaceModifier: ViewModifier {
+    var radius: CGFloat
+    var tint: Color?
+    var interactive: Bool
+
+    @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var glassTint: Color? {
+        if let tint { return tint }
+        guard interactive, hovering else { return nil }
+        return Console.accent.opacity(0.05)
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                LiquidGlassSurface(
+                    shape: RoundedRectangle(cornerRadius: radius, style: .continuous),
+                    tint: glassTint
+                )
+            }
+            .onHover { value in
+                guard interactive else { return }
+                if reduceMotion {
+                    hovering = value
+                } else {
+                    withAnimation(Motion.quick) { hovering = value }
+                }
+            }
+    }
+}
+
+extension View {
+    /// 套上模型页卡片那层表面。默认圆角与模型卡一致，内边距由调用方自己加。
+    func consoleCardSurface(radius: CGFloat = Console.cardRadius,
+                            tint: Color? = nil,
+                            interactive: Bool = false) -> some View {
+        modifier(ConsoleCardSurfaceModifier(radius: radius, tint: tint, interactive: interactive))
+    }
+}
 
 struct GlassCard<Content: View>: View {
     var radius: CGFloat = Console.cardRadius
-    var strong: Bool = false
     var padding: CGFloat = 20
     var tint: Color = .clear
     @ViewBuilder var content: () -> Content
@@ -121,14 +198,8 @@ struct GlassCard<Content: View>: View {
     var body: some View {
         content()
             .padding(padding)
-            .background {
-                LiquidGlassSurface(
-                    shape: RoundedRectangle(cornerRadius: radius, style: .continuous),
-                    tint: tint == .clear
-                        ? (strong ? Console.ink.opacity(0.05) : nil)
-                        : tint.opacity(0.16)
-                )
-            }
+            .consoleCardSurface(radius: radius,
+                                tint: tint == .clear ? nil : tint.opacity(0.16))
     }
 }
 
@@ -272,17 +343,19 @@ struct NativeSegmented<Value: Hashable>: View {
                 // 于普通 `.segmented` 值选择器：玻璃胶囊选中态、按压拖动选中、
                 // 系统动画都由 AppKit 绘制（Games app 用的就是这一种），
                 // 不能再叠 `.tint` 强调色。
+                //
+                // 不要再套 `.clipShape(Capsule())`：裁剪会连同 AppKit 在按住时
+                // 画在轨道边缘外的玻璃高光/透镜一起裁掉，表现为「按下后玻璃消失」。
                 picker.pickerStyle(.tabs)
             } else {
                 picker.pickerStyle(.segmented)
+                    // 旧系统的轨道默认是圆角矩形，裁成胶囊才能和 macOS 27 的外观一致。
+                    .clipShape(Capsule())
             }
         }
         .labelsHidden()
         .controlSize(.large)
         .frame(width: width)
-        // 系统 tabs/segmented 的轨道默认是圆角矩形；裁成胶囊，
-        // 才能得到 Games 那种整条两端全圆的形状。
-        .clipShape(Capsule())
     }
 
     private var picker: some View {
@@ -337,10 +410,11 @@ struct LetterTile: View {
 struct ConsoleTag: View {
     var text: String
     var tone: TagTone = .neutral
+    var fontSize: CGFloat = 10.5
 
     var body: some View {
         Text(L10n.t(text))
-            .font(.system(size: 10.5, weight: .medium))
+            .font(.system(size: fontSize, weight: .medium))
             .foregroundStyle(tone.foreground)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
@@ -357,19 +431,19 @@ struct SpecTable: View {
     var body: some View {
         HStack(spacing: 0) {
             ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(L10n.t(item.label))
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .font(.system(size: 9, weight: .semibold))
                         .tracking(0.8)
                         .foregroundStyle(Console.tertiary)
                     Text(L10n.t(item.value))
-                        .font(.system(size: 12.5, weight: .medium))
+                        .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(Console.text)
                         .lineLimit(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
                 if index != items.count - 1 {
                     Rectangle()
                         .fill(Console.insetStroke)

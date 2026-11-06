@@ -22,10 +22,6 @@ struct LaunchPage: View {
     private var recommendation: HardwareRecommendation? { state.hardwareRecommendation }
     private var isRecommendation: Bool { state.showsRecommendationPage }
 
-    private var rowShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-    }
-
     var body: some View {
         ZStack {
             ConsoleBackdrop(accent: Console.accent)
@@ -151,9 +147,7 @@ struct LaunchPage: View {
             }
         }
         .padding(Native.cardPadding)
-        .background {
-            LiquidGlassSurface(shape: rowShape)
-        }
+        .consoleCardSurface()
     }
 
     private var engineList: some View {
@@ -189,9 +183,7 @@ struct LaunchPage: View {
             installButton(id, recommended: nil)
         }
         .padding(Native.cardPadding)
-        .background {
-            LiquidGlassSurface(shape: rowShape, tint: installed ? Console.ok.opacity(0.06) : nil)
-        }
+        .consoleCardSurface(tint: installed ? Console.ok.opacity(0.06) : nil)
     }
 
     @ViewBuilder
@@ -199,7 +191,7 @@ struct LaunchPage: View {
         let installed = state.engineIsInstalled(id)
         let phase = installs.phases[id] ?? .idle
         let fraction = installs.progress[id] ?? 0
-        let label = installs.progressStep[id] ?? phase.label
+        let label = L10n.t(installs.progressStep[id] ?? phase.label)
 
         Group {
             if installed {
@@ -277,6 +269,10 @@ struct LaunchPage: View {
     }
 
     private func startInstall(_ id: EngineID, recommended: HardwareRecommendation.Pick?) {
+        guard installs.building == nil else {
+            state.toast(L10n.format("正在构建 %@，完成后再试", installs.building?.displayName ?? L10n.t("引擎")))
+            return
+        }
         busy = id
         if recommended != nil {
             state.dismissRecommendation(engine: id)
@@ -289,13 +285,11 @@ struct LaunchPage: View {
             state.engineInstallFailed(failed)
             busy = nil
         }
-        if let latest = center.releases[id]?.max(by: { EngineVersionOrder.isNewer($1.version, than: $0.version) }) {
-            center.install(latest, for: id)
-        } else if case .update(_, let release) = center.upstream[id] {
-            _ = center.buildAndInstall(release, for: id)
-        } else {
-            busy = nil
-            state.toast(L10n.format("暂时没有 %@ 的可用安装版本", id.displayName))
+        // Build from the engine's newest GitHub release; this page never had an
+        // upstream check, so `installFromUpstream` fetches it on demand.
+        Task { @MainActor in
+            let started = await center.installFromUpstream(id)
+            if !started { busy = nil }
         }
     }
 

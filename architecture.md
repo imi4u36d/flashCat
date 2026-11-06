@@ -74,7 +74,7 @@ graph TD
 | 分发件 | `scripts/make-installer.sh` | `dist/flashCat-<版本>.pkg` 与 `.dmg` |
 | 启动即登录 | `Sources/FlashCat/LoginItem.swift` | LaunchAgent `com.zhuo.flashCat` |
 
-**最低系统版本是 macOS 27.0。** 按钮组用了 macOS 27 的 `.tabs` 分段控件（Liquid Glass），所以应用本身以 27 为下限；splash 原生引擎的 26.4 下限在这之下，已被覆盖。三处必须一致：`scripts/build-native-app.sh` 的 `MIN_MACOS` 写进 `Info.plist` 的 `LSMinimumSystemVersion`（默认 `27.0`），`README.md` 的系统一栏，以及 `native/Package.swift` 的 `platforms: [.macOS("27.0")]`。三点同心才站得住：前两者是用户看得见的门槛，Package.swift 是编译器与 SwiftPM 认的槛；它若停在旧版本，产物里写的是 27.0 而构建系统仍以为能跑在旧系统上，两边说法不一。
+**最低系统版本是 macOS 26.0。** 界面依赖的 Liquid Glass 来自 macOS 26；macOS 27 的 `.tabs` 分段控件只作增强，运行时不可用时回退到 `.segmented`，因此不抬高应用下限。splash 原生引擎自身仍要求 26.4，这是引擎级门槛，其他引擎在 26.0 上照常可用。三处必须一致：`scripts/build-native-app.sh` 的 `MIN_MACOS` 写进 `Info.plist` 的 `LSMinimumSystemVersion`（默认 `26.0`），`README.md` 的系统一栏，以及 `native/Package.swift` 的 `platforms: [.macOS("26.0")]`。三点同心才站得住：前两者是用户看得见的门槛，Package.swift 是编译器与 SwiftPM 认的槛；它若停在旧版本，产物里写的是 26.0 而构建系统仍以为能跑在旧系统上，两边说法不一。
 
 ## 已知限制
 

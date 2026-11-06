@@ -141,6 +141,16 @@
         }
       }
     },
+    "%@ 的安装包不在本机，改为从 GitHub 构建 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No local pack for %@; building %@ from GitHub instead"
+          }
+        }
+      }
+    },
     "%@ 的配置已保存": {
       "localizations": {
         "en": {
@@ -157,6 +167,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ is missing the DFlash2 draft model. Download it before starting."
+          }
+        }
+      }
+    },
+    "%@ 获取上游版本失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Failed to read the upstream version of %@: %@"
           }
         }
       }
@@ -187,6 +207,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@.log"
+          }
+        }
+      }
+    },
+    "%@K 下载": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@K downloads"
+          }
+        }
+      }
+    },
+    "%@M 下载": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@M downloads"
           }
         }
       }
@@ -387,6 +427,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "API Gateway"
+          }
+        }
+      }
+    },
+    "APP 透明度": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Overlay Opacity"
           }
         }
       }
@@ -651,6 +701,16 @@
         }
       }
     },
+    "下载 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download %@"
+          }
+        }
+      }
+    },
     "下载 %lld%%": {
       "localizations": {
         "en": {
@@ -667,6 +727,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Downloading"
+          }
+        }
+      }
+    },
+    "下载中 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloading %@"
           }
         }
       }
@@ -697,6 +767,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Downloading model"
+          }
+        }
+      }
+    },
+    "下载源不可用：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download source unavailable: %@"
           }
         }
       }
@@ -791,6 +871,16 @@
         }
       }
     },
+    "作为系统消息置于每段对话之前": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sent as a system message before every conversation"
+          }
+        }
+      }
+    },
     "使用": {
       "localizations": {
         "en": {
@@ -827,6 +917,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Use the selected reasoning level"
+          }
+        }
+      }
+    },
+    "使用自定义图片作为画布背景": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Using a custom image as the canvas background"
           }
         }
       }
@@ -1121,6 +1221,16 @@
         }
       }
     },
+    "准备": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparing"
+          }
+        }
+      }
+    },
     "准备切换": {
       "localizations": {
         "en": {
@@ -1151,32 +1261,12 @@
         }
       }
     },
-    "切换图标导航模式": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Toggle icon navigation"
-          }
-        }
-      }
-    },
     "切换外观": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Change Appearance"
-          }
-        }
-      }
-    },
-    "切换外观（⌘⇧A）": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Change Appearance (⌘⇧A)"
+            "value": "Toggle Appearance"
           }
         }
       }
@@ -1227,6 +1317,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Switch Model?"
+          }
+        }
+      }
+    },
+    "切换浅色 / 深色": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Toggle Light / Dark"
           }
         }
       }
@@ -1461,6 +1561,16 @@
         }
       }
     },
+    "可更新至 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update to %@ available"
+          }
+        }
+      }
+    },
     "可用 %@": {
       "localizations": {
         "en": {
@@ -1681,22 +1791,22 @@
         }
       }
     },
-    "外观、启动与网关设置": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Appearance, startup and gateway"
-          }
-        }
-      }
-    },
     "外观、服务与默认参数": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Appearance, service and default parameters"
+          }
+        }
+      }
+    },
+    "外观、背景、启动与网关设置": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Appearance, background, launch and gateway settings"
           }
         }
       }
@@ -2081,6 +2191,16 @@
         }
       }
     },
+    "已安装 %lld 个版本": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld versions installed"
+          }
+        }
+      }
+    },
     "已恢复默认对话参数": {
       "localizations": {
         "en": {
@@ -2381,6 +2501,26 @@
         }
       }
     },
+    "待安装": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "To install"
+          }
+        }
+      }
+    },
+    "待安装 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Install %@ when ready"
+          }
+        }
+      }
+    },
     "待机": {
       "localizations": {
         "en": {
@@ -2521,6 +2661,16 @@
         }
       }
     },
+    "打包并写索引": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Package and update the index"
+          }
+        }
+      }
+    },
     "打开": {
       "localizations": {
         "en": {
@@ -2607,16 +2757,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Collapse Sidebar"
-          }
-        }
-      }
-    },
-    "拖动调整边栏宽度": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Drag to resize sidebar"
           }
         }
       }
@@ -2771,6 +2911,46 @@
         }
       }
     },
+    "数值越高图片越清晰；会自动柔化以保证可读性": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Higher values show the image more clearly; softening keeps text readable"
+          }
+        }
+      }
+    },
+    "数值越高桌面越柔和，文字越清晰": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Higher values blur the desktop more, keeping text sharp"
+          }
+        }
+      }
+    },
+    "数值越高背景越柔和，文字越清晰": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Higher values blur the background more, keeping text sharp"
+          }
+        }
+      }
+    },
+    "数值越高越透出桌面；会自动柔化以保证可读性": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Higher values reveal more of the desktop; softening keeps text readable"
+          }
+        }
+      }
+    },
     "文件": {
       "localizations": {
         "en": {
@@ -2861,6 +3041,16 @@
         }
       }
     },
+    "显示 / 隐藏玻璃导航列（⌘\\）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show / hide the glass navigation column (⌘\\)"
+          }
+        }
+      }
+    },
     "显示边栏": {
       "localizations": {
         "en": {
@@ -2911,12 +3101,32 @@
         }
       }
     },
+    "更换": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Change"
+          }
+        }
+      }
+    },
     "更改": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Change"
+          }
+        }
+      }
+    },
+    "更新到 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update to %@"
           }
         }
       }
@@ -3181,12 +3391,42 @@
         }
       }
     },
+    "校验 SHA256": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verifying SHA256"
+          }
+        }
+      }
+    },
+    "校验包": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Validating pack"
+          }
+        }
+      }
+    },
     "检查 %@…": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Checking %@…"
+          }
+        }
+      }
+    },
+    "检查上游版本": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checking upstream version"
           }
         }
       }
@@ -3351,6 +3591,16 @@
         }
       }
     },
+    "每条消息都会带上这组默认值": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "These defaults apply to every message"
+          }
+        }
+      }
+    },
     "没有下载任务": {
       "localizations": {
         "en": {
@@ -3467,6 +3717,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Temperature %.1f · Top P %.2f · Max output %lld"
+          }
+        }
+      }
+    },
+    "激活": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activating"
           }
         }
       }
@@ -3611,6 +3871,16 @@
         }
       }
     },
+    "移除": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove"
+          }
+        }
+      }
+    },
     "移除任务并清理半成品": {
       "localizations": {
         "en": {
@@ -3721,6 +3991,16 @@
         }
       }
     },
+    "继续 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resume %@"
+          }
+        }
+      }
+    },
     "继续 %lld%%": {
       "localizations": {
         "en": {
@@ -3751,12 +4031,32 @@
         }
       }
     },
+    "背景模糊": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Background Blur"
+          }
+        }
+      }
+    },
     "自动": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Automatic"
+          }
+        }
+      }
+    },
+    "自定义背景": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Custom Background"
           }
         }
       }
@@ -3777,6 +4077,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Save"
+          }
+        }
+      }
+    },
+    "解包": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unpacking"
+          }
+        }
+      }
+    },
+    "解析版本": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resolving version"
           }
         }
       }
@@ -4071,6 +4391,26 @@
         }
       }
     },
+    "选择一张图片作为画布背景": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose an image as the canvas background"
+          }
+        }
+      }
+    },
+    "选择图片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose Image"
+          }
+        }
+      }
+    },
     "选择模型": {
       "localizations": {
         "en": {
@@ -4307,6 +4647,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "First-run setup"
+          }
+        }
+      }
+    },
+    "首次安装会从 GitHub 构建": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "First install builds from GitHub"
           }
         }
       }

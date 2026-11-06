@@ -191,7 +191,7 @@ def render(size=SIZE, ss=SS, flat=False):
     head = ir.to_image(field).convert("RGBA")
     head.putalpha(head_mask)
 
-    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    canvas = Image.new("RGBA", (size, size), (255, 255, 255, 255))
 
     # 投影 / 边缘光 / 体积阴影 / 玻璃高光（扁平版全部跳过）------------------
     shadow_color = "#2B0616"

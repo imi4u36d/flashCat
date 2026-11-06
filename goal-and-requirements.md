@@ -18,7 +18,7 @@ Splash、oMLX、MTPLX、MLX-Serve、Strata 等本地推理引擎各自有端口�
 
 ## 受众
 
-单台 Apple Silicon Mac 上的个人用户，以开发者为主：他要本地推理，也要把本地推理当作 OpenAI / Claude 兼容的接口喂给自己的其他工具。系统门槛是 macOS 27.0——界面用到 macOS 27 的 Liquid Glass 分段控件，splash 原生引擎自身的 26.4 下限已在其下。
+单台 Apple Silicon Mac 上的个人用户，以开发者为主：他要本地推理，也要把本地推理当作 OpenAI / Claude 兼容的接口喂给自己的其他工具。系统门槛是 macOS 26.0——界面依赖 macOS 26 的 Liquid Glass，splash 原生引擎自身的 26.4 下限是引擎级要求。
 
 ## 能力
 
@@ -29,7 +29,7 @@ Splash、oMLX、MTPLX、MLX-Serve、Strata 等本地推理引擎各自有端口�
 - **模型库按引擎格式与内存档精选。** Splash 使用 27B IQ3_S 与 Flash-Next Q2_0 的 GGUF；oMLX 使用 Jundot 的 `oQ4e` 包；MTPLX 使用 Youssofal 的 Qwen 包，并在低内存机器上以 MiMo 9B、Qwen3.5 4B 兜底。模型页把本机权重与尚未下载的 FlashCat 推荐分开；应用内下载、加载、切换。切换方式按引擎能力区分（oMLX 热切换，Splash / MTPLX 重启进程）。splash 的每个家族还配一个 DFlash2 draft，跟着主模型一起下、缺了在启动前补齐，用户不需要知道它存在。
 - **内置对话。** 流式输出、温度 / top-p / 最大输出、思考模式与推理等级；对话记录存本地，可新建与回看。
 - **性能可见。** 解码速度、首字延迟、预填充速度、草稿接受率、内存与峰值、端口占用、当前会话上下文占用，以及引擎实时日志（按级别过滤、搜索、暂停、清空）。
-- **API 网关。** 固定 `http://127.0.0.1:9000/v1`，同一端口同时说 OpenAI 与 Anthropic 两种方言，模型列表跨引擎统一；客户端钉一次 Base URL，换引擎、换端口都不用改配置。
+- **API 网关。** 固定 `http://127.0.0.1:9000/v1`，同一端口同时说 OpenAI 与 Anthropic 两种方言，模型列表跨引擎统一；请求中的 `model` 决定实际加载的权重，必要时自动切引擎或拉起未启动的模型。客户端钉一次 Base URL，换引擎、换端口都不用改配置。
 - **外观与系统集成。** 跟随系统 / 浅色 / 深色三档即时生效；菜单栏面板；登录时启动。
 
 ## 非目标

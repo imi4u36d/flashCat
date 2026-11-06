@@ -18,9 +18,36 @@ enum ModelSharing {
     /// 需要软链，但同样要记住「这个模型授权给 Splash 了」。
     static var tableFile: String { Paths.supportDirectory + "/model-shares.json" }
 
+    // MARK: 缓存
+    //
+    // `table()` 和 `scan()` 会被视图 body 高频调用（侧栏计数、模型页、选择器）。
+    // 以前每次都读 JSON / 枚举目录，主线程被几十毫秒的磁盘操作反复占住。授权表
+    // 只由本进程写，扫描结果短暂缓存即可；写入和显式同步都会让缓存失效。
+
+    private static let cacheLock = NSLock()
+    nonisolated(unsafe) private static var tableCache: [String: Set<EngineID>]?
+    nonisolated(unsafe) private static var scanCache: (models: [ModelInfo], at: Date)?
+    private static let scanTTL: TimeInterval = 1.0
+
     // MARK: 授权表
 
     static func table() -> [String: Set<EngineID>] {
+        cacheLock.lock()
+        if let tableCache {
+            cacheLock.unlock()
+            return tableCache
+        }
+        cacheLock.unlock()
+
+        let loaded = loadTable()
+
+        cacheLock.lock()
+        tableCache = loaded
+        cacheLock.unlock()
+        return loaded
+    }
+
+    private static func loadTable() -> [String: Set<EngineID>] {
         guard let data = FileManager.default.contents(atPath: tableFile),
               let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: [String]] else {
             return [:]
@@ -39,9 +66,22 @@ enum ModelSharing {
             raw[repo] = EngineCatalog.allIDs.filter { engines.contains($0) }.map(\.rawValue)
         }
         Paths.ensureDirectory(Paths.supportDirectory)
-        guard let data = try? JSONSerialization.data(withJSONObject: raw,
-                                                     options: [.prettyPrinted, .sortedKeys]) else { return }
-        try? data.write(to: URL(fileURLWithPath: tableFile), options: .atomic)
+        if let data = try? JSONSerialization.data(withJSONObject: raw,
+                                                  options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: URL(fileURLWithPath: tableFile), options: .atomic)
+        }
+        cacheLock.lock()
+        tableCache = table
+        scanCache = nil
+        cacheLock.unlock()
+    }
+
+    /// 外部改写了共享目录或授权表时调用，下次读取重新落盘。
+    static func invalidateCaches() {
+        cacheLock.lock()
+        tableCache = nil
+        scanCache = nil
+        cacheLock.unlock()
     }
 
     static func engines(for repo: String) -> Set<EngineID> {
@@ -108,6 +148,23 @@ enum ModelSharing {
     /// 共享目录里已经成形的权重。判据与引擎目录一致（`isWeightsDirectory`），
     /// 半下载的目录不会成行——下载中心那一行还在，卡片继续显示进度。
     static func scan() -> [ModelInfo] {
+        cacheLock.lock()
+        if let scanCache, Date().timeIntervalSince(scanCache.at) < scanTTL {
+            let models = scanCache.models
+            cacheLock.unlock()
+            return models
+        }
+        cacheLock.unlock()
+
+        let models = scanUncached()
+
+        cacheLock.lock()
+        scanCache = (models, Date())
+        cacheLock.unlock()
+        return models
+    }
+
+    private static func scanUncached() -> [ModelInfo] {
         let manager = FileManager.default
         let names = (try? manager.contentsOfDirectory(atPath: directory)) ?? []
         var models: [ModelInfo] = []

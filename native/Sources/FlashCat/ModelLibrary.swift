@@ -20,6 +20,10 @@ struct ModelLibraryEntry: Identifiable {
     let source: ModelSource
 
     var id: String { model.id }
+
+    /// 同一条目在「全部」页会按引擎各出现一次（一个模型可以由多个引擎驱动），
+    /// 所以列表身份必须带上引擎，否则 ForEach 收到重复 id，懒加载网格会出现空位。
+    var identity: String { engine.rawValue + "/" + model.id }
     var installed: Bool { model.origin != .recommended }
     var downloadable: Bool { !installed }
 

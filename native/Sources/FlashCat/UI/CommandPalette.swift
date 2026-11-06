@@ -2,7 +2,12 @@ import SwiftUI
 import AppKit
 import FlashCatKit
 
-/// ⌘K 命令面板：页面跳转与常用动作，一个输入框全都能到。
+extension Notification.Name {
+    /// 命令面板是视图自己的 `@State`，菜单通过这条通知请求打开它。
+    static let flashCatOpenCommandPalette = Notification.Name("flashCat.openCommandPalette")
+}
+
+/// 命令面板：页面跳转与常用动作，一个输入框全都能到。
 struct CommandPalette: View {
     @ObservedObject var state: AppState
     var openDownloads: () -> Void
@@ -145,14 +150,6 @@ struct CommandPalette: View {
                 }
             }
             Spacer(minLength: 8)
-            if let shortcut = item.shortcut, !shortcut.isEmpty {
-                Text(shortcut)
-                    .font(.system(size: 9.5, design: .monospaced))
-                    .foregroundStyle(Native.tertiary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(RoundedRectangle(cornerRadius: 4).fill(Native.overlay(0.05)))
-            }
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
@@ -205,42 +202,36 @@ struct CommandPalette: View {
             CommandItem(id: "nav.\(page.rawValue)",
                         title: L10n.format("打开%@", L10n.t(page.rawValue)),
                         detail: page.detail,
-                        icon: page.symbol,
-                        shortcut: "⌘\(pageIndex(page))") {
+                        icon: page.symbol) {
                 state.section = page
             }
         }
         list.append(CommandItem(id: "engine.toggle",
                                 title: state.isRunning ? "停止推理引擎" : "启动推理引擎",
                                 detail: "\(state.activeEngine.displayName) · \(state.engineStageText)",
-                                icon: state.isRunning ? "stop.fill" : "play.fill",
-                                shortcut: nil) {
+                                icon: state.isRunning ? "stop.fill" : "play.fill") {
             state.toggleService()
         })
         list.append(CommandItem(id: "chat.new", title: "新对话", detail: "开一段新的本地会话",
-                                icon: "square.and.pencil", shortcut: "⌘N") {
+                                icon: "square.and.pencil") {
             state.newConversation()
             state.section = .chat
         })
         list.append(CommandItem(id: "downloads", title: "打开下载中心", detail: "查看模型下载进度",
-                                icon: "arrow.down.circle", shortcut: nil, run: openDownloads))
+                                icon: "arrow.down.circle", run: openDownloads))
         list.append(CommandItem(id: "hub", title: "模型广场", detail: "搜索 Hugging Face 并下载",
-                                icon: "sparkle.magnifyingglass", shortcut: nil, run: openHub))
+                                icon: "sparkle.magnifyingglass", run: openHub))
         list.append(CommandItem(id: "theme", title: "切换外观",
                                 detail: L10n.format("当前：%@", L10n.t(state.theme.mode.label)),
-                                icon: state.theme.mode == .dark ? "sun.max" : "moon", shortcut: "⌘⇧A") {
+                                icon: state.theme.mode == .dark ? "sun.max" : "moon") {
             toggleAppearance()
         })
         list.append(CommandItem(id: "sidebar", title: state.showsSidebar ? "折叠边栏" : "展开边栏",
-                                detail: "切换图标导航模式",
-                                icon: "sidebar.left", shortcut: "⌘\\") {
+                                detail: "显示 / 隐藏玻璃导航列（⌘\\）",
+                                icon: "sidebar.left") {
             state.toggleSidebar()
         })
         return list
-    }
-
-    private func pageIndex(_ page: Page) -> Int {
-        (Page.allCases.firstIndex(of: page) ?? 0) + 1
     }
 
     private func toggleAppearance() {
@@ -266,7 +257,6 @@ struct CommandItem: Identifiable {
     let title: String
     let detail: String
     let icon: String
-    var shortcut: String? = nil
     let run: () -> Void
 }
 

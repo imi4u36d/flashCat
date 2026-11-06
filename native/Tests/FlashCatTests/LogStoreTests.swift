@@ -39,6 +39,19 @@ final class LogStoreTests: XCTestCase {
         XCTAssertTrue(LogStore(path: path).tail(20).isEmpty)
     }
 
+    /// 上限之后的裁剪是分批的；无论裁掉多少，最新一行必须还在，且内存尾部
+    /// 不能无限增长。
+    func testBatchTrimKeepsTheNewestLines() {
+        let store = LogStore(path: path)
+        for index in 1...25_000 { store.append("line \(index)") }
+
+        let tail = store.tail(30_000)
+        XCTAssertLessThanOrEqual(tail.count, 20_000)
+        XCTAssertGreaterThan(tail.count, 19_000)
+        XCTAssertEqual(tail.first?.text, "line 25000")
+        XCTAssertFalse(tail.contains { $0.text == "line 1" })
+    }
+
     /// `note()` used to call `openFile()`/`close()` around a single line. Since
     /// `openFile()` reloads history from disk and `close()` drops the write
     /// handle, a note written while the engine ran stopped every later line from

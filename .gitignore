@@ -26,6 +26,10 @@ __pycache__/
 docs/scratch/
 *.screenshot.png
 
+# Distribution/promo material (screenshots, mp4 renders, node_modules): built
+# locally and shipped outside the repo. 5d14e3d removed an accidental add.
+promo/
+
 # Engine runtime packs (GB-scale build output; install via scripts/engines)
 vendor/engines/
 

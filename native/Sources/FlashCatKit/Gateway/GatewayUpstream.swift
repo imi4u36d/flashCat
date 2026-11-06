@@ -29,8 +29,6 @@ public enum GatewayUpstream {
         guard let request = request(method: "POST", port: port, path: path, body: body, timeout: timeout) else {
             return nil
         }
-        let session = makeSession(timeout: timeout)
-        defer { session.finishTasksAndInvalidate() }
         do {
             let (data, response) = try await session.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -47,8 +45,6 @@ public enum GatewayUpstream {
         guard let request = request(method: "GET", port: port, path: path, body: nil, timeout: timeout) else {
             return nil
         }
-        let session = makeSession(timeout: timeout)
-        defer { session.finishTasksAndInvalidate() }
         do {
             let (data, response) = try await session.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -67,7 +63,6 @@ public enum GatewayUpstream {
         guard let request = request(method: "POST", port: port, path: path, body: body, timeout: timeout) else {
             return nil
         }
-        let session = makeSession(timeout: timeout)
         do {
             let (bytes, response) = try await session.bytes(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -75,20 +70,23 @@ public enum GatewayUpstream {
             // being consumed; no explicit retain is needed.
             return StreamResponse(status: status, bytes: bytes)
         } catch {
-            session.finishTasksAndInvalidate()
             return nil
         }
     }
 
     // MARK: plumbing
 
-    private static func makeSession(timeout: TimeInterval) -> URLSession {
+    /// 网关面向所有本地客户端，请求可能很频繁。每个请求新建并销毁
+    /// `URLSession` 会造成连接池和线程反复抖动；复用同一个会话，
+    /// 超时由 request 级 `timeoutInterval` 控制。
+    private static let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = timeout
-        configuration.timeoutIntervalForResource = timeout
         configuration.waitsForConnectivity = false
+        configuration.httpMaximumConnectionsPerHost = 8
+        configuration.timeoutIntervalForRequest = 600
+        configuration.timeoutIntervalForResource = 3600
         return URLSession(configuration: configuration)
-    }
+    }()
 
     private static func request(method: String,
                                 port: Int,

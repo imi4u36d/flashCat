@@ -1,8 +1,11 @@
 import Foundation
 
-struct ServerStats {
+struct ServerStats: Equatable {
     var decodeTokensPerSecond: Double?
     var prefillTokensPerSecond: Double?
+    /// 上面两个速率是否来自引擎的实时计数（见 `EngineStatus.decodeRateIsLive`）。
+    var decodeRateIsLive = false
+    var prefillRateIsLive = false
     var draftAcceptance: Double?
     var ttftMilliseconds: Double?
     var activeRequests: Int = 0

@@ -34,13 +34,23 @@ final class ChatHistory {
         var thinkingSeconds: Double?
     }
 
-    func load() -> [ChatThread] {
-        let threads = loadStored()
-        let (kept, dropped) = pruned(threads)
-        // 旧版本每轮都新建线程，同一段对话在侧栏里堆成多份；读盘时顺手清掉，
-        // 免得重复条目一直留着（清理只在真的摘掉东西时才写盘）。
-        if dropped { write(kept) }
-        return kept
+    /// 磁盘上线程列表的进程内副本。`load()` 以前每轮回答结束都会重读并
+    /// 重新去重整份历史；写入路径会同步更新缓存，读侧因此可以常量时间返回。
+    private var cache: [ChatThread]?
+
+    /// `pruneLegacy` 只在启动时打开：旧版本曾把同一段对话按轮次各存一条，
+    /// 启动清理一次即可。之后再在每次 `load()` 里跑 O(n²) 的比对没有意义。
+    func load(pruneLegacy: Bool = false) -> [ChatThread] {
+        if !pruneLegacy, let cache { return cache }
+        var threads = loadStored()
+        if pruneLegacy {
+            let (kept, dropped) = pruned(threads)
+            // 清理只在真的摘掉东西时才写盘。
+            if dropped { write(kept) }
+            threads = kept
+        }
+        cache = threads
+        return threads
     }
 
     /// 去掉「内容是别人前缀」的旧副本：同一段对话早先几轮存下的短版本。
@@ -163,16 +173,29 @@ final class ChatHistory {
         write(threads)
     }
 
+    /// 历史文件可能越滚越大，序列化和写盘放在主线程会让每轮回答结束时
+    /// 顿一下。缓存同步更新，磁盘写入排到串行后台队列，顺序保持不变。
+    private let writeQueue = DispatchQueue(label: "com.zhuo.flashCat.chat-history",
+                                           qos: .utility)
+
     private func write(_ threads: [ChatThread]) {
+        cache = threads
         let stored = threads.map { thread in
             StoredThread(id: thread.id, title: thread.title,
                          updatedAt: thread.updatedAt.timeIntervalSince1970,
                          messages: thread.messages.map(Self.stored))
         }
-        Paths.ensureDirectory(Paths.supportDirectory)
-        if let data = try? JSONEncoder().encode(stored) {
-            try? data.write(to: URL(fileURLWithPath: Paths.historyFile))
+        writeQueue.async {
+            Paths.ensureDirectory(Paths.supportDirectory)
+            if let data = try? JSONEncoder().encode(stored) {
+                try? data.write(to: URL(fileURLWithPath: Paths.historyFile))
+            }
         }
+    }
+
+    /// 退出前等所有挂起的写盘完成，避免最后一条回答丢在队列里。
+    func flushPendingWrites() {
+        writeQueue.sync {}
     }
 
     /// 同一段对话只占一条：`threadID` 已存在就原地覆盖并提到最前，只有新会话
@@ -256,6 +279,9 @@ final class ConversationStore {
         }
     }
 
+    private let writeQueue = DispatchQueue(label: "com.zhuo.flashCat.conversation",
+                                           qos: .utility)
+
     func save(_ messages: [ChatMessage]) {
         let stored = messages.filter { !$0.streaming }.map { message in
             StoredMessage(role: message.role, content: message.content,
@@ -270,13 +296,23 @@ final class ConversationStore {
                           thinkingSeconds: message.thinkingSeconds)
         }
         guard !stored.isEmpty else { return }
-        Paths.ensureDirectory(Paths.supportDirectory)
-        if let data = try? JSONEncoder().encode(stored) {
-            try? data.write(to: URL(fileURLWithPath: Paths.conversationFile))
+        writeQueue.async {
+            Paths.ensureDirectory(Paths.supportDirectory)
+            if let data = try? JSONEncoder().encode(stored) {
+                try? data.write(to: URL(fileURLWithPath: Paths.conversationFile))
+            }
         }
     }
 
     func clear() {
-        try? FileManager.default.removeItem(atPath: Paths.conversationFile)
+        // 走同一条队列：先前的 save 必须先落盘，再删文件，顺序不能反。
+        writeQueue.async {
+            try? FileManager.default.removeItem(atPath: Paths.conversationFile)
+        }
+    }
+
+    /// 退出前等所有挂起的写盘完成。
+    func flushPendingWrites() {
+        writeQueue.sync {}
     }
 }

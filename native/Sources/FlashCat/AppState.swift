@@ -64,6 +64,13 @@ final class AppState: ObservableObject {
     /// 本次切换开始的时间。热切换时引擎进程一直在跑，`busySince` 不会动，
     /// 只靠它才能给「切换中 · 加载权重」配一个真正在走的等待时长。
     private var switchStartedAt: Date?
+    /// 「已等待 m:ss」读的是时钟，不是任何 `@Published` 字段：引擎安静加载的几
+    /// 分钟里 `syncController` 的「只有真的变了才发布」会把每一秒都挡掉，灵动岛的
+    /// 秒数就停住，等下一行日志或一个指标变化才跳一大截。这个计数器只在模型忙的
+    /// 时候每秒推一格，专门让读时钟的文案重算。
+    @Published private(set) var lifecycleTick: Int = 0
+    /// 上面那个计数器的心跳；模型不忙时它不发任何东西，界面不白白每秒重绘。
+    private var lifecycleClock: Timer?
     /// 每次切换领一个号，只有当代的结尾允许改「切换中」状态。被接管或被取消的
     /// 旧任务回来时代数已经不同，它就静默退出：既不会抹掉新切换的状态，也没人
     /// 能把界面永久留在「切换中」。
@@ -76,8 +83,16 @@ final class AppState: ObservableObject {
     /// unloading the resident model, so the engine is briefly unusable — that is
     /// worth one click, not a silent stall.
     @Published var confirmingModelSwitch: String?
-    @Published var messages: [ChatMessage] = []
-    @Published var threads: [ChatThread] = []
+    /// 高频对话状态独立成 store；这里保留同名转发，内部逻辑不用改。
+    let chat = ChatStore()
+    var messages: [ChatMessage] {
+        get { chat.messages }
+        set { chat.messages = newValue }
+    }
+    var threads: [ChatThread] {
+        get { chat.threads }
+        set { chat.threads = newValue }
+    }
     /// 当前会话在「最近对话」里的 id。以前每轮生成结束都新建一条线程，同一段
     /// 对话会在侧栏堆成好几份（概览读到的上下文也可能来自旧副本）；现在这个 id
     /// 跟着 `conversation.json` 一起用，`history.save` 原地覆盖而不是 insert。
@@ -101,8 +116,23 @@ final class AppState: ObservableObject {
     static func newThreadID() -> String {
         String(Int(Date().timeIntervalSince1970 * 1_000_000))
     }
-    @Published var generating = false
-    @Published var generationStatus: String?
+    var generating: Bool {
+        get { chat.generating }
+        set { chat.generating = newValue }
+    }
+    var generationStatus: String? {
+        get { chat.generationStatus }
+        set { chat.generationStatus = newValue }
+    }
+    /// 非 nil 时这条回复还在等引擎启动/加载权重；对话页据此把占位提示
+    /// 从「等待首个 token」换成「模型正在启动中」。
+    var chatStartupStage: String? {
+        get { chat.chatStartupStage }
+        set { chat.chatStartupStage = newValue }
+    }
+    /// 每次发送领一个号。取消或重开对话时推进，启动等待中的旧任务回来
+    /// 发现代数不同就静默退出，不会在已经取消的回复里继续发请求。
+    private var sendGeneration = 0
 
     /// The assistant message this generation owns, located by id.
     private var streamMessageID = ""
@@ -114,7 +144,7 @@ final class AppState: ObservableObject {
     @Published private(set) var islandNotices: [IslandNotice] = []
     /// 尚未展开查看的通知数量。
     @Published private(set) var islandUnread = 0
-    /// 侧边栏是否展开。折叠后留一条图标 rail，导航不消失；
+    /// 悬浮导航列是否显示。隐藏后主视口铺满窗口，重新显示时恢复玻璃列；
     /// 状态落盘到 UserDefaults 的 `sidebarVisible`，重启后沿用上次的样子。
     @Published var showsSidebar: Bool
     @Published var throughput: [ThroughputSample] = []
@@ -123,9 +153,22 @@ final class AppState: ObservableObject {
     @Published var acceptance: [ThroughputSample] = []
     /// 应用内对话流式回复的本地测速（tok/s）。各引擎对「解码速度」的口径
     /// 并不一致：splash 报实时值，oMLX 报开机以来的累计均值（只在请求结束
-    /// 时跳一格）。生成期间概览卡与曲线统一改用这个本地口径，空闲时回落到
-    /// 引擎自报的读数。
+    /// 时跳一格）。它只描述「应用内这一路」：对话页直播条用它，概览的
+    /// 「总解码」要的是所有请求合起来，见 `totalDecodeRate`。
     @Published private(set) var liveDecodeRate: Double?
+    // 预填充不再由应用自己按「整段提示词 / 首字耗时」估算。同一会话的第二轮
+    // 几乎全部命中前缀缓存，分子里的 token 大部分根本没被前向，TTFT 里还混着
+    // 排队和缓存恢复，两者一除能把读数放大两个数量级。现在只显示引擎真的
+    // 量过的数：mlx-serve 用 prefill_tokens_total / prefill_time_seconds
+    //（都不含缓存恢复），其余引擎用它自己的 prefill 字段；引擎没有时回落到
+    // 网关的按请求打点。
+    /// 网关侧会话的合计读数。本地 agent 等外部客户端不经过应用内对话，
+    /// 而且 MLX-Serve 之类引擎的 /metrics 不报解码速率，概览只能从网关
+    /// 的按请求打点里聚合（见 `GatewayMeter.overview`）。
+    @Published private(set) var gatewayDecodeRate: Double = 0
+    @Published private(set) var gatewayPrefillRate: Double?
+    /// 本次请求的提示词 token 估算，生成期间用来实时刷新上下文占用。
+    private var livePromptTokens = 0
     /// 生成期间的连续时间低通速率估计。不再用「攒够 0.9 秒就清零」的窗口：
     /// 那种非重叠窗口让相邻读数互不相关，SSE 分片一抖数字就跟着跳。
     private var decodeMeter = DecodeRateMeter()
@@ -145,7 +188,16 @@ final class AppState: ObservableObject {
     /// Download center rows. Paused and failed transfers survive a relaunch
     /// (the Hub keeps partial files in the destination's `.cache`), so the
     /// list is persisted and "downloading" rows become "paused" on load.
-    @Published private(set) var downloadTasks: [ModelDownloadTask] = []
+    @Published private(set) var downloadTasks: [ModelDownloadTask] = [] {
+        didSet {
+            // 进度每 0.5 秒都会改 `downloadedBytes`，但模型集合没变；只有
+            // 引擎/模型/状态真的变化时才让模型目录缓存失效，避免下载期间
+            // 侧栏和模型页反复扫盘。
+            let before = oldValue.map { "\($0.engine.rawValue)|\($0.model)|\($0.status.rawValue)" }
+            let after = downloadTasks.map { "\($0.engine.rawValue)|\($0.model)|\($0.status.rawValue)" }
+            if before != after { invalidateModelCaches() }
+        }
+    }
     /// Hugging Face 浏览器的状态：列表与单个仓库详情分开存——弹层里翻 tab 不
     /// 该把列表挤掉，两者也都只是「看一眼」，不持久化、不碰磁盘。
     @Published private(set) var hubResults: [HubModel] = []
@@ -262,6 +314,11 @@ final class AppState: ObservableObject {
     /// engine while it runs — the old weights must be confirmed gone before the
     /// new ones allocate.
     private var switchTask: Task<Void, Never>?
+    /// Serialises API-triggered model preparation. The visible switcher has its
+    /// own task/generation state, while two HTTP clients may arrive together;
+    /// chaining here keeps the second request from issuing a second load while
+    /// the first is still unloading or starting an engine.
+    private var gatewayPreparationTail: Task<Void, Never>?
     /// Active engine as of the last pack install/uninstall callback. When an
     /// uninstall removes the engine in use, `rebuild()` silently falls back to
     /// another pack (or to none); comparing against this snapshot is how the
@@ -302,6 +359,18 @@ final class AppState: ObservableObject {
     /// 窗口是界面每一帧都要问的值，而取它要么重扫模型目录、要么读 config.json，
     /// 这里跟 EngineModelStore.meta 用同一档 20s 缓存，避免把扫描塞进推送热路径。
     private var contextWindowCache: (key: String, value: Int?, at: Date)?
+
+    /// 模型目录扫描的短缓存。`engineModels(for:)` / `libraryEntries(for:)` 会被
+    /// 侧栏计数、模型页、选择器等视图在每次重绘时调用；以前每秒的指标刷新都会
+    /// 触发多次目录枚举与 JSON 读取。这里缓存 1 秒，下载/删除/重新加载时立即失效。
+    private static let modelListTTL: TimeInterval = 1.0
+    private var engineModelsCache: [EngineID: (models: [EngineModel], at: Date)] = [:]
+    private var libraryEntriesCache: [EngineID: (entries: [ModelLibraryEntry], at: Date)] = [:]
+
+    private func invalidateModelCaches() {
+        engineModelsCache.removeAll()
+        libraryEntriesCache.removeAll()
+    }
 
     /// 模型**自身**支持的上下文（config.json 的 max_position_embeddings），
     /// 不是引擎本次加载收敛后的窗口。模型库扫盘结果对 omlx / mtplx 就带这一项；
@@ -378,12 +447,15 @@ final class AppState: ObservableObject {
         return remembered > 0 ? remembered : nil
     }
 
-    /// 当前会话已占用的上下文 tokens：**只认引擎回报的真实 usage**。
+    /// 当前会话已占用的上下文 tokens。
     ///
-    /// 取最近一条带 `prompt_tokens` 的回复，`prompt + completion` 就是那一轮
-    /// 结束时真正躺在 KV 里的量。还没跑完第一轮（或旧数据没带 usage）时返回 0——
-    /// 按字符估算出来的数看着像真实值，反而误导。
+    /// 生成期间用「本次提示词估算 + 已生成 token」实时推进，否则整段回复期间
+    /// 顶栏与概览卡会停在上一次的 usage 上；回复结束后再回落到引擎回报的真实
+    /// `prompt + completion`，所以静止时的数字仍然是 KV 里真正躺着的量。
     var contextUsedTokens: Int {
+        if generating, livePromptTokens > 0 {
+            return livePromptTokens + Int(decodeMeter.totalTokens.rounded())
+        }
         guard let last = messages.last(where: { $0.role == "assistant" && ($0.usage?.promptTokens ?? 0) > 0 }),
               let usage = last.usage else { return 0 }
         return usage.promptTokens + usage.completionTokens
@@ -421,6 +493,11 @@ final class AppState: ObservableObject {
     /// Lifecycle text for the title-bar pill and the overview: names the phase
     /// the engine is really in, so a weight load never reads as 「运行中」.
     var engineStageText: String {
+        // 这段字里的秒数是从时钟算的，不挂在任何数据字段上。读一次心跳，把
+        // 「它依赖每秒的时钟」写进这里的依赖关系：`@ObservedObject` 本来就会在
+        // 每次发布时重绘，但将来若换成按读取追踪的 `@Observable`，这一行仍然是
+        // 灵动岛、概览、菜单栏能继续走的理由。
+        _ = lifecycleTick
         if isSwitchingModel {
             var parts = [L10n.t("切换中")]
             if !switchStage.isEmpty { parts.append(L10n.t(switchStage)) }
@@ -434,7 +511,13 @@ final class AppState: ObservableObject {
         }
         if serverState == .ready {
             let stage = startupStage
-            return stage == EngineStartupStage.ready.rawValue ? L10n.t("运行中") : L10n.t(stage)
+            guard stage != EngineStartupStage.ready.rawValue else { return L10n.t("运行中") }
+            // 热加载引擎的 HTTP 壳子先绿、权重后到：这一段仍是「模型还不能用」，
+            // 秒数不能在最长的一段里消失。用权重加载自己的起点——引擎已经跑了
+            // 几个小时再被要求换权重时，进程的起点会给出一个荒唐的数字。
+            guard let waited = controller?.weightLoadSeconds else { return L10n.t(stage) }
+            return [L10n.t(stage), L10n.format("已等待 %@", Format.elapsed(waited))]
+                .joined(separator: " · ")
         }
         var parts = [L10n.t(serverState.rawValue)]
         let stage = startupStage
@@ -480,20 +563,68 @@ final class AppState: ObservableObject {
     var engineVersion: String { controller?.installation.version ?? "—" }
     var health: (label: String, tone: TagTone) { healthTone(stats) }
 
+    /// 概览与菜单栏的「总解码」读数：所有在跑请求合起来的 tok/s，而不是
+    /// 其中某一路。
+    ///
+    /// 取数顺序按「这分钟里谁最接近真实合计」排：
+    /// - 引擎能给出实时计数（mlx-serve 的 `generation_tokens_live` 差分、
+    ///   Strata 的 `live.tok_s`）时直接用它。它天然覆盖所有会话，连网关看不见
+    ///   的直连请求、只回工具调用的 agent 请求都算在内。
+    /// - 否则用网关按请求打点的聚合（含应用内对话与外部客户端）。
+    /// - 再退到应用内直播读数，最后才是引擎的累计/滚动均值。
+    var totalDecodeRate: Double {
+        Self.totalDecodeRate(gateway: gatewayDecodeRate,
+                             live: liveDecodeRate,
+                             engine: stats?.decodeTokensPerSecond,
+                             engineIsLive: stats?.decodeRateIsLive ?? false)
+    }
+
+    /// 「总解码」的取数顺序，单独抽出来以便在没有窗口、没有引擎进程的测试里
+    /// 断言。顺序很关键：两路并发时应用内直播只是其中一路，不能盖住更大的
+    /// 合计值——那正是概览顶上的大数字与「总解码」曲线标题曾经只显示单路
+    /// 速率的成因。
+    nonisolated static func totalDecodeRate(gateway: Double,
+                                            live: Double?,
+                                            engine: Double?,
+                                            engineIsLive: Bool = false) -> Double {
+        if engineIsLive, let engine, engine > 0 { return engine }
+        if gateway > 0 { return gateway }
+        if let live, live > 0 { return live }
+        return engine ?? 0
+    }
+
     /// Fixed 30-second window for the hero sparkline; older samples are dropped
     /// at the sampler so this only filters late arrivals.
     /// 吞吐卡（MOCKUP A）的三个时间窗：45 秒 / 5 分钟 / 全部。
     func recentThroughput(window: TimeInterval) -> [ThroughputSample] {
         guard window > 0 else { return throughput }
-        let cutoff = Date().addingTimeInterval(-window)
-        return throughput.filter { $0.at >= cutoff }
+        return Self.suffix(of: throughput, window: window)
     }
 
     /// Same windows for the draft-acceptance curve, so both charts scroll together.
     func recentAcceptance(window: TimeInterval) -> [ThroughputSample] {
         guard window > 0 else { return acceptance }
+        return Self.suffix(of: acceptance, window: window)
+    }
+
+    /// 序列按时间升序排列，用二分找窗口起点；概览每秒都会为几张图各取一次，
+    /// 全表 `filter` 在 30 分钟样本上没有必要。
+    private static func suffix(of samples: [ThroughputSample],
+                               window: TimeInterval) -> [ThroughputSample] {
+        guard !samples.isEmpty else { return [] }
         let cutoff = Date().addingTimeInterval(-window)
-        return acceptance.filter { $0.at >= cutoff }
+        var low = 0
+        var high = samples.count
+        while low < high {
+            let mid = (low + high) / 2
+            if samples[mid].at < cutoff {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        guard low < samples.count else { return [] }
+        return Array(samples[low...])
     }
 
     var endpointURL: String { "http://127.0.0.1:\(port)/v1" }
@@ -531,16 +662,52 @@ final class AppState: ObservableObject {
 
     // MARK: lifecycle
 
+    /// 引擎启动、加载权重、热切换期间每秒推一格 `lifecycleTick`。
+    ///
+    /// 这些时段的文案里带着 `已等待 m:ss`，而秒数是从时钟算出来的，不挂在任何
+    /// `@Published` 字段上；同步函数为了避免空闲时整页每秒重绘，只在数值真的变化
+    /// 时才发布。引擎安静搬权重的几分钟里两者一撞，灵动岛、概览和菜单栏的秒数就
+    /// 一起停住，看起来和卡死没区别。这个节拍器只在 `isModelBusy` 时发布，空闲时
+    /// 一声不响。
+    ///
+    /// 用 `.common` 模式：默认模式的定时器在弹窗、菜单或拖拽时停止，而启动失败的
+    /// 提示正好是弹窗，等待时长会停在那一刻。
+    private func installLifecycleClock() {
+        lifecycleClock?.invalidate()
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.isModelBusy else { return }
+                self.lifecycleTick &+= 1
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        lifecycleClock = timer
+    }
+
     private func syncController() {
-        serverState = controller?.state ?? .stopped
-        stats = controller?.stats
+        // 每秒轮询都会走到这里。引擎空闲时状态与指标往往原封不动，无条件赋值
+        // `@Published` 会让整页每秒重绘一次；只在真的变化时才发布。
+        let nextState = controller?.state ?? .stopped
+        if serverState != nextState { serverState = nextState }
+        let nextStats = controller?.stats
+        if stats != nextStats { stats = nextStats }
         if let store = controller?.logs, store.latestId != logs.last?.id {
-            logs = store.snapshot()
+            logs = store.snapshot(limit: 4000)
         } else if controller == nil, !logs.isEmpty {
             logs = []
         }
 
         let now = Date()
+        // 网关侧聚合读数：外部客户端（本地 agent / 编辑器插件等）不经过应用内
+        // 对话，概览的实时数字与曲线只能从这里取。每秒轮询读一次，数值真的
+        // 变了才发布，空闲时不会让整页重绘。
+        let gatewayOverview = GatewayMeter.shared.overview()
+        if gatewayDecodeRate != gatewayOverview.decodeRate {
+            gatewayDecodeRate = gatewayOverview.decodeRate
+        }
+        if gatewayPrefillRate != gatewayOverview.prefillRate {
+            gatewayPrefillRate = gatewayOverview.prefillRate
+        }
         // 保留 30 分钟：概览的区间选择器有「45 秒 / 5 分钟 / 全部」三档，
         // 序列只留 5 分钟的话「全部」永远等于「5 分钟」，看起来就像没生效。
         let cutoff = now.addingTimeInterval(-1800)
@@ -561,18 +728,25 @@ final class AppState: ObservableObject {
                 lastRateSampleAt = now
                 publishDecodeRate(at: now)
             }
-        } else if generationEndedAt == nil, let reported = stats?.decodeTokensPerSecond, reported > 0 {
-            // 各引擎口径天差地别（splash 实时值 / oMLX 累计均值 / MTPLX 滚动
-            // 均值），再统一过一层低通，逐秒轮询的采样噪声不会直接变成跳变。
-            let smoothed = engineRateEMA.map { $0 * 0.6 + reported * 0.4 } ?? reported
-            engineRateEMA = smoothed
-            let changed = throughput.last.map { abs($0.value - smoothed) > 0.15 } ?? true
-            let due = throughput.last.map { now.timeIntervalSince($0.at) >= 0.9 } ?? true
-            // 引擎空闲时会一直重复最后一格读数；变化小于阈值就不落点，曲线
-            // 不会凭空续出一段平线、均值也不会被空闲时间拖着走。
-            if changed, due {
-                throughput.append(ThroughputSample(at: now, value: smoothed))
-                throughput.removeAll { $0.at < cutoff }
+        } else if generationEndedAt == nil {
+            // 曲线与大数字同源：外部 agent 直连引擎时网关没有读数，但引擎的
+            // 实时计数（`generation_tokens_live` 差分）正好覆盖这一路。
+            let rate = totalDecodeRate
+            if rate > 0 {
+                // 只对「累计/滚动均值」这类粗粒度读数过一层低通；实时计数本身
+                // 已经是每秒的真实增量，再平滑会落后于正在发生的生成。
+                let smoothed = stats?.decodeRateIsLive == true
+                    ? rate
+                    : (engineRateEMA.map { $0 * 0.6 + rate * 0.4 } ?? rate)
+                engineRateEMA = smoothed
+                let changed = throughput.last.map { abs($0.value - smoothed) > 0.15 } ?? true
+                let due = throughput.last.map { now.timeIntervalSince($0.at) >= 0.9 } ?? true
+                // 引擎空闲时会一直重复最后一格读数；变化小于阈值就不落点，曲线
+                // 不会凭空续出一段平线、均值也不会被空闲时间拖着走。
+                if changed, due {
+                    throughput.append(ThroughputSample(at: now, value: smoothed))
+                    throughput.removeAll { $0.at < cutoff }
+                }
             }
         }
 
@@ -614,27 +788,43 @@ final class AppState: ObservableObject {
     /// SSE 分片估成 0 后整片丢弃；0.9 秒非重叠窗口每次清零，相邻读数互不
     /// 相关；窗口实际长度取决于最后一个 delta 何时到，分母自己也在抖。
     /// 现在计数与分片边界无关，速率也只随真实解码节奏缓慢变化。
-    private func recordStreamDelta(_ piece: String) {
+    private func recordStreamDelta(_ piece: String, at event: Date) {
         let tokens = TokenEstimator.fractional(piece)
         guard tokens > 0 else { return }
+        // 用分片真正到达的时刻，而不是主线程排到这一条任务的时刻。UI 忙时
+        // 一批回调会被挤在一起处理，若在此时取 `Date()`，估计器会以为几十个
+        // token 是「瞬间」吐出来的，读数被抬出一个尖峰。
+        decodeMeter.add(tokens: tokens, at: event)
         let now = Date()
-        decodeMeter.add(tokens: tokens, at: now)
         guard lastRateSampleAt.map({ now.timeIntervalSince($0) >= 0.5 }) ?? true else { return }
         lastRateSampleAt = now
         publishDecodeRate(at: now)
     }
 
     /// 让大数字、曲线、菜单栏读的都是同一个平滑速率，不再各算各的。
+    ///
+    /// 曲线画的是「总解码」：应用内这一路生成时，外部客户端可能正同时经网关
+    /// 或直连引擎端口跑别的请求。采样值与 `totalDecodeRate` 走同一个取数顺序，
+    /// 曲线末端才不会和顶上的数字打架。
     private func publishDecodeRate(at now: Date) {
         let rate = decodeMeter.rate(at: now)
         liveDecodeRate = rate > 0 ? rate : nil
-        guard rate > 0 else { return }
+        let total = GatewayMeter.shared.overview().decodeRate
+        let sample = Self.totalDecodeRate(gateway: total,
+                                          live: rate,
+                                          engine: stats?.decodeTokensPerSecond,
+                                          engineIsLive: stats?.decodeRateIsLive ?? false)
+        guard sample > 0 else { return }
         let cutoff = now.addingTimeInterval(-1800)
-        throughput.append(ThroughputSample(at: now, value: rate))
+        throughput.append(ThroughputSample(at: now, value: sample))
         throughput.removeAll { $0.at < cutoff }
     }
 
     func bootstrap() {
+        // 先让等待时长的心跳跑起来：下面的 autoStart 可能立刻拉起引擎，
+        // 而「已等待 0:01」从第一秒就该开始走。
+        installLifecycleClock()
+
         let service = ModelCatalogService()
         let migration = service.migrateLegacyDirectories()
         if !migration.isEmpty {
@@ -666,7 +856,8 @@ final class AppState: ObservableObject {
             selectedModel = settings.model
         }
         messages = conversation.load()
-        threads = history.load()
+        // 旧版本留下的重复线程只在启动时清理一次，之后都走缓存。
+        threads = history.load(pruneLegacy: true)
 
         attachEngines()
         // A crashed or force-quit session can leave an engine resident with its
@@ -796,6 +987,8 @@ final class AppState: ObservableObject {
 
     func reloadModels() {
         // 授权表是真相，磁盘上的链接跟着它走：启动、下载完成、授权变更都从这里过。
+        ModelSharing.invalidateCaches()
+        invalidateModelCaches()
         ModelSharing.synchronize()
         // 公共目录里已经有哪些仓库：模型广场用它标「已在本机」。跟着
         // reloadModels 走（不挂在每两秒的指标轮询里），磁盘不会被反复扫。
@@ -963,6 +1156,16 @@ final class AppState: ObservableObject {
     /// Same list, for an engine that is not (yet) the active one — switching
     /// engines has to know what the destination can serve before it commits.
     func engineModels(for id: EngineID) -> [EngineModel] {
+        if let hit = engineModelsCache[id],
+           Date().timeIntervalSince(hit.at) < Self.modelListTTL {
+            return hit.models
+        }
+        let models = scanEngineModels(for: id)
+        engineModelsCache[id] = (models, Date())
+        return models
+    }
+
+    private func scanEngineModels(for id: EngineID) -> [EngineModel] {
         // A half-downloaded snapshot already carries config.json and a
         // tokenizer, which is enough for the scan to call it a servable model.
         // Every download-center row means its folder is not finished (success
@@ -1022,6 +1225,16 @@ final class AppState: ObservableObject {
     /// Installed weights plus the engine's suggestions as one grid — the same
     /// rows whether or not that engine is installed, running or holding a model.
     func libraryEntries(for engine: EngineID) -> [ModelLibraryEntry] {
+        if let hit = libraryEntriesCache[engine],
+           Date().timeIntervalSince(hit.at) < Self.modelListTTL {
+            return hit.entries
+        }
+        let entries = buildLibraryEntries(for: engine)
+        libraryEntriesCache[engine] = (entries, Date())
+        return entries
+    }
+
+    private func buildLibraryEntries(for engine: EngineID) -> [ModelLibraryEntry] {
         let installed: [ModelInfo]
         if engine.adapter == .splash {
             installed = catalog.machine.filter { ModelSharing.visible($0.id, engine: .splash) }
@@ -1188,6 +1401,156 @@ final class AppState: ObservableObject {
     }
 
     func cancelLibraryUse() { pendingLibraryUse = nil }
+
+    // MARK: API gateway model preparation
+
+    /// Make the model named by an API request the one that is actually loaded.
+    ///
+    /// This is deliberately separate from `applyModel`: API clients cannot
+    /// answer a confirmation sheet, and a request that names a different model
+    /// must not be silently served by the currently resident one. The method
+    /// resolves ownership across every installed engine, performs the engine
+    /// handoff when needed, starts a stopped engine, and waits until the engine
+    /// reports the requested weights resident.
+    ///
+    /// `nil` means the requested (or currently selected) model is ready.
+    func prepareModelForGateway(_ requestedModel: String?) async -> GatewayModelPreparationError? {
+        let previous = gatewayPreparationTail
+        let operation = Task { @MainActor [weak self] () -> GatewayModelPreparationError? in
+            await previous?.value
+            guard let self else { return .unavailable("flashCat 状态不可用") }
+            return await self.prepareModelForGatewayExclusively(requestedModel)
+        }
+        gatewayPreparationTail = Task { _ = await operation.value }
+        return await operation.value
+    }
+
+    private func prepareModelForGatewayExclusively(_ requestedModel: String?)
+        async -> GatewayModelPreparationError? {
+        guard !needsEngineSetup, let engines else {
+            return .unavailable("还没有安装推理引擎，请先在 flashCat 中安装并启动一个引擎")
+        }
+
+        // A model picked in the UI may still be loading. Wait for that switch
+        // instead of issuing a competing load against an engine that is in the
+        // middle of unloading its previous weights.
+        let switchWaitDeadline = Date().addingTimeInterval(max(activeEngine.startupTimeout, 30))
+        while isSwitchingModel, Date() < switchWaitDeadline {
+            if Task.isCancelled { return .failed("模型准备已取消") }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        if isSwitchingModel {
+            return .unavailable("模型仍在切换中，请稍后重试")
+        }
+
+        var orderedEngines = [activeEngine]
+        orderedEngines.append(contentsOf: availableEngines.filter { $0 != activeEngine })
+        let modelsByEngine = Dictionary(uniqueKeysWithValues: orderedEngines.map { engine in
+            (engine, engineModels(for: engine).map(\.id))
+        })
+
+        let route: GatewayModelRoute
+        let wanted = requestedModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if wanted.isEmpty {
+            let activeModels = modelsByEngine[activeEngine] ?? []
+            guard let fallback = EngineModelSelection.resolve(saved: selectedModel,
+                                                              available: activeModels) else {
+                return .badRequest("请求没有 model 字段，flashCat 也没有可用的默认模型")
+            }
+            route = GatewayModelRoute(model: fallback, engine: activeEngine)
+        } else {
+            guard let resolved = GatewayModelRouting.resolve(requestedModel: wanted,
+                                                              orderedEngines: orderedEngines,
+                                                              modelsByEngine: modelsByEngine) else {
+                return .modelNotFound("没有已安装的模型 \(wanted)")
+            }
+            route = resolved
+        }
+
+        guard let destination = engines.controller(route.engine) else {
+            return .unavailable("\(route.engine.displayName) 没有可用的运行时")
+        }
+
+        // Changing weights under a running in-app generation would abort that
+        // response. If the request needs no physical model change it can share
+        // the resident model; otherwise report back rather than corrupting the
+        // current chat.
+        let alreadyActive = route.engine == activeEngine
+        let alreadyResident = gatewayModelIsResident(route.model, in: destination)
+        let requiresWork = !alreadyActive || !destination.isRunning || !alreadyResident
+        if generating, requiresWork {
+            return .unavailable("flashCat 正在生成回复，暂时不能切换模型")
+        }
+        if requiresWork || selectedModel != route.model {
+            gateway.logs.append("==> API 请求模型 \(route.model) · \(route.engine.displayName)",
+                                level: .system)
+        }
+
+        if !alreadyActive {
+            let activated = await engines.activate(route.engine)
+            guard activated || activeEngine == route.engine else {
+                return .failed("切换到 \(route.engine.displayName) 失败")
+            }
+            libraryEngine = route.engine
+            reloadModels()
+            syncController()
+        }
+
+        // Avoid rewriting UserDefaults and the engine configuration on every
+        // request when the requested model is already selected and resident.
+        if selectedModel != route.model {
+            selectModel(route.model)
+        }
+        let savedModel = EngineStore.shared.configuration(for: route.engine).lastModel
+        if savedModel != route.model {
+            engines.setModel(route.model, for: route.engine)
+        }
+        syncController()
+
+        guard let controller = self.controller, controller.id == route.engine else {
+            return .unavailable("\(route.engine.displayName) 没有可用的运行时")
+        }
+
+        if !controller.isRunning {
+            await controller.start(localModel: selectedModelInfo, requestedModel: route.model)
+        } else if !gatewayModelIsResident(route.model, in: controller),
+                  controller.model != route.model {
+            // A running engine with other weights resident: use the same
+            // unload-confirm-load path as the switcher. Hot engines do this in
+            // place; restart engines stop the process first.
+            let outcome = await controller.switchModel(route.model) { _ in
+                // The controller already writes the unload/load stages to its
+                // own log. Do not borrow the UI switcher's `switchStage`: that
+                // field is owned and cleared by `beginModelSwitch`, and setting
+                // it here would leave a stale stage in the status line.
+            }
+            if case .failed(let reason) = outcome {
+                return .failed(reason)
+            }
+        }
+
+        let ready = await controller.waitForSwitchReady(route.model,
+                                                         timeout: route.engine.startupTimeout)
+        syncController()
+        guard ready else {
+            let reason = controller.failureMessage
+                ?? "\(route.engine.displayName) 未能在预期时间内加载 \(route.model)"
+            return .failed(reason)
+        }
+        if requiresWork {
+            gateway.logs.append("==> API 模型已就绪 · \(route.model) · 端口 \(controller.port)",
+                                level: .system)
+        }
+        return nil
+    }
+
+    /// Whether the controller's own telemetry says these exact weights are
+    /// resident. During a cold start there is no status document yet, so the
+    /// caller also checks `controller.model` and waits for the load to finish.
+    private func gatewayModelIsResident(_ target: String, in controller: EngineController) -> Bool {
+        guard let status = controller.status else { return false }
+        return status.model == target || status.loadedModels.contains(target)
+    }
 
     // MARK: service
 
@@ -1476,7 +1839,7 @@ final class AppState: ObservableObject {
         let engine = activeEngine
         queuedSwitchModel = nil
         retireModelSwitch()
-        toast(L10n.format("已取消等待 · %@ 仍在后台加载", engine.displayName))
+        toast(L10n.format("已取消等待 · %@ 仍在后台加载", engine.displayName), kind: .warning)
     }
 
     /// Keep the stage line honest if the engine moves on its own between stages.
@@ -1492,7 +1855,7 @@ final class AppState: ObservableObject {
         switchStage = ""
         switch outcome {
         case .ready:
-            toast(L10n.format("模型已就绪 · %@", shortModelName(selectedModel)))
+            toast(L10n.format("模型已就绪 · %@", shortModelName(selectedModel)), kind: .success)
         case .failed(let reason):
             notice = reason
             toast("模型切换失败，请查看日志")
@@ -1516,7 +1879,7 @@ final class AppState: ObservableObject {
 
     // MARK: logs
 
-    func refreshLogs() { logs = controller?.logs.snapshot() ?? [] }
+    func refreshLogs() { logs = controller?.logs.snapshot(limit: 4000) ?? [] }
 
     func clearLogs() {
         controller?.logs.clear()
@@ -1541,20 +1904,52 @@ final class AppState: ObservableObject {
         return true
     }
 
+    /// 发送前把引擎带到「真的能用」：先等正在进行的切换结束，引擎没起就启动，
+    /// 再等权重加载完成。启动阶段实时写进 `chatStartupStage`，占位回复据此显示
+    /// 「模型正在启动中」。返回 false 表示启动失败或已被取消。
+    private func prepareChatSession(generation: Int) async -> Bool {
+        if isSwitchingModel {
+            let switchDeadline = Date().addingTimeInterval(activeEngine.startupTimeout)
+            while isSwitchingModel, Date() < switchDeadline {
+                if sendGeneration != generation || Task.isCancelled { return false }
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+            if isSwitchingModel { return false }
+        }
+        guard let controller else { return false }
+        guard !canChat else { return true }
+        if !controller.isRunning {
+            await controller.start(localModel: selectedModelInfo, requestedModel: selectedModel)
+        }
+        // 启动本身可能包含较长的准备（比如补下 draft 权重），从真正开跑之后再
+        // 计时，别让准备阶段吃掉等待权重的预算。
+        let deadline = Date().addingTimeInterval(activeEngine.startupTimeout)
+        while Date() < deadline {
+            if sendGeneration != generation || Task.isCancelled { return false }
+            if canChat { return true }
+            if serverState == .failed { return false }
+            if !isRunning, serverState == .stopped { return false }
+            let stage = engineStageText
+            if !stage.isEmpty, stage != "已停止" { chatStartupStage = stage }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+        return canChat
+    }
+
     func send(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty || generating { return }
-        guard canChat else {
-            if isRunning || isSwitchingModel {
-                let stage = startupStage
-                notice = stage.isEmpty || stage == "已停止"
-                    ? "模型还没有加载完成，请稍候"
-                    : "模型正在\(stage)，还不能对话，请稍候"
-            } else {
-                notice = "推理服务未运行，请先启动服务"
-            }
+        guard !needsEngineSetup else {
+            notice = "还没有安装推理引擎，请先在启动页选择一个"
             return
         }
+        guard !selectedModel.isEmpty else {
+            notice = "还没有选择模型"
+            return
+        }
+        // 引擎没就绪也允许发送：先把这句话摆进对话，回复气泡里显示启动状态，
+        // 等引擎真的能用之后 `prepareChatSession` 再继续跑这次生成。
+        let needsStartup = !canChat
 
         var turns: [ChatTurn] = messages.filter { !$0.streaming }.map { ChatTurn(role: $0.role, content: $0.content) }
         turns.append(ChatTurn(role: "user", content: trimmed))
@@ -1564,6 +1959,9 @@ final class AppState: ObservableObject {
         streamMessageID = messages[messages.count - 1].id.uuidString
         generating = true
         generationStatus = "生成中"
+        sendGeneration &+= 1
+        let generation = sendGeneration
+        chatStartupStage = needsStartup ? "模型正在启动中…" : nil
         liveDecodeRate = nil
         generationEndedAt = nil
         decodeMeter.reset()
@@ -1583,25 +1981,51 @@ final class AppState: ObservableObject {
                                       .tuning(for: activeEngine)
                                       .effectiveThinkingBudget(for: activeEngine))
         let model = selectedModel
-        let endpointPort = port
-        let started = Date()
+        // 上下文实时估算的基数：本轮提示词（含系统提示）的 token 数。回复结束
+        // 后仍会回落到引擎回报的真实 usage。
+        let promptTokens = TokenEstimator.promptTokens(
+            messages: turns.map { ["role": $0.role, "content": $0.content] })
+            + TokenEstimator.estimate(settings.systemPrompt)
+        livePromptTokens = promptTokens
         // 应用内对话直接连引擎端口，不经过网关；概览页的「最近请求」与会话
         // 计数统一读 GatewayMeter，所以这里也要打点，否则对话页的请求在
         // 概览里永远是 0 条。
         let meterID = GatewayMeter.shared.begin(
             model: model,
             dialect: "chat",
-            promptTokens: TokenEstimator.promptTokens(
-                messages: turns.map { ["role": $0.role, "content": $0.content] }))
+            promptTokens: promptTokens)
 
         Task {
+            if needsStartup {
+                let ready = await self.prepareChatSession(generation: generation)
+                guard self.sendGeneration == generation else { return }
+                guard ready else {
+                    GatewayMeter.shared.finish(meterID, failed: true)
+                    let reason = self.controller?.failureMessage ?? "模型未能启动，请查看日志"
+                    self.notice = reason
+                    self.updateStreamingMessage { message in
+                        message.content = "出错：\(reason)"
+                        message.streaming = false
+                    }
+                    self.chatStartupStage = nil
+                    self.generating = false
+                    self.conversation.save(self.messages)
+                    self.history.save(messages: self.messages, threadID: self.threadID)
+                    self.threads = self.history.load()
+                    return
+                }
+                self.chatStartupStage = nil
+            }
+            // 启动等待不算进首字时长，否则「思考了 N 秒」会把引擎启动时间也算上。
+            let started = Date()
+            let endpointPort = self.port
             let result = await chatClient.send(port: endpointPort, model: model, turns: turns, options: options,
-                onDelta: { piece in
-                    GatewayMeter.shared.addTokens(meterID, TokenEstimator.fractional(piece))
+                onDelta: { piece, at in
+                    GatewayMeter.shared.addTokens(meterID, TokenEstimator.fractional(piece), at: at)
                     Task { @MainActor in
                         let found = self.updateStreamingMessage { message in
                             if message.firstTokenSeconds == nil {
-                                let ttft = Date().timeIntervalSince(started)
+                                let ttft = at.timeIntervalSince(started)
                                 message.firstTokenSeconds = ttft
                                 // 正文首字之前的这段时间就是思考阶段；记下来，回答结束后
                                 // 折叠的思考块仍能给出真实时长。
@@ -1610,11 +2034,11 @@ final class AppState: ObservableObject {
                             message.content += piece
                         }
                         guard found else { return }
-                        self.recordStreamDelta(piece)
+                        self.recordStreamDelta(piece, at: at)
                     }
                 },
-                onReasoning: { piece in
-                    GatewayMeter.shared.addTokens(meterID, TokenEstimator.fractional(piece))
+                onReasoning: { piece, at in
+                    GatewayMeter.shared.addTokens(meterID, TokenEstimator.fractional(piece), at: at)
                     Task { @MainActor in
                         let found = self.updateStreamingMessage { message in
                             message.reasoning = (message.reasoning ?? "") + piece
@@ -1626,7 +2050,7 @@ final class AppState: ObservableObject {
                         // 思考流同样计入本地测速：思考模型的输出大头在 reasoning，
                         // 不计的话思考阶段 liveDecodeRate 一直是 nil，对话页直播条
                         // 只能显示「— tok/s」。
-                        self.recordStreamDelta(piece)
+                        self.recordStreamDelta(piece, at: at)
                     }
                 },
                 onUsage: { usage in
@@ -1717,6 +2141,8 @@ final class AppState: ObservableObject {
     }
 
     func cancelGeneration() {
+        sendGeneration &+= 1
+        chatStartupStage = nil
         chatClient.cancel()
         generating = false
         generationStatus = "已取消"
@@ -2253,7 +2679,7 @@ final class AppState: ObservableObject {
             return .ready(model)
         }
         append(log: "==> \(model.id) 缺少 DFlash2，先补齐 \(draft)", engine: .splash)
-        toast(L10n.format("%@ 缺少 DFlash2 加速模型，先下载好再启动", shortModelName(model.id)))
+        toast(L10n.format("%@ 缺少 DFlash2 加速模型，先下载好再启动", shortModelName(model.id)), kind: .warning)
         supplementInFlight = true
         let outcome = await downloadAndWait(model.id, engine: .splash, family: model.family)
         supplementInFlight = false
@@ -2445,6 +2871,7 @@ final class AppState: ObservableObject {
                     }
                 }
                 let now = Date()
+
                 if let last = self.lastWatchDate,
                    now.timeIntervalSince(last) > 0, downloaded > self.lastWatchBytes {
                     let instant = Double(downloaded - self.lastWatchBytes) / now.timeIntervalSince(last)
@@ -2581,7 +3008,7 @@ final class AppState: ObservableObject {
     /// Engine logs are per engine; only the running engine's copy is on screen.
     private func append(log line: String, engine: EngineID) {
         engines?.controller(engine)?.logs.append(line, level: .system)
-        if engine == activeEngine { logs = controller?.logs.snapshot() ?? [] }
+        if engine == activeEngine { logs = controller?.logs.snapshot(limit: 4000) ?? [] }
     }
 
     func copy(_ text: String, label: String = "已复制") {
@@ -2592,11 +3019,18 @@ final class AppState: ObservableObject {
 
     // MARK: toasts
 
-    func toast(_ message: String) {
+    func toast(_ message: String, title: String? = nil, kind: IslandNotice.Kind? = nil) {
         // Classify from the source text (the kind rules are written against
-        // Chinese phrases) before swapping in the localized message.
-        let kind = IslandNotice.Kind(message: message)
-        let notice = IslandNotice(message: L10n.t(message), kind: kind)
+        // Chinese phrases) before swapping in the localized message. Callers
+        // that already know the lifecycle phase pass an explicit kind so a
+        // model-ready notice reads as success and a still-loading notice stays
+        // warning, regardless of how the message happens to be worded.
+        let kind = kind ?? IslandNotice.Kind(message: message)
+        let notice = IslandNotice(
+            title: L10n.t(title ?? kind.defaultTitle),
+            message: L10n.t(message),
+            kind: kind
+        )
         islandNotice = notice
         islandNotices.insert(notice, at: 0)
         if islandNotices.count > 30 {
@@ -2609,7 +3043,7 @@ final class AppState: ObservableObject {
             self.islandNotice = nil
         }
         toastWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.2, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: work)
     }
 
     /// 收起灵动岛时清掉短暂通知，历史仍留在通知列表里。

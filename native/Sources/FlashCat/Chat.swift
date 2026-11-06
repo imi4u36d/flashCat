@@ -5,7 +5,7 @@ struct ChatTurn {
     let content: String
 }
 
-struct ChatUsage {
+struct ChatUsage: Equatable {
     var promptTokens: Int = 0
     var completionTokens: Int = 0
     /// usage.completion_tokens_details.reasoning_tokens —— 思考流的 token 数。
@@ -16,7 +16,7 @@ struct ChatUsage {
     var finishReason: String?
 }
 
-struct ChatMessage: Identifiable {
+struct ChatMessage: Identifiable, Equatable {
     let id = UUID()
     var role: String
     var content: String
@@ -75,8 +75,18 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
     private var status = 0
     private var transportError: Error?
 
-    private var onDelta: (String) -> Void = { _ in }
-    private var onReasoning: (String) -> Void = { _ in }
+    /// 流式回调合并缓冲：SSE 分片可能每秒上百个，逐片回调会让上层为每个
+    /// 分片创建一次主线程任务并触发整页重绘。这里按固定节奏合并成一批，
+    /// 既保留实时感，又把主线程唤醒次数压到约 30 次/秒。
+    private var pendingDelta = ""
+    private var pendingReasoning = ""
+    private var lastDeltaFlush = Date.distantPast
+    private static let deltaFlushInterval: TimeInterval = 1.0 / 30.0
+
+    /// 回调都带上分片到达的时刻：解码测速只该相信网络侧的时钟，不能等主线程
+    /// 排到这条任务时才取时间（UI 忙时会把一批分片挤成「瞬间到达」）。
+    private var onDelta: (String, Date) -> Void = { _, _ in }
+    private var onReasoning: (String, Date) -> Void = { _, _ in }
     private var onUsage: (ChatUsage) -> Void = { _ in }
     private var onStatus: (String) -> Void = { _ in }
 
@@ -90,8 +100,8 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
               model: String,
               turns: [ChatTurn],
               options: ChatOptions,
-              onDelta: @escaping (String) -> Void,
-              onReasoning: @escaping (String) -> Void,
+              onDelta: @escaping (String, Date) -> Void,
+              onReasoning: @escaping (String, Date) -> Void,
               onUsage: @escaping (ChatUsage) -> Void,
               onStatus: @escaping (String) -> Void) async -> Result<String, ChatError> {
         cancel()
@@ -133,6 +143,9 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
         usage = ChatUsage()
         status = 0
         transportError = nil
+        pendingDelta = ""
+        pendingReasoning = ""
+        lastDeltaFlush = .distantPast
 
         let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
         let dataTask = session.dataTask(with: request)
@@ -146,6 +159,7 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
         completion = nil
         if !trailing.isEmpty { consume(trailing) }
         trailing = Data()
+        flushDelta(force: true)
         session.finishTasksAndInvalidate()
         task = nil
 
@@ -165,7 +179,7 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
                let message = choices.first?["message"] as? [String: Any],
                let content = message["content"] as? String {
                 text = content
-                onDelta(content)
+                onDelta(content, Date())
             }
         }
         if text.isEmpty && !reasoned {
@@ -185,7 +199,10 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
             return
         }
         let payload = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
-        if payload == "[DONE]" { return }
+        if payload == "[DONE]" {
+            flushDelta(force: true)
+            return
+        }
         guard let data = payload.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return
@@ -208,7 +225,7 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
             // 正文与思考流分开：reasoning_content 只进思考块，不混入回答。
             if let content = chunk["content"] as? String, !content.isEmpty {
                 text += content
-                onDelta(content)
+                pendingDelta += content
             }
             // 不同引擎对思考流的字段名不一致：OpenAI 兼容层常见
             // `reasoning_content`，部分本地引擎用 `reasoning` 或 `thinking`，
@@ -220,7 +237,7 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
                 ?? ""
             if !reasoningPiece.isEmpty {
                 reasoned = true
-                onReasoning(reasoningPiece)
+                pendingReasoning += reasoningPiece
             }
         }
         if let finishReason, finishReason != "stop" {
@@ -233,6 +250,25 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
                 let reasoning = Self.intValue(details["reasoning_tokens"])
                 if reasoning > 0 { usage.reasoningTokens = reasoning }
             }
+        }
+        flushDelta()
+    }
+
+    /// 把攒下的正文/思考分片按节奏交给上层。`force` 用于流结束和 `[DONE]`，
+    /// 保证最后一批不会因为没到间隔而丢掉。
+    private func flushDelta(force: Bool = false) {
+        let now = Date()
+        guard force || now.timeIntervalSince(lastDeltaFlush) >= Self.deltaFlushInterval else { return }
+        lastDeltaFlush = now
+        if !pendingDelta.isEmpty {
+            let piece = pendingDelta
+            pendingDelta = ""
+            onDelta(piece, now)
+        }
+        if !pendingReasoning.isEmpty {
+            let piece = pendingReasoning
+            pendingReasoning = ""
+            onReasoning(piece, now)
         }
     }
 
@@ -272,16 +308,22 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         buffer.append(data)
-        while let newline = buffer.firstIndex(of: 0x0A) {
-            let line = buffer.prefix(upTo: newline)
-            consume(line)
-            buffer.removeSubrange(...newline)
+        // 一次回调里可能有多行。旧实现每处理一行就 `removeSubrange` 一次，
+        // 每次都搬移剩余字节，长流上是 O(n²)；这里只在最后裁掉已消费的前缀。
+        var consumed = buffer.startIndex
+        while let newline = buffer[consumed...].firstIndex(of: 0x0A) {
+            consume(buffer[consumed..<newline])
+            consumed = buffer.index(after: newline)
+        }
+        if consumed > buffer.startIndex {
+            buffer.removeSubrange(buffer.startIndex..<consumed)
         }
         trailing = buffer
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         transportError = error
+        flushDelta(force: true)
         completion?.resume()
         completion = nil
     }

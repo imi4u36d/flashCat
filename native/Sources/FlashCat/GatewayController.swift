@@ -1,6 +1,6 @@
 import Foundation
 import SwiftUI
-import FlashCatKit
+@preconcurrency import FlashCatKit
 
 /// The local API gateway: one fixed port that speaks both standard dialects —
 /// OpenAI (`/v1/chat/completions`, `/v1/models`) and Anthropic
@@ -198,6 +198,17 @@ final class GatewayController: ObservableObject {
     /// Forwards `/v1/chat/completions` to the running engine unchanged — both
     /// directions speak OpenAI, so only the transport (stream or not) matters.
     nonisolated private func proxyChatCompletions(_ request: GatewayRequest) async -> GatewayResponse {
+        let openaiPayload = Self.parseObject(request.body)
+        // The gateway is the only place that knows which engine owns a model.
+        // Resolve the request's `model` before touching the upstream: an
+        // engine may ignore an unknown id and answer from whichever weights it
+        // already holds, which is worse than a clean error because the client
+        // believes the requested model ran.
+        if let preparationError = await AppState.shared.prepareModelForGateway(
+            openaiPayload?["model"] as? String) {
+            return Self.preparationErrorResponse(preparationError, anthropic: false)
+        }
+
         let snapshot = await MainActor.run { () -> EngineSnapshot? in
             guard let state = Optional(AppState.shared), let controller = state.controller,
                   controller.isReady else { return nil }
@@ -205,10 +216,9 @@ final class GatewayController: ObservableObject {
         }
         guard let upstream = snapshot else {
             return Self.errorResponse(GatewayAPIError.overloaded("推理引擎未运行，请先在 flashCat 中启动服务"),
-                                      anthropic: request.isAnthropicStyle)
+                                      anthropic: false)
         }
 
-        let openaiPayload = Self.parseObject(request.body)
         let wantsStream = (openaiPayload?["stream"] as? Bool) ?? false
         // 引擎侧没有 per-session 指标，网关是唯一知道「这一路什么时候进来、第一个
         // token 什么时候到、一共吐了多少字」的地方，概览页的会话网格就从这里取数。
@@ -293,6 +303,11 @@ final class GatewayController: ObservableObject {
             return Self.errorResponse(GatewayAPIError.badRequest("无法编码上游请求"), anthropic: true)
         }
 
+        let model = (openai["model"] as? String) ?? ""
+        if let preparationError = await AppState.shared.prepareModelForGateway(model) {
+            return Self.preparationErrorResponse(preparationError, anthropic: true)
+        }
+
         let snapshot = await MainActor.run { () -> EngineSnapshot? in
             guard let controller = AppState.shared.controller, controller.isReady else { return nil }
             return EngineSnapshot(port: controller.port)
@@ -301,7 +316,6 @@ final class GatewayController: ObservableObject {
             return Self.errorResponse(GatewayAPIError.overloaded("推理引擎未运行，请先在 flashCat 中启动服务"),
                                       anthropic: true)
         }
-        let model = (openai["model"] as? String) ?? ""
         let meterID = GatewayMeter.shared.begin(model: model,
                                                dialect: "claude",
                                                promptTokens: AnthropicCodec.countInputTokens(payload))
@@ -381,6 +395,22 @@ final class GatewayController: ObservableObject {
     nonisolated private static func errorResponse(_ error: GatewayAPIError, anthropic: Bool) -> GatewayResponse {
         GatewayResponse.json(anthropic ? error.anthropicEnvelope() : error.openAIEnvelope(),
                              status: error.status)
+    }
+
+    nonisolated private static func preparationErrorResponse(_ error: GatewayModelPreparationError,
+                                                               anthropic: Bool) -> GatewayResponse {
+        let apiError: GatewayAPIError
+        switch error {
+        case .modelNotFound(let message):
+            apiError = .notFound(message)
+        case .badRequest(let message):
+            apiError = .badRequest(message)
+        case .unavailable(let message):
+            apiError = .overloaded(message)
+        case .failed(let message):
+            apiError = GatewayAPIError(status: 503, type: "api_error", message: message)
+        }
+        return errorResponse(apiError, anthropic: anthropic)
     }
 
     /// An upstream streaming request that failed before streaming: drain the

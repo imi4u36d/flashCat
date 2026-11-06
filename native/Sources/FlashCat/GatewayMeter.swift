@@ -172,10 +172,78 @@ final class GatewayMeter: @unchecked Sendable {
         }
     }
 
+    // MARK: 概览聚合
+
+    /// 概览页大数字与指标卡要的是「所有请求合起来」的读数，而不是某一路。
+    /// 本地 agent 等外部客户端经网关发起的请求不经过应用内对话，引擎本身又
+    /// 常常不上报解码速率（MLX-Serve 的 /metrics 只有 TTFT），这里直接从
+    /// 各会话的低通估计器聚合，概览就不再依赖引擎自报值。
+    struct Overview {
+        let decodeRate: Double
+        let prefillRate: Double?
+    }
+
+    /// 在跑会话的合计解码速率；没有在跑的就用刚结束（linger 内）的会话
+    /// 全程均值，避免收尾瞬间读数突然归零。
+    func overview() -> Overview {
+        let now = Date()
+        lock.lock()
+        defer { lock.unlock() }
+        sessions.removeAll { session in
+            guard let finishedAt = session.finishedAt else { return false }
+            return now.timeIntervalSince(finishedAt) > Self.lingerAfterFinish
+        }
+        let active = sessions.filter { $0.finishedAt == nil }
+        let decodeRate: Double
+        if active.isEmpty {
+            decodeRate = sessions.reduce(0) { $0 + $1.meter.averageRate() }
+        } else {
+            decodeRate = active.reduce(0) { $0 + $1.meter.rate(at: now) }
+        }
+
+        // 预填充：优先把在跑会话按「总提示词 / 总首字耗时」加权，单路时
+        // 就是它自己的读数；空闲时取最近一条有首字记录的请求。
+        let running = active.compactMap { session -> (tokens: Int, seconds: TimeInterval)? in
+            guard let first = session.firstTokenAt, session.promptTokens > 0 else { return nil }
+            let ttft = first.timeIntervalSince(session.startedAt)
+            return ttft > 0.05 ? (session.promptTokens, ttft) : nil
+        }
+        let prefillRate: Double?
+        if !running.isEmpty {
+            let tokens = running.reduce(0) { $0 + $1.tokens }
+            let seconds = running.reduce(0) { $0 + $1.seconds }
+            prefillRate = seconds > 0 ? Double(tokens) / seconds : nil
+        } else {
+            let recent = sessions.last { session in
+                guard let first = session.firstTokenAt, session.promptTokens > 0 else { return false }
+                return first.timeIntervalSince(session.startedAt) > 0.05
+            }
+            prefillRate = recent.flatMap { session -> Double? in
+                guard let first = session.firstTokenAt else { return nil }
+                let ttft = first.timeIntervalSince(session.startedAt)
+                return ttft > 0.05 ? Double(session.promptTokens) / ttft : nil
+            }
+        }
+        return Overview(decodeRate: decodeRate, prefillRate: prefillRate)
+    }
+
     // MARK: 快照
 
+    /// 只取数量时不必构造每条请求的 180 点历史曲线。
+    func sessionCount() -> Int {
+        let now = Date()
+        lock.lock()
+        defer { lock.unlock() }
+        sessions.removeAll { session in
+            guard let finishedAt = session.finishedAt else { return false }
+            return now.timeIntervalSince(finishedAt) > Self.lingerAfterFinish
+        }
+        return sessions.count
+    }
+
     /// 供 payload 使用的快照：只留最近 `historyPoints` 格的速率曲线。
-    func snapshot(historyPoints: Int = 180) -> [[String: Any]] {
+    /// `limit` 只构造最后几条请求的历史，概览页只需要显示 6 行。
+    func snapshot(historyPoints: Int = 180, limit: Int? = nil) -> [[String: Any]] {
         let now = Date()
         lock.lock()
         defer { lock.unlock() }
@@ -184,7 +252,8 @@ final class GatewayMeter: @unchecked Sendable {
             return now.timeIntervalSince(finishedAt) > Self.lingerAfterFinish
         }
         let nowSlot = Int(now.timeIntervalSinceReferenceDate / Self.bucketWidth)
-        return sessions.map { session in
+        let visible = limit.map { Array(sessions.suffix($0)) } ?? sessions
+        return visible.map { session in
             let elapsed = now.timeIntervalSince(session.startedAt)
             let ttft = session.firstTokenAt.map { $0.timeIntervalSince(session.startedAt) }
             // 活动请求读低通后的瞬时速率；已结束的请求改报全程平均，
@@ -196,24 +265,29 @@ final class GatewayMeter: @unchecked Sendable {
                 guard let ttft, ttft > 0.05, session.promptTokens > 0 else { return 0 }
                 return Double(session.promptTokens) / ttft
             }()
-            var bySlot: [Int: Double] = [:]
-            for tick in session.ticks { bySlot[tick.index] = tick.count }
-            // 历史曲线：以每格为中心的 5 格三角加权，再换算成 tok/s。
-            // 原来直接 `count * 4`，一格 1 token 就是 4 tok/s 的硬台阶；
-            // 加权后相邻格共享样本，曲线不会因分片落在不同桶而锯齿化。
-            let weights: [Double] = [1, 2, 3, 2, 1]
-            let history: [Double] = (0..<historyPoints).map { offset in
-                let slot = nowSlot - (historyPoints - 1 - offset)
-                var numerator = 0.0
-                var denominator = 0.0
-                for (index, weight) in weights.enumerated() {
-                    let key = slot + index - 2
-                    guard key <= nowSlot else { continue }
-                    numerator += (bySlot[key] ?? 0) * weight
-                    denominator += weight
+            // 概览的「最近请求」只显示状态/模型/速率，不需要 180 点历史。
+            // `historyPoints <= 0` 时直接跳过，避免每秒为几行 UI 计算上千个点。
+            var history: [Double] = []
+            if historyPoints > 0 {
+                var bySlot: [Int: Double] = [:]
+                for tick in session.ticks { bySlot[tick.index] = tick.count }
+                // 历史曲线：以每格为中心的 5 格三角加权，再换算成 tok/s。
+                // 原来直接 `count * 4`，一格 1 token 就是 4 tok/s 的硬台阶；
+                // 加权后相邻格共享样本，曲线不会因分片落在不同桶而锯齿化。
+                let weights: [Double] = [1, 2, 3, 2, 1]
+                history = (0..<historyPoints).map { offset in
+                    let slot = nowSlot - (historyPoints - 1 - offset)
+                    var numerator = 0.0
+                    var denominator = 0.0
+                    for (index, weight) in weights.enumerated() {
+                        let key = slot + index - 2
+                        guard key <= nowSlot else { continue }
+                        numerator += (bySlot[key] ?? 0) * weight
+                        denominator += weight
+                    }
+                    let value = denominator > 0 ? numerator / denominator * 4 : 0
+                    return (value * 10).rounded() / 10
                 }
-                let value = denominator > 0 ? numerator / denominator * 4 : 0
-                return (value * 10).rounded() / 10
             }
             let state: String
             if session.finishedAt != nil {

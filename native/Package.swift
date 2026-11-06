@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "FlashCat",
     defaultLocalization: "zh-Hans",
-    platforms: [.macOS("27.0")],
+    platforms: [.macOS("26.0")],
     products: [
         .executable(name: "flashCat", targets: ["FlashCat"]),
         .library(name: "FlashCatKit", targets: ["FlashCatKit"]),

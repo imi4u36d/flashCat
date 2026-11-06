@@ -16,10 +16,12 @@ VERSION="${VERSION:-$("$ROOT/scripts/version.sh")}"
 BUILD_NUMBER="${BUILD_NUMBER:-$("$ROOT/scripts/version.sh" --build)}"
 INSTALL="${INSTALL:-1}"
 IDENTIFIER="${IDENTIFIER:-com.zhuo.flashCat}"
-# The app floor is macOS 27: the Liquid Glass segmented control (`.tabs`)
-# only exists in the macOS 27 SDK. splash's native engine additionally
-# requires 26.4, which is below this floor and therefore satisfied.
-MIN_MACOS="${MIN_MACOS:-27.0}"
+# The app floor is macOS 26.0: Liquid Glass, the visual language of the whole
+# UI, ships with macOS 26. The macOS 27-only `.tabs` segmented style is used
+# behind an availability check and falls back to `.segmented` on 26.
+# splash's native engine still requires 26.4; that is an engine-level floor,
+# not the app's.
+MIN_MACOS="${MIN_MACOS:-26.0}"
 # How the runtime packs reach the app.
 #   none  (default) ship no packs: they come from pack-index.json, installed into
 #         ~/Library/Application Support/flashCat/engines. Keeps the bundle ~15 MB,

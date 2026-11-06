@@ -16,8 +16,9 @@ defaults:
 jobs:
   # Hard gate. These three must stay green from now on.
   build-and-test:
-    # Must be >= the floor in native/Package.swift (`platforms: [.macOS("27.0")]`).
-    # The macOS 27 SDK only ships with the `xcode-27` runner image.
+    # Must be >= the floor in native/Package.swift (`platforms: [.macOS("26.0")]`).
+    # The runner still needs the macOS 27 SDK to compile the macOS 27-only
+    # `.tabs` segmented style; it is availability-guarded at runtime.
     runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4

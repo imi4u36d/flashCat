@@ -34,6 +34,18 @@ final class LocalizationTests: XCTestCase {
         let path = try XCTUnwrap(L10n.bundle.path(forResource: "en", ofType: "lproj"))
         let english = try XCTUnwrap(Bundle(path: path))
 
+        // 先确认这些词条在**源码** Catalog 里：构建产物可能带着上一次编译的
+        // 旧词条，只查 bundle 会让「删了词条」这种回归在本地误判为通过。
+        let catalog = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf:
+            URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("native/Sources/FlashCat/Resources/Localizable.xcstrings")
+        )) as? [String: Any])
+        let entries = try XCTUnwrap(catalog["strings"] as? [String: Any])
+
         // ⌘\ 折叠边栏、⌘⇧A 切外观——两处都带着按键本身。
         XCTAssertEqual(english.localizedString(forKey: "隐藏边栏（⌘\\）", value: nil, table: nil),
                        "Hide Sidebar (⌘\\)")
@@ -41,11 +53,16 @@ final class LocalizationTests: XCTestCase {
                        "Show Sidebar (⌘\\)")
         XCTAssertEqual(english.localizedString(forKey: "切换浅色 / 深色", value: nil, table: nil),
                        "Toggle Light / Dark")
-        // 命令面板里两条带按键的动作说明。
+        // 命令面板里的动作说明也带着按键。
         XCTAssertEqual(english.localizedString(forKey: "显示 / 隐藏玻璃导航列（⌘\\）", value: nil, table: nil),
                        "Show / hide the glass navigation column (⌘\\)")
-        XCTAssertEqual(english.localizedString(forKey: "当前：%@（⌘⇧A）", value: nil, table: nil),
-                       "Current: %@ (⌘⇧A)")
+        XCTAssertEqual(english.localizedString(forKey: "当前：%@", value: nil, table: nil),
+                       "Current: %@")
+
+        for key in ["隐藏边栏（⌘\\）", "显示边栏（⌘\\）", "切换浅色 / 深色",
+                    "显示 / 隐藏玻璃导航列（⌘\\）", "当前：%@"] {
+            XCTAssertNotNil(entries[key], "快捷键文案缺少词条：\(key)")
+        }
     }
 
     /// 每个中文词条都得有英文译文：漏一条，英文界面就会露出中文源文案。

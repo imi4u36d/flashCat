@@ -74,12 +74,21 @@ public enum EngineStatusParser {
         if next.state != .ready || result.state == .stopped { result.state = next.state }
         if let value = next.model, !value.isEmpty { result.model = value }
         if !next.loadedModels.isEmpty { result.loadedModels = next.loadedModels }
-        if let value = next.decodeTokensPerSecond, value > 0 { result.decodeTokensPerSecond = value }
-        if let value = next.prefillTokensPerSecond, value > 0 { result.prefillTokensPerSecond = value }
-        // 实时标记取「或」：任何一个来源能给出真实时读数，上层就该信它。
-        // 数值本身仍按「先到先得、非零覆盖」合并，标记不能被后来的累计均值洗掉。
-        result.decodeRateIsLive = result.decodeRateIsLive || next.decodeRateIsLive
-        result.prefillRateIsLive = result.prefillRateIsLive || next.prefillRateIsLive
+        // 速率与它的粒度必须**成对**合并。文档按 health → status → metrics →
+        // props → inventory 的顺序折叠，后到的会覆盖数值；如果只让数值覆盖、
+        // 粒度另外取最强，就会出现「数值是后来的累计均值、角标却写着 LIVE」。
+        // 所以只有来源粒度不弱于当前时才整对替换：更好的来源（`.live`）不会被
+        // 后面端点的均值洗掉，均值也不会冒充实时。
+        if let value = next.decodeTokensPerSecond, value > 0,
+           next.decodeRateKind.rank >= result.decodeRateKind.rank {
+            result.decodeTokensPerSecond = value
+            result.decodeRateKind = next.decodeRateKind
+        }
+        if let value = next.prefillTokensPerSecond, value > 0,
+           next.prefillRateKind.rank >= result.prefillRateKind.rank {
+            result.prefillTokensPerSecond = value
+            result.prefillRateKind = next.prefillRateKind
+        }
         if let value = next.draftAcceptance { result.draftAcceptance = value }
         if let value = next.ttftMilliseconds { result.ttftMilliseconds = value }
         if next.activeRequests > 0 || result.activeRequests == 0 { result.activeRequests = next.activeRequests }
@@ -109,13 +118,82 @@ public enum EngineStatusParser {
         }
     }
 
+    /// splash 在跑请求所处的阶段集合（`active_requests[].phase`）。
+    private static func activePhases(_ json: [String: Any]) -> Set<String> {
+        guard let array = JSONValue.dig(json, "active_requests") as? [[String: Any]] else { return [] }
+        return Set(array.compactMap { $0["phase"] as? String })
+    }
+
+    /// splash 的 `current_*_batch` 读数。`valid: false` 表示引擎还没跑过同类
+    /// 批次（刚启动、或只解码没预填充），此时必须交回均值口径而不是报 0。
+    private static func batchRate(_ json: [String: Any], _ path: String) -> Double? {
+        guard let value = JSONValue.digNumber(json, "\(path).tokens_per_second"), value > 0,
+              JSONValue.digBool(json, "\(path).valid") != false
+        else { return nil }
+        return value
+    }
+
+    /// `prefill_rates.tokens / compute_time_s`：最近一批预填充 chunk 的滚动均值。
+    /// 分子分母同口径（都只含真正前向的部分），所以是可信的——只是它描述的是
+    /// 「最近这一段时间」，不是「此刻」。
+    private static func prefillWindowedRate(_ json: [String: Any]) -> Double? {
+        guard let tokens = JSONValue.digNumber(json, "prefill_rates.tokens"),
+              let seconds = JSONValue.digNumber(json, "prefill_rates.compute_time_s"),
+              tokens > 0, seconds > 0 else { return nil }
+        return tokens / seconds
+    }
+
+    /// MTPLX 快照里正在跑的预填充速率。多路并发时取 `elapsed_s` 最大的那一路，
+    /// 与 MTPLX 自己仪表盘的做法一致（dashboard/src/state/store.ts
+    /// `usePrimaryActivePrefill`）。分子是 `tokens_done / elapsed_s`，即已完成
+    /// 的前向 token 除以本请求预填充已用时，缓存恢复不算在内。
+    private static func activePrefillRate(_ json: [String: Any]) -> Double? {
+        guard let handles = JSONValue.dig(json, "in_flight") as? [[String: Any]] else { return nil }
+        var best: (elapsed: Double, rate: Double)?
+        for handle in handles {
+            guard let state = handle["prefill_state"] as? [String: Any],
+                  let phase = state["phase"] as? String, phase != "completed"
+            else { continue }
+            let elapsed = JSONValue.number(state["elapsed_s"]) ?? 0
+            let done = JSONValue.number(state["tokens_done"]) ?? 0
+            let reported = JSONValue.number(state["live_prefill_tok_s"])
+                ?? JSONValue.number(state["prefill_tok_s"])
+            // 服务端每个 chunk 刷新的 `live_prefill_tok_s` 才是「此刻」；
+            // `tokens_done / elapsed_s` 是这一轮从开始到现在的均值，只在
+            // 引擎没给实时场时兜底。过去优先用均值，读数会越跑越钝。
+            let rate = reported ?? (done > 0 && elapsed > 0 ? done / elapsed : nil)
+            guard let rate, rate > 0 else { continue }
+            if best == nil || elapsed > best!.elapsed { best = (elapsed, rate) }
+        }
+        return best?.rate
+    }
+
     // MARK: splash
 
     public static func splash(status json: [String: Any],
                               fallbackState: EngineRunState = .ready) -> EngineStatus {
         var result = EngineStatus(state: fallbackState)
-        result.decodeTokensPerSecond = JSONValue.digNumber(json, "metrics.decode_tokens_per_second")
-        result.prefillTokensPerSecond = JSONValue.digNumber(json, "metrics.prefill_tokens_per_second")
+        // splash 的 `metrics.*_tokens_per_second` 是**两个进程累计计数器之比**
+        // （runtime/engine/Status.hpp: `prefillTokens_ * 1000 / prefillWallMilliseconds_`，
+        // 两个量都只加不减），所以它是开机以来的均值：一个快的首轮会把它长期抬高，
+        // 空闲时更是原样重复上一格。真·瞬时值在同源的 `current_prefill_batch` /
+        // `current_decode_batch` 里——最近一个完成的同类批次，GPU 忙碌期间一直保持新鲜。
+        // `current_*_batch` 是「最近一个完成的同类批次」，空闲时它会一直停在那儿。
+        // 所以粒度不能只凭「有样本」就判成 `.live`：还要看此刻是否真有该阶段的
+        // 在跑请求（splash 的 `active_requests[].phase` 会说是 prefill 还是 decode）。
+        // 有 → 批次正在被刷新，是当前速度；没有 → 那是上一请求的终值。
+        let prefillingNow = activePhases(json).contains("prefill")
+        let decodingNow = activePhases(json).contains("decode")
+        // 让轮询侧知道此刻真的在预填充，采样才能提到 chunk 节奏。splash 的
+        // `current_prefill_batch` 每块 2048 token 才刷新一次，1 Hz 采样会让
+        // 每个读数在屏幕上多停半拍，看起来就像「不动」。
+        result.extras[EngineRateCounters.prefilling] = prefillingNow ? 1 : 0
+        let prefillBatch = batchRate(json, "metrics.current_prefill_batch")
+        let decodeBatch = batchRate(json, "metrics.current_decode_batch")
+        result.prefillTokensPerSecond = prefillBatch ?? JSONValue.digNumber(json, "metrics.prefill_tokens_per_second")
+        result.prefillRateKind = prefillBatch == nil ? .lifetimeMean : (prefillingNow ? .live : .lastRequest)
+        result.decodeTokensPerSecond = decodeBatch ?? JSONValue.digNumber(json, "metrics.decode_tokens_per_second")
+        result.decodeRateKind = decodeBatch == nil ? .lifetimeMean : (decodingNow ? .live : .lastRequest)
         result.draftAcceptance = JSONValue.digNumber(json, "metrics.draft_acceptance_rate")
         result.ttftMilliseconds = JSONValue.digNumber(json, "metrics.ttft_ms.p50")
         if let array = JSONValue.dig(json, "active_requests") as? [Any] {
@@ -153,8 +231,16 @@ public enum EngineStatusParser {
                             health: [String: Any]? = nil,
                             fallbackState: EngineRunState = .ready) -> EngineStatus {
         var result = EngineStatus(state: fallbackState)
+        // oMLX 只给进程累计均值（omlx/server_metrics.py: `_build_snapshot` 拿
+        // (prompt − cached) / prefill_dur 累加值相除）。它的分子确实扣了缓存，
+        // 所以数是真的，只是粒度粗：一次请求结束才跳一格。`/api/status` 不报
+        // 累计耗时（`total_prefill_duration` 只在内部），逐秒实时值需要相邻两次
+        // 完成之间对累计 token 差分，代价是只在请求边界动——所以这里如实标成
+        // 均值，由上层按需要回落到网关的逐请求读数。
         result.decodeTokensPerSecond = JSONValue.digNumber(json, "avg_generation_tps")
+        result.decodeRateKind = (result.decodeTokensPerSecond ?? 0) > 0 ? .lifetimeMean : .none
         result.prefillTokensPerSecond = JSONValue.digNumber(json, "avg_prefill_tps")
+        result.prefillRateKind = (result.prefillTokensPerSecond ?? 0) > 0 ? .lifetimeMean : .none
         result.activeRequests = JSONValue.digInt(json, "active_requests") ?? 0
         result.queuedRequests = JSONValue.digInt(json, "waiting_requests") ?? 0
         result.requestsCompleted = JSONValue.digInt(json, "total_requests") ?? 0
@@ -243,8 +329,36 @@ public enum EngineStatusParser {
         // per-request `latest.decode_tok_s` only describes the last answer.
         result.decodeTokensPerSecond = JSONValue.digNumber(json, "rolling.mean")
             ?? JSONValue.digNumber(json, "latest.decode_tok_s")
-        result.prefillTokensPerSecond = JSONValue.digNumber(json, "latest.prefill_tok_s")
-            ?? JSONValue.digNumber(json, "prefill_rates.peak_tok_s")
+        result.decodeRateKind = (result.decodeTokensPerSecond ?? 0) > 0 ? .live : .none
+        // 预填充取数按「越接近此刻越优先」排三档：
+        //   1. `in_flight[].prefill_state` —— 正在跑的那一路，服务端每完成一个
+        //      chunk 就刷新（openai.py `_dashboard_publish_prefill`）。
+        //   2. `latest.prefill_tok_s` —— 上一个请求的终值。空闲时它原样重复，
+        //      正是「一个恒定不变的几千」的来历，只能标成 `LAST`。
+        //   3. `prefill_rates.tokens / compute_time_s` —— 最近 ≤100 个预填充
+        //      chunk 的滚动均值（dashboard_state.PrefillHistory.rates()）。
+        //      注意**不用**同处的 `peak_tok_s`：那是单 chunk 峰值，拿它当读数
+        //      就是那个大数字的直接来源。峰值只留作诊断放在 extras 里。
+        let livePrefill = activePrefillRate(json)
+        let windowedPrefill = prefillWindowedRate(json)
+        let lastPrefill = JSONValue.digNumber(json, "latest.prefill_tok_s")
+        if let handles = JSONValue.dig(json, "in_flight") as? [[String: Any]] {
+            let prefilling = handles.filter { handle in
+                guard let state = handle["prefill_state"] as? [String: Any] else { return false }
+                return (state["phase"] as? String) != "completed"
+            }.count
+            result.extras[EngineRateCounters.prefilling] = Double(prefilling)
+        }
+        if let livePrefill {
+            result.prefillTokensPerSecond = livePrefill
+            result.prefillRateKind = .live
+        } else if let lastPrefill, lastPrefill > 0 {
+            result.prefillTokensPerSecond = lastPrefill
+            result.prefillRateKind = .lastRequest
+        } else if let windowedPrefill, windowedPrefill > 0 {
+            result.prefillTokensPerSecond = windowedPrefill
+            result.prefillRateKind = .lifetimeMean
+        }
         if let ttft = JSONValue.digNumber(json, "latest.ttft_s") {
             result.ttftMilliseconds = ttft * 1000
         }
@@ -302,6 +416,7 @@ public enum EngineStatusParser {
         if let cached = JSONValue.digNumber(json, "lifetime.cached_tokens_total") {
             result.extras["total_cached_tokens"] = cached
         }
+        // 峰值只做诊断：它是最近若干 chunk 里的最高一块，不是当前速度。
         if let peak = JSONValue.digNumber(json, "prefill_rates.peak_tok_s") {
             result.extras["prefill_peak_tps"] = peak
         }
@@ -458,8 +573,11 @@ public enum EngineStatusParser {
         result.queuedRequests = JSONValue.digInt(json, "queued", "live.queued", "waiting") ?? 0
         if JSONValue.digBool(json, "busy") == true { result.detail = "生成中" }
         if let last = JSONValue.dig(json, "timings") as? [String: Any] {
+            // `timings` 是上一个请求的终值（llama.cpp 口径），不是此刻的速度。
             result.decodeTokensPerSecond = JSONValue.number(last["predicted_per_second"])
+            result.decodeRateKind = (result.decodeTokensPerSecond ?? 0) > 0 ? .lastRequest : .none
             result.prefillTokensPerSecond = JSONValue.number(last["prompt_per_second"])
+            result.prefillRateKind = (result.prefillTokensPerSecond ?? 0) > 0 ? .lastRequest : .none
         }
         return result
     }
@@ -470,8 +588,12 @@ public enum EngineStatusParser {
         result.model = JSONValue.digString(json, "engine.model")
         result.maximumContextTokens = JSONValue.digInt(json, "engine.max_context")
         result.decodeTokensPerSecond = JSONValue.digNumber(json, "live.tok_s")
-        if result.decodeTokensPerSecond != nil { result.decodeRateIsLive = true }
+        result.decodeRateKind = (result.decodeTokensPerSecond ?? 0) > 0 ? .live : .none
+        // strata 的引擎在 stdout 打 `PP <read> <total> <ms> <tok_s>`，serve 层
+        // 每收到一行就刷新 `prefill_tok_s_mean`，并在每次请求开始时置回 None
+        // （serve/server.py），所以这个字段是逐 chunk 的真·当前值，不是残留值。
         result.prefillTokensPerSecond = JSONValue.digNumber(json, "live.prefill_tok_s_mean")
+        result.prefillRateKind = (result.prefillTokensPerSecond ?? 0) > 0 ? .live : .none
         result.activeRequests = JSONValue.digInt(json, "live.running") ?? 0
         result.queuedRequests = (JSONValue.digInt(json, "live.queued") ?? 0)
             + (JSONValue.digInt(json, "live.waiting") ?? 0)
@@ -489,6 +611,7 @@ public enum EngineStatusParser {
         if let requests = json["requests"] as? [[String: Any]], let latest = requests.first {
             if result.decodeTokensPerSecond == nil {
                 result.decodeTokensPerSecond = JSONValue.digNumber(latest, "decode_tok_s")
+                result.decodeRateKind = (result.decodeTokensPerSecond ?? 0) > 0 ? .lastRequest : .none
             }
         }
         if JSONValue.digString(json, "live.state") == "reading" {

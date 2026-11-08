@@ -1,48 +1,100 @@
 import XCTest
+import FlashCatKit
 @testable import FlashCat
 
-/// 概览「总解码」的取数顺序。
+/// 概览「总解码」的取数口径。
 ///
-/// 线上问题：应用内对话正在生成、外部客户端同时经网关跑另一路时，概览顶上的
-/// 大数字与「总解码 · 最近 60 秒」标题只显示应用内那一路（37.5），而不是两路
-/// 合起来的 81.6。取数顺序必须以网关聚合为准，这里把它钉住。
+/// 速度类指标统一走网关按请求打点：应用内对话也注册在 `GatewayMeter` 里，
+/// 所以 hero、曲线与「最近请求」同一份数据。引擎的 LAST / AVG 不是当前速度，
+/// 不能拿来补位；引擎实时计数只在网关没有会话时兜底，而且要求引擎确实有
+/// 在跑请求。
 final class DecodeRateTotalTests: XCTestCase {
-    func testAggregateBeatsSingleSessionLiveRate() {
-        // 应用内 37.5 + 外部 44.1 = 81.6：直播读数只是其中一路，不能盖住合计。
-        XCTAssertEqual(AppState.totalDecodeRate(gateway: 81.6, live: 37.5, engine: 44.1),
+    func testGatewayAggregateWinsOverEngineLive() {
+        // 两路并发时引擎的“实时”可能只是最近一个批次；网关的按请求之和
+        // 才是当前合计，也才能和「最近请求」每一行对上。
+        XCTAssertEqual(AppState.totalDecodeRate(gateway: 81.6,
+                                                engine: 44.1,
+                                                engineKind: .live,
+                                                activeRequests: 2),
                        81.6, accuracy: 0.001)
+        XCTAssertEqual(AppState.speedOrigin(gateway: 81.6,
+                                            engine: 44.1,
+                                            engineKind: .live,
+                                            activeRequests: 2),
+                       .gatewayLive)
     }
 
-    func testFallsBackToLiveRateWhenGatewayHasNothing() {
-        // 网关没有打点（客户端直接连引擎端口）时，应用内直播读数仍可用。
-        XCTAssertEqual(AppState.totalDecodeRate(gateway: 0, live: 37.5, engine: 44.1),
-                       37.5, accuracy: 0.001)
-    }
-
-    func testFallsBackToEngineReportWhenNothingElseIsLive() {
-        XCTAssertEqual(AppState.totalDecodeRate(gateway: 0, live: nil, engine: 44.1),
+    /// 请求刚结束、网关还在 linger 里的值不是当前速度，界面要按 LAST 标。
+    func testGatewayFinishedTailIsMarkedLast() {
+        XCTAssertEqual(AppState.totalDecodeRate(gateway: 44.1,
+                                                gatewayIsLive: false,
+                                                engine: nil,
+                                                engineKind: .none,
+                                                activeRequests: 0),
                        44.1, accuracy: 0.001)
+        XCTAssertEqual(AppState.speedOrigin(gateway: 44.1,
+                                            gatewayIsLive: false,
+                                            engine: nil,
+                                            engineKind: .none,
+                                            activeRequests: 0),
+                       .gatewayLast)
+    }
+
+    /// 客户端直连引擎端口时网关看不见，才轮到引擎的实时计数。
+    func testEngineLiveIsFallbackWhenGatewayHasNothing() {
+        XCTAssertEqual(AppState.totalDecodeRate(gateway: 0,
+                                                engine: 44.1,
+                                                engineKind: .live,
+                                                activeRequests: 1),
+                       44.1, accuracy: 0.001)
+        XCTAssertEqual(AppState.speedOrigin(gateway: 0,
+                                            engine: 44.1,
+                                            engineKind: .live,
+                                            activeRequests: 1),
+                       .engineLive)
+    }
+
+    /// 引擎空闲时可能继续回报最后一格（MTPLX 的 rolling.mean 就是典型），
+    /// 没有在跑请求就不能把它当当前速度。
+    func testEngineLiveNeedsRunningRequests() {
+        XCTAssertEqual(AppState.totalDecodeRate(gateway: 0,
+                                                engine: 44.1,
+                                                engineKind: .live,
+                                                activeRequests: 0),
+                       0)
+        XCTAssertEqual(AppState.speedOrigin(gateway: 0,
+                                            engine: 44.1,
+                                            engineKind: .live,
+                                            activeRequests: 0),
+                       .none)
+    }
+
+    /// oMLX 的累计均值、splash 空闲时的上一批次终值都不是当前速度。
+    func testEngineLastAndLifetimeMeanAreNotCurrentSpeed() {
+        for kind in [EngineRateKind.lastRequest, .lifetimeMean] {
+            XCTAssertEqual(AppState.totalDecodeRate(gateway: 0,
+                                                    engine: 44.1,
+                                                    engineKind: kind,
+                                                    activeRequests: 1),
+                           0)
+            XCTAssertEqual(AppState.speedOrigin(gateway: 0,
+                                                engine: 44.1,
+                                                engineKind: kind,
+                                                activeRequests: 1),
+                           .none)
+        }
     }
 
     func testIdleReadsZero() {
-        XCTAssertEqual(AppState.totalDecodeRate(gateway: 0, live: nil, engine: nil), 0)
-        XCTAssertEqual(AppState.totalDecodeRate(gateway: 0, live: 0, engine: 0), 0)
-    }
-
-    /// 引擎的实时计数覆盖所有会话（包括直连引擎端口、网关看不见的 agent
-    /// 请求），比网关的按请求聚合更接近「总解码」。以前这种场景会显示 0.00：
-    /// 网关没有打点，引擎的 `generation_tokens_live` 又没被解析。
-    func testLiveEngineCounterBeatsGatewayEstimate() {
-        XCTAssertEqual(AppState.totalDecodeRate(gateway: 44.1, live: nil, engine: 81.6,
-                                                engineIsLive: true),
-                       81.6, accuracy: 0.001)
-    }
-
-    /// 累计均值不算实时：oMLX 的 avg_generation_tps 只在请求结束时跳一格，
-    /// 生成过程中它不动，不能让网关的按请求读数让位。
-    func testCumulativeEngineReportStillLosesToGateway() {
-        XCTAssertEqual(AppState.totalDecodeRate(gateway: 44.1, live: nil, engine: 81.6,
-                                                engineIsLive: false),
-                       44.1, accuracy: 0.001)
+        XCTAssertEqual(AppState.totalDecodeRate(gateway: 0,
+                                                engine: nil,
+                                                engineKind: .none,
+                                                activeRequests: 0),
+                       0)
+        XCTAssertEqual(AppState.speedOrigin(gateway: 0,
+                                            engine: nil,
+                                            engineKind: .none,
+                                            activeRequests: 0),
+                       .none)
     }
 }

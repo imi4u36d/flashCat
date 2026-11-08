@@ -27,9 +27,24 @@ enum Page: String, CaseIterable, Identifiable {
 }
 
 struct ThroughputSample: Identifiable {
-    let id = UUID()
+    /// 用时间戳做身份：每个采样点的时刻天然唯一，没必要为每个点再分配一个
+    /// UUID。10 分钟窗口里最多一千多个点，省下的是持续的分配与 16 字节/点。
+    var id: Date { at }
     let at: Date
     let value: Double
+}
+
+/// 概览速度读数的来源。速度类指标统一走网关按请求打点，避免同一个页面里
+/// 引擎的 LIVE / LAST / AVG 和网关估算混着用；引擎实时计数只作为兜底。
+enum SpeedOrigin: Equatable {
+    /// 没有在跑会话，也没有可用的引擎实时计数：没有当前速度。
+    case none
+    /// 网关在跑会话的低通速率之和。
+    case gatewayLive
+    /// 网关没有在跑会话，读数是刚结束会话的全程均值（linger 内）。
+    case gatewayLast
+    /// 网关看不见的直连请求，用引擎的实时计数兜底。
+    case engineLive
 }
 
 /// How a download ended, for the callers that wait on one instead of
@@ -147,14 +162,18 @@ final class AppState: ObservableObject {
     /// 悬浮导航列是否显示。隐藏后主视口铺满窗口，重新显示时恢复玻璃列；
     /// 状态落盘到 UserDefaults 的 `sidebarVisible`，重启后沿用上次的样子。
     @Published var showsSidebar: Bool
+    /// 概览总解码曲线的样本。速度统一取网关按请求打点的聚合；网关没有
+    /// 在跑会话时，只收引擎的实时计数（且引擎必须有在跑请求），引擎的
+    /// LAST/AVG 不再被画成时间序列。
+    /// 曲线样本只服务概览 60 秒与菜单栏近 5 分钟；保留 10 分钟足够，
+    /// 以前留 30 分钟，多出来的两三千个点没有任何界面读。
+    private static let sampleRetention: TimeInterval = 600
     @Published var throughput: [ThroughputSample] = []
     /// 草稿接受率（DFlash2 / MTP）的时间序列，采样节奏与吞吐一致，
     /// 概览页用它画第二条实时曲线。value 是 0…1 的比例。
     @Published var acceptance: [ThroughputSample] = []
-    /// 应用内对话流式回复的本地测速（tok/s）。各引擎对「解码速度」的口径
-    /// 并不一致：splash 报实时值，oMLX 报开机以来的累计均值（只在请求结束
-    /// 时跳一格）。它只描述「应用内这一路」：对话页直播条用它，概览的
-    /// 「总解码」要的是所有请求合起来，见 `totalDecodeRate`。
+    /// 应用内对话流式回复的本地测速（tok/s）。只服务对话页直播条与灵动岛；
+    /// 概览的速度读数统一走网关按请求聚合，不再用它补位。
     @Published private(set) var liveDecodeRate: Double?
     // 预填充不再由应用自己按「整段提示词 / 首字耗时」估算。同一会话的第二轮
     // 几乎全部命中前缀缓存，分子里的 token 大部分根本没被前向，TTFT 里还混着
@@ -162,11 +181,15 @@ final class AppState: ObservableObject {
     // 量过的数：mlx-serve 用 prefill_tokens_total / prefill_time_seconds
     //（都不含缓存恢复），其余引擎用它自己的 prefill 字段；引擎没有时回落到
     // 网关的按请求打点。
-    /// 网关侧会话的合计读数。本地 agent 等外部客户端不经过应用内对话，
-    /// 而且 MLX-Serve 之类引擎的 /metrics 不报解码速率，概览只能从网关
-    /// 的按请求打点里聚合（见 `GatewayMeter.overview`）。
+    /// 网关按请求打点的聚合速率。概览 hero、曲线与「最近请求」同源，
+    /// 所以大数字就是活跃行之和；应用内对话也注册在 `GatewayMeter` 里。
     @Published private(set) var gatewayDecodeRate: Double = 0
-    @Published private(set) var gatewayPrefillRate: Double?
+    /// `gatewayDecodeRate` 是否来自在跑会话。false = 没有在跑会话，当前值
+    /// 只是刚结束会话的全程均值（linger 内），界面必须标成 LAST。
+    @Published private(set) var gatewayRateIsLive = false
+    /// 预填充**没有**网关侧聚合：网关的「(整段提示词 − 缓存命中) / 首字耗时」
+    /// 口径已废弃（分母混着排队与缓存恢复，分子要等末帧 usage），概览只显示
+    /// 引擎自报的速率。`GatewayMeter` 仍为「最近请求」逐行保留各自的预填充读数。
     /// 本次请求的提示词 token 估算，生成期间用来实时刷新上下文占用。
     private var livePromptTokens = 0
     /// 生成期间的连续时间低通速率估计。不再用「攒够 0.9 秒就清零」的窗口：
@@ -176,8 +199,6 @@ final class AppState: ObservableObject {
     private var lastRateSampleAt: Date?
     /// 回答结束后保留一小段平滑读数，避免 LIVE 数字在收尾瞬间台阶式回落。
     private var generationEndedAt: Date?
-    /// 引擎自报读数的低通值（生成期间不用它，空闲时概览卡才回落到这里）。
-    private var engineRateEMA: Double?
     @Published var downloadingModel: String?
     /// Which engine the running download is for: two engines can hold models
     /// with the same id, and only the one being written shows the progress bar.
@@ -563,39 +584,72 @@ final class AppState: ObservableObject {
     var engineVersion: String { controller?.installation.version ?? "—" }
     var health: (label: String, tone: TagTone) { healthTone(stats) }
 
-    /// 概览与菜单栏的「总解码」读数：所有在跑请求合起来的 tok/s，而不是
-    /// 其中某一路。
+    /// 概览与菜单栏的「总解码」读数：速度类指标统一走网关按请求打点。
     ///
-    /// 取数顺序按「这分钟里谁最接近真实合计」排：
-    /// - 引擎能给出实时计数（mlx-serve 的 `generation_tokens_live` 差分、
-    ///   Strata 的 `live.tok_s`）时直接用它。它天然覆盖所有会话，连网关看不见
-    ///   的直连请求、只回工具调用的 agent 请求都算在内。
-    /// - 否则用网关按请求打点的聚合（含应用内对话与外部客户端）。
-    /// - 再退到应用内直播读数，最后才是引擎的累计/滚动均值。
+    /// 应用内对话也注册在 `GatewayMeter` 里，所以 hero 大数字、总解码曲线和
+    /// 「最近请求」每一行是同一份数据，大数字就是活跃行之和。网关没有在跑
+    /// 会话时（客户端直连引擎端口），才用引擎的实时计数兜底，并且要求引擎
+    /// 确实有在跑请求；引擎的 LAST/AVG 不是当前速度，不参与。
     var totalDecodeRate: Double {
-        Self.totalDecodeRate(gateway: gatewayDecodeRate,
-                             live: liveDecodeRate,
-                             engine: stats?.decodeTokensPerSecond,
-                             engineIsLive: stats?.decodeRateIsLive ?? false)
+        guard isRunning else { return 0 }
+        return Self.totalDecodeRate(gateway: gatewayDecodeRate,
+                                    gatewayIsLive: gatewayRateIsLive,
+                                    engine: stats?.decodeTokensPerSecond,
+                                    engineKind: stats?.decodeRateKind ?? .none,
+                                    activeRequests: stats?.activeRequests ?? 0)
+    }
+
+    /// 当前速度读数的来源，界面据此打「网关估算」/「网关 LAST」/「引擎实时」。
+    var speedOrigin: SpeedOrigin {
+        guard isRunning else { return .none }
+        return Self.speedOrigin(gateway: gatewayDecodeRate,
+                                gatewayIsLive: gatewayRateIsLive,
+                                engine: stats?.decodeTokensPerSecond,
+                                engineKind: stats?.decodeRateKind ?? .none,
+                                activeRequests: stats?.activeRequests ?? 0)
     }
 
     /// 「总解码」的取数顺序，单独抽出来以便在没有窗口、没有引擎进程的测试里
-    /// 断言。顺序很关键：两路并发时应用内直播只是其中一路，不能盖住更大的
-    /// 合计值——那正是概览顶上的大数字与「总解码」曲线标题曾经只显示单路
-    /// 速率的成因。
+    /// 断言。网关优先是刻意的：引擎的「实时」在不同引擎里分别是最近批次、
+    /// 滚动均值或累计均值，混在一起会让同一个页面的数字互相对不上。
     nonisolated static func totalDecodeRate(gateway: Double,
-                                            live: Double?,
+                                            gatewayIsLive: Bool = true,
                                             engine: Double?,
-                                            engineIsLive: Bool = false) -> Double {
-        if engineIsLive, let engine, engine > 0 { return engine }
-        if gateway > 0 { return gateway }
-        if let live, live > 0 { return live }
-        return engine ?? 0
+                                            engineKind: EngineRateKind = .none,
+                                            activeRequests: Int = 0) -> Double {
+        switch speedOrigin(gateway: gateway,
+                           gatewayIsLive: gatewayIsLive,
+                           engine: engine,
+                           engineKind: engineKind,
+                           activeRequests: activeRequests) {
+        case .gatewayLive, .gatewayLast:
+            return gateway
+        case .engineLive:
+            return engine ?? 0
+        case .none:
+            return 0
+        }
+    }
+
+    /// 速度来源的判定。抽成纯函数，测试可以钉住「引擎 LIVE 不能压过网关」、
+    /// 「引擎 LAST/AVG 不算当前速度」「空闲不显示旧值」这几条。
+    nonisolated static func speedOrigin(gateway: Double,
+                                        gatewayIsLive: Bool = true,
+                                        engine: Double?,
+                                        engineKind: EngineRateKind = .none,
+                                        activeRequests: Int = 0) -> SpeedOrigin {
+        if gateway > 0 {
+            return gatewayIsLive ? .gatewayLive : .gatewayLast
+        }
+        if engineKind == .live, let engine, engine > 0, activeRequests > 0 {
+            return .engineLive
+        }
+        return .none
     }
 
     /// Fixed 30-second window for the hero sparkline; older samples are dropped
     /// at the sampler so this only filters late arrivals.
-    /// 吞吐卡（MOCKUP A）的三个时间窗：45 秒 / 5 分钟 / 全部。
+    /// 概览用 60 秒、菜单栏用近 5 分钟；序列保留 10 分钟，留一点余量。
     func recentThroughput(window: TimeInterval) -> [ThroughputSample] {
         guard window > 0 else { return throughput }
         return Self.suffix(of: throughput, window: window)
@@ -608,7 +662,7 @@ final class AppState: ObservableObject {
     }
 
     /// 序列按时间升序排列，用二分找窗口起点；概览每秒都会为几张图各取一次，
-    /// 全表 `filter` 在 30 分钟样本上没有必要。
+    /// 全表 `filter` 在千余个样本上没有必要。
     private static func suffix(of samples: [ThroughputSample],
                                window: TimeInterval) -> [ThroughputSample] {
         guard !samples.isEmpty else { return [] }
@@ -698,29 +752,18 @@ final class AppState: ObservableObject {
         }
 
         let now = Date()
-        // 网关侧聚合读数：外部客户端（本地 agent / 编辑器插件等）不经过应用内
-        // 对话，概览的实时数字与曲线只能从这里取。每秒轮询读一次，数值真的
-        // 变了才发布，空闲时不会让整页重绘。
+        // 网关按请求打点的聚合：概览 hero、曲线与「最近请求」同源。
+        // 每秒轮询读一次，数值真的变了才发布，空闲时不会让整页重绘。
         let gatewayOverview = GatewayMeter.shared.overview()
         if gatewayDecodeRate != gatewayOverview.decodeRate {
             gatewayDecodeRate = gatewayOverview.decodeRate
         }
-        if gatewayPrefillRate != gatewayOverview.prefillRate {
-            gatewayPrefillRate = gatewayOverview.prefillRate
+        if gatewayRateIsLive != gatewayOverview.isLive {
+            gatewayRateIsLive = gatewayOverview.isLive
         }
-        // 保留 30 分钟：概览的区间选择器有「45 秒 / 5 分钟 / 全部」三档，
-        // 序列只留 5 分钟的话「全部」永远等于「5 分钟」，看起来就像没生效。
-        let cutoff = now.addingTimeInterval(-1800)
-        // 引擎空闲时不会把指标清零，而是把「最后一次」原样回报：splash 请求结束后
-        // metrics.decode_tokens_per_second 会一直停在最后一格（实测 116.2899403）。
-        // 这种重复读数不是新数据。照抄进序列，曲线会凭空续出一段平线，均值也会被
-        // 空闲时间一路拖着走——所以只收「数值真的动过」的读数，序列里就只剩下生成
-        // 阶段的那几秒。
-        //
-        // 应用内生成期间这套采样让位给本地测速（recordStreamDelta）：oMLX 的
-        // avg_generation_tps 是累计均值，整个生成过程一动不动，一次回复只会在
-        // 结束时落 1 个点，曲线永远凑不满两个点（表现就是「回复都结束了图还是
-        // 空的」）。外部 API 请求不经过这里，仍走引擎自报的读数。
+        // 生成期间按 0.5 秒采样（publishDecodeRate），空闲时按 1 秒；两者都
+        // 只落到同一个网关聚合值上。没有在跑会话时 overview 给的是刚结束
+        // 会话的全程均值，`gatewayRateIsLive` 会把它标成 LAST。
         if generating {
             // pollTimer 每秒仍会走到这里。生成中即使某个瞬间没有 delta 也照常
             // 落点，低通估计器会自己按停顿时长衰减，读数不会僵在旧值上。
@@ -728,34 +771,14 @@ final class AppState: ObservableObject {
                 lastRateSampleAt = now
                 publishDecodeRate(at: now)
             }
-        } else if generationEndedAt == nil {
-            // 曲线与大数字同源：外部 agent 直连引擎时网关没有读数，但引擎的
-            // 实时计数（`generation_tokens_live` 差分）正好覆盖这一路。
-            let rate = totalDecodeRate
-            if rate > 0 {
-                // 只对「累计/滚动均值」这类粗粒度读数过一层低通；实时计数本身
-                // 已经是每秒的真实增量，再平滑会落后于正在发生的生成。
-                let smoothed = stats?.decodeRateIsLive == true
-                    ? rate
-                    : (engineRateEMA.map { $0 * 0.6 + rate * 0.4 } ?? rate)
-                engineRateEMA = smoothed
-                let changed = throughput.last.map { abs($0.value - smoothed) > 0.15 } ?? true
-                let due = throughput.last.map { now.timeIntervalSince($0.at) >= 0.9 } ?? true
-                // 引擎空闲时会一直重复最后一格读数；变化小于阈值就不落点，曲线
-                // 不会凭空续出一段平线、均值也不会被空闲时间拖着走。
-                if changed, due {
-                    throughput.append(ThroughputSample(at: now, value: smoothed))
-                    throughput.removeAll { $0.at < cutoff }
-                }
-            }
+        } else {
+            sampleSpeed(at: now)
         }
 
-        // 回答结束后先保留最后一次平滑读数，5 秒后才回落到引擎自报值，
-        // 免得收尾瞬间 LIVE 数字从 100 台阶式跳回累计均值。
+        // 回答结束后先保留最后一次平滑读数，5 秒后才撤掉，免得对话页直播条
+        // 在收尾瞬间台阶式归零；概览速度不受这段保留影响。
         if !generating, let ended = generationEndedAt, now.timeIntervalSince(ended) >= 5 {
             generationEndedAt = nil
-            // 让引擎自报读数从最后一次平滑值起步，回落时不再出现台阶。
-            engineRateEMA = liveDecodeRate
             liveDecodeRate = nil
         }
         // 取消 / 出错的回复没有「结束保留期」，空闲后立刻撤掉旧读数。
@@ -767,6 +790,7 @@ final class AppState: ObservableObject {
         // 因此只在「数值真的变了」或「解码读数正在动」的时候落点——否则每秒都会多
         // 一个样本，概览页的曲线与读数会无谓刷新。
         if let latest = stats?.draftAcceptance {
+            let cutoff = now.addingTimeInterval(-Self.sampleRetention)
             let due = acceptance.last.map { now.timeIntervalSince($0.at) >= 0.9 } ?? true
             let changed = acceptance.last.map { abs($0.value - latest) > 0.0001 } ?? true
             let rateMoving = stats?.decodeTokensPerSecond.map { reported in
@@ -801,23 +825,35 @@ final class AppState: ObservableObject {
         publishDecodeRate(at: now)
     }
 
-    /// 让大数字、曲线、菜单栏读的都是同一个平滑速率，不再各算各的。
+    /// 把网关聚合值落到曲线上的唯一入口。
     ///
-    /// 曲线画的是「总解码」：应用内这一路生成时，外部客户端可能正同时经网关
-    /// 或直连引擎端口跑别的请求。采样值与 `totalDecodeRate` 走同一个取数顺序，
-    /// 曲线末端才不会和顶上的数字打架。
+    /// 应用内对话也注册在 `GatewayMeter` 里，所以这里和应用内生成期间的
+    /// `publishDecodeRate` 读的是同一份按请求打点，hero 大数字与曲线末端
+    /// 不会各算各的。没有在跑会话时，网关给的是刚结束会话的全程均值，
+    /// 界面会按 `gatewayRateIsLive` 标成 LAST，不冒充当前速度。
+    private func sampleSpeed(at now: Date) {
+        let sample = totalDecodeRate
+        guard sample > 0 else { return }
+        let changed = throughput.last.map { abs($0.value - sample) > 0.15 } ?? true
+        let due = throughput.last.map { now.timeIntervalSince($0.at) >= 0.9 } ?? true
+        guard changed, due else { return }
+        throughput.append(ThroughputSample(at: now, value: sample))
+        throughput.removeAll { $0.at < now.addingTimeInterval(-Self.sampleRetention) }
+    }
+
+    /// 应用内生成期间按分片节奏刷新：先把 `liveDecodeRate` 留给对话页直播条，
+    /// 再把网关聚合值落到概览曲线。
     private func publishDecodeRate(at now: Date) {
         let rate = decodeMeter.rate(at: now)
         liveDecodeRate = rate > 0 ? rate : nil
-        let total = GatewayMeter.shared.overview().decodeRate
-        let sample = Self.totalDecodeRate(gateway: total,
-                                          live: rate,
-                                          engine: stats?.decodeTokensPerSecond,
-                                          engineIsLive: stats?.decodeRateIsLive ?? false)
-        guard sample > 0 else { return }
-        let cutoff = now.addingTimeInterval(-1800)
-        throughput.append(ThroughputSample(at: now, value: sample))
-        throughput.removeAll { $0.at < cutoff }
+        let overview = GatewayMeter.shared.overview()
+        if gatewayDecodeRate != overview.decodeRate {
+            gatewayDecodeRate = overview.decodeRate
+        }
+        if gatewayRateIsLive != overview.isLive {
+            gatewayRateIsLive = overview.isLive
+        }
+        sampleSpeed(at: now)
     }
 
     func bootstrap() {
@@ -1966,7 +2002,6 @@ final class AppState: ObservableObject {
         generationEndedAt = nil
         decodeMeter.reset()
         lastRateSampleAt = nil
-        engineRateEMA = nil
 
         // 最大生成 tokens：思考与正文共享的总输出上限。留空时取模型自身上限
         // 并按引擎生效窗口封顶（见 effectiveMaxTokens），4096 那种小默认会让

@@ -393,7 +393,8 @@ struct MenuBarPanel: View {
             }
 
             // 读数条常驻：没有实时数据时显示「—」，面板不会因为停止或加载而少一截。
-            MetricStrip(stats: state.serverState == .ready ? state.stats : nil)
+            MetricStrip(stats: state.serverState == .ready ? state.stats : nil,
+                        rate: currentRate)
             if state.serverState == .ready, let peak = sparklinePeak {
                 Sparkline(values: state.recentThroughput(window: 300).map(\.value),
                           peak: peak,
@@ -406,6 +407,16 @@ struct MenuBarPanel: View {
     /// 三个地方的措辞和秒数以前是三份拷贝，改一处就漏两处（灵动岛的计时停下时，
     /// 菜单栏还在按另一套规则算）。
     private var stageText: String { state.engineStageText }
+
+    /// 菜单栏没有角标位，所以只显示真正的当前速度；网关 linger 里的
+    /// 上一请求均值只留在概览（那里有 LAST 角标）。
+    private var currentRate: Double? {
+        guard state.serverState == .ready else { return nil }
+        switch state.speedOrigin {
+        case .gatewayLive, .engineLive: return state.totalDecodeRate
+        case .gatewayLast, .none: return nil
+        }
+    }
 
     private var sparklinePeak: Double? {
         let samples = state.recentThroughput(window: 300).map(\.value)
@@ -534,10 +545,12 @@ private struct StatusPill: View {
 /// 三列读数：解码速度 / 首字延迟 / 内存占用。值用等宽数字，列间发丝线分隔。
 private struct MetricStrip: View {
     let stats: ServerStats?
+    /// 与概览、吞吐曲线同源（网关按请求聚合）；没有当前速度时显示「—」。
+    let rate: Double?
 
     var body: some View {
         HStack(spacing: 0) {
-            cell("解码", value(stats?.decodeTokensPerSecond.map { Format.compact($0) }), unit: "tok/s")
+            cell("解码", value(rate.map { Format.compact($0) }), unit: "tok/s")
             divider
             cell("首字", value(stats?.ttftMilliseconds.map { "\(Int($0))" }), unit: "ms")
             divider

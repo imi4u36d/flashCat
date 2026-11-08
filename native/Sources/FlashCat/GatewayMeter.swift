@@ -15,11 +15,6 @@ import FlashCatKit
 final class GatewayMeter: @unchecked Sendable {
     static let shared = GatewayMeter()
 
-    /// 曲线桶宽度：250ms 一格。速率本身不再由这些桶计算（改用连续时间
-    /// 低通），桶只留给前端画历史曲线。
-    private static let bucketWidth: TimeInterval = 0.25
-    /// 每路保留 120 秒（480 格），45 秒曲线和 5 分钟曲线都够用。
-    private static let ringSize = 480
     /// 请求结束后再留一会儿，让「刚跑完」看得见，然后自然消失。
     private static let lingerAfterFinish: TimeInterval = 6
     /// 同时在追踪的请求上限，防止异常流量把内存吃掉。
@@ -41,15 +36,14 @@ final class GatewayMeter: @unchecked Sendable {
         var failed: Bool
         /// 连续时间低通速率估计，与应用内对话共用同一个实现。
         var meter: DecodeRateMeter
-        /// (绝对桶序号, 该桶生成的 token 数)，只用于历史曲线。
-        var ticks: [(index: Int, count: Double)]
     }
 
     private let lock = NSLock()
     private var sessions: [Session] = []
     private var nextID = 1
 
-    private init() {}
+    /// 测试可以建独立实例；生产只用 `shared`，避免两份会话表。
+    init() {}
 
     // MARK: 生命周期
 
@@ -69,8 +63,7 @@ final class GatewayMeter: @unchecked Sendable {
                                 firstTokenAt: nil,
                                 finishedAt: nil,
                                 failed: false,
-                                meter: DecodeRateMeter(),
-                                ticks: []))
+                                meter: DecodeRateMeter()))
         if sessions.count > Self.sessionLimit {
             sessions.removeAll { $0.finishedAt != nil }
             if sessions.count > Self.sessionLimit {
@@ -102,16 +95,6 @@ final class GatewayMeter: @unchecked Sendable {
         if sessions[index].firstTokenAt == nil { sessions[index].firstTokenAt = now }
         sessions[index].completionTokens += count
         sessions[index].meter.add(tokens: count, at: now)
-        let slot = Int(now.timeIntervalSinceReferenceDate / Self.bucketWidth)
-        if var last = sessions[index].ticks.last, last.index == slot {
-            last.count += count
-            sessions[index].ticks[sessions[index].ticks.count - 1] = last
-        } else {
-            sessions[index].ticks.append((slot, count))
-            if sessions[index].ticks.count > Self.ringSize {
-                sessions[index].ticks.removeFirst(sessions[index].ticks.count - Self.ringSize)
-            }
-        }
     }
 
     // MARK: 上报解码
@@ -212,13 +195,15 @@ final class GatewayMeter: @unchecked Sendable {
 
     // MARK: 概览聚合
 
-    /// 概览页大数字与指标卡要的是「所有请求合起来」的读数，而不是某一路。
-    /// 本地 agent 等外部客户端经网关发起的请求不经过应用内对话，引擎本身又
-    /// 常常不上报解码速率（MLX-Serve 的 /metrics 只有 TTFT），这里直接从
-    /// 各会话的低通估计器聚合，概览就不再依赖引擎自报值。
+    /// 概览大数字与总解码曲线要的是「所有请求合起来」的读数，而不是某一路。
+    /// 各引擎的实时速率口径不一（最近批次 / 滚动均值 / 累计均值），只有网关
+    /// 能按请求给出同一时间基的读数；这里把各会话的低通估计器相加，hero、
+    /// 曲线和「最近请求」逐行才能真正对上。
     struct Overview {
         let decodeRate: Double
-        let prefillRate: Double?
+        /// true = 数值来自在跑会话的实时低通；false = 没有在跑会话，
+        /// 数值只是刚结束会话的全程均值（linger 内），必须标成 LAST。
+        let isLive: Bool
     }
 
     /// 单条请求的预填充速度：分子只算真正前向过的 token。
@@ -256,37 +241,40 @@ final class GatewayMeter: @unchecked Sendable {
         } else {
             decodeRate = active.reduce(0) { $0 + $1.meter.rate(at: now) }
         }
-
-        // 预填充：在跑会话各自算「真正前向的 token / 首字耗时」再相加——和解码
-        // 一样，几路并发要报合计，不能拿 token 总和除以耗时总和（那会把两路
-        // 并发的读数算成单路）。空闲时沿用最近一条有首字记录的请求。
-        let running = active.compactMap(Self.prefillRate)
-        let prefillRate: Double?
-        if !running.isEmpty {
-            prefillRate = running.reduce(0, +)
-        } else {
-            prefillRate = sessions.last { $0.firstTokenAt != nil }.flatMap(Self.prefillRate)
-        }
-        return Overview(decodeRate: decodeRate, prefillRate: prefillRate)
+        // 这里**不算**预填充聚合。概览只显示引擎自报的预填充速率：网关这套
+        // 「(整段提示词 − 缓存命中) / 首字耗时」的分母是 TTFT，混着排队与
+        // 缓存恢复，而分子要等末帧 usage 才知道命中量——两害叠加能把读数放大
+        // 两个数量级，正是过去那个虚高数字的来源。逐行读数留给「最近请求」。
+        return Overview(decodeRate: decodeRate, isLive: !active.isEmpty)
     }
 
     // MARK: 快照
 
-    /// 只取数量时不必构造每条请求的 180 点历史曲线。
-    func sessionCount() -> Int {
-        let now = Date()
-        lock.lock()
-        defer { lock.unlock() }
-        sessions.removeAll { session in
-            guard let finishedAt = session.finishedAt else { return false }
-            return now.timeIntervalSince(finishedAt) > Self.lingerAfterFinish
+    /// 一条请求的只读快照。用结构体而不是 `[String: Any]`：概览每秒刷新一次，
+    /// 字典装箱、字符串键和 `as?` 转换都是白花的分配；字段固定后 UI 也不会
+    /// 因为拼错键悄悄拿到 0。
+    struct SessionSnapshot: Sendable {
+        enum State: String, Sendable {
+            case prefill, decode, done, failed
         }
-        return sessions.count
+
+        let id: Int
+        let model: String
+        let dialect: String
+        let state: State
+        let elapsed: TimeInterval
+        let ttftMilliseconds: Double?
+        let promptTokens: Int
+        let completionTokens: Int
+        let decodeRate: Double
+        /// 网关侧的逐请求预填充估算，仅作诊断；概览卡不读它。
+        let prefillRate: Double
+        let ctxTokens: Int
     }
 
-    /// 供 payload 使用的快照：只留最近 `historyPoints` 格的速率曲线。
-    /// `limit` 只构造最后几条请求的历史，概览页只需要显示 6 行。
-    func snapshot(historyPoints: Int = 180, limit: Int? = nil) -> [[String: Any]] {
+    /// 最近 `limit` 条请求的快照；`nil` 表示全部。只构造概览真正用到的字段，
+    /// 不再为每行复制 180 点历史曲线（那段数据没有任何界面在读）。
+    func snapshot(limit: Int? = nil) -> [SessionSnapshot] {
         let now = Date()
         lock.lock()
         defer { lock.unlock() }
@@ -294,8 +282,12 @@ final class GatewayMeter: @unchecked Sendable {
             guard let finishedAt = session.finishedAt else { return false }
             return now.timeIntervalSince(finishedAt) > Self.lingerAfterFinish
         }
-        let nowSlot = Int(now.timeIntervalSinceReferenceDate / Self.bucketWidth)
-        let visible = limit.map { Array(sessions.suffix($0)) } ?? sessions
+        let visible: ArraySlice<Session>
+        if let limit {
+            visible = sessions.suffix(max(0, limit))
+        } else {
+            visible = sessions[...]
+        }
         return visible.map { session in
             let elapsed = now.timeIntervalSince(session.startedAt)
             let ttft = session.firstTokenAt.map { $0.timeIntervalSince(session.startedAt) }
@@ -304,53 +296,26 @@ final class GatewayMeter: @unchecked Sendable {
             let rate = session.finishedAt == nil
                 ? session.meter.rate(at: now)
                 : session.meter.averageRate()
-            let prefillRate = Self.prefillRate(session) ?? 0
-            // 概览的「最近请求」只显示状态/模型/速率，不需要 180 点历史。
-            // `historyPoints <= 0` 时直接跳过，避免每秒为几行 UI 计算上千个点。
-            var history: [Double] = []
-            if historyPoints > 0 {
-                var bySlot: [Int: Double] = [:]
-                for tick in session.ticks { bySlot[tick.index] = tick.count }
-                // 历史曲线：以每格为中心的 5 格三角加权，再换算成 tok/s。
-                // 原来直接 `count * 4`，一格 1 token 就是 4 tok/s 的硬台阶；
-                // 加权后相邻格共享样本，曲线不会因分片落在不同桶而锯齿化。
-                let weights: [Double] = [1, 2, 3, 2, 1]
-                history = (0..<historyPoints).map { offset in
-                    let slot = nowSlot - (historyPoints - 1 - offset)
-                    var numerator = 0.0
-                    var denominator = 0.0
-                    for (index, weight) in weights.enumerated() {
-                        let key = slot + index - 2
-                        guard key <= nowSlot else { continue }
-                        numerator += (bySlot[key] ?? 0) * weight
-                        denominator += weight
-                    }
-                    let value = denominator > 0 ? numerator / denominator * 4 : 0
-                    return (value * 10).rounded() / 10
-                }
-            }
-            let state: String
+            let completion = Int(session.completionTokens.rounded())
+            let state: SessionSnapshot.State
             if session.finishedAt != nil {
-                state = session.failed ? "failed" : "done"
+                state = session.failed ? .failed : .done
             } else if session.firstTokenAt == nil {
-                state = "prefill"
+                state = .prefill
             } else {
-                state = "decode"
+                state = .decode
             }
-            return [
-                "id": session.id,
-                "model": session.model,
-                "dialect": session.dialect,
-                "state": state,
-                "elapsed": elapsed,
-                "ttft": ttft.map { $0 * 1000 } ?? NSNull(),
-                "promptTokens": session.promptTokens,
-                "completionTokens": Int(session.completionTokens.rounded()),
-                "decodeRate": rate,
-                "prefillRate": prefillRate,
-                "ctxTokens": session.promptTokens + Int(session.completionTokens.rounded()),
-                "history": history,
-            ] as [String: Any]
+            return SessionSnapshot(id: session.id,
+                                   model: session.model,
+                                   dialect: session.dialect,
+                                   state: state,
+                                   elapsed: elapsed,
+                                   ttftMilliseconds: ttft.map { $0 * 1000 },
+                                   promptTokens: session.promptTokens,
+                                   completionTokens: completion,
+                                   decodeRate: rate,
+                                   prefillRate: Self.prefillRate(session) ?? 0,
+                                   ctxTokens: session.promptTokens + completion)
         }
     }
 

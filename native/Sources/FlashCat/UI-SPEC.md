@@ -82,8 +82,20 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 
 - **单一状态源。** `AppState`（`@MainActor`，`ObservableObject`）持有全部可变状态：
   引擎、模型库、会话、下载、设置、外观、侧栏。视图只读，不缓存副本。
-- **没有快照协议。** 页面直接订阅 `@Published`；引擎指标仍按 1 秒轮询更新，
-  但只是普通状态变化，不经过 JSON 序列化，也不存在「快照与实时流谁领先」的问题。
+- **没有快照协议。** 页面直接订阅 `@Published`；引擎指标空闲时按 1 秒轮询，
+  预填充时按 0.4 秒轮询（`prefill_tokens_live` 只在 chunk 完成时前进，1 秒采样
+  经常整块跨过），但只是普通状态变化，不经过 JSON 序列化，也不存在「快照与实时流
+  谁领先」的问题。空闲时**不**降频：隔秒轮询会把累计计数器的差分窗口从 1 秒拉成 2 秒。
+- **概览速度统一走网关。** 解码速度的 hero 大数字、60 秒曲线与「最近请求」逐行都读
+  `GatewayMeter` 的按请求低通聚合，所以大数字就是活跃行之和；应用内对话也注册在网关里。
+  引擎的 `LAST` / `AVG` 不参与当前速度，只有网关没有在跑会话（客户端直连引擎端口）时
+  才用引擎的 `.live` 计数兜底，且要求 `activeRequests > 0`。角标如实写「网关估算」/
+  「网关 LAST」/「引擎实时」，没有实时值就显示「—」。
+- **生命体征仍由引擎上报，并自证粒度。** 预填充、首字延迟 p50、内存占用、上下文上限
+  与 `SESSIONS`（`activeRequests`）读引擎 status，卡片说明标明「引擎」；预填充不是连续量，按 `EngineRateKind` 打
+  `LIVE` / `LAST` / `AVG` 角标，说明随之改口（「正在处理提示词」/「上一个请求的实测值」/
+  「开机以来均值」）。`LIVE` 的预填充值是最近约 1.2 秒（1~2 个 chunk）的窗口速度，
+  不是整轮请求的累计平均；灵动岛只说当前速度，因此只在 `.live` 时采用引擎读数。
 - **动作即方法调用。** 导航 `state.section = .models`，启停 `state.toggleService()`，
   换模型 `state.applyModelFromAnyEngine(id, engine:)`，下载 `state.downloadModel` /
   `state.downloadShared`。确认类交互由 `AppState` 持有（`confirmingModelSwitch`、

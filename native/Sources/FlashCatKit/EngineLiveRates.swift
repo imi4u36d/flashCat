@@ -31,11 +31,11 @@ public enum EngineRateCounters {
 public struct EngineLiveRates {
     public struct Reading: Equatable, Sendable {
         /// 实时解码速度；空闲或这一格没有新增 token 时为 nil。
-        public var decode: Double?
-        /// 预填充速度；没有新完成请求时沿用上一次的实测值。
-        public var prefill: Double?
+        public var decode: EngineRateSample
+        /// 预填充速度；没有新完成请求时为 `.none`，由上层决定回落。
+        public var prefill: EngineRateSample
 
-        public init(decode: Double? = nil, prefill: Double? = nil) {
+        public init(decode: EngineRateSample = .none, prefill: EngineRateSample = .none) {
             self.decode = decode
             self.prefill = prefill
         }
@@ -54,16 +54,48 @@ public struct EngineLiveRates {
     }
 
     private var previous: Sample?
-    /// 最近一次真实测得的预填充速度。预填充是阵发的：请求做完后计数器才
-    /// 落账，空闲的一格没有增量，不能因此把卡片清成「—」。
-    private var lastPrefill: Double?
+    /// 最近一次**已完成**请求的实测预填充速度。
+    ///
+    /// 预填充是阵发的：计数器在请求做完才落账，空闲格没有增量。这个值必须留着
+    /// ——但只能以 `.lastRequest` 交出去，绝不能冒充「当前速度」。旧实现把它当
+    /// `.live` 贴回空闲格，概览页那个恒定不变的几千 tok/s 就是这么来的。
+    private var lastCompleted: Double?
+
+    /// 当前这一轮预填充的采样点：`(时刻, 已前向 token)`。
+    ///
+    /// 只在 `prefill_tokens_live` **前进**时追加。gauge 停在原地不代表速度归零，
+    /// 只是当前 chunk 还没走完；两个点之间夹着若干个完整 chunk，差值除以时间
+    /// 就是这一段 chunk 的真实吞吐。与旧的「本轮累计 ÷ 本轮已用时」相比，分母
+    /// 只覆盖最近一小段，不再把请求最早那几秒的慢 chunk 一直带着——那正是
+    /// 「读数是平均」的来源。
+    private struct PrefillPoint {
+        let at: Date
+        let tokens: Double
+    }
+    private var prefillPoints: [PrefillPoint] = []
+    /// 最近一个窗口的实测速度。chunk 之间保持不动，等下一次前进再刷新；
+    /// 不能让分母随时间长大，否则同一 chunk 内轮询会看到读数一路下滑。
+    private var prefillWindowRate: Double?
+    /// 本轮预填充的起点，只在「很久没有新 chunk」时用于退回累计均值。
+    private var prefillRoundStartedAt: Date?
+    private var prefillRoundStartTokens: Double = 0
+    private var prefillLastProgressAt: Date?
+
+    /// 窗口长度约等于 1~2 个 prefill chunk：再短会被 chunk 量化带出锯齿，
+    /// 再长就开始像「本次请求的平均值」。
+    private static let prefillWindow: TimeInterval = 1.2
+    /// 首个 chunk 之前的跨度太小，除出来的数字没有意义。
+    private static let prefillMinimumSpan: TimeInterval = 0.3
+    /// 超过这么久没有新 chunk，实时窗口已经过期：退回本轮累计均值。
+    private static let prefillStaleAfter: TimeInterval = 3.0
 
     public init() {}
 
     /// 引擎换了进程或停止时调用，避免拿上一轮的计数当基线。
     public mutating func reset() {
         previous = nil
-        lastPrefill = nil
+        lastCompleted = nil
+        forgetPrefillRound()
     }
 
     public mutating func observe(_ status: EngineStatus, at now: Date) -> Reading {
@@ -72,13 +104,35 @@ public struct EngineLiveRates {
             return Reading()
         }
         // 引擎重启会把这些计数清零。基线跟着换，别把「变小」算成负速率。
-        if let previous, let current = sample.prefillTokens, let last = previous.prefillTokens,
-           current < last {
-            lastPrefill = nil
+        let restarted: Bool
+        if let previous, let current = sample.prefillTokens, let last = previous.prefillTokens {
+            restarted = current < last
+        } else {
+            restarted = false
         }
         defer { previous = sample }
+        guard !restarted else {
+            // 重启后上一轮的数字与当前进程无关，闩锁也得一起丢。
+            lastCompleted = nil
+            forgetPrefillRound()
+            return Reading()
+        }
 
         var reading = Reading()
+        // 预填充的实时值用**滑动窗口**：分子是最近一两个 chunk 前向的 token，
+        // 分母是这一小段时间。请求最早那几秒不进分母，所以读数会跟着当前
+        // chunk 走，而不是整轮请求的平均；gauge 某一拍没动时保持上一格，
+        // 不会因为分母变大而自己往下滑。
+        if sample.prefilling > 0, let current = sample.prefillLiveTokens, current >= 0 {
+            recordPrefill(tokens: current, at: now)
+            if current > 0, let rate = prefillWindowRate {
+                reading.prefill = EngineRateSample(value: rate, kind: .live)
+            }
+        } else if sample.prefilling == 0 {
+            // 预填充结束：本轮窗口作废，实时值不再代表「此刻」。
+            forgetPrefillRound()
+        }
+
         if let last = previous {
             let elapsed = now.timeIntervalSince(last.at)
             // 轮询间隔通常在 1~2 秒；太短会把计数器量化成尖峰，太长（休眠/卡顿）
@@ -88,17 +142,13 @@ public struct EngineLiveRates {
                    let current = sample.decodeTokens, let lastDecode = last.decodeTokens,
                    current >= lastDecode {
                     let delta = current - lastDecode
-                    if delta > 0 { reading.decode = delta / elapsed }
+                    if delta > 0 {
+                        reading.decode = EngineRateSample(value: delta / elapsed, kind: .live)
+                    }
                 }
-                if sample.prefilling > 0,
-                   let current = sample.prefillLiveTokens,
-                   let lastLive = last.prefillLiveTokens,
-                   current > 0, current >= lastLive {
-                    let delta = current - lastLive
-                    if delta > 0 { reading.prefill = delta / elapsed }
-                }
-                // 完成的请求：分子只含真正前向的 token，分母只含预填充耗时。
-                // 缓存恢复的 token 与恢复耗时都不在这两个计数器里。
+                // 完成了一个请求：分子只含真正前向的 token，分母只含预填充耗时，
+                // 缓存恢复的部分两边都不进。这一格描述的是「刚做完的那一次」，
+                // 所以是 `.lastRequest` 而不是 `.live`——它已经不是当前速度了。
                 if let currentTokens = sample.prefillTokens,
                    let currentSeconds = sample.prefillSeconds,
                    let lastTokens = last.prefillTokens,
@@ -106,16 +156,81 @@ public struct EngineLiveRates {
                    currentTokens > lastTokens, currentSeconds > lastSeconds {
                     let deltaTokens = currentTokens - lastTokens
                     let deltaSeconds = currentSeconds - lastSeconds
-                    if deltaSeconds > 0 { reading.prefill = deltaTokens / deltaSeconds }
+                    if deltaSeconds > 0 {
+                        lastCompleted = deltaTokens / deltaSeconds
+                    }
                 }
             }
         }
-        if let prefill = reading.prefill {
-            lastPrefill = prefill
-        } else {
-            reading.prefill = lastPrefill
+        // 没有在跑的预填充时，把最近一次实测值作为 `.lastRequest` 交出去，让
+        // 界面能显示「上一个请求跑了多少」并打上 `LAST`，而不是空成「—」。
+        // 关键是粒度如实：这个数字不再是当前速度。
+        if reading.prefill.kind == .none, let lastCompleted, lastCompleted > 0 {
+            reading.prefill = EngineRateSample(value: lastCompleted, kind: .lastRequest)
         }
         return reading
+    }
+
+    private mutating func forgetPrefillRound() {
+        prefillPoints.removeAll()
+        prefillWindowRate = nil
+        prefillRoundStartedAt = nil
+        prefillRoundStartTokens = 0
+        prefillLastProgressAt = nil
+    }
+
+    /// 记一个预填充采样点，并刷新滑动窗口速度。
+    ///
+    /// gauge 变小 = 换了新请求（`prefill_tokens_live` 每请求归零）；同一个请求内
+    /// 只在 token 前进时追加点，窗口外的点及时丢掉，速度才会跟着当前 chunk 走。
+    private mutating func recordPrefill(tokens: Double, at now: Date) {
+        guard let last = prefillPoints.last else {
+            prefillPoints = [PrefillPoint(at: now, tokens: tokens)]
+            prefillRoundStartedAt = now
+            prefillRoundStartTokens = tokens
+            prefillLastProgressAt = now
+            return
+        }
+        guard tokens >= last.tokens else {
+            // 新请求占了预填充位：旧窗口与旧基线一起丢掉。
+            prefillPoints = [PrefillPoint(at: now, tokens: tokens)]
+            prefillWindowRate = nil
+            prefillRoundStartedAt = now
+            prefillRoundStartTokens = tokens
+            prefillLastProgressAt = now
+            return
+        }
+        guard tokens > last.tokens else {
+            // 这一拍还没有新 chunk：保持上一次的窗口速度，别让它随时间衰减。
+            // 真的卡住超过 `prefillStaleAfter` 才退回本轮累计均值，让读数
+            // 至少还在动，也不会把几分钟前的高速度一直挂在角标上。
+            if let startedAt = prefillRoundStartedAt,
+               let progressedAt = prefillLastProgressAt,
+               now.timeIntervalSince(progressedAt) >= Self.prefillStaleAfter {
+                let span = now.timeIntervalSince(startedAt)
+                if span > 0 {
+                    prefillWindowRate = (tokens - prefillRoundStartTokens) / span
+                }
+            }
+            return
+        }
+        prefillPoints.append(PrefillPoint(at: now, tokens: tokens))
+        prefillLastProgressAt = now
+        let cutoff = now.addingTimeInterval(-Self.prefillWindow)
+        // 窗口里至少要有两个点才算速度；只有一个点时，连同它前一个点一起
+        // 保留（那正是「最近一个 chunk」）。窗口外的更早的点一律丢掉，读数
+        // 才会从「本轮平均」变成「当前这一小段」。
+        if let firstInside = prefillPoints.firstIndex(where: { $0.at >= cutoff }),
+           firstInside > 0 {
+            let keepFrom = firstInside < prefillPoints.count - 1 ? firstInside : firstInside - 1
+            prefillPoints.removeFirst(keepFrom)
+        }
+        if let base = prefillPoints.first {
+            let span = now.timeIntervalSince(base.at)
+            if span >= Self.prefillMinimumSpan {
+                prefillWindowRate = (tokens - base.tokens) / span
+            }
+        }
     }
 
     private static func sample(from status: EngineStatus, at now: Date) -> Sample? {

@@ -1,5 +1,67 @@
 import Foundation
 
+// MARK: - Rate semantics
+
+/// 一个速率读数的**来源与粒度**。
+///
+/// 「这个数字是不是引擎量过的」问得不够：五家引擎全都自报速率，但粒度和新鲜度
+/// 完全不同，同一个数字放在 1 秒的轮询里可能含义相反。所以这里编码的是
+/// 「这个数字回答的是哪个问题」，界层据此决定该不该打 `LIVE`、`LAST`、`AVG`。
+///
+/// 预填充天然不是连续量：一个请求做完，计数器就不动了，此刻「多快」没有定义。
+/// MTPLX 自己的仪表盘把这种情况分成三格（prefill 面板：active / last / mean），
+/// 我们照同一套语义命名，而不是硬凑一个「当前速度」。
+public enum EngineRateKind: String, Codable, Sendable {
+    /// 正在发生的量，每秒刷新都有意义。
+    ///
+    /// 两个来源：累计计数器的相邻差分（mlx-serve 的
+    /// `prefill_tokens_total` / `prefill_time_seconds`），以及引擎自报的瞬时场
+    /// （splash 的 `current_*_batch.tokens_per_second`、strata 的
+    /// `live.prefill_tok_s_mean`、mtplx 的 `in_flight[].prefill_state`）。
+    case live
+
+    /// 上一个已完成请求的实测值。数字是真的，但它描述的是过去那一次，
+    /// 不是「此刻」。空闲时显示它必须带 `LAST`。
+    case lastRequest
+
+    /// 进程或会话累计均值，只在请求结束跳一格。一个快的首轮会长期抬高它，
+    /// 不能当实时读数用（splash 的 `metrics.prefill_tokens_per_second` 本质是
+    /// 两个累计计数器之比，oMLX 的 `avg_*_tps` 同）。
+    case lifetimeMean
+
+    /// 引擎没有给出这个方向的速率。上层可以回落到网关的请求级打点。
+    case none
+
+    /// 可信程度排序，用于多端点合并时选出「谁描述了这个数值」。
+    /// 数值大 = 更接近「此刻」。
+    public var rank: Int {
+        switch self {
+        case .none: return 0
+        case .lifetimeMean: return 1
+        case .lastRequest: return 2
+        case .live: return 3
+        }
+    }
+}
+
+/// 速率 + 它的粒度。`value == nil` 时 `kind` 必须是 `.none`。
+public struct EngineRateSample: Sendable, Equatable {
+    public var value: Double?
+    public var kind: EngineRateKind
+
+    public init(value: Double? = nil, kind: EngineRateKind = .none) {
+        self.value = kind == .none ? nil : value
+        self.kind = value == nil ? .none : kind
+    }
+
+    public static let none = EngineRateSample()
+
+    /// 只有真·实时读数才允许被当作「当前速度」。
+    public var isLive: Bool { kind == .live && (value ?? 0) > 0 }
+
+    public var isActive: Bool { (value ?? 0) > 0 }
+}
+
 // MARK: - Status
 
 /// Engine-neutral snapshot. Every adapter folds its own `/status` payload into
@@ -10,14 +72,13 @@ public struct EngineStatus: Sendable, Equatable {
     public var loadedModels: [String]
     public var decodeTokensPerSecond: Double?
     public var prefillTokensPerSecond: Double?
-    /// 上面两个速率是不是引擎按「此刻真在做多少」量出来的。
+    /// 上面两个速率各自的粒度。见 `EngineRateKind`。
     ///
-    /// 各引擎口径不同：mlx-serve 用 `generation_tokens_live` 差分（真实时），
-    /// splash 的 `decode_tokens_per_second` 也是实时值；oMLX 的
-    /// `avg_generation_tps` 是从开机起的累计均值，只在请求结束时跳一格。
-    /// 上层据此决定该用引擎的真实计数，还是回落到网关/应用内的请求级估计。
-    public var decodeRateIsLive: Bool
-    public var prefillRateIsLive: Bool
+    /// 取代旧的 `decodeRateIsLive` / `prefillRateIsLive` 两个布尔：一个 bool 分不出
+    /// 「上一请求的实测值」和「开机以来的累计均值」，而这两个都会看起来像实时数，
+    /// 正是概览页把几千 tok/s 当当前速度的根因。
+    public var decodeRateKind: EngineRateKind
+    public var prefillRateKind: EngineRateKind
     public var draftAcceptance: Double?
     public var ttftMilliseconds: Double?
     public var activeRequests: Int
@@ -45,8 +106,8 @@ public struct EngineStatus: Sendable, Equatable {
                 loadedModels: [String] = [],
                 decodeTokensPerSecond: Double? = nil,
                 prefillTokensPerSecond: Double? = nil,
-                decodeRateIsLive: Bool = false,
-                prefillRateIsLive: Bool = false,
+                decodeRateKind: EngineRateKind = .none,
+                prefillRateKind: EngineRateKind = .none,
                 draftAcceptance: Double? = nil,
                 ttftMilliseconds: Double? = nil,
                 activeRequests: Int = 0,
@@ -67,8 +128,8 @@ public struct EngineStatus: Sendable, Equatable {
         self.loadedModels = loadedModels
         self.decodeTokensPerSecond = decodeTokensPerSecond
         self.prefillTokensPerSecond = prefillTokensPerSecond
-        self.decodeRateIsLive = decodeRateIsLive
-        self.prefillRateIsLive = prefillRateIsLive
+        self.decodeRateKind = decodeRateKind
+        self.prefillRateKind = prefillRateKind
         self.draftAcceptance = draftAcceptance
         self.ttftMilliseconds = ttftMilliseconds
         self.activeRequests = activeRequests
@@ -87,6 +148,12 @@ public struct EngineStatus: Sendable, Equatable {
     }
 
     public var isReady: Bool { state == .ready }
+
+    /// 此刻是否真的有一路在预填充。只有上报该计数的引擎（目前 mlx-serve）
+    /// 会为真；轮询侧据此把采样提到 chunk 节奏，其余引擎保持原频率。
+    public var isPrefilling: Bool {
+        (extras[EngineRateCounters.prefilling] ?? 0) > 0
+    }
 
     public var memoryText: String? { memoryBytes.map(EngineFormat.bytes) }
     public var peakMemoryText: String? { peakMemoryBytes.map(EngineFormat.bytes) }

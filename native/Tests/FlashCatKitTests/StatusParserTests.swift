@@ -141,6 +141,9 @@ final class StatusParserTests: XCTestCase {
 
         XCTAssertEqual(status.decodeTokensPerSecond, 63.5)
         XCTAssertEqual(status.prefillTokensPerSecond, 410)
+        // 没有 current_*_batch 时这两个数是进程累计计数器之比，只能标成均值。
+        XCTAssertEqual(status.decodeRateKind, .lifetimeMean)
+        XCTAssertEqual(status.prefillRateKind, .lifetimeMean)
         XCTAssertEqual(status.draftAcceptance, 0.82)
         XCTAssertEqual(status.ttftMilliseconds, 120)
         XCTAssertEqual(status.queuedRequests, 2)
@@ -153,6 +156,59 @@ final class StatusParserTests: XCTestCase {
         XCTAssertEqual(status.peakMemoryBytes, 2_000)
         XCTAssertEqual(status.maximumContextTokens, 65_536)
         XCTAssertEqual(status.detail, "kv q8")
+    }
+
+    /// splash 的 `metrics.prefill_tokens_per_second` 是两个进程累计计数器之比，
+    /// 一个快的首轮会把它长期抬高；真·瞬时值在同源的 `current_prefill_batch`。
+    /// 有批次样本时必须走批次，且标成 `.live`。
+    func testSplashPrefersTheCurrentBatchOverTheLifetimeRatio() {
+        let status = EngineStatusParser.parse(engine: .splash, status: [
+            "metrics": [
+                "prefill_tokens_per_second": 3_400.0,
+                "decode_tokens_per_second": 52.0,
+                "current_prefill_batch": ["valid": true, "input_tokens": 512,
+                                          "wall_ms": 150.0, "tokens_per_second": 512.0],
+                "current_decode_batch": ["valid": true, "output_tokens": 24,
+                                         "wall_ms": 400.0, "tokens_per_second": 60.0],
+            ],
+            "active_requests": [["id": 1, "phase": "prefill"], ["id": 2, "phase": "decode"]],
+            "instance": ["model": "Qwen3.8-27B-DFlash2"],
+        ], health: nil)
+
+        XCTAssertEqual(status.prefillTokensPerSecond, 512)
+        XCTAssertEqual(status.prefillRateKind, .live)
+        XCTAssertEqual(status.decodeTokensPerSecond, 60)
+        XCTAssertEqual(status.decodeRateKind, .live)
+    }
+
+    /// `current_*_batch` 是「最近一个完成的批次」，空闲时它一直停在那儿。
+    /// 这时不能说它是当前速度——那是上一请求的终值，必须标 `LAST`。
+    func testSplashIdleBatchIsMarkedAsLastRequest() {
+        let status = EngineStatusParser.parse(engine: .splash, status: [
+            "metrics": [
+                "current_prefill_batch": ["valid": true, "tokens_per_second": 512.0],
+                "current_decode_batch": ["valid": true, "tokens_per_second": 60.0],
+            ],
+            "active_requests": [],
+        ], health: nil)
+
+        XCTAssertEqual(status.prefillTokensPerSecond, 512)
+        XCTAssertEqual(status.prefillRateKind, .lastRequest)
+        XCTAssertEqual(status.decodeRateKind, .lastRequest)
+    }
+
+    /// 引擎刚启动、还没跑过预填充时 `valid` 是 false：这时不能报 0 当成速度，
+    /// 必须退回到均值口径（并如实标成均值）。
+    func testSplashInvalidBatchFallsBackToTheLifetimeRatio() {
+        let status = EngineStatusParser.parse(engine: .splash, status: [
+            "metrics": [
+                "prefill_tokens_per_second": 410.0,
+                "current_prefill_batch": ["valid": false, "tokens_per_second": 0.0],
+            ],
+        ], health: nil)
+
+        XCTAssertEqual(status.prefillTokensPerSecond, 410)
+        XCTAssertEqual(status.prefillRateKind, .lifetimeMean)
     }
 
     func testSplashActiveRequestsCountsBusySlots() {
@@ -218,12 +274,105 @@ final class StatusParserTests: XCTestCase {
         XCTAssertEqual(status.extras[EngineRateCounters.prefillTokens], 88_000)
         XCTAssertEqual(status.extras[EngineRateCounters.prefillSeconds], 66.5)
         XCTAssertEqual(status.extras["total_cached_tokens"], 16_000_000)
-        // 解析器本身不报速率，也还谈不上「实时」；标记由轮询侧差分后打上。
+        // 解析器本身不报速率，粒度也就无从谈起；由轮询侧差分后标成 `.live`。
         XCTAssertNil(status.decodeTokensPerSecond)
-        XCTAssertFalse(status.decodeRateIsLive)
+        XCTAssertEqual(status.decodeRateKind, .none)
     }
 
     // MARK: Strata
+
+    /// MTPLX 的 `latest.prefill_tok_s` 只在请求结束时落一次，空闲时会原样重复
+    /// 上一请求的终值——那正是「一个恒定不变的几千」的来历，所以它只能是
+    /// `.lastRequest`，不能当当前速度。
+    func testMTPLXLatestPrefillIsMarkedAsLastRequest() {
+        let status = EngineStatusParser.mtplx(snapshot: [
+            "latest": ["prefill_tok_s": 3_400.0, "decode_tok_s": 40.0],
+            "rolling": ["mean": 38.0],
+        ])
+        XCTAssertEqual(status.prefillTokensPerSecond, 3_400)
+        XCTAssertEqual(status.prefillRateKind, .lastRequest)
+        XCTAssertEqual(status.decodeRateKind, .live)
+    }
+
+    /// `prefill_rates` 里的 `peak_tok_s` 是**单 chunk 峰值**，绝不能当读数用
+    /// （那正是「恒定不变的大数字」的直接来源）；同一处还有 tokens/compute_time_s
+    /// 这个滚动均值，才是合理的兜底。
+    func testMTPLXUsesWindowedRateNotPeak() {
+        let status = EngineStatusParser.mtplx(snapshot: [
+            "prefill_rates": ["tokens": 96_000, "compute_time_s": 40.0,
+                              "peak_tok_s": 8_500.0, "samples": 12],
+        ])
+        // 96000 / 40 = 2400，不是峰值 8500。
+        XCTAssertEqual(status.prefillTokensPerSecond ?? 0, 2_400, accuracy: 0.001)
+        XCTAssertEqual(status.prefillRateKind, .lifetimeMean)
+        XCTAssertEqual(status.extras["prefill_peak_tps"], 8_500)
+    }
+
+    /// 正在预填充时，实时值在 `in_flight[].prefill_state`，服务端每完成一个
+    /// chunk 就刷新一次。这条路径必须优先于 `latest`。
+    func testMTPLXPrefersTheInFlightPrefillRate() {
+        let status = EngineStatusParser.mtplx(snapshot: [
+            "latest": ["prefill_tok_s": 3_400.0, "decode_tok_s": 40.0],
+            "in_flight": [[
+                "request_id": "r1",
+                "prefill_state": ["phase": "chunk", "tokens_done": 4_096,
+                                  "tokens_total": 32_768, "elapsed_s": 2.0,
+                                  "prefill_tok_s": 2_048.0],
+            ]],
+        ])
+        XCTAssertEqual(status.prefillTokensPerSecond, 2_048)
+        XCTAssertEqual(status.prefillRateKind, .live)
+    }
+
+    /// 多路并发预填充时取 `elapsed_s` 最大的那一路（MTPLX 自己的仪表盘
+    /// `usePrimaryActivePrefill` 也是这么选的），不是简单相加。
+    func testMTPLXPicksTheLongestRunningPrefill() {
+        let status = EngineStatusParser.mtplx(snapshot: [
+            "in_flight": [
+                ["request_id": "short",
+                 "prefill_state": ["phase": "chunk", "tokens_done": 100,
+                                   "elapsed_s": 0.2, "prefill_tok_s": 500.0]],
+                ["request_id": "long",
+                 "prefill_state": ["phase": "chunk", "tokens_done": 4_000,
+                                   "elapsed_s": 1.0, "prefill_tok_s": 4_000.0]],
+            ],
+        ])
+        XCTAssertEqual(status.prefillTokensPerSecond, 4_000)
+        XCTAssertEqual(status.prefillRateKind, .live)
+    }
+
+    /// 多端点折叠时，速率与粒度必须成对替换：一个后来端点的累计均值不能
+    /// 覆盖前面已经拿到的实时值——否则会出现「数值是均值、角标却写 LIVE」，
+    /// 或反过来让均值冒充实时。
+    func testMergeDoesNotLetALaterMeanOverwriteALiveRate() {
+        let metrics = EngineTelemetrySource(role: .metrics, path: "/live", format: .strataMetrics)
+        let props = EngineTelemetrySource(role: .props, path: "/props", format: .llamaProps)
+        let status = EngineStatusParser.parse(documents: [
+            EngineTelemetryDocument(source: metrics,
+                                    json: ["live": ["tok_s": 42.0, "prefill_tok_s_mean": 640.0]]),
+            // props 排在后（rank 3），带一个累计均值：数值更强但粒度更弱。
+            EngineTelemetryDocument(source: props,
+                                    json: ["timings": ["predicted_per_second": 31.0,
+                                                       "prompt_per_second": 200.0]]),
+        ])
+        // .live(3) 不被 .lastRequest(2) 覆盖。
+        XCTAssertEqual(status.decodeTokensPerSecond, 42.0)
+        XCTAssertEqual(status.decodeRateKind, .live)
+        XCTAssertEqual(status.prefillTokensPerSecond, 640.0)
+        XCTAssertEqual(status.prefillRateKind, .live)
+    }
+
+    /// oMLX 只有进程累计均值（`_build_snapshot` 拿两个累计量相除），
+    /// 请求之间不会动，所以只能是 `.lifetimeMean`。
+    func testOMLXPrefillIsALifetimeMean() {
+        let status = EngineStatusParser.omlx(status: [
+            "avg_prefill_tps": 1_800.0,
+            "avg_generation_tps": 44.0,
+            "total_requests": 9,
+        ])
+        XCTAssertEqual(status.prefillRateKind, .lifetimeMean)
+        XCTAssertEqual(status.decodeRateKind, .lifetimeMean)
+    }
 
     func testStrataMetricsMapLiveAndTotals() {
         let status = EngineStatusParser.strataMetrics([
@@ -237,6 +386,8 @@ final class StatusParserTests: XCTestCase {
         XCTAssertEqual(status.maximumContextTokens, 32_768)
         XCTAssertEqual(status.decodeTokensPerSecond, 41.5)
         XCTAssertEqual(status.prefillTokensPerSecond, 640)
+        XCTAssertEqual(status.decodeRateKind, .live)
+        XCTAssertEqual(status.prefillRateKind, .live)
         XCTAssertEqual(status.activeRequests, 1)
         XCTAssertEqual(status.queuedRequests, 3)
         XCTAssertEqual(status.requestsCompleted, 9)

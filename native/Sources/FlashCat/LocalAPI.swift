@@ -1,11 +1,12 @@
 import Foundation
+import FlashCatKit
 
 struct ServerStats: Equatable {
     var decodeTokensPerSecond: Double?
     var prefillTokensPerSecond: Double?
-    /// 上面两个速率是否来自引擎的实时计数（见 `EngineStatus.decodeRateIsLive`）。
-    var decodeRateIsLive = false
-    var prefillRateIsLive = false
+    /// 上面两个速率的粒度（见 `EngineRateKind`）。
+    var decodeRateKind: EngineRateKind = .none
+    var prefillRateKind: EngineRateKind = .none
     var draftAcceptance: Double?
     var ttftMilliseconds: Double?
     var activeRequests: Int = 0
@@ -60,8 +61,12 @@ struct ServerStats: Equatable {
         let weights = dict(json["weights"])
 
         var stats = ServerStats()
+        // 这里读到的是 splash 自己的累计比值，粒度如实标成 lifetimeMean：
+        // 真·瞬时值在 `metrics.current_*_batch`，那条路径走 FlashCatKit 的解析器。
         stats.decodeTokensPerSecond = number(metrics["decode_tokens_per_second"])
+        stats.decodeRateKind = (stats.decodeTokensPerSecond ?? 0) > 0 ? .lifetimeMean : .none
         stats.prefillTokensPerSecond = number(metrics["prefill_tokens_per_second"])
+        stats.prefillRateKind = (stats.prefillTokensPerSecond ?? 0) > 0 ? .lifetimeMean : .none
         stats.draftAcceptance = number(metrics["draft_acceptance_rate"])
         stats.ttftMilliseconds = number(dict(metrics["ttft_ms"])["p50"])
         if let active = json["active_requests"] as? [Any] {

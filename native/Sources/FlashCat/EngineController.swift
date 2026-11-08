@@ -74,12 +74,12 @@ final class EngineController {
     /// oMLX applies MTP/DFlash through its own settings API, once per run.
     private var tuningApplied = false
     private var pollTimer: Timer?
+    /// 当前轮询间隔。预填充时缩短，结束时恢复；见 `adaptPolling(to:)`。
+    private var pollInterval: TimeInterval = 1.0
     /// mlx-serve 只报累计计数器，实时速率要靠相邻两次轮询差分。每个引擎进程
     /// 一份基线；换进程时清掉，否则会把上一轮的计数当起点。
     private var liveRates = EngineLiveRates()
     private var pollInFlight = false
-    /// 空闲时隔一次轮询；非空闲立即归零，恢复每秒刷新。
-    private var idlePollCounter = 0
     private var isStopping = false
     private var lastError: String?
     /// Moves `.starting` out of limbo when the engine neither binds its port nor
@@ -914,14 +914,30 @@ final class EngineController {
     // MARK: polling
 
     private func startPolling() {
+        schedulePolling(every: 1.0)
+    }
+
+    /// 预填充时把采样提到 chunk 节奏。`prefill_tokens_live` 每完成一个 chunk
+    /// 才动一次（常见 0.2~0.8 秒），1 Hz 采样会跨过整块、只能算出「这一秒
+    /// 平均」；跟上 chunk 之后，滑动窗口读到的才是当前这一段的真实吞吐。
+    /// 只在预填充期间提速：解码是连续量，1 Hz 已经够，没必要一直空转。
+    private func schedulePolling(every interval: TimeInterval) {
+        pollInterval = interval
         pollTimer?.invalidate()
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
             Task { await self.poll() }
         }
+        pollTimer = timer
         // Default run-loop mode stops while a modal alert is up. The app opens
         // alerts from the engine page, so the poller used to freeze exactly when
         // the reader was staring at the stalled engine.
-        if let pollTimer { RunLoop.main.add(pollTimer, forMode: .common) }
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func adaptPolling(to status: EngineStatus) {
+        let target: TimeInterval = status.isPrefilling ? 0.4 : 1.0
+        guard abs(target - pollInterval) > 0.05 else { return }
+        schedulePolling(every: target)
     }
 
     /// Give the launch a budget. `descriptor.startupTimeout` already encodes
@@ -945,13 +961,13 @@ final class EngineController {
     /// 别的引擎没有这些键，`observe` 返回空读数，不会覆盖它们自己的口径。
     private func applyLiveRates(to parsed: inout EngineStatus) {
         let reading = liveRates.observe(parsed, at: Date())
-        if let decode = reading.decode, decode > 0 {
+        if let decode = reading.decode.value, decode > 0 {
             parsed.decodeTokensPerSecond = decode
-            parsed.decodeRateIsLive = true
+            parsed.decodeRateKind = reading.decode.kind
         }
-        if let prefill = reading.prefill, prefill > 0 {
+        if let prefill = reading.prefill.value, prefill > 0 {
             parsed.prefillTokensPerSecond = prefill
-            parsed.prefillRateIsLive = true
+            parsed.prefillRateKind = reading.prefill.kind
         }
     }
 
@@ -960,19 +976,11 @@ final class EngineController {
         pollInFlight = true
         defer { pollInFlight = false }
 
-        // 已就绪、无排队/在跑请求、也不在加载权重时隔秒轮询；一旦忙起来
-        // 立刻恢复每秒一次。空闲时少一半健康探测和 telemetry 请求。
-        let idle = state == .ready
-            && !switchInFlight
-            && (stats?.activeRequests ?? 0) == 0
-            && (stats?.queuedRequests ?? 0) == 0
-            && startupStage == EngineStartupStage.ready.rawValue
-        if idle {
-            idlePollCounter += 1
-            if idlePollCounter % 2 == 0 { return }
-        } else {
-            idlePollCounter = 0
-        }
+        // 每秒都读引擎的自报值，不再空闲隔秒。省下的那次请求要重新解析
+        // `prefill_tokens_total` / `prefill_time_seconds` 这类累计计数，隔秒轮询
+        // 会把差分窗口从 1 秒拉成 2 秒——曲线变糙是小事，更要紧的是实时速率与
+        // 均值本来只差在「多久动一次」，采样间隔一飘，两种口径就更难分辨了。
+        // 空闲时这一轮只是几个本地回环 GET，成本远低于它换来的读数一致性。
 
         let health = await probeHealth()
         guard health.ready else {
@@ -998,6 +1006,7 @@ final class EngineController {
         var parsed = EngineStatusParser.parse(documents: documents, fallbackState: .ready)
         await adoptEngineReportedEfforts(into: &parsed)
         applyLiveRates(to: &parsed)
+        adaptPolling(to: parsed)
         status = parsed
         stats = ServerStats(engineStatus: parsed, previous: stats)
         if process == nil { logs.pollFollow() }

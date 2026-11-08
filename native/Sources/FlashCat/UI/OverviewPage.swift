@@ -21,9 +21,17 @@ struct OverviewPage: View {
 
     private var decodeRate: Double {
         // 概览要的是「所有请求合起来」的解码速度，不是某一路：应用内对话生成时，
-        // 外部客户端可能正同时经网关跑请求。这里统一读聚合值（网关按请求打点，
-        // 已包含应用内这一路），曲线采样也来自同一个口径。
+        // 外部客户端可能正同时经网关跑请求。速度类指标统一读网关按请求打点，
+        // 这样 hero、曲线和「最近请求」每一行是同一份数据，数字能对上；引擎的
+        // LAST/AVG 不参与，引擎实时计数只在网关没有会话时兜底。
         state.totalDecodeRate
+    }
+
+    private var speedOrigin: SpeedOrigin { state.speedOrigin }
+
+    /// 速率统一显示口径：没有值就留「—」，不拿 0.00 冒充读数。
+    private func rateText(_ value: Double) -> String {
+        value > 0 ? Format.compact(value) : "—"
     }
 
     private var runningText: String {
@@ -173,13 +181,22 @@ struct OverviewPage: View {
                         .foregroundStyle(Console.tertiary)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text(Format.compact(decodeRate))
+                    Text(rateText(decodeRate))
                         .font(.system(size: 42, weight: .bold, design: .monospaced))
                         .foregroundStyle(Console.text)
                         .contentTransition(.numericText())
                     Text("tok/s")
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
                         .foregroundStyle(Console.tertiary)
+                    if let badge = decodeBadge {
+                        Text(badge.text)
+                            .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                            .tracking(0.6)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .overlay(Capsule().stroke(badge.tint.opacity(0.55), lineWidth: 0.8))
+                            .foregroundStyle(badge.tint)
+                    }
                 }
                 Sparkline(samples: Array(samples.suffix(60)), color: Console.accent)
                     .frame(width: 200, height: 34)
@@ -194,8 +211,10 @@ struct OverviewPage: View {
         .consoleCardSurface(tint: Console.accent.opacity(0.10))
     }
 
+    /// 引擎自己报的在跑请求数。速度走网关，但「几路在跑」是引擎的状态，
+    /// 直连引擎端口的请求不会出现在网关会话表里。
     private var sessionCount: Int {
-        GatewayMeter.shared.sessionCount()
+        state.stats?.activeRequests ?? 0
     }
 
     @ViewBuilder private var modelMenuContent: some View {
@@ -325,30 +344,29 @@ struct OverviewPage: View {
                    title: "当前上下文", tag: "CTX",
                    value: Format.tokens(state.contextUsedTokens),
                    unit: state.contextWindowCeiling.map { "/ \(shortTokens($0))" } ?? "/ —",
-                   hint: state.isRunning ? "本会话已用" : "引擎未运行",
-                   bars: nil)
+                   hint: contextHint,
+                   badge: contextBadge)
         metricCard(icon: "timer", tint: Console.warn,
                    title: "首字延迟", tag: "TTFT",
                    value: ttftText,
                    unit: "ms",
-                   hint: state.isRunning ? "从请求到首个 token" : "引擎未运行",
-                   bars: [0.12, 0.16, 0.14, 0.18, 0.15, 0.17, 0.13, 0.16, 0.14, 0.18])
+                   hint: ttftHint)
         metricCard(icon: "arrow.up.circle.fill", tint: Color(console: 0x7C5CFF),
                    title: "预填充", tag: "PREFILL",
                    value: prefillText,
                    unit: "tok/s",
-                   hint: state.isRunning ? "长提示词处理速度" : "引擎未运行",
-                   bars: [0.10, 0.14, 0.12, 0.16, 0.13, 0.15, 0.11, 0.16, 0.12, 0.14])
+                   hint: prefillHint,
+                   badge: prefillBadge)
         metricCard(icon: "memorychip", tint: Console.info,
                    title: "内存压力", tag: "MEM",
                    value: memoryPercentText,
                    unit: "%",
-                   hint: state.isRunning ? "统一内存占用" : "引擎未运行",
-                   bars: [0.08, 0.10, 0.09, 0.11, 0.10, 0.12, 0.09, 0.11, 0.10, 0.08])
+                   hint: memoryHint)
     }
 
     private func metricCard(icon: String, tint: Color, title: String, tag: String,
-                            value: String, unit: String, hint: String, bars: [Double]?) -> some View {
+                            value: String, unit: String, hint: String,
+                            badge: (text: String, tint: Color)? = nil) -> some View {
         GlassCard(padding: 16) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
@@ -372,9 +390,14 @@ struct OverviewPage: View {
                     Text(unit)
                         .font(.system(size: 11.5, design: .monospaced))
                         .foregroundStyle(Console.tertiary)
-                    Spacer(minLength: 0)
-                    if let bars {
-                        MiniBars(levels: bars, tint: tint)
+                    if let badge {
+                        Text(badge.text)
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .tracking(0.6)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1.5)
+                            .overlay(Capsule().stroke(badge.tint.opacity(0.55), lineWidth: 0.8))
+                            .foregroundStyle(badge.tint)
                     }
                 }
                 Text(hint)
@@ -386,20 +409,76 @@ struct OverviewPage: View {
         .frame(maxWidth: .infinity)
     }
 
+    /// 上下文卡：生成期间是网关估算，结束后回落到引擎 usage。
+    private var contextHint: String {
+        guard state.isRunning else { return "引擎未运行" }
+        return state.generating ? "网关估算 · 结束后用引擎 usage" : "引擎 usage · 本会话已用"
+    }
+
+    private var contextBadge: (text: String, tint: Color)? {
+        state.generating && state.contextUsedTokens > 0 ? ("EST", Console.warn) : nil
+    }
+
+    private var ttftHint: String {
+        guard state.isRunning else { return "引擎未运行" }
+        return (stats?.ttftMilliseconds ?? 0) > 0 ? "引擎 p50 · 从请求到首个 token" : "引擎未上报"
+    }
+
+    private var memoryHint: String {
+        guard state.isRunning else { return "引擎未运行" }
+        return stats?.memoryBytes != nil ? "引擎 · 统一内存占用" : "引擎未上报"
+    }
+
     private var ttftText: String {
         guard let value = stats?.ttftMilliseconds, value > 0 else { return "—" }
         return String(format: "%.0f", value)
     }
 
     private var prefillText: String {
-        // 引擎真的按「本轮前向过的 token」量过的数优先，其次才是网关的
-        // 按请求聚合。应用自己按「整段提示词 / 首字耗时」估出来的口径已经废弃：
-        // 第二轮几乎全命中前缀缓存，分子里大部分 token 根本没被前向，
-        // 两者一除能把读数放大两个数量级。
-        let engine = stats.flatMap { $0.prefillRateIsLive ? $0.prefillTokensPerSecond : nil }
-        let value = engine ?? state.gatewayPrefillRate ?? stats?.prefillTokensPerSecond
-        guard let value, value > 0 else { return "—" }
+        // 只显示引擎自己量过的数。网关那套「(整段提示词 − 缓存命中) / 首字耗时」
+        // 已经废弃：分母是 TTFT，里面混着排队与缓存恢复，而分子只能在末帧
+        // usage 到达后才知道命中量——请求进行中它算不出可靠的预填充速度。
+        // 引擎没有报这个方向的速率时，宁可显示「—」。
+        guard let value = state.stats?.prefillTokensPerSecond, value > 0 else { return "—" }
         return Format.compact(value)
+    }
+
+    /// 预填充读数的粒度角标。空闲时把上一请求的实测值挂成「当前速度」正是
+    /// 之前那个恒定大数字的来源，所以界层必须说清这个数字回答的是哪个问题
+    /// （对齐 MTPLX 自己的 prefill 面板：active / last / mean 三态）。
+    private var prefillBadge: (text: String, tint: Color)? {
+        guard let value = state.stats?.prefillTokensPerSecond, value > 0 else { return nil }
+        switch state.stats?.prefillRateKind ?? .none {
+        case .live: return ("LIVE", Console.accent)
+        case .lastRequest: return ("LAST", Console.warn)
+        case .lifetimeMean: return ("AVG", Console.tertiary)
+        case .none: return nil
+        }
+    }
+
+    /// 大数字的来源角标。速度统一走网关，所以这里只区分「网关实时」、
+    /// 「网关刚结束的均值」和「引擎实时兜底」；不再把引擎的 LAST/AVG
+    /// 混进当前速度。
+    private var decodeBadge: (text: String, tint: Color)? {
+        guard decodeRate > 0 else { return nil }
+        switch speedOrigin {
+        case .gatewayLive: return ("网关估算", Console.info)
+        case .gatewayLast: return ("网关 LAST", Console.warn)
+        case .engineLive: return ("引擎实时", Console.accent)
+        case .none: return nil
+        }
+    }
+
+    /// 预填充卡下方那行说明。它必须随粒度一起变：把开机以来的均值说成
+    /// 「长提示词处理速度」正是在撒谎。
+    private var prefillHint: String {
+        guard state.isRunning else { return "引擎未运行" }
+        switch state.stats?.prefillRateKind ?? .none {
+        case .live: return "引擎 · 正在处理提示词"
+        case .lastRequest: return "引擎 · 上一个请求的实测值"
+        case .lifetimeMean: return "引擎 · 开机以来均值"
+        case .none: return "引擎未上报"
+        }
     }
 
     private var memoryPercentText: String {
@@ -421,22 +500,21 @@ struct OverviewPage: View {
                     Text("总解码 · 最近 60 秒")
                         .font(.system(size: 13.5, weight: .medium))
                         .foregroundStyle(Console.text)
-                    Text(Format.compact(decodeRate))
+                    Text(rateText(decodeRate))
                         .font(.system(size: 15, weight: .semibold, design: .monospaced))
                         .foregroundStyle(Console.text)
                     Text("tok/s")
                         .font(.system(size: 10.5, design: .monospaced))
                         .foregroundStyle(Console.tertiary)
                     Spacer(minLength: 0)
-                    StatusChip(text: state.isRunning ? "LIVE" : "IDLE",
-                               color: state.isRunning ? Console.ok : Console.tertiary,
-                               filled: true)
+                    StatusChip(text: speedChip.text, color: speedChip.color, filled: true)
+                        .help("速度来源：网关按请求估算 / 引擎实时计数 / 上一请求均值")
                 }
 
-                if samples.isEmpty {
+                if samples.count < 2 {
                     ZStack {
                         chartGrid
-                        Text("引擎未运行 · 暂无解码数据")
+                        Text(chartEmptyText)
                             .font(.system(size: 11.5))
                             .foregroundStyle(Console.tertiary)
                     }
@@ -453,6 +531,7 @@ struct OverviewPage: View {
                             .foregroundStyle(Console.accent)
                             .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
                     }
+                    .chartXScale(domain: chartWindow)
                     .chartYScale(domain: 0...(peak * 1.2))
                     .chartXAxis(.hidden)
                     .chartYAxis {
@@ -469,6 +548,41 @@ struct OverviewPage: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// 固定 60 秒横轴。Swift Charts 默认按样本的时间范围铺满宽度，样本稀疏时
+    /// 两三个点会被拉伸成一整条长线，看起来像「60 秒都在跑」，和标题的
+    /// 「最近 60 秒」不是一回事。
+    private var chartWindow: ClosedRange<Date> {
+        let now = Date()
+        return now.addingTimeInterval(-60)...now
+    }
+
+    /// 曲线右上角只报来源，不再拿 `isRunning` 冒充「速率是实时的」。
+    private var speedChip: (text: String, color: Color) {
+        switch speedOrigin {
+        case .gatewayLive: return ("网关", Console.info)
+        case .gatewayLast: return ("LAST", Console.warn)
+        case .engineLive: return ("引擎", Console.accent)
+        case .none: return (state.isRunning ? "等待" : "IDLE", Console.tertiary)
+        }
+    }
+
+    /// 没有曲线点时，说清楚是「没在跑」还是「引擎只给均值/终值」，
+    /// 不要让空白图看起来像故障。
+    private var chartEmptyText: String {
+        guard state.isRunning else { return "引擎未运行 · 暂无解码数据" }
+        switch speedOrigin {
+        case .gatewayLast: return "上一请求已结束 · 等待新的实时样本"
+        case .gatewayLive, .engineLive: return "等待实时样本"
+        case .none:
+            switch state.stats?.decodeRateKind ?? .none {
+            case .lastRequest: return "引擎只报上一请求终值 · 等待网关样本"
+            case .lifetimeMean: return "引擎只报累计均值 · 等待网关样本"
+            case .live: return "引擎有实时计数 · 等待首个样本"
+            case .none: return "等待网关实时样本"
+            }
+        }
     }
 
     private var chartGrid: some View {
@@ -494,18 +608,26 @@ struct OverviewPage: View {
 
     private var recentRequests: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
-            let sessions = GatewayMeter.shared.snapshot(historyPoints: 0, limit: 6).reversed()
+            let sessions = GatewayMeter.shared.snapshot(limit: 6).reversed()
             GlassCard(padding: 18) {
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack {
+                    HStack(spacing: 6) {
                         Text("最近请求")
                             .font(.system(size: 13.5, weight: .medium))
                             .foregroundStyle(Console.text)
+                        Text("网关估算")
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .tracking(0.5)
+                            .foregroundStyle(Console.tertiary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1.5)
+                            .overlay(Capsule().strokeBorder(Console.insetStroke, lineWidth: 0.8))
                         Spacer(minLength: 0)
                         Text("\(sessions.count) 条")
                             .font(.system(size: 10.5, design: .monospaced))
                             .foregroundStyle(Console.tertiary)
                     }
+                    .help("速度与上下文由网关按流式分片估算，不是引擎上报")
                     if sessions.isEmpty {
                         VStack(spacing: 8) {
                             Spacer(minLength: 0)
@@ -533,20 +655,20 @@ struct OverviewPage: View {
         .frame(maxHeight: .infinity)
     }
 
-    private func requestRow(_ session: [String: Any]) -> some View {
-        let stateName = session["state"] as? String ?? "decode"
-        let model = (session["model"] as? String) ?? "未命名"
-        let decode = session["decodeRate"] as? Double ?? 0
-        let ctx = session["ctxTokens"] as? Int ?? 0
+    private func requestRow(_ session: GatewayMeter.SessionSnapshot) -> some View {
+        let decode = session.decodeRate
+        let ctx = session.ctxTokens
         return HStack(spacing: 8) {
-            StatusChip(text: stateLabel(stateName), color: sessionColor(stateName), filled: true)
-            Text(state.shortModelName(model))
+            StatusChip(text: stateLabel(session.state),
+                       color: sessionColor(session.state),
+                       filled: true)
+            Text(state.shortModelName(session.model.isEmpty ? "未命名" : session.model))
                 .font(.system(size: 11.5))
                 .foregroundStyle(Console.text)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 4)
-            Text("\(Format.compact(decode)) tok/s")
+            Text(decode > 0 ? "\(Format.compact(decode)) tok/s" : "—")
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(Console.secondary)
             Text(Format.tokens(ctx))
@@ -556,21 +678,21 @@ struct OverviewPage: View {
         .padding(.vertical, 7)
     }
 
-    private func sessionColor(_ state: String) -> Color {
+    private func sessionColor(_ state: GatewayMeter.SessionSnapshot.State) -> Color {
         switch state {
-        case "decode": return Console.ok
-        case "prefill": return Console.info
-        case "failed": return Console.danger
-        default: return Console.tertiary
+        case .decode: return Console.ok
+        case .prefill: return Console.info
+        case .failed: return Console.danger
+        case .done: return Console.tertiary
         }
     }
 
-    private func stateLabel(_ state: String) -> String {
+    private func stateLabel(_ state: GatewayMeter.SessionSnapshot.State) -> String {
         switch state {
-        case "decode": return "解码"
-        case "prefill": return "预填"
-        case "failed": return "失败"
-        default: return "完成"
+        case .decode: return "解码"
+        case .prefill: return "预填"
+        case .failed: return "失败"
+        case .done: return "完成"
         }
     }
 }
@@ -599,21 +721,5 @@ private struct Sparkline: View {
                     style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round, dash: samples.isEmpty ? [3, 5] : []))
         }
         .accessibilityHidden(true)
-    }
-}
-
-private struct MiniBars: View {
-    let levels: [Double]
-    var tint: Color
-
-    var body: some View {
-        HStack(alignment: .bottom, spacing: 2) {
-            ForEach(Array(levels.enumerated()), id: \.offset) { _, level in
-                Capsule()
-                    .fill(tint.opacity(0.28))
-                    .frame(width: 3, height: max(4, 22 * level * 4))
-            }
-        }
-        .frame(height: 24, alignment: .bottom)
     }
 }

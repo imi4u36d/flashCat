@@ -13,8 +13,8 @@ extension ServerStats {
         self.init()
         decodeTokensPerSecond = status.decodeTokensPerSecond
         prefillTokensPerSecond = status.prefillTokensPerSecond
-        decodeRateIsLive = status.decodeRateIsLive
-        prefillRateIsLive = status.prefillRateIsLive
+        decodeRateKind = status.decodeRateKind
+        prefillRateKind = status.prefillRateKind
         draftAcceptance = status.draftAcceptance
         ttftMilliseconds = status.ttftMilliseconds
         activeRequests = status.activeRequests

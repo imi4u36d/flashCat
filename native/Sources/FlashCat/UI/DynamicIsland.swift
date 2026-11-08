@@ -61,11 +61,14 @@ struct DynamicIsland: View {
     private var rate: Double {
         // 引擎能给出真实时计数时优先用它：它覆盖所有会话（含直连引擎端口的
         // agent 请求），不会被「应用内这一路」或「上一轮请求的均值」带偏。
-        if state.stats?.decodeRateIsLive == true,
+        if state.stats?.decodeRateKind == .live,
            let engine = state.stats?.decodeTokensPerSecond, engine > 0 {
             return engine
         }
-        return state.liveDecodeRate ?? state.stats?.decodeTokensPerSecond ?? 0
+        // 岛上显示的是「正在跑多快」，所以绝不回落到引擎的上一请求值或累计
+        // 均值——那会让胶囊在完全空闲时也显示一个不是当前速度的数字。
+        if let live = state.liveDecodeRate, live > 0 { return live }
+        return 0
     }
 
     private var hasNotices: Bool { !state.islandNotices.isEmpty }

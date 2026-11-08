@@ -21,6 +21,14 @@
     ],
     "mtplx": [
       {
+        "version": "2.12.3",
+        "url": "mtplx-2.12.3-arm64-macos26.0.tar.gz",
+        "sha256": "29d3f7c3242f7fb89bdfe414c22ee8a2640cce40dd7d90efd9d98595b6c7bd9c",
+        "bytes": 132039512,
+        "minMacOS": "26.0",
+        "notes": ""
+      },
+      {
         "version": "2.12.2",
         "url": "mtplx-2.12.2-arm64-macos26.0.tar.gz",
         "sha256": "359aa5ade5220250577ed55adf773aeccce480804841e691dede8cc393ebddec",

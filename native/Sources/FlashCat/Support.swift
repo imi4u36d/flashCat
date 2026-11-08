@@ -1,6 +1,7 @@
 import Foundation
 import Darwin
 import CryptoKit
+import FlashCatKit
 
 /// Thin NSRegularExpression wrappers. Swift regex literals are not available in
 /// the Swift 5 language mode this target is built with.
@@ -47,30 +48,22 @@ enum TextPattern {
     }
 }
 
-/// Shared paths, formatting helpers and low-level probes used across the app.
+/// Shared formatting helpers and low-level probes used across the app.
+///
+/// File locations live in `FlashCatPaths` (`FlashCatKit`) so the CLI resolves
+/// the same support directory, logs and model folders.
 enum Paths {
-    static var home: String {
-        let value = ProcessInfo.processInfo.environment["HOME"] ?? ""
-        return value.isEmpty ? NSHomeDirectory() : value
-    }
-
-    /// `FLASHCAT_SUPPORT_DIR` keeps tests and trial runs out of the real
-    /// application-support folder.
-    static var supportDirectory: String {
-        if let override = ProcessInfo.processInfo.environment["FLASHCAT_SUPPORT_DIR"], !override.isEmpty {
-            return override
-        }
-        return home + "/Library/Application Support/flashCat"
-    }
-    static var logsDirectory: String { home + "/Library/Logs/flashCat" }
-    static var logFile: String { logsDirectory + "/server.log" }
-    static var pidFile: String { supportDirectory + "/server.pid" }
-    static var conversationFile: String { supportDirectory + "/conversation.json" }
-    static var historyFile: String { supportDirectory + "/chat-history.json" }
+    static var home: String { FlashCatPaths.home }
+    static var supportDirectory: String { FlashCatPaths.supportDirectory }
+    static var logsDirectory: String { FlashCatPaths.logsDirectory }
+    static var logFile: String { FlashCatPaths.serverLogFile }
+    static var pidFile: String { FlashCatPaths.pidFile }
+    static var conversationFile: String { FlashCatPaths.conversationFile }
+    static var historyFile: String { FlashCatPaths.historyFile }
 
     /// Every engine, Splash included, keeps weights under the app's own data
     /// root. Splash keeps its historical nested `owner/repo` layout.
-    static var modelsDirectory: String { supportDirectory + "/models/splash" }
+    static var modelsDirectory: String { FlashCatPaths.modelsDirectory(.splash) }
 
     /// Read-only sources from builds that kept Splash under `~/.flashcat` or
     /// let the upstream Splash app own its assemblies.
@@ -80,11 +73,11 @@ enum Paths {
     }
 
     static func ensureDirectory(_ path: String) {
-        try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+        FlashCatPaths.ensureDirectory(path)
     }
 
     static func fileExists(_ path: String) -> Bool {
-        FileManager.default.fileExists(atPath: path)
+        FlashCatPaths.fileExists(path)
     }
 }
 

@@ -122,7 +122,7 @@ final class ChatHistory {
                                    createdAt: Self.parseLegacyDate(item["createdAt"] as? String),
                                    usage: usage,
                                    seconds: elapsed,
-                                   tokensPerSecond: (elapsed ?? 0) > 0 && tokens > 0 ? Double(tokens) / elapsed! : nil,
+                                   tokensPerSecond: legacyRate(tokens: tokens, elapsed: elapsed),
                                    firstTokenSeconds: (item["ttft"] as? Double).map { $0 / 1000 })
             }
             guard !converted.isEmpty else { return nil }
@@ -274,7 +274,7 @@ final class ConversationStore {
                                createdAt: ChatHistory.parseLegacyDate(row["createdAt"] as? String),
                                usage: usage,
                                seconds: elapsed,
-                               tokensPerSecond: (elapsed ?? 0) > 0 && tokens > 0 ? Double(tokens) / elapsed! : nil,
+                               tokensPerSecond: legacyRate(tokens: tokens, elapsed: elapsed),
                                firstTokenSeconds: (row["ttft"] as? Double).map { $0 / 1000 })
         }
     }
@@ -315,4 +315,11 @@ final class ConversationStore {
     func flushPendingWrites() {
         writeQueue.sync {}
     }
+}
+
+/// Tokens per second from the legacy `elapsed` field. A missing or zero
+/// duration means "not measured", not a division by zero.
+private func legacyRate(tokens: Int, elapsed: Double?) -> Double? {
+    guard let elapsed, elapsed > 0, tokens > 0 else { return nil }
+    return Double(tokens) / elapsed
 }

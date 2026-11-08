@@ -37,13 +37,30 @@ if command -v pkgbuild >/dev/null 2>&1; then
     rm -rf "$PAYLOAD"
     mkdir -p "$PAYLOAD"
     cp -R "$APP" "$PAYLOAD/flashCat.app"
+    # The pkg is the one install path that can put `flashcat` on PATH without
+    # asking the user to run anything. The postinstall is best effort: a
+    # read-only /usr/local/bin must not fail the application install.
+    SCRIPTS="$OUT_DIR/.pkg-scripts"
+    rm -rf "$SCRIPTS"
+    mkdir -p "$SCRIPTS"
+    cat > "$SCRIPTS/postinstall" <<'POSTINSTALL'
+#!/bin/bash
+set -e
+TARGET="/Applications/flashCat.app/Contents/Helpers/flashcat"
+if [ -x "$TARGET" ] && [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
+    ln -sfn "$TARGET" /usr/local/bin/flashcat 2>/dev/null || true
+fi
+exit 0
+POSTINSTALL
+    chmod +x "$SCRIPTS/postinstall"
     pkgbuild \
         --identifier "$IDENTIFIER" \
         --version "$VERSION" \
         --install-location /Applications \
         --root "$PAYLOAD" \
+        --scripts "$SCRIPTS" \
         "$PKG"
-    rm -rf "$PAYLOAD"
+    rm -rf "$PAYLOAD" "$SCRIPTS"
     echo "     $PKG ($(du -sh "$PKG" | cut -f1), double-click installs into /Applications)"
 else
     echo "warning: pkgbuild not available; skipped the .pkg installer" >&2

@@ -161,6 +161,16 @@
         }
       }
     },
+    "%@ 端口": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ Port"
+          }
+        }
+      }
+    },
     "%@ 缺少 DFlash2 加速模型，先下载好再启动": {
       "localizations": {
         "en": {
@@ -431,6 +441,16 @@
         }
       }
     },
+    "API 网关端口": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API Gateway Port"
+          }
+        }
+      }
+    },
     "APP 透明度": {
       "localizations": {
         "en": {
@@ -457,6 +477,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "DFlash2 speculative decoding"
+          }
+        }
+      }
+    },
+    "Hugging Face Token": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face Token"
+          }
+        }
+      }
+    },
+    "Hugging Face 端点": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face Endpoint"
           }
         }
       }
@@ -561,12 +601,12 @@
         }
       }
     },
-    "esc": {
+    "Top P": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "esc"
+            "value": "Top P"
           }
         }
       }
@@ -587,6 +627,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "flashCat users"
+          }
+        }
+      }
+    },
+    "flashcat 命令": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "flashcat command"
           }
         }
       }
@@ -647,16 +697,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "≈%@–%@ GB memory"
-          }
-        }
-      }
-    },
-    "⌘K": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "⌘K"
           }
         }
       }
@@ -787,6 +827,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Download Cache"
+          }
+        }
+      }
+    },
+    "下载缓存目录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download Cache Folder"
           }
         }
       }
@@ -1117,6 +1167,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Off"
+          }
+        }
+      }
+    },
+    "关闭命令面板": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close command palette"
           }
         }
       }
@@ -1661,6 +1721,46 @@
         }
       }
     },
+    "命令行工具": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Command-line Tool"
+          }
+        }
+      }
+    },
+    "命令行接口": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Command-line Interface"
+          }
+        }
+      }
+    },
+    "命令行接口端口": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Command-line Interface Port"
+          }
+        }
+      }
+    },
+    "命令行用法已复制": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "CLI usage copied"
+          }
+        }
+      }
+    },
     "回到最新": {
       "localizations": {
         "en": {
@@ -1717,6 +1817,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "View in Models"
+          }
+        }
+      }
+    },
+    "在终端运行 flashcat --help 查看全部命令": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Run flashcat --help in Terminal for every command"
           }
         }
       }
@@ -2791,6 +2901,36 @@
         }
       }
     },
+    "控制端口": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Control Port"
+          }
+        }
+      }
+    },
+    "推理引擎": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inference Engines"
+          }
+        }
+      }
+    },
+    "推理等级": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reasoning Effort"
+          }
+        }
+      }
+    },
     "推荐 · %@": {
       "localizations": {
         "en": {
@@ -3041,12 +3181,12 @@
         }
       }
     },
-    "显示 / 隐藏玻璃导航列（⌘\\）": {
+    "显示 / 隐藏玻璃导航列": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Show / hide the glass navigation column (⌘\\)"
+            "value": "Show / hide the glass navigation column"
           }
         }
       }
@@ -3057,16 +3197,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Show Sidebar"
-          }
-        }
-      }
-    },
-    "显示边栏（⌘\\）": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Show Sidebar (⌘\\)"
           }
         }
       }
@@ -3151,12 +3281,32 @@
         }
       }
     },
+    "最大上下文参数": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Max Context Argument"
+          }
+        }
+      }
+    },
     "最大内存": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Max Memory"
+          }
+        }
+      }
+    },
+    "最大内存参数": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Max Memory Argument"
           }
         }
       }
@@ -3347,6 +3497,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Local weights"
+          }
+        }
+      }
+    },
+    "本机 flashcat 命令的连接端口": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Port the local flashcat command connects to"
           }
         }
       }
@@ -3631,6 +3791,16 @@
         }
       }
     },
+    "没有可用的引擎": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No engine available"
+          }
+        }
+      }
+    },
     "没有可用的引擎运行时。装一台就能开始；之后可以在引擎页随时加装其他引擎。": {
       "localizations": {
         "en": {
@@ -3727,6 +3897,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Activating"
+          }
+        }
+      }
+    },
+    "点击一行运行命令": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click a row to run the command"
           }
         }
       }
@@ -3851,6 +4031,16 @@
         }
       }
     },
+    "磁盘": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disk"
+          }
+        }
+      }
+    },
     "磁盘不足": {
       "localizations": {
         "en": {
@@ -3971,6 +4161,16 @@
         }
       }
     },
+    "纯文本": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Text Only"
+          }
+        }
+      }
+    },
     "统一内存占用": {
       "localizations": {
         "en": {
@@ -4077,6 +4277,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Save"
+          }
+        }
+      }
+    },
+    "被占用时会自动顺延，实际端口写在 control.json": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Falls forward when taken; the actual port is written to control.json"
           }
         }
       }
@@ -4211,12 +4421,12 @@
         }
       }
     },
-    "输入关键词回车，或留空看热门；也可以直接填 owner/repo 下载。": {
+    "输入关键词后点「搜索」，或留空看热门；也可以直接填 owner/repo 下载。": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Press Return to search, leave empty for trending, or enter owner/repo to download."
+            "value": "Type a keyword and press Search, leave it empty for trending, or enter owner/repo to download."
           }
         }
       }
@@ -4541,16 +4751,6 @@
         }
       }
     },
-    "隐藏边栏（⌘\\）": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Hide Sidebar (⌘\\)"
-          }
-        }
-      }
-    },
     "页面": {
       "localizations": {
         "en": {
@@ -4607,6 +4807,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Extra Arguments"
+          }
+        }
+      }
+    },
+    "额外启动参数": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Extra Launch Arguments"
           }
         }
       }
@@ -4687,6 +4897,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Defaults to HF_HUB_CACHE"
+          }
+        }
+      }
+    },
+    "默认引擎端口": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Default Engine Port"
           }
         }
       }

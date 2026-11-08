@@ -251,7 +251,6 @@ struct GlassFilterBar<Value: Hashable>: View {
                         .textFieldStyle(.plain)
                         .font(.system(size: 12.5))
                         .focused($focused)
-                        .onSubmit { collapseIfEmpty() }
                     if !query.isEmpty {
                         Button {
                             query = ""

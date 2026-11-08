@@ -8,6 +8,7 @@ struct SettingsPage: View {
     @ObservedObject private var background = BackgroundSettings.shared
     @State private var ports: [String: String] = [:]
     @State private var gatewayPort = ""
+    @State private var controlPort = ""
     @State private var cachePath = ""
     /// 思考设置走 `@AppStorage` 而不是本地镜像：`AppSettings` 不是
     /// ObservableObject，只写 UserDefaults 不会触发 SwiftUI 重新求值。
@@ -64,6 +65,7 @@ struct SettingsPage: View {
     private var rightColumn: some View {
         VStack(spacing: 18) {
             gatewayCard
+            cliCard
             thinkingCard
             infoCard
         }
@@ -76,6 +78,7 @@ struct SettingsPage: View {
         }
         ports = values
         gatewayPort = String(state.settings.gatewayPort)
+        controlPort = String(state.settings.controlPort)
         cachePath = state.settings.hfCache
     }
 
@@ -218,7 +221,6 @@ struct SettingsPage: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 11.5, design: .monospaced))
                 .frame(width: 54)
-                .onSubmit { applyPort(id) }
             VStack(spacing: 0) {
                 Button { stepPort(id, by: 1) } label: {
                     Image(systemName: "chevron.up").font(.system(size: 7, weight: .bold))
@@ -230,6 +232,17 @@ struct SettingsPage: View {
                 .buttonStyle(.plainHit)
             }
             .foregroundStyle(Console.tertiary)
+            // 输入框没有回车提交：改完端口点这个按钮才生效。
+            Button { applyPort(id) } label: {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Console.secondary)
+                    .frame(width: 20, height: 20)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plainHit)
+            .help(L10n.t("应用"))
+            .accessibilityLabel(L10n.t("应用"))
         }
         .padding(.horizontal, 9)
         .frame(height: 28)
@@ -324,6 +337,67 @@ struct SettingsPage: View {
         }
     }
 
+    private var cliCard: some View {
+        SettingsCard {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(L10n.t("命令行接口"))
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Console.text)
+                    Text(L10n.t("本机 flashcat 命令的连接端口"))
+                        .font(.system(size: 11))
+                        .foregroundStyle(Console.tertiary)
+                }
+                Spacer(minLength: 0)
+                Toggle("", isOn: Binding(
+                    get: { state.settings.controlAPIEnabled },
+                    set: { value in
+                        state.settings.setControlAPIEnabled(value)
+                        state.applyControlSettings()
+                    }))
+                    .toggleStyle(.switch)
+                    .controlSize(.regular)
+                    .labelsHidden()
+                    .tint(Console.accent)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+
+            Divider().overlay(Console.insetStroke)
+
+            SettingsRow(title: "控制端口", detail: "被占用时会自动顺延，实际端口写在 control.json") {
+                HStack(spacing: 4) {
+                    Text(":")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(Console.tertiary)
+                    TextField("9100", text: $controlPort)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .frame(width: 54)
+                    Button("应用") {
+                        if let port = Int(controlPort), (1024...65535).contains(port) {
+                            state.settings.setControlPort(port)
+                            state.applyControlSettings()
+                        }
+                    }
+                    .buttonStyle(.consoleSoft)
+                }
+                .padding(.horizontal, 9)
+                .frame(height: 28)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Console.inset))
+            }
+
+            Divider().overlay(Console.insetStroke)
+
+            SettingsRow(title: "命令行工具", detail: "在终端运行 flashcat --help 查看全部命令") {
+                Button("复制") {
+                    state.copy("flashcat --help", label: "命令行用法已复制")
+                }
+                .buttonStyle(.consoleSecondary)
+            }
+        }
+    }
+
     private var thinkingCard: some View {
         SettingsCard {
             SettingsRow(title: "思考模式", detail: "回答前是否输出推理过程") {
@@ -404,8 +478,11 @@ struct SettingsPage: View {
                     background.blur = 18
                     state.settings.setAutoStart(false)
                     state.settings.setGatewayEnabled(true)
+                    state.settings.setControlAPIEnabled(true)
+                    state.settings.setControlPort(9100)
                     state.resetChatParameters()
                     state.applyGatewaySettings()
+                    state.applyControlSettings()
                     state.toast("已恢复默认设置")
                 }
                 .buttonStyle(.consoleSoft)

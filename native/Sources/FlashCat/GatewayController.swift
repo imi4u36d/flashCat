@@ -42,8 +42,9 @@ final class GatewayController: ObservableObject {
                 status: 500)
         }
         guard await newServer.start(port: port) else {
-            failureMessage = "端口 \(port) 被占用，网关未启动"
-            logs.append("==> \(failureMessage!)", level: .error)
+            let message = "端口 \(port) 被占用，网关未启动"
+            failureMessage = message
+            logs.append("==> \(message)", level: .error)
             isRunning = false
             return
         }

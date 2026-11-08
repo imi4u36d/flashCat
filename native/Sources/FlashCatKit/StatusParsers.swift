@@ -163,7 +163,7 @@ public enum EngineStatusParser {
             // 引擎没给实时场时兜底。过去优先用均值，读数会越跑越钝。
             let rate = reported ?? (done > 0 && elapsed > 0 ? done / elapsed : nil)
             guard let rate, rate > 0 else { continue }
-            if best == nil || elapsed > best!.elapsed { best = (elapsed, rate) }
+            if best.map({ elapsed > $0.elapsed }) ?? true { best = (elapsed, rate) }
         }
         return best?.rate
     }

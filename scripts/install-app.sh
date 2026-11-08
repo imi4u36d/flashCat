@@ -132,6 +132,18 @@ SIZE="$(du -sh "$TARGET" | cut -f1)"
 echo "==> Installed flashCat $INSTALLED_VERSION to $TARGET ($SIZE)"
 INSTALL_OK=1
 
+# The CLI lives inside the bundle; link it into a writable system bin folder
+# when the user already has one. Otherwise `flashcat cli install` (or the pkg
+# postinstall) is the documented path.
+if [ -x "$TARGET/Contents/Helpers/flashcat" ]; then
+    CLI_LINK="/usr/local/bin/flashcat"
+    if [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
+        ln -sfn "$TARGET/Contents/Helpers/flashcat" "$CLI_LINK" 2>/dev/null             && echo "     linked $CLI_LINK -> $TARGET/Contents/Helpers/flashcat"
+    else
+        echo "     CLI: $TARGET/Contents/Helpers/flashcat (run 'flashcat cli install' to put it on PATH)"
+    fi
+fi
+
 # 6b. Bookkeeping only, now that the new bundle is in place: drop older
 #     backups. Never fatal — a leftover backup costs disk, a missing app costs
 #     the install.

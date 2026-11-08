@@ -518,7 +518,7 @@ struct ConsoleTitlebar: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plainHit)
-        .help(L10n.t(state.showsSidebar ? "隐藏边栏（⌘\\）" : "显示边栏（⌘\\）"))
+        .help(L10n.t(state.showsSidebar ? "隐藏边栏" : "显示边栏"))
         .accessibilityLabel(L10n.t(state.showsSidebar ? "隐藏边栏" : "显示边栏"))
     }
 

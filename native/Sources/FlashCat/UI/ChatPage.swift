@@ -321,12 +321,6 @@ struct ChatPage: View {
                             composerFocused = true
                         }
                 }
-                .onKeyPress(phases: .down) { press in
-                    guard press.key == .return else { return .ignored }
-                    if press.modifiers.contains(.shift) { return .ignored }
-                    send()
-                    return .handled
-                }
 
             HStack(spacing: 10) {
                 Button {
@@ -689,7 +683,6 @@ struct ChatParametersSheet: View {
             Spacer(minLength: 0)
             Button("完成") { dismiss() }
                 .buttonStyle(.arcadePill)
-                .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, Native.pagePadding)
         .padding(.vertical, 12)

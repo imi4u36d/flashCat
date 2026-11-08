@@ -281,8 +281,35 @@ enum HubClient {
 
     /// 详情按仓库记忆一次：模型卡是整篇 README（几个 KB），来回翻 tab 不该
     /// 反复下载。只缓存在内存里，最多留 60 个仓库。
-    private static var cache: [String: HubModel] = [:]
-    private static var cacheOrder: [String] = []
+    ///
+    /// `enrich` 会并发拉取同一页的多个仓库，所以缓存必须带锁；两个裸静态
+    /// 字典在 Swift 6 下也是明确的跨线程可变状态。
+    private final class DetailCache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var values: [String: HubModel] = [:]
+        private var order: [String] = []
+        private let limit = 60
+
+        func value(for key: String) -> HubModel? {
+            lock.lock()
+            defer { lock.unlock() }
+            return values[key]
+        }
+
+        func store(_ model: HubModel) {
+            lock.lock()
+            defer { lock.unlock() }
+            if values[model.id] == nil {
+                order.append(model.id)
+                if order.count > limit {
+                    values.removeValue(forKey: order.removeFirst())
+                }
+            }
+            values[model.id] = model
+        }
+    }
+
+    private static let cache = DetailCache()
 
     /// 一页的条数。HF 的 `skip` 就是纯偏移量，所以翻页不需要游标，
     /// 「第 N 页」算得出来，也能直接跳回上一页。
@@ -295,7 +322,9 @@ enum HubClient {
         page: Int = 0,
         limit: Int = pageSize
     ) async throws -> [HubModel] {
-        var components = URLComponents(string: endpoint + "/api/models")!
+        guard var components = URLComponents(string: endpoint + "/api/models") else {
+            throw HubClientError.message("模型广场地址无效：\(endpoint)")
+        }
         var items: [URLQueryItem] = []
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { items.append(URLQueryItem(name: "search", value: trimmed)) }
@@ -328,9 +357,9 @@ enum HubClient {
     /// on screen; opening the model card still adds the README separately.
     static func metadata(_ repo: String, force: Bool = false) async throws -> HubModel {
         let key = repo.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !force, let cached = cache[key] { return cached }
+        if !force, let cached = cache.value(for: key) { return cached }
         let model = try await fetchMetadata(key)
-        store(model)
+        cache.store(model)
         return model
     }
 
@@ -356,7 +385,7 @@ enum HubClient {
             }
             for original in chunk {
                 let model = enriched[original.id] ?? original
-                if model.files.isEmpty == false { store(model) }
+                if model.files.isEmpty == false { cache.store(model) }
                 result.append(model)
             }
         }
@@ -365,10 +394,10 @@ enum HubClient {
 
     static func detail(_ repo: String, force: Bool = false) async throws -> HubModel {
         let key = repo.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !force, let cached = cache[key], cached.modelCard != nil { return cached }
+        if !force, let cached = cache.value(for: key), cached.modelCard != nil { return cached }
         var model = try await metadata(key, force: force)
         model.modelCard = try? await card(key)
-        store(model)
+        cache.store(model)
         return model
     }
 
@@ -446,17 +475,6 @@ enum HubClient {
             }
         }
         return model
-    }
-
-    private static func store(_ model: HubModel) {
-        if cache[model.id] == nil {
-            cacheOrder.append(model.id)
-            if cacheOrder.count > 60, let oldest = cacheOrder.first {
-                cacheOrder.removeFirst()
-                cache.removeValue(forKey: oldest)
-            }
-        }
-        cache[model.id] = model
     }
 
     private static func get(_ url: URL) async throws -> Data {

@@ -81,7 +81,7 @@ struct HubSheet: View {
                     } else if models.isEmpty {
                         EmptyHint(icon: "magnifyingglass",
                                   title: "搜一个模型仓库",
-                                  detail: "输入关键词回车，或留空看热门；也可以直接填 owner/repo 下载。")
+                                  detail: "输入关键词后点「搜索」，或留空看热门；也可以直接填 owner/repo 下载。")
                             .padding(.vertical, 30)
                     } else {
                         ForEach(models) { model in
@@ -124,7 +124,6 @@ struct HubSheet: View {
                 TextField("搜索模型仓库，例如 Qwen3 Coder", text: $query)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12.5))
-                    .onSubmit { runSearch(page: 0) }
                 if !query.isEmpty {
                     Button {
                         query = ""
@@ -441,7 +440,6 @@ struct HubSheet: View {
                 TextField("直接填 owner/repo 下载", text: $directRepo)
                     .textFieldStyle(.plain)
                     .font(Native.monoFont)
-                    .onSubmit(downloadDirect)
                 Button("下载", action: downloadDirect)
                     .buttonStyle(.consoleSecondary)
                     .disabled(directRepo.trimmingCharacters(in: .whitespaces).isEmpty)

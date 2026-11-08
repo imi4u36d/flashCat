@@ -3,7 +3,7 @@ import Network
 
 /// One parsed inbound request. Header names are lowercased; the path keeps no
 /// query string (the split parts live in `query`).
-public struct GatewayRequest {
+public struct GatewayRequest: Sendable {
     public let method: String
     public let path: String
     public let query: [String: String]
@@ -25,7 +25,11 @@ public struct GatewayRequest {
 /// What a route answers with. A JSON response is written in one go; an SSE
 /// response hands the route a session it pushes events through until the
 /// upstream (or the client) is done.
-public struct GatewayResponse {
+/// Handed from a route (which may hop onto the main actor) back to the
+/// connection queue. The payload is immutable once built and the optional
+/// stream closure is the only non-Sendable member; the server owns both sides,
+/// so the unchecked conformance is the honest description of the handoff.
+public struct GatewayResponse: @unchecked Sendable {
     public var status: Int = 200
     public var contentType: String = "application/json"
     public var headers: [String: String] = [:]
@@ -106,7 +110,10 @@ public final class GatewaySSESession: @unchecked Sendable {
 /// handler, keep-alive, and enough of the protocol for OpenAI / Anthropic SDK
 /// clients: request line, headers, Content-Length bodies, and streamed
 /// `text/event-stream` answers.
-public final class GatewayHTTPServer {
+/// `@unchecked Sendable`: every mutable field is either immutable (`handler`)
+/// or guarded by `lock`; the listener and connections are only touched on
+/// `queue`. Connection callbacks therefore may hop between queues safely.
+public final class GatewayHTTPServer: @unchecked Sendable {
     /// A request body larger than this is refused — these are chat calls, and
     /// even a base64 image batch stays far below the cap.
     public static let maximumBodyBytes = 128 * 1024 * 1024
@@ -129,6 +136,14 @@ public final class GatewayHTTPServer {
         return port
     }
 
+    /// `NSLock.lock()` is unavailable directly in an async function; this
+    /// synchronous hop keeps the write under the same lock `boundPort` reads.
+    private func setBoundPort(_ value: UInt16) {
+        lock.lock()
+        defer { lock.unlock() }
+        port = value
+    }
+
     /// Binds 127.0.0.1:`port` and returns once the listener is ready (true) or
     /// failed (false, e.g. the port is taken).
     public func start(port: UInt16) async -> Bool {
@@ -138,7 +153,7 @@ public final class GatewayHTTPServer {
         parameters.allowLocalEndpointReuse = true
         guard let listener = try? NWListener(using: parameters) else { return false }
 
-        self.port = port
+        setBoundPort(port)
         return await withCheckedContinuation { (resume: CheckedContinuation<Bool, Never>) in
             listener.stateUpdateHandler = { state in
                 switch state {
@@ -360,7 +375,8 @@ public final class GatewayHTTPServer {
         write(connection, data: Data((head + body).utf8)) { _ in connection.cancel() }
     }
 
-    private func write(_ connection: NWConnection, data: Data, completion: @escaping (Error?) -> Void) {
+    private func write(_ connection: NWConnection, data: Data,
+                       completion: @escaping @Sendable (Error?) -> Void) {
         connection.send(content: data, completion: .contentProcessed { error in
             completion(error)
         })

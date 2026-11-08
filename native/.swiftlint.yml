@@ -5,11 +5,11 @@
 #     swiftlint --write-baseline .swiftlint.baseline.json
 #
 # once, commit the baseline, and let CI gate only newly introduced violations.
-# Then shrink the baseline month by month. Demanding 21k lines to be clean on
+# Then shrink the baseline month by month. Demanding ~38k lines to be clean on
 # day one is how lint gets switched off.
 #
 # Thresholds below are set to what the code can realistically reach, not to
-# what it is now: AppState.swift is 2,511 lines and would fail every size rule,
+# what it is now: AppState.swift is ~3.2k lines and would fail every size rule,
 # which is recorded in docs/reviews/2026-11-04-architecture-review.md as P0-2.
 
 included:
@@ -86,11 +86,3 @@ type_name:
   max_length:
     warning: 50
     error: 60
-
-custom_rules:
-  no_window_assignment:
-    name: "No ad-hoc global injection"
-    regex: "window\\.[A-Za-z_$][A-Za-z0-9_$]*\\s*=(?!=)"
-    message: "禁止用 window.X = 注入全局；模块间通过显式 API 通信（见 P0-1）。"
-    severity: warning
-    included: "Sources/FlashCat/WebUI/.*\\.js"

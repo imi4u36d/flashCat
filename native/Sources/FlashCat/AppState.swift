@@ -41,7 +41,7 @@ enum SpeedOrigin: Equatable {
     case none
     /// 网关在跑会话的低通速率之和。
     case gatewayLive
-    /// 网关没有在跑会话，读数是刚结束会话的全程均值（linger 内）。
+    /// 网关没有在跑会话，读数是最近一次已结束请求的全程均值。
     case gatewayLast
     /// 网关看不见的直连请求，用引擎的实时计数兜底。
     case engineLive
@@ -185,7 +185,7 @@ final class AppState: ObservableObject {
     /// 所以大数字就是活跃行之和；应用内对话也注册在 `GatewayMeter` 里。
     @Published private(set) var gatewayDecodeRate: Double = 0
     /// `gatewayDecodeRate` 是否来自在跑会话。false = 没有在跑会话，当前值
-    /// 只是刚结束会话的全程均值（linger 内），界面必须标成 LAST。
+    /// 只是最近一次已结束请求的全程均值，界面必须标成 LAST。
     @Published private(set) var gatewayRateIsLive = false
     /// 预填充**没有**网关侧聚合：网关的「(整段提示词 − 缓存命中) / 首字耗时」
     /// 口径已废弃（分母混着排队与缓存恢复，分子要等末帧 usage），概览只显示
@@ -355,6 +355,8 @@ final class AppState: ObservableObject {
     /// The fixed-port API gateway (OpenAI + Claude formats). One instance for
     /// the whole app; requests it serves read the live engine state from here.
     let gateway = GatewayController.shared
+    /// The loopback command channel used by the bundled `flashcat` CLI.
+    let control = ControlServer()
     var engines: EngineManager?
     /// Pack installs shown on the engines page; owns its own installer actor.
     let installs = EngineInstallCenter()
@@ -762,8 +764,8 @@ final class AppState: ObservableObject {
             gatewayRateIsLive = gatewayOverview.isLive
         }
         // 生成期间按 0.5 秒采样（publishDecodeRate），空闲时按 1 秒；两者都
-        // 只落到同一个网关聚合值上。没有在跑会话时 overview 给的是刚结束
-        // 会话的全程均值，`gatewayRateIsLive` 会把它标成 LAST。
+        // 只落到同一个网关聚合值上。没有在跑会话时 overview 给的是最近一次
+        // 已结束请求的全程均值，`gatewayRateIsLive` 会把它标成 LAST。
         if generating {
             // pollTimer 每秒仍会走到这里。生成中即使某个瞬间没有 delta 也照常
             // 落点，低通估计器会自己按停顿时长衰减，读数不会僵在旧值上。
@@ -829,8 +831,8 @@ final class AppState: ObservableObject {
     ///
     /// 应用内对话也注册在 `GatewayMeter` 里，所以这里和应用内生成期间的
     /// `publishDecodeRate` 读的是同一份按请求打点，hero 大数字与曲线末端
-    /// 不会各算各的。没有在跑会话时，网关给的是刚结束会话的全程均值，
-    /// 界面会按 `gatewayRateIsLive` 标成 LAST，不冒充当前速度。
+    /// 不会各算各的。没有在跑会话时，网关给的是最近一次已结束请求的
+    /// 全程均值，界面会按 `gatewayRateIsLive` 标成 LAST，不冒充当前速度。
     private func sampleSpeed(at now: Date) {
         let sample = totalDecodeRate
         guard sample > 0 else { return }
@@ -885,8 +887,8 @@ final class AppState: ObservableObject {
         catalog = service.load()
         if catalog.machine.isEmpty {
             selectedModel = settings.model
-        } else if settings.model.isEmpty {
-            selectedModel = catalog.machine.first!.id
+        } else if settings.model.isEmpty, let first = catalog.machine.first {
+            selectedModel = first.id
             settings.setModel(selectedModel)
         } else {
             selectedModel = settings.model
@@ -905,6 +907,10 @@ final class AppState: ObservableObject {
         // takes over: the first-run page and the launch page both ask "which
         // engine", and the recommendation is what answers it.
         settleRecommendation()
+
+        // The CLI needs a status endpoint even on a fresh install, so the
+        // command channel comes up before the launch-page early return.
+        startControlServerIfNeeded()
 
         // Nothing installed yet: the launch page takes over and picks an engine.
         guard !needsEngineSetup else {
@@ -926,6 +932,30 @@ final class AppState: ObservableObject {
 
         if settings.autoStart && !selectedModel.isEmpty {
             startService()
+        }
+    }
+
+    /// Start the CLI control channel when it is enabled and not already up.
+    /// Called from `bootstrap` and from the settings page after the toggle or
+    /// port changes.
+    func startControlServerIfNeeded() {
+        guard settings.controlAPIEnabled, !control.isRunning else { return }
+        let port = UInt16(settings.controlPort)
+        Task { [control] in
+            await control.start(preferredPort: port)
+        }
+    }
+
+    /// Apply the control-interface settings without requiring a relaunch.
+    func applyControlSettings() {
+        guard settings.controlAPIEnabled else {
+            control.stop()
+            return
+        }
+        let port = UInt16(settings.controlPort)
+        if control.isRunning, control.port == port { return }
+        Task { [control] in
+            await control.restart(port: port)
         }
     }
 
@@ -2344,26 +2374,29 @@ final class AppState: ObservableObject {
     ///
     /// 这是「开放下载」的入口：不设格式/家族门槛，支持与否交给用户自己
     /// 判断。卡片只负责标明来源（引擎推荐 / 个人下载），不再把人挡在门外。
-    func downloadShared(_ repo: String, engines: [EngineID]) {
+    /// - Returns: whether the transfer started. `false` comes with a `notice`,
+    ///   which the control server (and therefore the CLI) reports verbatim.
+    @discardableResult
+    func downloadShared(_ repo: String, engines: [EngineID]) -> Bool {
         guard downloadingModel == nil else {
             toast("正在下载另一个模型，先等它结束")
-            return
+            return false
         }
         let target = ModelSharing.canonical(repo.trimmingCharacters(in: .whitespaces))
         guard target.contains("/") else {
             notice = "仓库 id 要写成 owner/repo"
-            return
+            return false
         }
         guard !engines.isEmpty else {
             notice = "至少选一个引擎，否则下完就没人能用它"
-            return
+            return false
         }
         // 已经在本机的仓库不再下一遍：先 reload 一次，免得上一次下载刚落地、
         // 清单还是旧的。
         reloadModels()
         guard !repoIsLocal(target) else {
             notice = "「\(target)」已经在本机了，不用重复下载"
-            return
+            return false
         }
         let plan: ModelInstaller.Plan
         do {
@@ -2372,9 +2405,9 @@ final class AppState: ObservableObject {
                                                  cache: settings.hfCache)
         } catch {
             notice = (error as? ModelInstaller.Failure)?.message ?? "\(error)"
-            return
+            return false
         }
-        startDownload(plan, engine: engines.first ?? libraryEngine, id: target, shared: engines)
+        return startDownload(plan, engine: engines.first ?? libraryEngine, id: target, shared: engines)
     }
 
     /// 改一个共享模型能被哪些引擎看见：写授权表并同步链接，模型页随即重算。
@@ -2771,6 +2804,7 @@ final class AppState: ObservableObject {
     /// window left to stop it from.
     func prepareForTermination() {
         gateway.stop()
+        control.stop()
         guard let process = downloadProcess, process.isRunning else { return }
         terminatingDownloadPid = processPid(process)
         append(log: "==> 退出应用，终止正在进行的下载", engine: downloadingEngine ?? activeEngine)

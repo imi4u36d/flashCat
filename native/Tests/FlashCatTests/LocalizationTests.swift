@@ -28,41 +28,91 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(chinese.localizedString(forKey: "%@ · 端口 %@", value: nil, table: nil), "%@ · 端口 %@")
     }
 
-    /// 快捷键文案是「代码里的 keyboardShortcut」与「界面提示」两处的唯一契约。
-    /// 改了 `App.swift` 的按键就要在这里同步，否则提示会指向一个不存在的手势。
-    func testKeyboardShortcutCopyMatchesTheMenu() throws {
+    /// 快捷键已全部移除：应用内不再注册键盘快捷键，也不接管回车、方向键或
+    /// esc。这条测试扫源码，防止某次改动把 `.keyboardShortcut` 或按键监听
+    /// 悄悄加回来——那会同时推翻「鼠标可达 + CLI 键盘可达」的产品决定。
+    func testNoInAppKeyboardShortcutsRemain() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // Tests/FlashCatTests/
+            .deletingLastPathComponent()   // Tests/
+            .deletingLastPathComponent()   // native/
+            .appendingPathComponent("Sources/FlashCat")
+        let enumerator = FileManager.default.enumerator(at: root,
+                                                        includingPropertiesForKeys: nil,
+                                                        options: [.skipsHiddenFiles])
+        let files: [URL] = try XCTUnwrap(enumerator).compactMap { item in
+            guard let url = item as? URL, url.pathExtension == "swift" else { return nil }
+            return url
+        }
+        XCTAssertGreaterThan(files.count, 30, "源码目录扫描异常")
+
+        let banned = [
+            #"\.keyboardShortcut\s*\("#,
+            #"\.onKeyPress\s*[({]"#,
+            #"\.onExitCommand\b"#,
+            #"\.onSubmit\s*[({]"#,
+            #"NSEvent\.addLocalMonitorForEvents"#,
+            #"addGlobalMonitorForEvents"#,
+        ]
+        var offenders: [String] = []
+        for file in files {
+            let source = try String(contentsOf: file, encoding: .utf8)
+            let range = NSRange(source.startIndex..., in: source)
+            for pattern in banned {
+                let expression = try NSRegularExpression(pattern: pattern)
+                if expression.firstMatch(in: source, range: range) != nil {
+                    offenders.append(file.lastPathComponent + " ← " + pattern)
+                }
+            }
+        }
+        XCTAssertTrue(offenders.isEmpty,
+                      "应用内不应再有键盘快捷键/按键监听：\(offenders.joined(separator: " | "))")
+    }
+
+    /// 控制接口的设置项标题不只出现在 `title:` 字面量里：`text("key", "标题", …)`
+    /// 这类帮助函数把标题作为位置参数传进去。通用扫描抓不到，单独补一条，
+    /// 免得 `flashcat config list` 在英文界面里露出中文。
+    func testControlConfigTitlesAreLocalized() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent(
+            "Sources/FlashCat/ControlServer+Documents.swift"), encoding: .utf8)
+        let english = try XCTUnwrap(Bundle(path: try XCTUnwrap(
+            L10n.bundle.path(forResource: "en", ofType: "lproj"))))
+        let patterns = [
+            #"\b(?:bool|int|double|text)\(\s*"[^"]+"\s*,\s*"([^"]+)""#,
+            #"title:\s*"([^"]+)""#,
+        ]
+        let cjk = CharacterSet(charactersIn: "\u{4e00}"..."\u{9fff}")
+        var missing: [String] = []
+        for pattern in patterns {
+            let expression = try NSRegularExpression(pattern: pattern)
+            let range = NSRange(source.startIndex..., in: source)
+            for match in expression.matches(in: source, range: range) {
+                guard let group = Range(match.range(at: 1), in: source) else { continue }
+                let key = String(source[group])
+                guard key.rangeOfCharacter(from: cjk) != nil else { continue }
+                if english.localizedString(forKey: key, value: nil, table: nil) == key {
+                    missing.append(key)
+                }
+            }
+        }
+        XCTAssertTrue(missing.isEmpty, "控制接口设置标题缺少英文：\(missing.joined(separator: " | "))")
+    }
+
+    func testCLISettingsCopyIsLocalized() throws {
         let path = try XCTUnwrap(L10n.bundle.path(forResource: "en", ofType: "lproj"))
         let english = try XCTUnwrap(Bundle(path: path))
-
-        // 先确认这些词条在**源码** Catalog 里：构建产物可能带着上一次编译的
-        // 旧词条，只查 bundle 会让「删了词条」这种回归在本地误判为通过。
-        let catalog = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf:
-            URL(fileURLWithPath: #filePath)
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .appendingPathComponent("native/Sources/FlashCat/Resources/Localizable.xcstrings")
-        )) as? [String: Any])
-        let entries = try XCTUnwrap(catalog["strings"] as? [String: Any])
-
-        // ⌘\ 折叠边栏、⌘⇧A 切外观——两处都带着按键本身。
-        XCTAssertEqual(english.localizedString(forKey: "隐藏边栏（⌘\\）", value: nil, table: nil),
-                       "Hide Sidebar (⌘\\)")
-        XCTAssertEqual(english.localizedString(forKey: "显示边栏（⌘\\）", value: nil, table: nil),
-                       "Show Sidebar (⌘\\)")
-        XCTAssertEqual(english.localizedString(forKey: "切换浅色 / 深色", value: nil, table: nil),
-                       "Toggle Light / Dark")
-        // 命令面板里的动作说明也带着按键。
-        XCTAssertEqual(english.localizedString(forKey: "显示 / 隐藏玻璃导航列（⌘\\）", value: nil, table: nil),
-                       "Show / hide the glass navigation column (⌘\\)")
-        XCTAssertEqual(english.localizedString(forKey: "当前：%@", value: nil, table: nil),
-                       "Current: %@")
-
-        for key in ["隐藏边栏（⌘\\）", "显示边栏（⌘\\）", "切换浅色 / 深色",
-                    "显示 / 隐藏玻璃导航列（⌘\\）", "当前：%@"] {
-            XCTAssertNotNil(entries[key], "快捷键文案缺少词条：\(key)")
-        }
+        XCTAssertEqual(english.localizedString(forKey: "命令行接口", value: nil, table: nil),
+                       "Command-line Interface")
+        XCTAssertEqual(english.localizedString(forKey: "控制端口", value: nil, table: nil),
+                       "Control Port")
+        XCTAssertEqual(english.localizedString(forKey: "点击一行运行命令", value: nil, table: nil),
+                       "Click a row to run the command")
+        XCTAssertEqual(english.localizedString(forKey: "显示 / 隐藏玻璃导航列", value: nil, table: nil),
+                       "Show / hide the glass navigation column")
     }
 
     /// 每个中文词条都得有英文译文：漏一条，英文界面就会露出中文源文案。

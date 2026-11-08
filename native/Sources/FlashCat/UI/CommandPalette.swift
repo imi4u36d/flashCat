@@ -1,5 +1,4 @@
 import SwiftUI
-import AppKit
 import FlashCatKit
 
 extension Notification.Name {
@@ -8,6 +7,10 @@ extension Notification.Name {
 }
 
 /// 命令面板：页面跳转与常用动作，一个输入框全都能到。
+///
+/// 面板刻意只支持鼠标：应用不注册任何键盘快捷键，也不接管方向键、
+/// 回车或 esc。搜索框仍然可以输入（那是文本编辑，不是快捷键），
+/// 运行命令则点一行或点底部的按钮。
 struct CommandPalette: View {
     @ObservedObject var state: AppState
     var openDownloads: () -> Void
@@ -15,8 +18,7 @@ struct CommandPalette: View {
     var dismiss: () -> Void
 
     @State private var query = ""
-    @State private var selection = 0
-    @State private var keyMonitor: Any?
+    @State private var hovered: String?
     @FocusState private var focused: Bool
 
     private var items: [CommandItem] {
@@ -48,88 +50,62 @@ struct CommandPalette: View {
             .padding(.top, 120)
             .frame(maxHeight: .infinity, alignment: .top)
         }
-        .onExitCommand { dismiss() }
-        .background {
-            Button("") { dismiss() }
-                .keyboardShortcut(.cancelAction)
-                .opacity(0)
-                .frame(width: 0, height: 0)
-        }
-        .onAppear {
-            focused = true
-            selection = 0
-            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-                if event.keyCode == 53 {
-                    dismiss()
-                    return nil
-                }
-                return event
-            }
-        }
-        .onDisappear {
-            if let keyMonitor {
-                NSEvent.removeMonitor(keyMonitor)
-            }
-            keyMonitor = nil
-        }
-        .onChange(of: query) { _, _ in selection = 0 }
+        .onAppear { focused = true }
     }
 
     private var searchRow: some View {
         HStack(spacing: 9) {
-            Image(systemName: "command")
+            Image(systemName: "magnifyingglass")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Native.tertiary)
             TextField("跳转到页面或执行命令…", text: $query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .focused($focused)
-                .onSubmit(runSelected)
-                .onKeyPress(.upArrow) { move(-1); return .handled }
-                .onKeyPress(.downArrow) { move(1); return .handled }
-                .onKeyPress(.escape) { dismiss(); return .handled }
-            Text("esc")
-                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                .foregroundStyle(Native.tertiary)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(RoundedRectangle(cornerRadius: 4).fill(Native.overlay(0.06)))
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Native.secondary)
+                    .frame(width: 22, height: 22)
+                    .background(Circle().fill(Native.overlay(0.07)))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plainHit)
+            .help("关闭命令面板")
         }
         .padding(.horizontal, 14)
         .frame(height: 46)
     }
 
     private var results: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 1) {
-                    if items.isEmpty {
-                        Text("没有匹配的命令")
-                            .font(Native.captionFont)
-                            .foregroundStyle(Native.tertiary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 24)
-                    } else {
-                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                            row(item, selected: index == selection)
-                                .id(item.id)
-                                .onTapGesture {
-                                    selection = index
-                                    runSelected()
+        ScrollView {
+            LazyVStack(spacing: 1) {
+                if items.isEmpty {
+                    Text("没有匹配的命令")
+                        .font(Native.captionFont)
+                        .foregroundStyle(Native.tertiary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 24)
+                } else {
+                    ForEach(items) { item in
+                        row(item, selected: hovered == item.id)
+                            .id(item.id)
+                            .onTapGesture { run(item) }
+                            .onHover { inside in
+                                if inside {
+                                    hovered = item.id
+                                } else if hovered == item.id {
+                                    hovered = nil
                                 }
-                        }
+                            }
                     }
                 }
-                .padding(6)
             }
-            .frame(maxHeight: 340)
-            .onChange(of: selection) { _, value in
-                guard items.indices.contains(value) else { return }
-                withAnimation(Motion.quick) {
-                    proxy.scrollTo(items[value].id, anchor: .center)
-                }
-            }
+            .padding(6)
         }
+        .frame(maxHeight: 340)
     }
 
     private func row(_ item: CommandItem, selected: Bool) -> some View {
@@ -162,8 +138,9 @@ struct CommandPalette: View {
 
     private var footer: some View {
         HStack(spacing: 12) {
-            hint("↑", "↓", "选择")
-            hint("↵", nil, "打开")
+            Text("点击一行运行命令")
+                .font(.system(size: 9.5))
+                .foregroundStyle(Native.tertiary)
             Spacer(minLength: 0)
             Text("\(items.count) 个命令")
                 .font(.system(size: 9.5, design: .monospaced))
@@ -171,28 +148,6 @@ struct CommandPalette: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
-    }
-
-    private func hint(_ key: String, _ second: String?, _ label: String) -> some View {
-        HStack(spacing: 4) {
-            Text(key)
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundStyle(Native.secondary)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 1.5)
-                .background(RoundedRectangle(cornerRadius: 3.5).fill(Native.overlay(0.07)))
-            if let second {
-                Text(second)
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Native.secondary)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1.5)
-                    .background(RoundedRectangle(cornerRadius: 3.5).fill(Native.overlay(0.07)))
-            }
-            Text(L10n.t(label))
-                .font(.system(size: 9.5))
-                .foregroundStyle(Native.tertiary)
-        }
     }
 
     // MARK: Commands
@@ -227,7 +182,7 @@ struct CommandPalette: View {
             toggleAppearance()
         })
         list.append(CommandItem(id: "sidebar", title: state.showsSidebar ? "折叠边栏" : "展开边栏",
-                                detail: "显示 / 隐藏玻璃导航列（⌘\\）",
+                                detail: "显示 / 隐藏玻璃导航列",
                                 icon: "sidebar.left") {
             state.toggleSidebar()
         })
@@ -239,14 +194,7 @@ struct CommandPalette: View {
         state.theme.set(dark ? .light : .dark)
     }
 
-    private func move(_ delta: Int) {
-        guard !items.isEmpty else { return }
-        selection = min(max(0, selection + delta), items.count - 1)
-    }
-
-    private func runSelected() {
-        guard items.indices.contains(selection) else { return }
-        let item = items[selection]
+    private func run(_ item: CommandItem) {
         dismiss()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { item.run() }
     }

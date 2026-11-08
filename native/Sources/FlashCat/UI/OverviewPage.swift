@@ -627,7 +627,7 @@ struct OverviewPage: View {
                             .font(.system(size: 10.5, design: .monospaced))
                             .foregroundStyle(Console.tertiary)
                     }
-                    .help("速度与上下文由网关按流式分片估算，不是引擎上报")
+                    .help("速度与上下文由网关按流式分片估算，不是引擎上报；完成的行会保留到被后续请求挤出列表")
                     if sessions.isEmpty {
                         VStack(spacing: 8) {
                             Spacer(minLength: 0)

@@ -2,6 +2,71 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本号的唯一来源是仓库根的 `VERSION` 文件。
 
+## [未发布]
+
+请求收尾后概览不再把最后一次请求的信息清空；同时把键盘效率从窗口里移到终端：
+应用内不再注册任何快捷键，并补上一个完整、可脚本化的 `flashcat` 命令行。
+
+### 新增
+
+- **`flashcat` 命令行。** 随 `.app` 分发在 `Contents/Helpers/flashcat`，`.pkg`
+  安装时链接到 `/usr/local/bin`。支持 `status`、`engines`（list/start/stop/
+  restart/use/install/uninstall/port/logs）、`models`（list/use/download/delete/
+  path）、`chat`（stdin、流式、思考过程、JSON）、`gateway`、`logs`（级别过滤与
+  `--follow`）、`config`、`app`、`doctor`、`completion`、`cli`。
+- **应用侧本机控制接口。** 默认 `127.0.0.1:9100`，端口被占用时自动顺延；每次
+  启动生成随机令牌，`control.json` 以 `0600` 保存。设置页新增「命令行接口」开关
+  与端口。接口与推理网关分离，网关关闭时仍可驱动应用。
+- **共享路径与协议。** `FlashCatPaths`、`EngineInstallations` 与
+  `FlashCatKit/Control/ControlProtocol.swift` 收进 Kit，应用和 CLI 使用同一套
+  支持目录、模型目录、引擎发现规则与控制文档。
+- **命令行脚本契约。** 结果型命令都支持 `--json`；结果走 stdout、进度走 stderr；
+  固定退出码（应用未运行 `3`、找不到 `4`、超时 `5`、冲突 `6`、令牌 `7`）；
+  zsh / bash / fish 补全；`--timeout`、`--quiet`、`--no-color`。
+- **离线能力。** 应用未运行时仍可 `status`、列出引擎与磁盘模型、安装/卸载引擎、
+  读日志与读取/修改纯配置；需要应用的动作明确报错，不伪造成功。
+
+### 变更
+
+- **应用内取消所有快捷键。** 菜单不再带按键等价物；命令面板只响应鼠标点击，
+  不再接管方向键、回车或 esc；对话输入框回车换行、发送改为点击按钮；搜索框
+  不再回车提交；设置页端口改为点击「应用」；弹窗去掉 `.defaultAction`。
+  设置页与 README 的快捷键说明同步删除。
+- **设置页新增「命令行接口」卡片。** 显示开关、控制端口与 `flashcat --help`
+  的复制入口；「恢复默认」会把控制接口恢复为开启、端口 9100。
+- **发版产物。** `scripts/build-native-app.sh` 同时编译并嵌入 `flashcat`；
+  `make-installer.sh` 的 `.pkg` postinstall 创建 `/usr/local/bin/flashcat`；
+  `install-app.sh` 在 `/usr/local/bin` 可写时同样链接；`make uninstall` 会清掉
+  指向已安装应用的链接。
+
+### 修复
+
+- **退出改为同步收尾。** `applicationShouldTerminate` 不再返回 `.terminateLater` 后靠
+  一个 `Task` 去回信：当前 macOS 会在任务被调度前销毁进程，导致引擎仍驻留、最后
+  一次历史写盘丢失。现在在委托里同步走完网关/引擎/下载收尾，最坏等待仍被 1.5 秒
+  的引擎宽限期封顶；`flashcat app quit` 因此能真正等到进程消失并清掉 `control.json`。
+- **概览保留最后一次请求。** `GatewayMeter` 不再在结束 6 秒后删除会话：hero 大数字、
+  曲线标题继续显示最近一条已结束请求的全程均值并标「网关 LAST」，「最近请求」保留
+  完成 / 失败行（最多显示 6 条，底层保留 32 条），直到被后续请求挤出列表。已结束
+  行的耗时固定在收尾时刻，不会跟着挂钟继续涨；空闲聚合只读最近一条，避免把历史
+  各条速率相加成越滚越大的假读数。
+- **命令行不再误删版本、也不再误判终端。** `engines uninstall omlx@0.7.2` 在只装了
+  0.7.3 时报错，而不是确认后删掉 0.7.3；`chat -` 与 `--yes` 确认改看 stdin 是否
+  终端，`echo … | flashcat chat -` 在终端里也能用；重复 `--for` 累加而不是只留
+  最后一个；表格按 CJK 显示宽度对齐；`--control-url` 只接受回环地址或 HTTPS，
+  不把控制令牌明文发给网络；`logs --app --level` 与服务端日志过滤口径一致；
+  `control.json` 从创建起就是 `0600`，不再有"先 0644 再 chmod"的窗口。
+- **控制接口启停竞态。** 关闭开关时，正在绑定端口的启动会被作废并关掉新监听，
+  不会在设置关闭后留下一个还能驱动应用的接口。
+
+### 测试
+
+- 新增 `FlashCatCLICoreTests`：参数解析、别名、SSE 解码、控制路由、运行时文件
+  权限（含旧文件收紧到 `0600`）、控制地址校验、版本选择、CJK 表格宽度、配置/医生
+  文档编码、输出格式。
+- `LocalizationTests` 用源码扫描守住「应用内不得再出现快捷键/按键监听」，并覆盖
+  新增的 CLI 设置文案。
+
 ## [1.5.3] - 2026-11-08
 
 把概览的速度读数收成一套口径：解码统一走网关，引擎只保留自己真正量过的生命体征；

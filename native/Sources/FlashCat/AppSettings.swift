@@ -233,6 +233,32 @@ final class AppSettings {
     }
     func setGatewayPort(_ value: Int) { defaults.set(value, forKey: "gatewayPort") }
 
+    // MARK: CLI control API
+
+    /// The local control server `flashcat` talks to. On by default; the
+    /// gateway answers inference requests, this one answers app commands
+    /// (start/stop engines, switch models, read downloads, edit settings).
+    var controlAPIEnabled: Bool {
+        defaults.object(forKey: "controlAPIEnabled") == nil
+            ? true
+            : defaults.bool(forKey: "controlAPIEnabled")
+    }
+    func setControlAPIEnabled(_ value: Bool) { defaults.set(value, forKey: "controlAPIEnabled") }
+
+    /// 9100 sits outside 9000 (gateway) and every engine block. If it is taken,
+    /// the server walks upward and records the real port in `control.json`.
+    var controlPort: Int {
+        // The override exists for tests and for a second instance launched from
+        // a checkout; the shipped app uses the setting.
+        if let raw = ProcessInfo.processInfo.environment["FLASHCAT_CONTROL_PORT"],
+           let value = Int(raw), (1024...65535).contains(value) {
+            return value
+        }
+        let value = defaults.integer(forKey: "controlPort")
+        return (1024...65535).contains(value) ? value : 9100
+    }
+    func setControlPort(_ value: Int) { defaults.set(value, forKey: "controlPort") }
+
     func rememberModel(_ id: String) {
         var values = recentModels.filter { $0 != id }
         values.insert(id, at: 0)

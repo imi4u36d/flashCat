@@ -182,19 +182,19 @@ final class EngineManager {
     /// reap; disposing only `active` left the rest holding their weights after
     /// the app was gone.
     ///
-    /// Signals first, waits off the main actor, then kills what is left. The
-    /// bounded grace keeps a wedged engine from turning "quit" into a hang.
-    func shutdownEngines(grace: TimeInterval = 1.5) async {
+    /// Synchronous on purpose. `applicationShouldTerminate` runs on the main
+    /// thread; returning `.terminateLater` and finishing in a `Task` looked
+    /// right, but AppKit tears the process down before that task is scheduled
+    /// on current macOS — the engines and the history flush never ran. The
+    /// whole wait is bounded (a healthy engine exits in tens of milliseconds;
+    /// the grace only covers a wedged one), so the quit cannot hang.
+    func shutdownEngines(grace: TimeInterval = 1.5) {
         let all = controllers
         let signalled = all.map { $0.prepareForTermination() }.contains(true)
         if grace > 0 && signalled {
-            // Poll rather than sleeping the whole budget: a healthy engine
-            // exits in tens of milliseconds, and the grace only exists for the
-            // wedged case. `Task.sleep` yields the main actor; `Thread.sleep`
-            // here is what used to freeze the quit for up to eight seconds.
             let deadline = Date().addingTimeInterval(grace)
             while Date() < deadline && all.contains(where: { $0.hasLiveEngineProcesses }) {
-                try? await Task.sleep(nanoseconds: 50_000_000)
+                Thread.sleep(forTimeInterval: 0.05)
             }
         }
         for controller in all { controller.finishTermination() }

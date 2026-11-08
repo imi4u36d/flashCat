@@ -130,13 +130,8 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
         }
         body["messages"] = messages
 
-        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/chat/completions")!)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 600
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-
+        // 回调和流状态先就位：下面任何一条失败返回都要能把失败原因报给
+        // 调用方，而不是复用上一轮的状态。
         self.onDelta = onDelta
         self.onReasoning = onReasoning
         self.onUsage = onUsage
@@ -153,6 +148,22 @@ final class ChatClient: NSObject, URLSessionDelegate, URLSessionTaskDelegate, UR
         pendingDelta = ""
         pendingReasoning = ""
         lastDeltaFlush = .distantPast
+
+        guard let url = URL(string: "http://127.0.0.1:\(port)/v1/chat/completions") else {
+            onStatus("失败")
+            return .failure(ChatError(message: "本地网关地址无效：端口 \(port)"))
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 600
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        } catch {
+            onStatus("失败")
+            return .failure(ChatError(message: "请求体编码失败：\(error.localizedDescription)"))
+        }
 
         let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
         let dataTask = session.dataTask(with: request)

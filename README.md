@@ -11,8 +11,9 @@
 
 <sub>▶ 50 秒介绍片 · 无旁白，建议开声音听垫乐 · 画面来自真实运行的 flashCat</sub>
 
-不需要敲命令行，不需要为每个引擎记一套参数；打开就能用，
-需要接别的工具时它就是一个 `http://127.0.0.1:9000/v1` 这样的地址。
+不需要为每个引擎记一套参数；打开就能用，需要接别的工具时它就是一个
+`http://127.0.0.1:9000/v1` 这样的地址。习惯终端的人也可以只装一次
+`flashcat` 命令，把状态、启停、模型和对话都写进脚本。
 
 ---
 
@@ -36,11 +37,12 @@ Hugging Face、按下载量排序、筛 MLX / GGUF、翻页看模型卡（README
 下载支持暂停与续传；权重落公共目录只存一份，下完勾给哪些引擎用。
 
 **5. 直观的运行数据。** 解码速度、首字延迟、预填充、DFlash2 草稿接受率、内存压力、
-当前上下文占用（如 `18K / 262K`）一屏读完；总解码是 60 秒曲线，最近请求逐条标出首字、
-预填充与上下文。引擎只给聚合指标，会话级读数由网关侧自己打点。
+当前上下文占用（如 `18K / 262K`）一屏读完；总解码是 60 秒曲线，最近请求逐条标出状态、
+解码速度与上下文，请求结束后保留最后一条，不会整页归零。引擎只给聚合指标，
+会话级读数由网关侧自己打点。
 
 **6. 内置对话。** 流式输出、思考块、Markdown、温度 / top-p / 最大输出 / 思考等级；
-每条回复标 tok/s 与首字延迟；历史存本地，⌘N 开新对话。装完引擎第一件事就是验证它。
+每条回复标 tok/s 与首字延迟；历史存本地，可随时新建与回看。装完引擎第一件事就是验证它。
 
 ## 系统要求
 
@@ -48,7 +50,7 @@ Hugging Face、按下载量排序、筛 MLX / GGUF、翻页看模型卡（README
 | --- | --- |
 | 芯片 | Apple Silicon（M 系列） |
 | 系统 | macOS **26.0** 或更高 |
-| 磁盘 | 应用约 10 MB；每个引擎约 50 MB ~ 600 MB；模型另算（每档 2 ~ 250 GB） |
+| 磁盘 | 应用约 15 MB（含 `flashcat` 命令行）；每个引擎约 50 MB ~ 600 MB；模型另算（每档 2 ~ 250 GB） |
 
 界面跟随系统语言：**简体中文** 或 **English**。两种文案都随应用打包，切换系统语言后重开即可生效。
 
@@ -106,8 +108,9 @@ Hugging Face、按下载量排序、筛 MLX / GGUF、翻页看模型卡（README
 **设置** —— 外观、背景图与透明度、端口、开机自启、思考模式、推理等级、默认模型、
 下载缓存目录等，行内即改即生效。
 
-页面跳转与常用动作都收在 **⌘K 命令面板**：六个页面、启停引擎、新对话、下载中心、
-模型广场、切换外观、折叠边栏，输入关键词直达。
+页面跳转与常用动作都收在标题栏的 **「命令」面板**：六个页面、启停引擎、新对话、下载中心、
+模型广场、切换外观、折叠边栏，输入关键词后点一行直达。应用内不注册键盘快捷键；
+所有动作都可以用鼠标完成，键盘用户请使用下面介绍的 `flashcat` 命令行。
 
 ## 用自己的客户端连它
 
@@ -154,6 +157,72 @@ curl http://127.0.0.1:9000/v1/messages \
 - 也可以直连引擎自己（8000 / 8100 / 8200），但地址会随引擎切换变化，
   所以一般还是接网关
 
+## 命令行 `flashcat`
+
+应用自带一个完整的命令行客户端，和图形界面共用同一份引擎、模型、设置与日志。
+`.pkg` 会在 `/usr/local/bin` 可写时把 `/usr/local/bin/flashcat` 指向应用内的
+可执行文件；用 `.dmg` 安装或想手动放进 PATH 时：
+
+```bash
+/Applications/flashCat.app/Contents/Helpers/flashcat cli install
+# 默认装到 ~/.local/bin/flashcat；加到 PATH：
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+`flashcat` 有两种工作方式：
+
+- **应用在运行**：通过本机回环控制接口（默认 `127.0.0.1:9100`，每次启动随机令牌，
+  只允许当前用户读取）执行启停、切模型、下载、改设置等动作。
+- **应用没运行**：仍能查看磁盘上的引擎与模型、安装/卸载引擎、读写不需要副作用的
+  配置、读日志；需要应用的动作会以退出码 `3` 明确失败，而不是假装成功。
+
+```bash
+flashcat                            # 状态：应用、引擎、网关、下载
+flashcat engines list               # 五个引擎的安装版本与运行状态
+flashcat engines install omlx       # 不需要图形界面，直接下载并安装运行时
+flashcat engines start omlx         # 切换并等到权重真的加载完
+flashcat models list --all          # 本机权重 + 推荐档位
+flashcat models download mlx-community/Qwen3-8B-4bit --wait
+flashcat models use <模型 id>       # 加载并等待就绪（必要时自动换引擎）
+flashcat chat "用一句话解释 MoE"    # 走本地网关，流式输出
+printf '总结这段日志\n' | flashcat chat - --model <模型 id> --json
+flashcat logs --engine omlx -f      # 跟踪日志；--gateway / --control
+flashcat config set appearance dark
+flashcat gateway status             # OpenAI / Claude 网关
+flashcat app open                   # 启动应用并等待控制接口就绪
+flashcat doctor                     # 安装、权限、运行时、磁盘与 PATH 自检
+```
+
+离线安装引擎时，如果随应用分发的索引只带文件名、没有带归档，用
+`--index <pack-index.json 或 URL>` 指向可下载的索引（或用
+`FLASHCAT_PACK_INDEX_URL` 环境变量）；否则命令会以「索引里的归档不在本机」
+明确失败，而不是启动一个注定失败的下载。
+
+| 命令 | 用途 |
+| --- | --- |
+| `status` | 应用 / 引擎 / 网关 / 下载状态；`--watch` 持续刷新 |
+| `engines` | `list`、`start`、`stop`、`restart`、`use`、`install`、`uninstall`、`port`、`logs` |
+| `models` | `list`、`use`、`download`、`delete`、`path` |
+| `chat` | 通过网关对话；支持 stdin、流式、思考过程与 JSON |
+| `gateway` | `status`、`start`、`stop` |
+| `logs` | 引擎 / 网关 / 控制接口日志，支持级别过滤与跟踪 |
+| `config` | `list`、`get`、`set`、`unset`、`path` |
+| `app` | `status`、`open`、`quit`、`restart`、`path` |
+| `doctor` | 环境自检；有 `fail` 项时退出码为 1 |
+| `completion` | 输出 zsh / bash / fish 补全脚本 |
+| `cli` | 把 `flashcat` 链接到 PATH，或打印当前位置 |
+
+**给脚本用。** 结果型命令都支持 `--json`（错误也是 JSON，写 stderr）；进度与提示
+写 stderr，正文写 stdout，所以 `flashcat models list --json | jq` 不会混入日志。
+退出码固定为：`0` 成功、`1` 失败、`2` 用法错误、`3` 应用未运行、`4` 找不到、
+`5` 超时、`6` 状态冲突、`7` 控制令牌错误。`--timeout` 控制等待上限，`--quiet`
+关掉提示，`--no-color` 或 `NO_COLOR` 关掉 ANSI 颜色。
+
+控制接口的开关与端口在「设置 → 命令行接口」里；改端口后实际端口会写进
+`control.json`，命令行自动跟随，不需要重新安装。接口只监听 `127.0.0.1`，
+每次启动换一次随机令牌，`control.json` 以 `0600` 权限保存，因此同一台机器上的
+其他用户不能驱动应用。
+
 ## 模型
 
 模型都在应用里下载，来源是 Hugging Face。模型页把可直接加载的权重放在「本机模型」，
@@ -192,6 +261,7 @@ defaults write com.zhuo.flashCat hfToken hf_xxx                    # 有权限�
 | 所有引擎的模型 | `~/Library/Application Support/flashCat/models/<引擎>` |
 | 公共目录（自己下载的模型） | `~/Library/Application Support/flashCat/shared-models` |
 | 下载缓存 | 默认沿用 Hugging Face 的缓存目录，可在设置里改 |
+| 控制接口 | `~/Library/Application Support/flashCat/control.json`（仅本机、权限 0600） |
 | 日志 | `~/Library/Logs/flashCat` |
 
 ## 设置项
@@ -207,6 +277,7 @@ defaults write com.zhuo.flashCat hfToken hf_xxx                    # 有权限�
 | 推理等级 | 思考模式为「开启」时生效，档位由引擎决定 |
 | 默认模型 | 引擎启动时自动加载哪个模型 |
 | 下载缓存目录 | 模型下载缓存放哪里 |
+| 命令行接口 | 本机 `flashcat` 命令连接的开关与端口（默认 9100） |
 | 恢复默认设置 | 把上面各项恢复成出厂值 |
 
 ## 常见问题
@@ -233,11 +304,25 @@ oMLX 可以在模型之间热切；Splash / MTPLX 换模型会重启进程，
 **模型页看不到某个引擎的模型？**
 顶部可以切换引擎，没安装的引擎也能先浏览它支持的精选档位。
 
+**为什么应用里没有快捷键？**
+这一版刻意不注册任何应用级快捷键：所有动作都有可点击的菜单项或按钮，需要键盘
+效率时用 `flashcat` 命令行（支持补全、JSON 与脚本）。macOS 自己提供的文本编辑、
+剪贴板、关闭窗口与退出等系统级按键不受影响。
+
+**`flashcat` 提示应用未运行？**
+先 `flashcat app open`。如果应用明明开着，检查「设置 → 命令行接口」是否被关闭，
+或 `control.json` 是否被清理；`flashcat doctor` 会指出卡在哪一步。
+
+**命令行端口被占用？**
+控制接口在 9100 起、最多向后顺延 20 个端口，实际端口写在
+`~/Library/Application Support/flashCat/control.json`，`flashcat` 会自动读取。
+
 ## 卸载
 
 1. 退出 flashCat。
 2. 把 `/Applications/flashCat.app` 拖进废纸篓。
-3. 想连配置和模型一起清掉，再删除：
+3. 如果安装过命令行，删掉链接：`rm -f /usr/local/bin/flashcat ~/.local/bin/flashcat`
+4. 想连配置和模型一起清掉，再删除：
 
 ```bash
 rm -rf ~/Library/Application\ Support/flashCat ~/Library/Logs/flashCat

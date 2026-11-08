@@ -134,7 +134,6 @@ struct EngineConfigSheet: View {
                 .buttonStyle(.arcadeGlass)
             Button("保存") { save() }
                 .buttonStyle(.arcadePill)
-                .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, Native.pagePadding)
         .padding(.vertical, 12)

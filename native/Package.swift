@@ -7,6 +7,11 @@ let package = Package(
     platforms: [.macOS("26.0")],
     products: [
         .executable(name: "flashCat", targets: ["FlashCat"]),
+        // Not `flashcat`: APFS is case-insensitive, and a product name that
+        // differs from `flashCat` only by case collides with the app's build
+        // directory. The shipped binary is still renamed to `flashcat` when
+        // the bundle is assembled.
+        .executable(name: "flashcat-cli", targets: ["FlashCatCLI"]),
         .library(name: "FlashCatKit", targets: ["FlashCatKit"]),
     ],
     targets: [
@@ -17,6 +22,17 @@ let package = Package(
             // build inputs, but SwiftPM warns about undeclared files unless
             // they are excluded explicitly.
             exclude: ["SPEC.md", "Gateway/SPEC.md"]
+        ),
+        .target(
+            name: "FlashCatCLICore",
+            dependencies: ["FlashCatKit"],
+            path: "Sources/FlashCatCLICore",
+            exclude: ["SPEC.md"]
+        ),
+        .executableTarget(
+            name: "FlashCatCLI",
+            dependencies: ["FlashCatCLICore"],
+            path: "Sources/flashcat-cli"
         ),
         .executableTarget(
             name: "FlashCat",
@@ -41,6 +57,13 @@ let package = Package(
             name: "FlashCatTests",
             dependencies: ["FlashCat"],
             path: "Tests/FlashCatTests"
+        ),
+        // The CLI's parser, SSE decoder and output formatting are pure; they
+        // get the same no-window test harness as the kit.
+        .testTarget(
+            name: "FlashCatCLICoreTests",
+            dependencies: ["FlashCatCLICore", "FlashCatKit"],
+            path: "Tests/FlashCatCLICoreTests"
         ),
     ]
 )

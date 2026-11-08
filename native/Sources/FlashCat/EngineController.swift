@@ -65,9 +65,6 @@ final class EngineController {
     private var hotLoadSince: Date?
 
     private var process: Process?
-    /// pid of a server we did not spawn but are driving (a listener left behind by
-    /// an earlier run, or one started outside the app).
-    private(set) var attachedPid: Int32?
     /// Model the reader started the current run with; splash needs it again for
     /// a restart so the local serve path keeps its assembly/target arguments.
     private var runModel: ModelInfo?
@@ -125,7 +122,7 @@ final class EngineController {
         self.logs = LogStore(path: EnginePaths.logFile(id))
     }
 
-    var isRunning: Bool { process != nil || attachedPid != nil }
+    var isRunning: Bool { process != nil }
     var isReady: Bool { state == .ready }
     var isInstalled: Bool { true }
 
@@ -849,8 +846,9 @@ final class EngineController {
             state = .stopped
         } else {
             state = .failed
-            failureMessage = lastError ?? "服务异常退出（退出码 \(finished.terminationStatus)）"
-            logs.append("==> \(failureMessage!)", level: .system)
+            let message = lastError ?? "服务异常退出（退出码 \(finished.terminationStatus)）"
+            failureMessage = message
+            logs.append("==> \(message)", level: .system)
         }
         onChange()
     }
@@ -1187,7 +1185,6 @@ final class EngineController {
         return .ready
     }
 
-    private var id_engineSwitchIsHot: Bool { descriptor.switchMode == .hot }
 
     /// Models the engine itself reports as resident. `nil` means the status
     /// document could not be read at all.

@@ -27,7 +27,7 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 | `UI/LiquidGlass.swift` | macOS 26 Liquid Glass 材质与玻璃按钮样式 |
 | `UI/ModelFamily.swift` | 模型家族识别与家族徽标 |
 | `UI/ModelCardText.swift` | Hugging Face 模型卡的 Markdown 清洗 |
-| `UI/CommandPalette.swift` | ⌘K 命令面板：页面跳转与常用动作 |
+| `UI/CommandPalette.swift` | 命令面板：页面跳转与常用动作（鼠标操作） |
 | `UI/OverviewPage.swift` | 引擎状态、当前模型、六项实时指标、吞吐曲线、上下文与接口 |
 | `UI/ChatPage.swift` | 会话、流式消息、思考块、Markdown 正文、输入框与生成参数 |
 | `UI/MarkdownView.swift` | 对话正文的块级 Markdown 渲染（标题/列表/表格/代码/引用） |
@@ -38,17 +38,17 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 | `UI/EnginesPage.swift` | 五台引擎的安装、启停、切换、上游版本与运行时删除 |
 | `UI/EngineConfigSheet.swift` | 单台引擎的端口与调优开关 |
 | `UI/LogsPage.swift` | 实时日志、级别过滤、搜索、暂停、复制、清空 |
-| `UI/SettingsPage.swift` | 外观、服务、网关、生成默认值、存储与关于 |
+| `UI/SettingsPage.swift` | 外观、服务、网关、命令行接口、生成默认值、存储与关于 |
 | `UI/LaunchPage.swift` | 首次启动的硬件推荐与引擎安装 |
 | `Design.swift` / `Theme.swift` | 设计 token、组件与外观（`Native` / `AppAppearance`） |
 
 ## 窗口 chrome
 
 - **标题栏。** 一行 48pt：红绿灯留白、折叠边栏、居中的灵动岛（引擎名、真实阶段、实时 tok/s 与启停；
-  通知到来时临时显示消息并计未读，点开原地展开通知历史或引擎详情）、命令面板入口（⌘K）、
+  通知到来时临时显示消息并计未读，点开原地展开通知历史或引擎详情）、命令面板入口、
   外观切换、下载中心（带任务徽标）。
 - **侧栏。** 悬浮玻璃导航列，可整体隐藏让主视口铺满窗口；收起按钮在红绿灯右侧，
-  与「显示 → 隐藏边栏」菜单和 ⌘\ 同一条路径；
+  与「显示 → 隐藏边栏」菜单同一条路径；
   工作区六页 + 最近对话 + 引擎卡（启停与切换）+ 反馈入口。
 - **页面切换。** 220ms 淡入 + 8pt 上移；侧栏选中态用 `matchedGeometryEffect` 在行间滑动。
 - **动效。** `Motion.quick` 140ms 用于 hover/press，`Motion.standard` 220ms 用于页面与卡片状态，
@@ -61,22 +61,21 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
   卡片也用同一层玻璃材质，但正文只靠排版分层，不在内容上再叠色。
   菜单用系统玻璃 popover（如 `ModelPickerPopover`）。
 
-## 快捷键
+## 键盘策略
 
-只保留 macOS 用户已经形成的习惯动作，其余能力全部收进命令面板：
+**应用不注册任何键盘快捷键。** 菜单项、工具栏按钮和命令面板都不带按键等价物；
+对话输入框不把回车当发送，命令面板不接管方向键 / 回车 / esc，搜索框也不在回车
+时提交——这些动作一律由点击完成。这样做的原因不是「不要键盘」，而是把键盘
+效率集中到 `flashcat` 命令行：它支持补全、JSON、脚本与批量动作，且不会和用户
+自己的快捷键管理器打架。
 
-| 键 | 动作 |
-| --- | --- |
-| ⌘K | 命令面板 |
-| ⌘N | 新建对话 |
-| ⌘\\ | 隐藏 / 显示边栏 |
-| ⌘⇧A | 切换浅色 / 深色 |
-| ⌘↩ | 发送（对话输入框内回车也发送，⇧↩ 换行） |
-| esc | 关闭命令面板 / 浮层 |
+命令面板因此只负责「点击一行运行命令」；搜索框仍然可以输入文字（文本编辑不是
+快捷键）。检查由 `FlashCatTests.LocalizationTests.testNoInAppKeyboardShortcutsRemain`
+守着：`.keyboardShortcut`、`.onKeyPress`、`.onExitCommand`、`.onSubmit` 和
+`NSEvent` 全局/本地监听都不允许再出现在 `Sources/FlashCat` 里。
 
-六个页面不占用 ⌘1…⌘6：页面跳转、启停引擎、下载中心、模型广场、切换外观都收在
-命令面板里，输入关键词直达。标题栏按钮上的「⌘K」提示与菜单里的按键显示同源，
-改了 `App.swift` 的 `keyboardShortcut` 就要同步改这张表。
+macOS 自己提供的文本编辑与剪贴板快捷键、关闭窗口与退出等系统级菜单项不受影响，
+它们属于 AppKit，不属于这个应用。
 
 ## 状态与数据流
 
@@ -90,7 +89,8 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
   `GatewayMeter` 的按请求低通聚合，所以大数字就是活跃行之和；应用内对话也注册在网关里。
   引擎的 `LAST` / `AVG` 不参与当前速度，只有网关没有在跑会话（客户端直连引擎端口）时
   才用引擎的 `.live` 计数兜底，且要求 `activeRequests > 0`。角标如实写「网关估算」/
-  「网关 LAST」/「引擎实时」，没有实时值就显示「—」。
+  「网关 LAST」/「引擎实时」；请求结束后保留最近一条请求的终值并标「网关 LAST」，
+  「最近请求」也不再清空，直到它被后续请求挤出列表。
 - **生命体征仍由引擎上报，并自证粒度。** 预填充、首字延迟 p50、内存占用、上下文上限
   与 `SESSIONS`（`activeRequests`）读引擎 status，卡片说明标明「引擎」；预填充不是连续量，按 `EngineRateKind` 打
   `LIVE` / `LAST` / `AVG` 角标，说明随之改口（「正在处理提示词」/「上一个请求的实测值」/
@@ -128,8 +128,9 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 - **不可逆动作先确认。** 删除模型、删除运行时、切换模型（会卸载权重）都先弹确认。
 - **等待必须可解释。** 启停、换模型、安装、下载都显示阶段文案与进度，
   不靠一个转圈。
-- **键盘可达。** ⌘K 命令面板、⌘N 新对话、⌘\ 折叠边栏、⌘⇧A 切外观、⌘↩ 发送；
-  页面跳转与启停引擎收在命令面板里；删除/确认弹窗的默认按钮有 `keyboardShortcut`。
+- **鼠标可达。** 页面跳转、启停引擎、新对话、下载中心、模型广场与外观切换都收在
+  命令面板或标题栏按钮里；删除/确认弹窗的按钮都靠点击。键盘效率由 `flashcat`
+  提供，界面本身不再注册快捷键。
 
 ## 边界
 
@@ -142,8 +143,9 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 
 ## 已知限制
 
-- **没有界面自动化测试。** 六个页面的渲染、弹窗开合与键盘快捷键靠手工回归；
-  `FlashCatTests` 只覆盖壳层的纯函数（日志切片、进程树、快照数值清洗）。
+- **没有界面自动化测试。** 六个页面的渲染与弹窗开合靠手工回归；`FlashCatTests`
+  只覆盖壳层的纯函数（日志切片、进程树、快照数值清洗），外加一条禁止快捷键
+  回流的源码守卫。
 - **Markdown 渲染是保守实现。** 支持标题、段落、围栏代码、引用、有序/无序列表、
   表格与行内语法；嵌套列表、脚注与 HTML 原样显示。
 - **超长对话仍是一次性重排。** `LazyVStack` 只实例化可见行，但流式期间最后一条

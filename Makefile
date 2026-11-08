@@ -32,6 +32,8 @@ verify: install
 	@sleep 4
 	@pgrep -f "$(INSTALLED_APP)/Contents/MacOS/flashCat" >/dev/null || { \
 		echo "error: installed app did not stay running" >&2; exit 1; }
+	@"$(INSTALLED_APP)/Contents/Helpers/flashcat" --version >/dev/null || { \
+		echo "error: bundled flashcat CLI did not run" >&2; exit 1; }
 	@echo "APP LAUNCH OK"
 
 run:
@@ -43,6 +45,7 @@ uninstall:
 	@if [ -e "$(INSTALLED_APP)" ]; then rm -rf "$(INSTALLED_APP)"; echo "removed $(INSTALLED_APP)"; else echo "nothing installed"; fi
 	@rm -rf /Applications/.flashCat-previous-*.app
 	@rm -f "$$HOME/Library/LaunchAgents/com.zhuo.flashCat.plist"
+	@if [ -L /usr/local/bin/flashcat ] && [ "$$(readlink /usr/local/bin/flashcat)" = "$(INSTALLED_APP)/Contents/Helpers/flashcat" ]; then rm -f /usr/local/bin/flashcat; fi
 
 ## Unpack the vendored splash release into an installable runtime pack.
 splash-pack:
@@ -60,5 +63,7 @@ test:
 
 ## Remove build output (the installed app and the installers are kept).
 clean:
-	rm -rf native/.build dist/.build dist/AppIcon.iconset
-	@echo "Removed native build output."
+	rm -rf native/.build native/.swiftpm .build dist/.build dist/AppIcon.iconset \
+		scripts/__pycache__ runtime/__pycache__
+	@find . -name .DS_Store -not -path './.git/*' -delete
+	@echo "Removed build output and OS metadata."

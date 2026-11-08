@@ -64,6 +64,20 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/flashCat"
 chmod +x "$APP/Contents/MacOS/flashCat"
 
+# The command-line client ships inside the bundle. It talks to the app through
+# the loopback control server, but works offline for status, engine installs
+# and pure settings. Keeping it in Contents/Helpers keeps Contents/MacOS to the
+# one executable LaunchServices expects.
+CLI_BINARY="$NATIVE_DIR/.build/release/flashcat-cli"
+[ -x "$CLI_BINARY" ] || {
+    echo "error: swift build did not produce $CLI_BINARY" >&2
+    exit 1
+}
+mkdir -p "$APP/Contents/Helpers"
+cp "$CLI_BINARY" "$APP/Contents/Helpers/flashcat"
+chmod +x "$APP/Contents/Helpers/flashcat"
+echo "     Contents/Helpers/flashcat"
+
 echo "==> Embed engine packs ($EMBED_PACKS)"
 # APFS clones make the copy free: `cp -Rc` shares extents with vendor/engines, so
 # the bundle is independent but only costs disk once.

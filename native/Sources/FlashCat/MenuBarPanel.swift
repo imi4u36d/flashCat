@@ -408,8 +408,8 @@ struct MenuBarPanel: View {
     /// 菜单栏还在按另一套规则算）。
     private var stageText: String { state.engineStageText }
 
-    /// 菜单栏没有角标位，所以只显示真正的当前速度；网关 linger 里的
-    /// 上一请求均值只留在概览（那里有 LAST 角标）。
+    /// 菜单栏没有角标位，所以只显示真正的当前速度；网关保留的上一请求
+    /// 均值只留在概览（那里有 LAST 角标）。
     private var currentRate: Double? {
         guard state.serverState == .ready else { return nil }
         switch state.speedOrigin {

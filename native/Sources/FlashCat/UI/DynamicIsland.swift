@@ -541,7 +541,7 @@ struct DynamicIsland: View {
 
 /// 收起态内容的实测宽度。只测量摘要本身，不受展开态固定宽度影响。
 private struct IslandSummaryWidthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
+    static let defaultValue: CGFloat = 0
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())

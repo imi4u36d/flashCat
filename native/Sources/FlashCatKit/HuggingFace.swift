@@ -412,8 +412,10 @@ public actor HubSearchClient {
     public func search(_ query: String, limit: Int = 20) async throws -> [HubModel] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
-        var components = URLComponents(url: baseURL.appendingPathComponent("api/models"),
-                                       resolvingAgainstBaseURL: false)!
+        guard var components = URLComponents(url: baseURL.appendingPathComponent("api/models"),
+                                             resolvingAgainstBaseURL: false) else {
+            throw HubError.decoding
+        }
         components.queryItems = [
             URLQueryItem(name: "search", value: trimmed),
             URLQueryItem(name: "limit", value: String(max(1, min(limit, 50)))),
@@ -434,8 +436,10 @@ public actor HubSearchClient {
     /// answer is cached because the page may redraw many times per search.
     public func model(_ repo: String) async throws -> HubModel {
         if let cached = cache[repo] { return cached }
-        var components = URLComponents(url: baseURL.appendingPathComponent("api/models/\(repo)"),
-                                       resolvingAgainstBaseURL: false)!
+        guard var components = URLComponents(url: baseURL.appendingPathComponent("api/models/\(repo)"),
+                                             resolvingAgainstBaseURL: false) else {
+            throw HubError.decoding
+        }
         components.queryItems = [URLQueryItem(name: "blobs", value: "true")]
         guard let url = components.url else { throw HubError.decoding }
         let data = try await get(url)

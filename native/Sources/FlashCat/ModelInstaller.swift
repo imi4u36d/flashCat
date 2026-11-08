@@ -53,10 +53,10 @@ enum ModelInstaller {
     // MARK: Destination
 
     /// Weight folders are flat: `owner--repo` is the id every engine serves, and
-    /// the same shape a download lands in.
+    /// the same shape a download lands in. The rule lives in `FlashCatPaths`
+    /// so the CLI resolves an existing weight folder identically.
     static func folderName(for repo: String) -> String {
-        let flat = repo.replacingOccurrences(of: "/", with: "--")
-        return flat.replacingOccurrences(of: ":", with: "-")
+        FlashCatPaths.modelFolderName(for: repo)
     }
 
     static func destination(engine: EngineID, repo: String) -> String {

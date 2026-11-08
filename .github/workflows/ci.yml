@@ -29,12 +29,12 @@ jobs:
       - name: Build (warnings are errors)
         run: swift build -Xswiftc -warnings-as-errors
 
-      # A ratchet, not a zero-tolerance check: the codebase carries 25
-      # concurrency warnings today (36 at the 1.5.1 baseline, before the native
-      # UI work retired a page of them), so asserting "no warnings" would make
-      # this job red on its first run and teach everyone to ignore CI. It fails
-      # only when the count goes *up*; lowering the baseline as they are fixed
-      # is how this reaches zero.
+      # A ratchet, not a zero-tolerance check: the codebase carries 11
+      # concurrency warnings today (25 before the 2026-11-08 CLI/control pass
+      # fixed the Sendable-boundary and observer-token cases), so asserting
+      # "no warnings" would make this job red on its first run and teach
+      # everyone to ignore CI. It fails only when the count goes *up*;
+      # lowering the baseline as they are fixed is how this reaches zero.
       - name: Strict concurrency must not regress
         run: |
           set -o pipefail

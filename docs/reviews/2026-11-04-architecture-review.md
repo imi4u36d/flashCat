@@ -1,30 +1,30 @@
 ---
 title: flashCat 整改待办
 date: 2026-11-04
-updated: 2026-11-05
-scope: native/（Swift 21,323 行 / 52 文件）+ WebUI（拆分后 store/render/actions/live 四模块）
-method: 全量静态扫描 + 关键路径人工通读 + 编译/测试实测 + 真机验证
-status: 阶段 0/1/2 已完成，仅保留未完成项；完成记录压缩为台账
+updated: 2026-11-08
+scope: native/（Swift 38,000 行 / 135 个文件：App、FlashCatKit、FlashCatCLICore 与 flashcat-cli）
+method: 全量静态扫描 + 关键路径人工通读 + 干净构建/测试实测
+status: 阶段 0/1/2 已完成；WebUI 已随原生重写删除；本轮命令行/控制接口精修完成，只剩 P0-2 与 P2 规范项
 ---
 
 # flashCat 整改待办
 
-> 原文档为 2026-11-04 架构与代码质量审查（P0×3、P1×8、P2×14）。阶段 0/1/2 已完成，
-> 完成记录压缩为下文「整改台账」，原详细记录已删；本文只保留**尚未完成**的工作与仍然有效的判断。
+> 原文档为 2026-11-04 架构与代码质量审查（P0×3、P1×8、P2×14）。阶段 0/1/2 已完成；
+> 2026-11-08 的收尾轮清理了命令行与控制接口的已知缺陷。本文只保留**尚未完成**的
+> 工作与仍然有效的判断。
 
 ## 整改台账（已完成）
 
 | 日期 | 内容 | 结果 |
 | --- | --- | --- |
 | 11-04 | 阶段 0 护栏：CI、lint/format 配置、版本号收敛（`scripts/version.sh`）、治理文件、编译警告清零 | `swift build` 0 warning |
-| 11-04 | 阶段 1：P1-1…8 全部修复（退出异步收尾、进程身份校验、进程树快照、就绪超时、快照清洗、日志 sink、流式按 id 寻址、导航策略 + CSP） | 真机退出 0.20 s、零残留；`swift test` 199 通过 |
-| 11-04 | 阶段 1.5：WebUI 渲染测试台 `native/Tools/WebUIRenderCheck` | 后续每步整改的证明基座 |
-| 11-04 | 阶段 2 第一步：删 app.js preview 实现与 page-components 死分支 | -1,979 行 |
-| 11-05 | 阶段 2 第二步：esc 统一（9→1）、main.js + ES module（`window.X =` 49→5）、esbuild 打包（14 请求→1） | bundle 400 KB 经典脚本（file:// 拒绝外链 module，已实证） |
-| 11-05 | 阶段 2 第三步：live.js 三层拆分（store 953 / render 1,970 / actions 1,107 / live 186） | 可变状态收进 `S` 容器，分层单向 |
-| 11-05 | 阶段 2 第四步：三个 `aria-modal` 对话框键盘治理（焦点陷阱/Escape/焦点还原） | `webui-render-check` 32 通过 |
+| 11-04 | 阶段 1：P1-1…8（退出异步收尾、进程身份校验、进程树快照、就绪超时、快照清洗、日志 sink、流式按 id 寻址、导航策略 + CSP） | 真机退出 0.20 s、零残留 |
+| 11-05 | 阶段 2：WebUI 分层与渲染治理 | 已随 1.5.x 原生重写作废，WebUI 目录整体删除 |
+| 11-08 | 命令行/控制接口精修：`engines uninstall` 不再把指定版本回退成最新版、`chat -` 与确认提示改看 stdin、重复 `--for` 累加、表格按显示宽度对齐、`control.json` 从创建起 0600、`--control-url` 限制回环或 HTTPS、日志级别过滤统一、控制服务启停竞态 | `swift build -Xswiftc -warnings-as-errors` 通过；`swift test` 294 个用例全过；严格并发 25→11 |
 
-当前质量门禁：`webui-render-check` **32 passed / 0 failed / 2 skipped**；严格并发棘轮基线 **33**（`.strict-concurrency-baseline`；CI 口径：去重后唯一 `文件:行:列`，必须来自干净构建——增量编译只报被改文件的告警，读数不可信）。
+当前质量门禁：`swift build -Xswiftc -warnings-as-errors` 零告警；`swift test` 全过；
+严格并发棘轮基线 **11**（`.strict-concurrency-baseline`；CI 口径：干净构建、去重后的
+唯一 `文件:行:列`——增量编译只报被改文件的告警，读数不可信）。
 
 ---
 
@@ -39,8 +39,8 @@ status: 阶段 0/1/2 已完成，仅保留未完成项；完成记录压缩为�
 1. **`EngineCore.swift` 的开放值设计**（`EngineID` / `EngineCapability` 用 `RawRepresentable` 而非 `enum`）。新 pack 带来未知 capability 时，旧应用不该装不上——向前兼容优先于类型完备。
 2. **`EngineTemplate.unresolvedPlaceholders`**（`EngineCore.swift:270`）。残留占位符**显式报告**而不是静默传字面量——"把错误提前到边界"的写法应扩散到别处。
 3. **`EnginePackOwnership` 的路径分量比较**（`~/…/engines-copy/x` 不算 `~/…/engines` 的子目录）。没被 `hasPrefix` 糊弄过去。
-4. **`WebSnapshot.jsStringLiteral` + `JSON.parse` 的桥传输**（`WebViewShell.swift:637/665`）。桥不存在注入，比大多数 WKWebView 项目干净。
-5. **WebUI 的 `store → app.js` 单向依赖**：`adapt` 的本质是把 Swift 快照写进 app.js 的共享 `state`，是三层拆分时确认过的既有架构事实，靠「所有模块求值期外部引用 = 0」保证 TDZ 安全。后续收敛状态时要连这条边一起设计，不要单方面切断。
+4. **`ControlJSON` 每次新建 coder**（`Control/ControlProtocol.swift`）。`JSONEncoder` 是可变引用类型，共享实例正是并发检查拒绝放行的那类状态；按调用创建换来的是两端的日期策略天然一致。
+5. **CLI 输出契约**：结果走 stdout、进度走 stderr、固定退出码、`--json` 时 stdout 不含杂讯。它是脚本契约，不是展示细节。
 
 ---
 
@@ -48,9 +48,9 @@ status: 阶段 0/1/2 已完成，仅保留未完成项；完成记录压缩为�
 
 ### P0-2 · 拆分 `AppState`（唯一剩下的阻断项）
 
-2,511 行、49 个 `@Published`、101 个方法、77 个存储属性：导航、引擎生命周期、模型切换状态机、下载（17 个字段）、Hub、对话流式、硬件推荐、UserDefaults（13 处直接读写）混在一层。
+3,184 行、53 个 `@Published`、123 个方法、约 95 个存储属性、13 处直接读写 `UserDefaults`：导航、引擎生命周期、模型切换状态机、下载队列、Hub、对话流式、硬件推荐混在一层。
 
-- `syncController()`（`:468`）在每秒一次的快照路径里做采样决策、EMA 平滑、接受率落点——业务规则写进了"读状态"的函数。
+- `syncController()` 在每秒一次的快照路径里做采样决策、EMA 平滑、接受率落点——业务规则写进了"读状态"的函数。
 - `send()` 里 4 个回调各自 `Task { @MainActor in … }`，依赖下标式防御（P1-7 已修症状，根因在这里）。
 
 **修法**（渐进，先测后搬，按"变更原因"切而不是按"页面"切）：
@@ -69,29 +69,19 @@ AppState（薄，只做组合与转发）
 
 **验收**：`AppState.swift` < 400 行；`grep -c "@Published"` < 12；每个子模块有独立测试文件。
 
-### 阶段 2 尾巴 · WebUI
-
-- [ ] minify + 体积目标 ~200 KB（打包管线增量选项，`esbuild --minify` 即可打开）
-- [ ] `innerHTML` 61 处（改 DOM API 或统一 sanitizer）
-- [ ] CSS：`@layer` 分层 + 单一 `tokens.css`（现状 353 处字面色值、24 处 `!important`、58 个 `@keyframes`）
-- [ ] 字号：252/400 条落在 6.5–10.5px，Retina 桌面应用最低 11px
-
 ### 阶段 3 · 结构（持续）
 
-- [ ] WebUI 渲染抽 selector + 增量 diff（当前每次快照全量重建）
-- [ ] 引擎差异回归 Kit：`if engine == …` / `descriptor.adapter == …` 分支统计，逐个搬回 adapter
-- [ ] 严格并发 33 条告警逐条清零（集中：`AppState` 12、`GatewayController` 11、`GatewayHTTPServer` 5、`HubClient` 4——问题在网关的 `Sendable` 边界，不是到处漏）
+- [ ] 引擎差异回归 Kit：`if engine == …` / `descriptor.adapter == …` 分支统计，逐个搬回 adapter。
+- [ ] 严格并发剩余 11 条（`AppState` 9、`Chat` 1、`ChatPage` 1）。`AppState` 的流式缓冲捕获是主要难点：它应当随 P0-2 拆到 `ChatSession` 时一起处理，而不是单独打补丁。
+- [ ] 在线/离线两套文档收敛：`StatusCommand.offlineReport`、`EnginesCommand.offlineEngines` 与 `ControlServer+Documents` 的配置表各写一份，已经出现行为漂移（例如离线的 `thinkingMode` 不接受 `none`）。把离线文档做成 Kit 里的纯函数，命令只负责取数。
 
 ### P2 规范类（开源前）
 
-- [ ] 错误分类改枚举（`ChatError` 只有 `message: String`，`AppState.swift:1620` 靠字符串匹配 "cancel"/"取消"）
-- [ ] 写盘后立刻读回改返回值直更（`AppState.swift:1610-1611`）
-- [ ] `LogStore.tail` 锁内 `suffix()`，别全量复制 20k 行（每秒被调）
-- [ ] 复用静态 `DateFormatter`（`Support.swift:124` 每行日志 new 一个）
-- [ ] `EngineController` 10 个布尔/可选拼状态机收敛成单一 `enum Phase`；删 `attachedPid` 死字段
-- [ ] 删死代码：`EngineManager.dispose()`（无调用）、`Design.swift:1066 healthTone`（无读取点）
-- [ ] 全仓格式化一次（一次性大 diff，单独提交，便于 `git blame --ignore-rev`；因未提交 Git 而暂缓）
-- [ ] 注释定语言并写进 CONTRIBUTING；每文件加 `// SPDX-License-Identifier: MIT`
+- [ ] 错误分类改枚举（`ChatError` 只有 `message: String`，`AppState` 靠字符串匹配 "cancel"/"取消"）。
+- [ ] `EngineController` 10 个布尔/可选拼状态机收敛成单一 `enum Phase`。
+- [ ] `LocalState.engineConfiguration` 解析失败时报告，而不是 `try?` 后当成空配置；否则 `status` 会把损坏的 `engines.json` 说成"没有引擎"。
+- [ ] 全仓 `swift-format` 一次（一次性大 diff，单独提交，便于 `git blame --ignore-rev`）。
+- [ ] 每文件加 `// SPDX-License-Identifier: MIT`，注释语言规则写进 CONTRIBUTING。
 
 ---
 
@@ -103,4 +93,4 @@ AppState（薄，只做组合与转发）
 
 ---
 
-*行号基于 2026-11-04 工作区（提交 `98f0f46` + 未提交改动），整改会移动代码，仅供定位参考。环境：macOS，Swift 6 工具链。*
+*环境：macOS，Swift 6 工具链。行号会随整改移动，仅供定位参考。*

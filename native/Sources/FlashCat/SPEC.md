@@ -19,6 +19,7 @@ macOS 壳。它持有全部可变状态，驱动引擎进程，并把自己画�
 - **模型。** `ModelCatalog` / `ModelLibrary` / `ModelInstaller` / `ModelRecommendations` / `ModelDownloadTask` / `LocalEngineModels` / `DeviceProfile` —— 内置目录中的一条模型可以同时标记多个引擎；Splash、oMLX、MTPLX、MLX-Serve 和 Strata 都是平级 engine descriptor。归属靠 `ModelRecommendation.engines`，下载与模型布局按 descriptor 决定。Hub 搜索结果同样可以服务多个兼容引擎。splash 的 DFlash2 draft 随主模型一起下，缺了就在启动前补齐。库是「目录 ∪ 磁盘扫描」：盘上有、这一栏没有的权重照样成行并标「未收录」。
 - **对话。** `Chat` / `ChatHistory` / `LocalAPI` —— `URLSession` 流式、usage 与 `finish_reason`、本地历史（上限 6 条）。
 - **网关控制。** `GatewayController` 持有网关对象与路由，`GatewayMeter` 打点。
+- **命令行控制接口。** `ControlServer` / `ControlServer+Documents` —— 只在回环上监听的控制通道，供随包的 `flashcat` 使用：状态、引擎启停与切换、模型加载/下载/删除、日志、设置、医生检查与退出。令牌每次启动随机生成并写入 `control.json`（`0600`）；它与推理网关是两个服务器，网关可以关闭，控制接口负责驱动应用。
 - **外壳与界面。** 窗口与场景、菜单栏面板、状态栏图标、登录项、日志缓冲、外观主题、设计 token，以及六个原生页面（`UI/`，见 [flashcat-ui](UI-SPEC.md)）。
 
 ## 边界
@@ -36,6 +37,7 @@ macOS 壳。它持有全部可变状态，驱动引擎进程，并把自己画�
 | 模型 | 所有引擎统一为 `<support>/models/<id>` |
 | 日志 | `~/Library/Logs/flashCat/<id>.log`（`FLASHCAT_LOGS_DIR` 可覆盖） |
 | pid | `<support>/<id>.pid` |
+| 控制接口 | `<support>/control.json`（pid、实际端口、令牌；权限 0600） |
 | 会话与历史 | `<support>/conversation.json`、`<support>/chat-history.json` |
 
 ## 本层持有的不变量
@@ -46,14 +48,17 @@ macOS 壳。它持有全部可变状态，驱动引擎进程，并把自己画�
 - **切换有代号。** 每次切换领一个 `switchGeneration`，只有当代的收尾允许改「切换中」状态。被接管或被取消的旧任务回来时代数已经不同，它静默退出：既不会抹掉新切换的状态，也没人能把界面永久留在「切换中」。
 - **切换中的再次选择要排队，不能丢弃。** 切换进行中又选了同一引擎的模型时，排到这次切换之后且只保留最后一次——早期直接丢弃，读者看到的是「点了没反应」；队列只属于当前引擎，换引擎时清空，不能拿 A 的 id 去 B 的目录里找权重。
 - **换模型先确认。** 换权重意味着卸下常驻模型、引擎短暂不可用，这值得一次点击，而不是静默停摆。
+- **控制接口与界面是同一套状态。** 它不复制引擎/模型逻辑：启停走 `startService` / `stopService`，跨引擎走 `switchEngine`，模型加载走网关同一个 `prepareModelForGateway`（非交互、等真正就绪），下载走 `downloadModel` / `downloadShared`。CLI 看到的端口、阶段和错误与界面同源。
 - **API 请求按 `model` 落到真实权重。** 网关先解析模型归属引擎；同一引擎换模型走热切换/重启，跨引擎走先卸载再启动，引擎未运行则直接拉起。准备完成后才向上游转发，不能把未知模型名原样交给「忽略 model 字段」的引擎。
 - **对话线程 id 跟着 `conversation.json` 走。** 线程 id 落在 `UserDefaults` 的 `chat.threadID`，历史保存是原地覆盖而非每轮 insert——早期每轮生成都新建一条线程，同一段对话在侧栏堆成好几份，概览读到的上下文还可能来自旧副本。
 - **下载任务的「下载中」在重启后降级为「暂停」。** Hub 的部分文件留在目标目录的 `.cache` 里，暂停或中断的传输能跨进程存活，续传靠这份部分文件，任务行只记录停在哪一步。
 - **续传从已有的字节接着算，不从 0 重来。** 暂停时任务行记下已下载字节，继续时 `startDownload` 把它作为进度起点（`downloadResumeBytes`），目录监听只在其上累加新增字节；卡片和下载中心因此始终显示「已下载 / 总量」，百分比在暂停/继续之间连续，速度也不会因为起点归零而先蹦一个假峰值。
 - **DFlash2 对用户是隐形的。** splash 的每个模型家族都带一个 draft，它只影响速度、不是一个需要用户挑的模型。下载主模型时一起下；装配里缺 draft（老版本下的，或家族表里认出来的）时，`EngineController.start` 在 `launchPlan` 之前先补齐——`startService`、`restart`、冷切换都经过这一个开闸处。补下走的是下载中心那条链，所以可以暂停、可以取消：用户取消就按无加速启动，补下失败才阻断启动，因为「没有加速」能跑、起不来不能跑。
-- **引擎自报的解码速度口径不一致时，用本地口径。** splash 报实时值，oMLX 报开机以来的累计均值（只在请求结束时跳一格）。生成期间概览卡与曲线统一用流式窗口的本地测速，空闲时回落到引擎读数。
+- **引擎自报的解码速度口径不一致时，用网关口径。** 概览的 hero、曲线与「最近请求」统一读
+  `GatewayMeter` 的按请求打点；请求结束后不按时间丢弃会话，最后一条的终值继续以 `LAST`
+  显示，直到它被后续请求挤出保留列表。
 
 ## 已知限制
 
-- **这一层没有测试。** `FlashCatKitTests` 全部针对 Kit；`AppState` 的状态机、`EngineController` 的启停与切换、六个页面的交互都没有自动化覆盖。
+- **这一层没有端到端测试。** `FlashCatKitTests` 针对 Kit；`AppState` 的状态机、`EngineController` 的启停与切换、六个页面的交互仍靠手工回归。`FlashCatTests` 覆盖壳层纯函数与「不得再出现快捷键」的源码守卫。
 - **`AppState` 是单一大类**（约 77 KB），界面状态集中在一个 `@MainActor` 对象上。边界靠约定维持，不靠类型系统。

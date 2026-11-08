@@ -69,13 +69,18 @@ final class ThemeController: ObservableObject {
     @Published private(set) var mode: AppAppearance
 
     private let settings: AppSettings
+    /// Observation tokens are written on the main actor and read once in
+    /// `deinit`, where no other reference exists. `nonisolated(unsafe)` is the
+    /// narrow promise that lets the nonisolated deinit unregister them without
+    /// a Swift 6 data-race diagnostic.
+    ///
     /// macOS posts this when the reader flips the system appearance; the app is
     /// no longer following `nil` (see `resolved`), so it has to listen.
-    private var themeObserver: NSObjectProtocol?
-    private var activationObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var themeObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var activationObserver: NSObjectProtocol?
     /// 桌面壁纸变化没有一个稳定的公开通知名，但系统实际会广播这个；
     /// 监听它只是为了在壁纸切换后强制窗口重画，避免透明/玻璃层留下残影。
-    private var desktopObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var desktopObserver: NSObjectProtocol?
 
     init(settings: AppSettings) {
         self.settings = settings

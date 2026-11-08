@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import FlashCatKit
 
 private enum MainWindowGeometry {
     static let defaultSize = NSSize(width: 1280, height: 820)
@@ -30,10 +31,11 @@ struct FlashCatApp: App {
             CommandGroup(replacing: .appInfo) {
                 Button("关于 flashCat") { delegate.showAbout() }
             }
+            // 应用不注册任何键盘快捷键：每个动作都有可点击的菜单项或按钮，
+            // 键盘用户通过随应用安装的 `flashcat` 命令行完成同样的事。
             CommandGroup(after: .newItem) {
                 Button("打开对话") { state.section = .chat }
                 Button("新建对话") { state.newConversation() }
-                    .keyboardShortcut("n", modifiers: .command)
             }
             CommandMenu("服务") {
                 Button("启动服务") { state.startService() }
@@ -48,22 +50,19 @@ struct FlashCatApp: App {
                     NSWorkspace.shared.open(URL(fileURLWithPath: Paths.logFile))
                 }
             }
-            // 标准「显示 / 隐藏边栏」菜单位置与 ⌘\ 快捷键。
+            // 标准「显示 / 隐藏边栏」菜单位置；不带按键，点击即执行。
             CommandGroup(after: .sidebar) {
                 Button(L10n.t(state.showsSidebar ? "隐藏边栏" : "显示边栏")) {
                     state.toggleSidebar()
                 }
-                .keyboardShortcut("\\", modifiers: .command)
                 Button("切换浅色 / 深色") {
                     state.theme.set(state.theme.mode.resolvedIsDark ? .light : .dark)
                 }
-                .keyboardShortcut("a", modifiers: [.command, .shift])
             }
             CommandMenu("页面") {
                 Button("命令面板") {
                     NotificationCenter.default.post(name: .flashCatOpenCommandPalette, object: nil)
                 }
-                .keyboardShortcut("k", modifiers: .command)
                 Divider()
                 Button("概览") { state.section = .overview }
                 Button("对话") { state.section = .chat }
@@ -218,34 +217,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Quit is where "the app is gone but the engine is not" gets decided.
     ///
-    /// The old code waited for the engine inside a `Thread.sleep` loop on the
-    /// main actor, so a 20 GB model load could freeze the quit for seconds. Users
-    /// respond to a frozen quit with Force Quit, which is exactly what leaves an
-    /// engine holding unified memory. `.terminateLater` keeps AppKit in the loop
-    /// while the engines are signalled and reaped asynchronously.
+    /// The old code waited for the engine inside an unbounded `Thread.sleep`
+    /// loop on the main actor, so a 20 GB model load could freeze the quit for
+    /// seconds. The current version signals first and waits at most 1.5 s
+    /// before SIGKILL: long enough for a healthy engine, short enough that
+    /// Force Quit never becomes the expected next step (and leaves weights
+    /// resident).
     private var isTerminating = false
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !isTerminating else {
-            // A second ⌘Q while the first teardown is still in flight: refuse
+            // A second quit request while the first teardown is still in flight: refuse
             // rather than quit early and strand the engines. The window is
             // bounded (1.5 s grace), so this never feels stuck.
             return .terminateCancel
         }
         isTerminating = true
+        // Do the teardown inline and answer `.terminateNow`. Returning
+        // `.terminateLater` and letting a Task reply was not reliable: AppKit
+        // destroys the process before the task is scheduled, which leaves the
+        // engines resident and the last history write in flight. The wait below
+        // is bounded by the engine grace (1.5 s), so this never becomes the old
+        // multi-second freeze.
         let state = AppState.shared
-        Task { @MainActor in
-            // Gateway first (it answers requests), then every installed engine,
-            // then whatever ignored the first signal.
-            state.prepareForTermination()
-            await state.engines?.shutdownEngines()
-            state.finishTermination()
-            // 历史/当前会话改为后台写盘，退出前把队列排空。
-            state.history.flushPendingWrites()
-            state.conversation.flushPendingWrites()
-            sender.reply(toApplicationShouldTerminate: true)
-        }
-        return .terminateLater
+        // Gateway first (it answers requests), then every installed engine,
+        // then whatever ignored the first signal.
+        state.prepareForTermination()
+        state.engines?.shutdownEngines()
+        state.finishTermination()
+        // 历史/当前会话改为后台写盘，退出前把队列排空。
+        state.history.flushPendingWrites()
+        state.conversation.flushPendingWrites()
+        return .terminateNow
     }
 
     @MainActor

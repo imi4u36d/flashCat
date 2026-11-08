@@ -145,7 +145,7 @@ public actor EngineUpstreamChecker {
                 version: EngineUpstream.normalizedVersion(tag),
                 tag: tag,
                 title: (entry["name"] as? String).flatMap { $0.isEmpty ? nil : $0 },
-                publishedAt: (entry["published_at"] as? String).flatMap(Self.dateFormatter.date(from:)),
+                publishedAt: (entry["published_at"] as? String).flatMap(Self.date(from:)),
                 isPrerelease: (entry["prerelease"] as? Bool) ?? false,
                 pageURL: page,
                 assets: assets.compactMap { asset in
@@ -184,11 +184,14 @@ public actor EngineUpstreamChecker {
         return data
     }
 
-    private static let dateFormatter: ISO8601DateFormatter = {
+    /// A shared `ISO8601DateFormatter` would be non-Sendable global mutable
+    /// state. Release lists decode a handful of dates, so a local instance is
+    /// both safe and cheap.
+    private static func date(from raw: String) -> Date? {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
+        return formatter.date(from: raw)
+    }
 }
 
 // MARK: - Comparison

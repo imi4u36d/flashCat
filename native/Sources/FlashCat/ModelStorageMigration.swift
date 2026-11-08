@@ -16,7 +16,6 @@ enum ModelStorageMigration {
         var isEmpty: Bool { moved == 0 && archived == 0 && failures.isEmpty }
     }
 
-    private static let manager = FileManager.default
 
     @discardableResult
     static func migrate() -> Report {
@@ -38,7 +37,7 @@ enum ModelStorageMigration {
 
         if Paths.fileExists(Paths.legacySplashModelsDirectory),
            isEmptyDirectory(Paths.legacySplashModelsDirectory) {
-            try? manager.removeItem(atPath: Paths.legacySplashModelsDirectory)
+            try? FileManager.default.removeItem(atPath: Paths.legacySplashModelsDirectory)
         }
         return report
     }
@@ -83,7 +82,7 @@ enum ModelStorageMigration {
             movedPaths[from] = to
         }
         if isEmptyDirectory(source) {
-            try? manager.removeItem(atPath: source)
+            try? FileManager.default.removeItem(atPath: source)
         }
     }
 
@@ -113,7 +112,7 @@ enum ModelStorageMigration {
                 movedPaths[from] = to
             }
             if isEmptyDirectory(source) {
-                try? manager.removeItem(atPath: source)
+                try? FileManager.default.removeItem(atPath: source)
             }
             return
         }
@@ -134,11 +133,11 @@ enum ModelStorageMigration {
                 movedPaths[nested] = to
             }
             if isEmptyDirectory(from) {
-                try? manager.removeItem(atPath: from)
+                try? FileManager.default.removeItem(atPath: from)
             }
         }
         if isEmptyDirectory(source) {
-            try? manager.removeItem(atPath: source)
+            try? FileManager.default.removeItem(atPath: source)
         }
     }
 
@@ -147,7 +146,7 @@ enum ModelStorageMigration {
         do {
             if !Paths.fileExists(to) && !isLink(to) {
                 Paths.ensureDirectory((to as NSString).deletingLastPathComponent)
-                try manager.moveItem(atPath: from, toPath: to)
+                try FileManager.default.moveItem(atPath: from, toPath: to)
                 report.moved += 1
                 return
             }
@@ -156,7 +155,7 @@ enum ModelStorageMigration {
                     moveOrMerge(from: from + "/" + child, to: to + "/" + child, report: &report)
                 }
                 if isEmptyDirectory(from) {
-                    try? manager.removeItem(atPath: from)
+                    try? FileManager.default.removeItem(atPath: from)
                 }
                 return
             }
@@ -172,7 +171,7 @@ enum ModelStorageMigration {
     private static func archive(_ path: String, label: String, report: inout Report) {
         guard Paths.fileExists(path) || isLink(path) else { return }
         if isDirectory(path), isEmptyDirectory(path) {
-            try? manager.removeItem(atPath: path)
+            try? FileManager.default.removeItem(atPath: path)
             return
         }
         let root = Paths.supportDirectory + "/migration-backups"
@@ -182,7 +181,7 @@ enum ModelStorageMigration {
             destination += "-" + String(Int(Date().timeIntervalSince1970))
         }
         do {
-            try manager.moveItem(atPath: path, toPath: destination)
+            try FileManager.default.moveItem(atPath: path, toPath: destination)
             report.archived += 1
         } catch {
             report.failures.append("\(label): \(error.localizedDescription)")
@@ -192,12 +191,12 @@ enum ModelStorageMigration {
     private static func rewriteLinks(under root: String,
                                      movedPaths: [String: String],
                                      report: inout Report) {
-        guard !movedPaths.isEmpty, let enumerator = manager.enumerator(atPath: root) else { return }
+        guard !movedPaths.isEmpty, let enumerator = FileManager.default.enumerator(atPath: root) else { return }
         let mappings = movedPaths.keys.sorted { $0.count > $1.count }
         for case let relative as String in enumerator {
             let path = root + "/" + relative
             guard isLink(path),
-                  let raw = try? manager.destinationOfSymbolicLink(atPath: path) else { continue }
+                  let raw = try? FileManager.default.destinationOfSymbolicLink(atPath: path) else { continue }
             let absolute = raw.hasPrefix("/")
                 ? raw
                 : (path as NSString).deletingLastPathComponent + "/" + raw
@@ -206,8 +205,8 @@ enum ModelStorageMigration {
             }), let replacement = movedPaths[old] else { continue }
             let next = replacement + String(absolute.dropFirst(old.count))
             do {
-                try manager.removeItem(atPath: path)
-                try manager.createSymbolicLink(atPath: path, withDestinationPath: next)
+                try FileManager.default.removeItem(atPath: path)
+                try FileManager.default.createSymbolicLink(atPath: path, withDestinationPath: next)
             } catch {
                 report.failures.append("link \((path as NSString).lastPathComponent): \(error.localizedDescription)")
             }
@@ -215,16 +214,16 @@ enum ModelStorageMigration {
     }
 
     private static func entries(_ path: String) -> [String] {
-        ((try? manager.contentsOfDirectory(atPath: path)) ?? []).sorted()
+        ((try? FileManager.default.contentsOfDirectory(atPath: path)) ?? []).sorted()
     }
 
     private static func isDirectory(_ path: String) -> Bool {
         var value: ObjCBool = false
-        return manager.fileExists(atPath: path, isDirectory: &value) && value.boolValue
+        return FileManager.default.fileExists(atPath: path, isDirectory: &value) && value.boolValue
     }
 
     private static func isLink(_ path: String) -> Bool {
-        (try? manager.attributesOfItem(atPath: path)[.type]) as? FileAttributeType == .typeSymbolicLink
+        (try? FileManager.default.attributesOfItem(atPath: path)[.type]) as? FileAttributeType == .typeSymbolicLink
     }
 
     private static func isEmptyDirectory(_ path: String) -> Bool {

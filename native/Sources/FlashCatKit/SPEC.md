@@ -20,6 +20,8 @@ depends-on: [flashcat-manifest-contract]
 - **上游版本。** 读 GitHub release，与已装版本比对，得出「安装 / 更新 / 重装」。
 - **Splash 的家族表。** 解析 pack 里的 `install/families.py`，得出「模型家族 → 它发布的 DFlash2 draft」；再按 `model.json` 记下的 family（优先）或折叠后的模型 id 反查一个模型该配哪个 draft。
 - **装机。** 索引解析、校验和验证、安装/卸载、可删性判定，以及「上游有新版」到「实际产出 pack 的命令」的转化。
+- **路径与安装发现。** `FlashCatPaths` 是所有目录规则的唯一来源（支持目录、引擎、模型、日志、控制文件、偏好域）；`EngineInstallations` 按环境变量、用户安装、app bundle、checkout `vendor/engines` 的顺序找 pack。应用与 CLI 共用这两者，避免「命令行看得到、界面看不到」。
+- **控制协议。** `Control/ControlProtocol.swift` 定义 `control.json` 握手、状态/引擎/模型/下载/日志/设置/医生文档、请求体与路由解析。应用侧实现服务器，CLI 侧只依赖这些 Codable 类型；协议变化先改这里。
 - **启动阶段。** 从引擎自己打印的日志行判定它现在在哪一步。
 - **Hub 仓库。** `HubSearchClient` 检索 Hugging Face、逐仓库补齐真实字节；`HubModelLayout` 从仓库自报的元数据判出它服务哪个引擎（GGUF / MTPLX / MLX），并把 GGUF 仓库的量化枚举成 `select_gguf` 认得的名字。它只描述「这个仓库能不能跑」和「体积多大」，下载与归属判定归应用壳；网络出口仍只有 `URLSession`，没有新依赖。
 

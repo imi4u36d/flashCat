@@ -15,9 +15,9 @@ import FlashCatKit
 final class GatewayMeter: @unchecked Sendable {
     static let shared = GatewayMeter()
 
-    /// 请求结束后再留一会儿，让「刚跑完」看得见，然后自然消失。
-    private static let lingerAfterFinish: TimeInterval = 6
-    /// 同时在追踪的请求上限，防止异常流量把内存吃掉。
+    /// 保留的请求条数上限（含已完成），防止异常流量把内存吃掉。
+    /// 已结束的请求不按时间清掉：概览要维持最后一次请求的信息，直到它被
+    /// 后续请求挤出这张表。
     private static let sessionLimit = 32
 
     private struct Session {
@@ -65,7 +65,14 @@ final class GatewayMeter: @unchecked Sendable {
                                 failed: false,
                                 meter: DecodeRateMeter()))
         if sessions.count > Self.sessionLimit {
-            sessions.removeAll { $0.finishedAt != nil }
+            // 先淘汰最早的已完成请求，再考虑在跑的会话：正在打点的请求不能
+            // 因为历史太长而丢掉 finish/addTokens 的落点。
+            var overflow = sessions.count - Self.sessionLimit
+            sessions.removeAll { session in
+                guard overflow > 0, session.finishedAt != nil else { return false }
+                overflow -= 1
+                return true
+            }
             if sessions.count > Self.sessionLimit {
                 sessions.removeFirst(sessions.count - Self.sessionLimit)
             }
@@ -202,7 +209,8 @@ final class GatewayMeter: @unchecked Sendable {
     struct Overview {
         let decodeRate: Double
         /// true = 数值来自在跑会话的实时低通；false = 没有在跑会话，
-        /// 数值只是刚结束会话的全程均值（linger 内），必须标成 LAST。
+        /// 数值只是最近一次已结束请求的全程均值，必须标成 LAST。
+        /// 已结束的请求会一直保留到下一次请求，避免收尾后整页读数归零。
         let isLive: Bool
     }
 
@@ -224,20 +232,18 @@ final class GatewayMeter: @unchecked Sendable {
         return Double(forwarded) / ttft
     }
 
-    /// 在跑会话的合计解码速率；没有在跑的就用刚结束（linger 内）的会话
-    /// 全程均值，避免收尾瞬间读数突然归零。
-    func overview() -> Overview {
-        let now = Date()
+    /// 在跑会话的合计解码速率；没有在跑的请求时，读最近一次已结束请求的
+    /// 全程均值。概览的 hero 与曲线标题靠它维持「最后一次请求」的读数，
+    /// 不再在收尾后突然变成「—」。
+    func overview(now: Date = Date()) -> Overview {
         lock.lock()
         defer { lock.unlock() }
-        sessions.removeAll { session in
-            guard let finishedAt = session.finishedAt else { return false }
-            return now.timeIntervalSince(finishedAt) > Self.lingerAfterFinish
-        }
         let active = sessions.filter { $0.finishedAt == nil }
         let decodeRate: Double
         if active.isEmpty {
-            decodeRate = sessions.reduce(0) { $0 + $1.meter.averageRate() }
+            // 只读最近一条，不能把整张历史表相加：那会让大数字随着请求
+            // 次数越来越多，变成一张没有意义的累计值。
+            decodeRate = sessions.last { $0.finishedAt != nil }?.meter.averageRate() ?? 0
         } else {
             decodeRate = active.reduce(0) { $0 + $1.meter.rate(at: now) }
         }
@@ -272,16 +278,12 @@ final class GatewayMeter: @unchecked Sendable {
         let ctxTokens: Int
     }
 
-    /// 最近 `limit` 条请求的快照；`nil` 表示全部。只构造概览真正用到的字段，
-    /// 不再为每行复制 180 点历史曲线（那段数据没有任何界面在读）。
-    func snapshot(limit: Int? = nil) -> [SessionSnapshot] {
-        let now = Date()
+    /// 最近 `limit` 条请求的快照；`nil` 表示全部。已结束的请求仍然在表里，
+    /// 所以概览的「最近请求」在收尾后不会变空；上限由 `sessionLimit` 控制。
+    /// 只构造概览真正用到的字段，不再为每行复制 180 点历史曲线。
+    func snapshot(limit: Int? = nil, now: Date = Date()) -> [SessionSnapshot] {
         lock.lock()
         defer { lock.unlock() }
-        sessions.removeAll { session in
-            guard let finishedAt = session.finishedAt else { return false }
-            return now.timeIntervalSince(finishedAt) > Self.lingerAfterFinish
-        }
         let visible: ArraySlice<Session>
         if let limit {
             visible = sessions.suffix(max(0, limit))
@@ -289,10 +291,12 @@ final class GatewayMeter: @unchecked Sendable {
             visible = sessions[...]
         }
         return visible.map { session in
-            let elapsed = now.timeIntervalSince(session.startedAt)
+            // 已结束请求的耗时停在收尾那一刻；否则保留在列表里的旧行会
+            // 跟着挂钟一直涨，看起来像还在跑。
+            let elapsed = (session.finishedAt ?? now).timeIntervalSince(session.startedAt)
             let ttft = session.firstTokenAt.map { $0.timeIntervalSince(session.startedAt) }
             // 活动请求读低通后的瞬时速率；已结束的请求改报全程平均，
-            // 否则 linger 的 6 秒里读数会一路衰减到 0，看起来像引擎卡死。
+            // 这个终值会一直保留到它被新请求挤出列表。
             let rate = session.finishedAt == nil
                 ? session.meter.rate(at: now)
                 : session.meter.averageRate()

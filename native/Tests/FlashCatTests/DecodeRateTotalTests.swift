@@ -24,7 +24,7 @@ final class DecodeRateTotalTests: XCTestCase {
                        .gatewayLive)
     }
 
-    /// 请求刚结束、网关还在 linger 里的值不是当前速度，界面要按 LAST 标。
+    /// 请求结束后网关保留的终值不是当前速度，界面要按 LAST 标。
     func testGatewayFinishedTailIsMarkedLast() {
         XCTAssertEqual(AppState.totalDecodeRate(gateway: 44.1,
                                                 gatewayIsLive: false,

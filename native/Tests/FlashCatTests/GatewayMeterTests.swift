@@ -75,6 +75,58 @@ final class GatewayMeterTests: XCTestCase {
         XCTAssertEqual(finished[0].decodeRate, last.decodeRate, accuracy: 0.001)
     }
 
+    /// 概览在请求结束后要维持最后一次请求的信息：已结束的会话不能按时间
+    /// 自动消失，否则 hero 与「最近请求」会在收尾几秒后一起归零。
+    func testFinishedRequestSurvivesLongAfterFinish() {
+        let meter = GatewayMeter()
+        let id = meter.begin(model: "last-model", dialect: "test", promptTokens: 10)
+        meter.addTokens(id, 120, at: Date())
+        meter.finish(id)
+
+        let later = Date().addingTimeInterval(10 * 60)
+        let rows = meter.snapshot(limit: 6, now: later)
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows[0].state, .done)
+        XCTAssertEqual(rows[0].model, "last-model")
+        XCTAssertGreaterThan(rows[0].decodeRate, 0)
+
+        let overview = meter.overview(now: later)
+        XCTAssertFalse(overview.isLive)
+        XCTAssertEqual(overview.decodeRate, rows[0].decodeRate, accuracy: 0.001)
+    }
+
+    /// 历史表里可能躺着多条已完成请求；空闲时大数字只能报最近一条的终值，
+    /// 不能把整张表相加成越来越大的累计值。
+    func testIdleOverviewReportsLatestRequestNotHistorySum() {
+        let meter = GatewayMeter()
+        let first = meter.begin(model: "first", dialect: "test", promptTokens: 10)
+        meter.addTokens(first, 80, at: Date())
+        meter.finish(first)
+        let second = meter.begin(model: "second", dialect: "test", promptTokens: 10)
+        meter.addTokens(second, 40, at: Date())
+        meter.finish(second)
+
+        let rows = meter.snapshot(limit: 6)
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertEqual(rows.last?.model, "second")
+
+        let overview = meter.overview()
+        XCTAssertEqual(overview.decodeRate, rows.last?.decodeRate ?? 0, accuracy: 0.001)
+        XCTAssertLessThan(overview.decodeRate, rows.map(\.decodeRate).reduce(0, +))
+    }
+
+    /// 已结束的请求留在列表里时，耗时必须停在收尾时刻，不能跟着挂钟继续涨。
+    func testFinishedElapsedStopsAtFinish() {
+        let meter = GatewayMeter()
+        let id = meter.begin(model: "m", dialect: "test", promptTokens: 10)
+        meter.addTokens(id, 20, at: Date())
+        meter.finish(id)
+
+        let immediate = meter.snapshot().first?.elapsed ?? 0
+        let later = meter.snapshot(now: Date().addingTimeInterval(30)).first?.elapsed ?? 0
+        XCTAssertEqual(immediate, later, accuracy: 0.001)
+    }
+
     /// 末帧 usage 只校正总 token，不能回灌速率：否则请求结束时会炸出一个尖峰。
     func testUsageCorrectsTotalsWithoutBackfillingTheRate() {
         let meter = GatewayMeter()

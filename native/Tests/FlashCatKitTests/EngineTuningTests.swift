@@ -1,12 +1,23 @@
 import XCTest
 @testable import FlashCatKit
 
+/// The disk tier these assertions ride on top of: the factory defaults turn it
+/// on, so every case reads as "the flags it is about, plus whatever the cache
+/// adds". Kept in one place so a change to the default budget lands once.
+private func cacheArgs(_ id: EngineID) -> [String] {
+    EngineTuning.defaults(for: id).prefixCacheArguments(for: id)
+}
+
 final class EngineTuningTests: XCTestCase {
 
-    func testDefaultTuningAddsNoArguments() {
+    func testDefaultTuningAddsOnlyTheDiskTier() {
         for id in EngineCatalog.allIDs {
-            XCTAssertEqual(EngineTuning().arguments(for: id), [])
+            // An all-nil tuning still inherits the factory disk-tier default;
+            // strata advertises no tier at all, so it stays empty.
+            XCTAssertEqual(EngineTuning().arguments(for: id), cacheArgs(id),
+                           "unexpected arguments on \(id)")
         }
+        XCTAssertEqual(EngineTuning().arguments(for: .strata), [])
     }
 
     func testSplashArgumentsCarryTheSplashOnlySwitches() {
@@ -18,10 +29,10 @@ final class EngineTuningTests: XCTestCase {
 
         XCTAssertEqual(tuning.arguments(for: .splash),
                        ["--max-memory", "24G", "--max-context", "256K",
-                        "--language-only", "--decode-share", "0.5"])
+                        "--language-only"] + cacheArgs(.splash) + ["--decode-share", "0.5"])
         // MTPLX/oMLX do not understand splash's memory flags.
-        XCTAssertEqual(tuning.arguments(for: .mtplx), ["--decode-share", "0.5"])
-        XCTAssertEqual(tuning.arguments(for: .omlx), ["--decode-share", "0.5"])
+        XCTAssertEqual(tuning.arguments(for: .mtplx), cacheArgs(.mtplx) + ["--decode-share", "0.5"])
+        XCTAssertEqual(tuning.arguments(for: .omlx), cacheArgs(.omlx) + ["--decode-share", "0.5"])
     }
 
     func testMtplxSwitchesMapToItsCli() {
@@ -30,12 +41,12 @@ final class EngineTuningTests: XCTestCase {
         tuning.loadMtp = true
         tuning.mtpQuantBits = 4
         XCTAssertEqual(tuning.arguments(for: .mtplx),
-                       ["--no-mtp", "--load-mtp", "--mtp-quant-bits", "4"])
+                       ["--no-mtp", "--load-mtp", "--mtp-quant-bits", "4"] + cacheArgs(.mtplx))
 
         tuning.mtp = true
         tuning.loadMtp = false
         XCTAssertEqual(tuning.arguments(for: .mtplx),
-                       ["--mtp", "--no-load-mtp", "--mtp-quant-bits", "4"])
+                       ["--mtp", "--no-load-mtp", "--mtp-quant-bits", "4"] + cacheArgs(.mtplx))
     }
 
     func testOMLXPayloadNeverEnablesBothHeads() {
@@ -153,23 +164,27 @@ final class EngineTuningTests: XCTestCase {
     func testSplashTakesTheNgramCacheSizeVerbatim() {
         var tuning = EngineTuning()
         tuning.pleMemory = " 2G "
-        XCTAssertEqual(tuning.arguments(for: .splash), ["--ple-memory", "2G"])
+        XCTAssertEqual(tuning.arguments(for: .splash),
+                       ["--ple-memory", "2G"] + cacheArgs(.splash))
         // Only splash reads it as a flag.
-        XCTAssertEqual(tuning.arguments(for: .mtplx), [])
-        XCTAssertEqual(tuning.arguments(for: .omlx), [])
+        XCTAssertEqual(tuning.arguments(for: .mtplx), cacheArgs(.mtplx))
+        XCTAssertEqual(tuning.arguments(for: .omlx), cacheArgs(.omlx))
     }
 
     func testSplashMapsTheOffloadSwitchOntoPleMemory() {
         var tuning = EngineTuning()
         tuning.pleSSDOffload = true
-        XCTAssertEqual(tuning.arguments(for: .splash), ["--ple-memory", "auto"])
+        XCTAssertEqual(tuning.arguments(for: .splash),
+                       ["--ple-memory", "auto"] + cacheArgs(.splash))
 
         tuning.pleSSDOffload = false
-        XCTAssertEqual(tuning.arguments(for: .splash), ["--ple-memory", "off"])
+        XCTAssertEqual(tuning.arguments(for: .splash),
+                       ["--ple-memory", "off"] + cacheArgs(.splash))
 
         // An explicit size beats the switch, so the CLI never carries both.
         tuning.pleMemory = "4G"
-        XCTAssertEqual(tuning.arguments(for: .splash), ["--ple-memory", "4G"])
+        XCTAssertEqual(tuning.arguments(for: .splash),
+                       ["--ple-memory", "4G"] + cacheArgs(.splash))
     }
 
     func testOMLXPushesTheNgramOffloadAsItsOwnSetting() {
@@ -282,7 +297,8 @@ final class EngineTuningDefaultsTests: XCTestCase {
         let tuning = EngineTuning.defaults(for: .splash)
         XCTAssertEqual(tuning.dflash, true)
         XCTAssertEqual(tuning.pleSSDOffload, true)
-        XCTAssertEqual(tuning.arguments(for: .splash), ["--ple-memory", "auto"])
+        XCTAssertEqual(tuning.arguments(for: .splash),
+                       ["--ple-memory", "auto"] + cacheArgs(.splash))
         XCTAssertEqual(tuning.draftDirectory(automatic: "/models/draft"), "/models/draft")
     }
 
@@ -305,7 +321,7 @@ final class EngineTuningDefaultsTests: XCTestCase {
         // 思考截断默认不限制：出厂默认不带预算，需要时在配置里手动开。
         XCTAssertNil(tuning.thinkingBudget)
         // 思考截断走环境变量，不占 CLI 参数位。
-        XCTAssertEqual(tuning.arguments(for: .mtplx), ["--load-mtp"])
+        XCTAssertEqual(tuning.arguments(for: .mtplx), ["--load-mtp"] + cacheArgs(.mtplx))
         for id in EngineCatalog.allIDs {
             XCTAssertEqual(EngineTuning.defaults(for: id).sanitized(), EngineTuning.defaults(for: id),
                            "defaults survive sanitizing on \(id)")
@@ -373,5 +389,67 @@ final class EngineTuningMigrationTests: XCTestCase {
         let twice = EngineTuning.backfillPLEOffload(in: once)
         XCTAssertEqual(try JSONSerialization.data(withJSONObject: twice),
                        try JSONSerialization.data(withJSONObject: once))
+    }
+}
+
+/// The on-disk prefix cache is what makes a restarted app resume a session
+/// instead of re-prefilling it, so the flags that turn it on — and the unit
+/// each engine spells — are worth pinning down.
+final class PrefixCacheTuningTests: XCTestCase {
+
+    func testEveryAdapterButStrataGetsATierByDefault() {
+        for id in EngineCatalog.allIDs {
+            let arguments = EngineTuning().prefixCacheArguments(for: id)
+            switch id {
+            case .strata:
+                XCTAssertEqual(arguments, [], "strata advertises no disk tier")
+            case .mlxServe:
+                // Its location is fixed at `$HOME/.mlx-serve/kv-cache`; the
+                // shared root reaches it through a link, not an argument.
+                XCTAssertEqual(arguments, ["--prefix-cache-disk", "20GB"])
+            default:
+                XCTAssertTrue(arguments.contains(FlashCatPaths.prefixCacheDirectory(id)),
+                              "\(id) should write under the shared root")
+            }
+        }
+    }
+
+    func testSplashSpellsItsBudgetWithABareG() {
+        // splash's parser accepts K/M/G only; "20GB" would be rejected.
+        var tuning = EngineTuning()
+        tuning.prefixCacheDiskGB = 20
+        let arguments = tuning.prefixCacheArguments(for: .splash)
+        XCTAssertTrue(arguments.contains("20G"))
+        XCTAssertFalse(arguments.contains("20GB"))
+        // Persisting across restarts is the switch that matters, and the cache
+        // directory keeps the tier out of the system temp folder.
+        XCTAssertTrue(arguments.contains("--persistent-cache"))
+        XCTAssertEqual(arguments.first, "--max-cache-disk")
+    }
+
+    func testTheOtherEnginesSpellTheirBudgetWithGB() {
+        var tuning = EngineTuning()
+        tuning.prefixCacheDiskGB = 20
+        for id in [EngineID.omlx, .mtplx] {
+            XCTAssertTrue(tuning.prefixCacheArguments(for: id).contains("20GB"),
+                          "\(id) should get a GB suffix")
+        }
+        XCTAssertTrue(tuning.prefixCacheArguments(for: .mlxServe).contains("20GB"))
+    }
+
+    func testAZeroBudgetTurnsTheTierOffRatherThanFallingBack() {
+        var tuning = EngineTuning()
+        tuning.prefixCacheDiskGB = 0
+        XCTAssertNil(tuning.effectivePrefixCacheDiskGB(for: .splash))
+        XCTAssertEqual(tuning.prefixCacheArguments(for: .splash), ["--max-cache-disk", "0"])
+        XCTAssertEqual(tuning.prefixCacheArguments(for: .mtplx), ["--ssd-session-cache", "off"])
+        XCTAssertEqual(tuning.prefixCacheArguments(for: .omlx), ["--no-cache"])
+        XCTAssertEqual(tuning.prefixCacheArguments(for: .mlxServe), [])
+    }
+
+    func testAnUnsetBudgetInheritsTheFactoryDefault() {
+        let tuning = EngineTuning()
+        XCTAssertEqual(tuning.effectivePrefixCacheDiskGB(for: .splash), 20)
+        XCTAssertEqual(tuning.effectivePrefixCacheDiskGB(for: .strata), nil)
     }
 }

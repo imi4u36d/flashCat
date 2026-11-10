@@ -405,9 +405,10 @@ final class EngineController {
         }
 
         var environment = baseEnvironment(root: installation.root.path)
-        if descriptor.adapter == .mlxServe {
-            let home = Paths.supportDirectory + "/engine-homes/mlx-serve"
-            Paths.ensureDirectory(home + "/.mlx-serve")
+        // The disk tier needs its directory to exist before the engine starts;
+        // mlx-serve's fixed path is linked into the shared root here too.
+        if tuning.effectivePrefixCacheDiskGB(for: id) != nil {
+            FlashCatPaths.preparePrefixCacheDirectory(id)
         }
         for (key, raw) in profile.environment ?? [:] {
             environment[key] = EngineTemplate.expand(raw, context: values)

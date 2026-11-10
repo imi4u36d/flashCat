@@ -32,6 +32,28 @@ public enum FlashCatPaths {
     public static var modelsRoot: String { supportDirectory + "/models" }
     public static var sharedModelsDirectory: String { supportDirectory + "/shared-models" }
 
+    /// One root for every engine's on-disk prefix cache.
+    ///
+    /// A KV snapshot belongs to exactly one model — it is the weights' layer
+    /// count, hidden size and quantization in tensor form, so a second model
+    /// can never read it back. What *can* be shared is the place they live:
+    /// keeping every engine's SSD tier under one root is what makes the
+    /// capacity, the sweep and the backup a single thing to reason about.
+    /// Each engine still gets its own subdirectory because their on-disk
+    /// formats are unrelated.
+    public static var prefixCacheRoot: String { supportDirectory + "/prefix-cache" }
+
+    public static func prefixCacheDirectory(_ id: EngineID) -> String {
+        prefixCacheRoot + "/" + id.rawValue
+    }
+
+    /// mlx-serve has no flag for where its SSD tier goes — the path is fixed at
+    /// `$HOME/.mlx-serve/kv-cache` — so it is pointed here through `HOME`
+    /// instead, which puts it under the same root as the others.
+    public static func engineHome(_ id: EngineID) -> String {
+        supportDirectory + "/engine-homes/" + id.rawValue
+    }
+
     public static var controlRuntimeFile: String { supportDirectory + "/control.json" }
     public static var conversationFile: String { supportDirectory + "/conversation.json" }
     public static var historyFile: String { supportDirectory + "/chat-history.json" }
@@ -90,6 +112,32 @@ public enum FlashCatPaths {
 
     public static func fileExists(_ path: String) -> Bool {
         FileManager.default.fileExists(atPath: path)
+    }
+
+    /// Give an engine's disk tier somewhere to write before it starts.
+    ///
+    /// Every engine but mlx-serve takes the directory on its command line, so a
+    /// `mkdir` is the whole job. mlx-serve has no such flag — its tier is fixed
+    /// at `$HOME/.mlx-serve/kv-cache` — so the shared root holds a link to that
+    /// path instead, which keeps every engine's cache visible from one place
+    /// without moving the engine's own layout.
+    public static func preparePrefixCacheDirectory(_ id: EngineID) {
+        ensureDirectory(prefixCacheRoot)
+        let link = prefixCacheDirectory(id)
+        switch id {
+        case .mlxServe:
+            let engineRoot = home + "/.mlx-serve"
+            ensureDirectory(engineRoot)
+            let target = engineRoot + "/kv-cache"
+            // A real directory here would be an older layout: leave it alone
+            // rather than replacing something the engine may be writing to.
+            if !fileExists(link) {
+                try? FileManager.default.createSymbolicLink(atPath: link,
+                                                            withDestinationPath: target)
+            }
+        default:
+            ensureDirectory(link)
+        }
     }
 
     private static func environment(_ key: String) -> String? {

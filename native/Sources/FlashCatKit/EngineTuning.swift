@@ -65,6 +65,16 @@ public struct EngineTuning: Codable, Equatable, Sendable {
     public var thinkingBudget: Int?
     /// Free-form extra CLI arguments, split like a shell would.
     public var extraArguments: String?
+    /// 落盘前缀缓存的 SSD 预算，单位 GB。
+    ///
+    /// 引擎的 hot cache 只在内存里，App 一重启就清零，上一次会话的整段历史
+    /// 只能从零重算——这是「重启后预填充特别久」的根因。打开这一层后，见过的
+    /// 前缀 KV 快照落在 SSD 上，下次直接恢复而不是重算。
+    ///
+    /// `nil` 跟随引擎自己的默认（MTPLX 默认开、其余默认关）；`0` 显式关闭。
+    /// 各家单位拼写不同（Splash 只认 `16G`，其余认 `16GB`），所以这里存 GB
+    /// 数，下发时按引擎再拼。
+    public var prefixCacheDiskGB: Int?
 
     public init(mtp: Bool? = nil,
                 mtpDepth: Int? = nil,
@@ -79,7 +89,8 @@ public struct EngineTuning: Codable, Equatable, Sendable {
                 pleMemory: String? = nil,
                 pleSSDOffload: Bool? = nil,
                 thinkingBudget: Int? = nil,
-                extraArguments: String? = nil) {
+                extraArguments: String? = nil,
+                prefixCacheDiskGB: Int? = nil) {
         self.mtp = mtp
         self.mtpDepth = mtpDepth
         self.loadMtp = loadMtp
@@ -94,6 +105,7 @@ public struct EngineTuning: Codable, Equatable, Sendable {
         self.pleSSDOffload = pleSSDOffload
         self.thinkingBudget = thinkingBudget
         self.extraArguments = extraArguments
+        self.prefixCacheDiskGB = prefixCacheDiskGB
     }
 
     public var isDefault: Bool { self == EngineTuning() }
@@ -106,15 +118,65 @@ public struct EngineTuning: Codable, Equatable, Sendable {
     public static func defaults(for id: EngineID) -> EngineTuning {
         switch id.adapter {
         case .splash:
-            return EngineTuning(dflash: true, pleSSDOffload: true)
+            return EngineTuning(dflash: true, pleSSDOffload: true, prefixCacheDiskGB: 20)
         case .omlx:
-            return EngineTuning(mtp: true, dflash: false, pleSSDOffload: true)
+            return EngineTuning(mtp: true, dflash: false, pleSSDOffload: true, prefixCacheDiskGB: 20)
         case .mtplx:
-            return EngineTuning(loadMtp: true)
-        case .mlxServe, .strata:
+            return EngineTuning(loadMtp: true, prefixCacheDiskGB: 20)
+        case .mlxServe:
+            return EngineTuning(mtp: true, prefixCacheDiskGB: 20)
+        case .strata:
             return EngineTuning(mtp: true)
         default:
             return EngineTuning()
+        }
+    }
+
+    /// The disk tier's budget in GB, or `nil` when this engine has no such tier
+    /// or the reader turned it off.
+    public func effectivePrefixCacheDiskGB(for id: EngineID) -> Int? {
+        let fallback = EngineTuning.defaults(for: id)
+        guard let gb = prefixCacheDiskGB ?? fallback.prefixCacheDiskGB, gb > 0 else { return nil }
+        return gb
+    }
+
+    /// Arguments that turn the engine's on-disk prefix cache on and point it at
+    /// the shared root. Strata has no such tier, so it gets nothing.
+    public func prefixCacheArguments(for id: EngineID) -> [String] {
+        let directory = FlashCatPaths.prefixCacheDirectory(id)
+        guard let gb = effectivePrefixCacheDiskGB(for: id) else {
+            // Explicitly off. Splash keeps a temporary spill area by default and
+            // only `--max-cache-disk 0` turns it off; oMLX is off while its
+            // directory is unset; MTPLX defaults to on; mlx-serve to off.
+            switch id.adapter {
+            case .splash: return ["--max-cache-disk", "0"]
+            case .mtplx: return ["--ssd-session-cache", "off"]
+            case .omlx: return ["--no-cache"]
+            default: return []
+            }
+        }
+        switch id.adapter {
+        case .splash:
+            // Splash's parser takes a bare `G` suffix; `--persistent-cache` is
+            // the switch that carries the SSD tier across a restart, and
+            // `--cache-dir` is what keeps it out of the system temp folder.
+            return ["--max-cache-disk", "\(gb)G",
+                    "--persistent-cache",
+                    "--cache-dir", directory]
+        case .omlx:
+            // oMLX's paged cache is off entirely while this directory is unset.
+            return ["--paged-ssd-cache-dir", directory,
+                    "--paged-ssd-cache-max-size", "\(gb)GB"]
+        case .mtplx:
+            return ["--ssd-session-cache", "on",
+                    "--ssd-session-cache-dir", directory,
+                    "--ssd-session-cache-max-size", "\(gb)GB"]
+        case .mlxServe:
+            // The location is fixed at `$HOME/.mlx-serve/kv-cache`; the launch
+            // plan points HOME at the shared root instead.
+            return ["--prefix-cache-disk", "\(gb)GB"]
+        default:
+            return []
         }
     }
 
@@ -153,6 +215,7 @@ public struct EngineTuning: Codable, Equatable, Sendable {
         default:
             break
         }
+        result += prefixCacheArguments(for: id)
         result += EngineTuning.splitArguments(extraArguments)
         return result
     }

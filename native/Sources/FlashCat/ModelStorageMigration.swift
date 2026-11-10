@@ -34,6 +34,8 @@ enum ModelStorageMigration {
                           movedPaths: &movedPaths, report: &report)
         archive(Paths.home + "/.omlx/splash", label: "omlx-splash-hub", report: &report)
         rewriteLinks(under: EnginePaths.modelsRoot, movedPaths: movedPaths, report: &report)
+        migrateLegacyPrefixCache(&report)
+        retargetPrefixCache(movedPaths: movedPaths, report: &report)
 
         if Paths.fileExists(Paths.legacySplashModelsDirectory),
            isEmptyDirectory(Paths.legacySplashModelsDirectory) {
@@ -210,6 +212,68 @@ enum ModelStorageMigration {
             } catch {
                 report.failures.append("link \((path as NSString).lastPathComponent): \(error.localizedDescription)")
             }
+        }
+    }
+
+    /// Bring an engine's disk tier under the shared prefix-cache root.
+    ///
+    /// MTPLX used to keep its SessionBank at `~/.mtplx/session-bank`. The app
+    /// now passes `--ssd-session-cache-dir` under `prefix-cache/`, so the old
+    /// bank would simply be abandoned — tens of gigabytes of warm snapshots
+    /// nothing points at. Moving it keeps them; the manifest keys entries by
+    /// absolute model path, which this same migration keeps stable below.
+    private static func migrateLegacyPrefixCache(_ report: inout Report) {
+        let source = Paths.home + "/.mtplx/session-bank"
+        let target = FlashCatPaths.prefixCacheDirectory(.mtplx)
+        guard Paths.fileExists(source), !Paths.fileExists(target) else { return }
+        FlashCatPaths.ensureDirectory(FlashCatPaths.prefixCacheRoot)
+        do {
+            try FileManager.default.moveItem(atPath: source, toPath: target)
+            report.archived += 1
+        } catch {
+            report.failures.append("mtplx-session-bank: \(error.localizedDescription)")
+        }
+    }
+
+    /// Keep a moved model's disk-tier snapshots usable.
+    ///
+    /// A KV snapshot is only meaningful for one model, and engines find it
+    /// again by the model's absolute path. Weights moving into
+    /// `Application Support/flashCat` therefore used to strand the whole cache
+    /// of that model: the rows still pointed at the old path, nothing could
+    /// ever match them, and they kept their bytes forever. Rewriting the key
+    /// costs one UPDATE and keeps every snapshot warm across the move.
+    private static func retargetPrefixCache(movedPaths: [String: String],
+                                            report: inout Report) {
+        guard !movedPaths.isEmpty else { return }
+        let manifest = FlashCatPaths.prefixCacheDirectory(.mtplx) + "/manifest.sqlite"
+        guard Paths.fileExists(manifest) else { return }
+        for (old, new) in movedPaths where old != new {
+            let sql = "UPDATE entries SET model_path = \(quote(new)) WHERE model_path = \(quote(old));"
+            guard runSQLite(manifest, sql) else {
+                report.failures.append("prefix-cache: 无法改写 \(old)")
+                continue
+            }
+        }
+    }
+
+    /// `'` is the only character SQLite needs doubled inside a literal.
+    private static func quote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "''") + "'"
+    }
+
+    private static func runSQLite(_ database: String, _ sql: String) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = [database, sql]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
         }
     }
 

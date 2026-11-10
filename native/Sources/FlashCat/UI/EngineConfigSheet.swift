@@ -24,6 +24,7 @@ struct EngineConfigSheet: View {
                 VStack(alignment: .leading, spacing: Native.gap) {
                     portCard
                     switchesCard
+                    prefixCacheCard
                     advancedCard
                 }
                 .padding(Native.pagePadding)
@@ -104,6 +105,55 @@ struct EngineConfigSheet: View {
                 }
             }
         }
+    }
+
+    /// The disk tier is what turns "the app restarted, so the whole session is
+    /// re-prefilled from zero" into a restore. Only the engines that have one
+    /// get the card; strata serves without a prefix cache.
+    @ViewBuilder
+    private var prefixCacheCard: some View {
+        if engine != .strata {
+            Card("前缀缓存", subtitle: "把见过的前缀写到 SSD；App 重启后恢复而不是重算") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle(isOn: prefixCacheEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(L10n.t("落盘"))
+                                .font(Native.bodyFont)
+                                .foregroundStyle(Native.label)
+                            Text(L10n.t("关闭后每次重启都要从零重算整段历史"))
+                                .font(.system(size: 10))
+                                .foregroundStyle(Native.tertiary)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+
+                    if prefixCacheEnabled.wrappedValue {
+                        intField("磁盘预算 (GB)", value: $tuning.prefixCacheDiskGB, placeholder: "20")
+                        Text(FlashCatPaths.prefixCacheDirectory(engine))
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(Native.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+            }
+        }
+    }
+
+    /// `nil` follows the engine default, so the switch reads that default rather
+    /// than showing "off" for an engine that ships with the tier on.
+    private var prefixCacheEnabled: Binding<Bool> {
+        Binding(
+            get: { tuning.effectivePrefixCacheDiskGB(for: engine) != nil },
+            set: { on in
+                guard !on else {
+                    let fallback = EngineTuning.defaults(for: engine).prefixCacheDiskGB ?? 20
+                    tuning.prefixCacheDiskGB = tuning.prefixCacheDiskGB ?? fallback
+                    return
+                }
+                tuning.prefixCacheDiskGB = 0
+            })
     }
 
     private var advancedCard: some View {

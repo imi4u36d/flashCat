@@ -28,9 +28,10 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(chinese.localizedString(forKey: "%@ · 端口 %@", value: nil, table: nil), "%@ · 端口 %@")
     }
 
-    /// 快捷键已全部移除：应用内不再注册键盘快捷键，也不接管回车、方向键或
-    /// esc。这条测试扫源码，防止某次改动把 `.keyboardShortcut` 或按键监听
+    /// 快捷键已全部移除：应用内不再注册键盘快捷键，也不接管方向键或 esc。
+    /// 这条测试扫源码，防止某次改动把 `.keyboardShortcut` 或按键监听
     /// 悄悄加回来——那会同时推翻「鼠标可达 + CLI 键盘可达」的产品决定。
+    /// 唯一的按键例外是对话输入框里的回车，见 `testReturnKeyIsOnlyHandledByComposer`。
     func testNoInAppKeyboardShortcutsRemain() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()   // Tests/FlashCatTests/
@@ -67,6 +68,40 @@ final class LocalizationTests: XCTestCase {
         }
         XCTAssertTrue(offenders.isEmpty,
                       "应用内不应再有键盘快捷键/按键监听：\(offenders.joined(separator: " | "))")
+    }
+
+    /// 回车发送是唯一的按键例外，而且必须留在输入框里：`keyDown` 覆盖只能出现在
+    /// `ChatComposerField.swift`，并且那个文件要同时把回车映射成发送、⌘回车映射成
+    /// 换行、输入法组字期间不发送。这样「回车发送」不会慢慢长成一套应用内快捷键。
+    func testReturnKeyIsOnlyHandledByComposer() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // Tests/FlashCatTests/
+            .deletingLastPathComponent()   // Tests/
+            .deletingLastPathComponent()   // native/
+            .appendingPathComponent("Sources/FlashCat")
+        let enumerator = try XCTUnwrap(FileManager.default.enumerator(
+            at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]))
+        let files: [URL] = enumerator.compactMap { item in
+            guard let url = item as? URL, url.pathExtension == "swift" else { return nil }
+            return url
+        }
+        XCTAssertGreaterThan(files.count, 30, "源码目录扫描异常")
+
+        var keyDownFiles: [String] = []
+        for file in files {
+            let source = try String(contentsOf: file, encoding: .utf8)
+            if source.contains("override func keyDown(with") {
+                keyDownFiles.append(file.lastPathComponent)
+            }
+        }
+        XCTAssertEqual(keyDownFiles, ["ChatComposerField.swift"],
+                       "按键判定只允许存在于对话输入框")
+
+        let composer = try String(contentsOf: root.appendingPathComponent(
+            "UI/ChatComposerField.swift"), encoding: .utf8)
+        XCTAssertTrue(composer.contains("onSend?()"), "回车必须映射成发送")
+        XCTAssertTrue(composer.contains("insertNewline(nil)"), "⌘回车必须映射成换行")
+        XCTAssertTrue(composer.contains("hasMarkedText()"), "输入法组字期间不能发送")
     }
 
     /// 控制接口的设置项标题不只出现在 `title:` 字面量里：`text("key", "标题", …)`

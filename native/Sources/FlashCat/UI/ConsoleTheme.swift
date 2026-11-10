@@ -31,11 +31,11 @@ enum Console {
     static let inset = Color.adaptive(dark: 0xFFFFFF, light: 0x1B1B22, darkAlpha: 0.05, lightAlpha: 0.035)
     static let insetStroke = Color.adaptive(dark: 0xFFFFFF, light: 0x1B1B22, darkAlpha: 0.06, lightAlpha: 0.05)
 
-    static let text = Color.adaptive(dark: 0xF2F0F6, light: 0x15151D)
+    static let text = Color(nsColor: .consoleText)
     static let secondary = Color.adaptive(dark: 0xA8A5B2, light: 0x5F606B)
     static let tertiary = Color.adaptive(dark: 0x807D8A, light: 0x9294A0)
 
-    static let accent = Color.adaptive(dark: 0xF06B96, light: 0xD1487A)
+    static let accent = Color(nsColor: .consoleAccent)
     static let accentDeep = Color.adaptive(dark: 0xD94A7C, light: 0xBE3568)
     static let accentSoft = Color.adaptive(dark: 0x3A2230, light: 0xFBE8F0)
 

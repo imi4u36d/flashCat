@@ -1781,6 +1781,16 @@
         }
       }
     },
+    "回车发送 · ⌘回车换行": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Return sends · ⌘Return for a new line"
+          }
+        }
+      }
+    },
     "固定入口，客户端不用改": {
       "localizations": {
         "en": {

@@ -11,10 +11,10 @@ struct ChatPage: View {
     @State private var showsParameters = false
     @State private var showsThreads = false
     @State private var atBottom = true
-    @State private var keyMonitor: Any?
     /// 超长对话只渲染最近这些消息，往上翻时再按批放出来。
     @State private var messageLimit = 80
-    @FocusState private var composerFocused: Bool
+    /// 输入框的第一响应者状态由 `ChatComposerField` 回报。
+    @State private var composerFocused = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -301,26 +301,15 @@ struct ChatPage: View {
 
     private var composer: some View {
         VStack(spacing: 10) {
-            // 用竖向 TextField 代替 TextEditor：没有自带滚动条，点击即可聚焦并显示光标。
-            TextField("", text: $draft, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .lineLimit(1...6)
-                .focused($composerFocused)
-                .disabled(chat.generating)
+            // 自绘输入框：回车发送、⌘回车换行（见 `ChatComposerField`）。
+            ChatComposerField(text: $draft,
+                              isFocused: $composerFocused,
+                              isEnabled: !chat.generating,
+                              onSend: send)
                 .padding(.horizontal, 10)
                 // 聚焦时输入区向上扩展一块，让正在编辑的输入卡比空闲态更高。
                 .padding(.top, composerFocused ? 24 : 6)
                 .padding(.bottom, 6)
-                // 让文字框四周的留白区域也可点击聚焦，避免点到边缘没有光标。
-                .background {
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            guard !chat.generating else { return }
-                            composerFocused = true
-                        }
-                }
 
             HStack(spacing: 10) {
                 Button {
@@ -375,6 +364,7 @@ struct ChatPage: View {
                     .buttonStyle(.plainHit)
                     .disabled(!canSend)
                     .opacity(canSend ? 1 : 0.45)
+                    .help("回车发送 · ⌘回车换行")
                 }
             }
             .padding(.top, 2)

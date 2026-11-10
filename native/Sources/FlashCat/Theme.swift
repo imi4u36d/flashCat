@@ -229,6 +229,11 @@ extension NSColor {
     static func adaptiveOverlay(_ opacity: Double) -> NSColor {
         adaptive(dark: 0xFFFFFF, light: 0x101014, darkAlpha: opacity, lightAlpha: opacity)
     }
+
+    /// 控制台正文与强调色。SwiftUI 侧的 `Console.text` / `Console.accent`
+    /// 就是这两个颜色的包装，因此 AppKit 文本宿主（对话输入框）和卡片是同一组值。
+    static let consoleText = adaptive(dark: 0xF2F0F6, light: 0x15151D)
+    static let consoleAccent = adaptive(dark: 0xF06B96, light: 0xD1487A)
 }
 
 extension Color {

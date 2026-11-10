@@ -64,15 +64,23 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 ## 键盘策略
 
 **应用不注册任何键盘快捷键。** 菜单项、工具栏按钮和命令面板都不带按键等价物；
-对话输入框不把回车当发送，命令面板不接管方向键 / 回车 / esc，搜索框也不在回车
-时提交——这些动作一律由点击完成。这样做的原因不是「不要键盘」，而是把键盘
-效率集中到 `flashcat` 命令行：它支持补全、JSON、脚本与批量动作，且不会和用户
-自己的快捷键管理器打架。
+命令面板不接管方向键 / 回车 / esc，搜索框也不在回车时提交——这些动作一律由点击
+完成。这样做的原因不是「不要键盘」，而是把键盘效率集中到 `flashcat` 命令行：它
+支持补全、JSON、脚本与批量动作，且不会和用户自己的快捷键管理器打架。
+
+**唯一的按键例外是对话输入框里的回车**：回车发送、⌘回车换行。它属于文本编辑
+动作，只在输入框拿到焦点时发生，没有全局影响；输入法组字期间的回车一律交回
+AppKit（那是候选确认，不是发送）。实现在 `UI/ChatComposerField.swift` 的
+`NSTextView.keyDown`，之所以不用 SwiftUI 的 `TextField(axis: .vertical)`，是因为
+后者只会回车换行、没有换行组合键可留。Tab / ⇧Tab 仍然只在控件之间移动焦点，
+输入框不插入制表符，键盘不会被困在输入框里。
 
 命令面板因此只负责「点击一行运行命令」；搜索框仍然可以输入文字（文本编辑不是
 快捷键）。检查由 `FlashCatTests.LocalizationTests.testNoInAppKeyboardShortcutsRemain`
 守着：`.keyboardShortcut`、`.onKeyPress`、`.onExitCommand`、`.onSubmit` 和
-`NSEvent` 全局/本地监听都不允许再出现在 `Sources/FlashCat` 里。
+`NSEvent` 全局/本地监听都不允许再出现在 `Sources/FlashCat` 里；
+`testReturnKeyIsOnlyHandledByComposer` 再钉一遍例外范围——`keyDown` 覆盖只许出现在
+那个输入框文件里。
 
 macOS 自己提供的文本编辑与剪贴板快捷键、关闭窗口与退出等系统级菜单项不受影响，
 它们属于 AppKit，不属于这个应用。

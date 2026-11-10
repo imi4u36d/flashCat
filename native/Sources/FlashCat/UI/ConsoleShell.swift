@@ -65,7 +65,6 @@ struct ConsoleView: View {
 
             ConsoleTitlebar(state: state,
                             navReservedWidth: navReservedWidth,
-                            openCommand: { showCommand = true },
                             openDownloads: { showDownloads = true })
                 .frame(height: Console.titlebarHeight)
                 .frame(maxWidth: .infinity, alignment: .top)
@@ -436,7 +435,6 @@ struct ConsoleTitlebar: View {
     /// 导航列占用的横向总宽（含两侧留白）。折叠按钮跟着它走，
     /// 导航隐藏后回落到红绿灯右侧的最小安全位置。
     var navReservedWidth: CGFloat = 0
-    var openCommand: () -> Void
     var openDownloads: () -> Void
 
     private var downloadCount: Int {
@@ -451,21 +449,6 @@ struct ConsoleTitlebar: View {
                 sidebarToggle
                     .padding(.leading, max(84, navReservedWidth - 8))
                 Spacer(minLength: 8)
-                Button(action: openCommand) {
-                    HStack(spacing: 5) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("命令")
-                            .font(.system(size: 11.5))
-                    }
-                    .foregroundStyle(Console.secondary)
-                    .padding(.horizontal, 10)
-                    .frame(height: 28)
-                    .background {
-                        LiquidGlassSurface(shape: Capsule(), interactive: true)
-                    }
-                }
-                .buttonStyle(.plainHit)
 
                 IconAction(systemName: state.theme.mode.resolvedIsDark ? "sun.max" : "moon",
                            help: "切换外观") {

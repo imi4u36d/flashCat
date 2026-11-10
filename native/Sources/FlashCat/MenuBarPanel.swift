@@ -408,13 +408,12 @@ struct MenuBarPanel: View {
     /// 菜单栏还在按另一套规则算）。
     private var stageText: String { state.engineStageText }
 
-    /// 菜单栏没有角标位，所以只显示真正的当前速度；网关保留的上一请求
-    /// 均值只留在概览（那里有 LAST 角标）。
+    /// 菜单栏没有角标位，所以只显示真正的当前速度；收尾后的终值不挂。
     private var currentRate: Double? {
         guard state.serverState == .ready else { return nil }
         switch state.speedOrigin {
-        case .gatewayLive, .engineLive: return state.totalDecodeRate
-        case .gatewayLast, .none: return nil
+        case .gatewayLive, .engineLive: return state.decodeReading.value
+        case .none: return nil
         }
     }
 

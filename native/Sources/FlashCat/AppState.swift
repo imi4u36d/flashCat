@@ -35,16 +35,44 @@ struct ThroughputSample: Identifiable {
 }
 
 /// 概览速度读数的来源。速度类指标统一走网关按请求打点，避免同一个页面里
-/// 引擎的 LIVE / LAST / AVG 和网关估算混着用；引擎实时计数只作为兜底。
+/// 引擎的 LIVE / AVG 和网关估算混着用；引擎实时计数只作为兜底。
+/// 收尾后的上一请求终值（LAST）不再是一个可用来源：概览只认「此刻在跑」。
 enum SpeedOrigin: Equatable {
     /// 没有在跑会话，也没有可用的引擎实时计数：没有当前速度。
     case none
-    /// 网关在跑会话的低通速率之和。
+    /// 网关在跑会话的合计速率（重采样后的窗口读数）。窗口读数就是当前速度本身，
+    /// 所以活跃期间不区分估算与精确计数——引擎侧的 tok/s 同样是计数器差分的估计。
     case gatewayLive
-    /// 网关没有在跑会话，读数是最近一次已结束请求的全程均值。
-    case gatewayLast
     /// 网关看不见的直连请求，用引擎的实时计数兜底。
     case engineLive
+}
+
+/// 一个指标格当前的**取数来源**。owner 表算出来的就是这个值，界面直接按它
+/// 打角标与说明文案，不再各自 switch `EngineRateKind`/`SpeedOrigin`。
+///
+/// 没有 `.gatewayLast` / `.engineLast`：概览的速度格只回答「此刻多快」，
+/// 上一请求的终值不参与。平均解码速度单独有 `.gatewayMean` / `.engineMean`
+/// 这一档，只服务 hero 的「模型启动以来平均」。
+enum MetricOrigin: Equatable {
+    /// 没有任何可用读数（引擎未上报、或值 ≤ 0）。
+    case none
+    /// 网关按请求打点的实时读数（重采样窗口）。
+    case gatewayLive
+    /// 网关按会话累计的「模型启动以来平均」——HERO 专用。
+    case gatewayMean
+    /// 引擎此刻正在量的实时值。
+    case engineLive
+    /// 引擎进程 / 会话累计均值。
+    case engineMean
+}
+
+/// 一格指标的 owner 表输出：数值 + 它回答的是哪个问题。
+/// `value == nil` 时 `origin == .none`，界面画「—」。
+struct MetricReading: Equatable {
+    let value: Double?
+    let origin: MetricOrigin
+
+    static let none = MetricReading(value: nil, origin: .none)
 }
 
 /// How a download ended, for the callers that wait on one instead of
@@ -172,8 +200,8 @@ final class AppState: ObservableObject {
     /// 草稿接受率（DFlash2 / MTP）的时间序列，采样节奏与吞吐一致，
     /// 概览页用它画第二条实时曲线。value 是 0…1 的比例。
     @Published var acceptance: [ThroughputSample] = []
-    /// 应用内对话流式回复的本地测速（tok/s）。只服务对话页直播条与灵动岛；
-    /// 概览的速度读数统一走网关按请求聚合，不再用它补位。
+    /// 应用内对话流式回复的本地测速（tok/s）。只服务对话页直播条；
+    /// 概览与灵动岛的速度读数统一走 owner 表（`decodeReading`），不再用它补位。
     @Published private(set) var liveDecodeRate: Double?
     // 预填充不再由应用自己按「整段提示词 / 首字耗时」估算。同一会话的第二轮
     // 几乎全部命中前缀缓存，分子里的 token 大部分根本没被前向，TTFT 里还混着
@@ -181,12 +209,25 @@ final class AppState: ObservableObject {
     // 量过的数：mlx-serve 用 prefill_tokens_total / prefill_time_seconds
     //（都不含缓存恢复），其余引擎用它自己的 prefill 字段；引擎没有时回落到
     // 网关的按请求打点。
-    /// 网关按请求打点的聚合速率。概览 hero、曲线与「最近请求」同源，
-    /// 所以大数字就是活跃行之和；应用内对话也注册在 `GatewayMeter` 里。
+    /// 网关按请求打点的聚合速率。概览曲线与「最近请求」同源，
+    /// 应用内对话也注册在 `GatewayMeter` 里。收尾后归零：只表示「此刻多快」。
     @Published private(set) var gatewayDecodeRate: Double = 0
-    /// `gatewayDecodeRate` 是否来自在跑会话。false = 没有在跑会话，当前值
-    /// 只是最近一次已结束请求的全程均值，界面必须标成 LAST。
+    /// `gatewayDecodeRate` 是否来自在跑会话。false = 没有在跑会话（或引擎
+    /// 已经收尾），此时没有当前速度，读数不挂上一请求的终值。
     @Published private(set) var gatewayRateIsLive = false
+    /// 模型启动以来的平均解码速度（网关按会话累计）。hero 大数字读它：
+    /// 曲线回答「此刻多快」，大数字回答「这台模型平均吐字多快」。0 = 还没有
+    /// 可算的样本，界面画「—」。
+    @Published private(set) var averageDecodeRate: Double = 0
+    /// 60 秒曲线冻结的时刻。请求收尾后设为收尾时刻，`overviewThroughput`
+    /// 与横轴都以它为右缘——曲线停住，不再随挂钟把终点挤出窗口。
+    /// 新请求开始时清空，曲线恢复滚动。
+    @Published private(set) var throughputFrozenAt: Date?
+    /// 上一次采样时是否还有请求在跑，用来识别「1 → 0」这次收尾。
+    private var chartWasLive = false
+    /// 累计均值的身份（引擎 + 进程 + 模型）。换代时清空 `GatewayMeter`
+    /// 的累计量，避免把上一台模型的成绩算进这一台。
+    private var lifetimeIdentity: String?
     /// 预填充**没有**网关侧聚合：网关的「(整段提示词 − 缓存命中) / 首字耗时」
     /// 口径已废弃（分母混着排队与缓存恢复，分子要等末帧 usage），概览只显示
     /// 引擎自报的速率。`GatewayMeter` 仍为「最近请求」逐行保留各自的预填充读数。
@@ -194,11 +235,13 @@ final class AppState: ObservableObject {
     private var livePromptTokens = 0
     /// 生成期间的连续时间低通速率估计。不再用「攒够 0.9 秒就清零」的窗口：
     /// 那种非重叠窗口让相邻读数互不相关，SSE 分片一抖数字就跟着跳。
+    /// 只服务对话页直播条——概览概览按每秒一拍读网关，不在分片回调里改。
     private var decodeMeter = DecodeRateMeter()
-    /// 曲线的落点节奏，与估计器本身的更新频率解耦。
-    private var lastRateSampleAt: Date?
     /// 回答结束后保留一小段平滑读数，避免 LIVE 数字在收尾瞬间台阶式回落。
     private var generationEndedAt: Date?
+    /// 概览速度读数的上一拍。`syncController` 会被引擎的多次状态变化触发，
+    /// 不加闸就会在一秒内发布好几次——概览的刻钟是 1 秒，不是事件驱动。
+    private var lastSpeedPublishAt: Date?
     @Published var downloadingModel: String?
     /// Which engine the running download is for: two engines can hold models
     /// with the same id, and only the one being written shows the progress bar.
@@ -586,62 +629,105 @@ final class AppState: ObservableObject {
     var engineVersion: String { controller?.installation.version ?? "—" }
     var health: (label: String, tone: TagTone) { healthTone(stats) }
 
-    /// 概览与菜单栏的「总解码」读数：速度类指标统一走网关按请求打点。
-    ///
-    /// 应用内对话也注册在 `GatewayMeter` 里，所以 hero 大数字、总解码曲线和
-    /// 「最近请求」每一行是同一份数据，大数字就是活跃行之和。网关没有在跑
-    /// 会话时（客户端直连引擎端口），才用引擎的实时计数兜底，并且要求引擎
-    /// 确实有在跑请求；引擎的 LAST/AVG 不是当前速度，不参与。
-    var totalDecodeRate: Double {
-        guard isRunning else { return 0 }
-        return Self.totalDecodeRate(gateway: gatewayDecodeRate,
-                                    gatewayIsLive: gatewayRateIsLive,
-                                    engine: stats?.decodeTokensPerSecond,
-                                    engineKind: stats?.decodeRateKind ?? .none,
-                                    activeRequests: stats?.activeRequests ?? 0)
+    // MARK: 指标 owner 表
+    //
+    // 每个指标格只有一个 owner，owner 缺席时才走声明好的降级链。以前同一个页面
+    // 里 hero 走网关、预填充格走引擎、灵动岛又是引擎优先，两处数字天然对不上；
+    // 现在所有界面（概览 / 灵动岛 / 菜单栏）都从下面这几个函数取数，一格一个
+    // 来源、一个粒度，角标与说明文案由 `MetricOrigin` 直接给出。
+    //
+    // 分工的物理边界：网关只看得见流里的东西（分片节奏、TTFT、请求合计），
+    // 队列深度、缓存命中、KV 驻留、显存、草稿接受率这些只有引擎量得到。
+    // 速度类指标 owner = 网关；引擎实时计数只在网关没有会话在跑时兜底
+    //（客户端直连引擎端口），LAST/AVG 永远不参与当前速度。
+
+    /// 概览曲线与菜单栏的「当前解码速度」。应用内对话也注册在 `GatewayMeter`
+    /// 里，所以曲线和「最近请求」每一行是同一份数据；收尾后归零，不挂 LAST。
+    var totalDecodeRate: Double { decodeReading.value ?? 0 }
+
+    /// 当前速度读数的来源，界面据此打「网关」/「引擎实时」。
+    /// 只认 LIVE：收尾后的上一请求终值不是当前速度。
+    var speedOrigin: SpeedOrigin { currentSpeedOrigin }
+
+    /// 解码格的 owner 表输出：`speedOrigin` 的判定 + 它的值，永远同源。
+    var decodeReading: MetricReading {
+        Self.reading(origin: speedOrigin,
+                     gateway: gatewayDecodeRate,
+                     engine: stats?.decodeTokensPerSecond)
     }
 
-    /// 当前速度读数的来源，界面据此打「网关估算」/「网关 LAST」/「引擎实时」。
-    var speedOrigin: SpeedOrigin {
-        guard isRunning else { return .none }
-        return Self.speedOrigin(gateway: gatewayDecodeRate,
-                                gatewayIsLive: gatewayRateIsLive,
-                                engine: stats?.decodeTokensPerSecond,
-                                engineKind: stats?.decodeRateKind ?? .none,
-                                activeRequests: stats?.activeRequests ?? 0)
-    }
-
-    /// 「总解码」的取数顺序，单独抽出来以便在没有窗口、没有引擎进程的测试里
-    /// 断言。网关优先是刻意的：引擎的「实时」在不同引擎里分别是最近批次、
-    /// 滚动均值或累计均值，混在一起会让同一个页面的数字互相对不上。
-    nonisolated static func totalDecodeRate(gateway: Double,
-                                            gatewayIsLive: Bool = true,
-                                            engine: Double?,
-                                            engineKind: EngineRateKind = .none,
-                                            activeRequests: Int = 0) -> Double {
-        switch speedOrigin(gateway: gateway,
-                           gatewayIsLive: gatewayIsLive,
-                           engine: engine,
-                           engineKind: engineKind,
-                           activeRequests: activeRequests) {
-        case .gatewayLive, .gatewayLast:
-            return gateway
-        case .engineLive:
-            return engine ?? 0
-        case .none:
-            return 0
+    nonisolated static func reading(origin: SpeedOrigin,
+                                    gateway: Double,
+                                    engine: Double?) -> MetricReading {
+        switch origin {
+        case .gatewayLive: return MetricReading(value: gateway, origin: .gatewayLive)
+        case .engineLive: return MetricReading(value: engine, origin: .engineLive)
+        case .none: return .none
         }
     }
 
+    /// HERO 大数字：模型启动以来的平均解码速度，而不是曲线的实时值。
+    ///
+    /// 优先用网关按会话结算的累计量（覆盖所有经过网关的请求，含应用内对话）；
+    /// 没有网关样本时退回引擎自己的 `.lifetimeMean`。两者都不是当前速度，
+    /// 所以 `origin` 是 `gatewayMean` / `engineMean`，界面打 `AVG`。
+    var averageDecodeReading: MetricReading {
+        guard isRunning else { return .none }
+        if averageDecodeRate > 0 {
+            return MetricReading(value: averageDecodeRate, origin: .gatewayMean)
+        }
+        if stats?.decodeRateKind == .lifetimeMean,
+           let engine = stats?.decodeTokensPerSecond, engine > 0 {
+            return MetricReading(value: engine, origin: .engineMean)
+        }
+        return .none
+    }
+
+    /// 预填充格的 owner 表输出。
+    ///
+    /// 网关侧只有 TTFT 口径的估算——分母混着排队与缓存恢复，分子要等末帧
+    /// usage，1.5.3 已删——所以只走引擎自报的实时值；`.lastRequest` 不参与
+    /// （上一请求的终值会一直挂着冒充当前速度）。AVG 保留引擎真的累计过的
+    /// 「开机以来均值」，角标写清楚它不是实时值。
+    var prefillReading: MetricReading {
+        guard isRunning else { return .none }
+        return Self.prefillReading(engine: stats?.prefillTokensPerSecond,
+                                   engineKind: stats?.prefillRateKind ?? .none)
+    }
+
+    nonisolated static func prefillReading(engine: Double?,
+                                           engineKind: EngineRateKind = .none) -> MetricReading {
+        guard let engine, engine > 0 else { return .none }
+        switch engineKind {
+        case .live:
+            return MetricReading(value: engine, origin: .engineLive)
+        case .lifetimeMean:
+            return MetricReading(value: engine, origin: .engineMean)
+        case .lastRequest, .none:
+            return .none
+        }
+    }
+
+    /// 解码速度读数与它自己的时间基之间的最大跨度。超过这个跨度，重采样器
+    /// 的窗口就覆盖不到调用方所在的时间——这个读数就不再回答「此刻多快」，
+    /// 降级为「没有当前速度」，让引擎 LIVE 计数补位。
+    nonisolated private static let rateReadingFreshness: TimeInterval = 2.0
+    /// `gatewayDecodeRate` 最后一次刷新的时刻，用于 `decodeReading` 的新鲜度
+    /// 门槛。只在主线程读写。
+    private var gatewayReadingAt: Date?
+
     /// 速度来源的判定。抽成纯函数，测试可以钉住「引擎 LIVE 不能压过网关」、
-    /// 「引擎 LAST/AVG 不算当前速度」「空闲不显示旧值」这几条。
+    /// 「引擎 LAST/AVG 不算当前速度」「空闲不显示旧值」「读数过旧降级」。
+    /// `gatewayIsLive == false` 时网关值一律不参与——没有 LAST 这种"降级"。
     nonisolated static func speedOrigin(gateway: Double,
                                         gatewayIsLive: Bool = true,
                                         engine: Double?,
                                         engineKind: EngineRateKind = .none,
-                                        activeRequests: Int = 0) -> SpeedOrigin {
-        if gateway > 0 {
-            return gatewayIsLive ? .gatewayLive : .gatewayLast
+                                        activeRequests: Int = 0,
+                                        gatewayAge: TimeInterval? = nil) -> SpeedOrigin {
+        if gateway > 0, gatewayIsLive,
+           gatewayAge == nil || gatewayAge! <= rateReadingFreshness {
+            return .gatewayLive
         }
         if engineKind == .live, let engine, engine > 0, activeRequests > 0 {
             return .engineLive
@@ -649,26 +735,49 @@ final class AppState: ObservableObject {
         return .none
     }
 
-    /// Fixed 30-second window for the hero sparkline; older samples are dropped
-    /// at the sampler so this only filters late arrivals.
+    /// `speedOrigin` 的界面可见口径：带上主线程那份 `gatewayDecodeRate` 的年龄。
+    var currentSpeedOrigin: SpeedOrigin {
+        guard isRunning else { return .none }
+        return Self.speedOrigin(gateway: gatewayDecodeRate,
+                                gatewayIsLive: gatewayRateIsLive,
+                                engine: stats?.decodeTokensPerSecond,
+                                engineKind: stats?.decodeRateKind ?? .none,
+                                activeRequests: stats?.activeRequests ?? 0,
+                                gatewayAge: gatewayReadingAt.map(Date().timeIntervalSince))
+    }
+
+    /// 概览 60 秒曲线的右缘：请求收尾后冻结在收尾时刻，新请求开始后恢复
+    /// 跟随挂钟。hero 不再有 sparkline，只有概览曲线读这个口径。
+    var overviewChartEnd: Date { throughputFrozenAt ?? Date() }
+
+    /// 概览曲线样本。冻结后只取到 `throughputFrozenAt`，不会随着窗口
+    /// 继续滚动而把曲线抽空。
+    func overviewThroughput(window: TimeInterval) -> [ThroughputSample] {
+        guard window > 0 else { return throughput }
+        return Self.suffix(of: throughput, window: window, endingAt: overviewChartEnd)
+    }
+
     /// 概览用 60 秒、菜单栏用近 5 分钟；序列保留 10 分钟，留一点余量。
+    /// 菜单栏的 sparkline 不冻结，所以这里仍以当前时刻为右缘。
     func recentThroughput(window: TimeInterval) -> [ThroughputSample] {
         guard window > 0 else { return throughput }
-        return Self.suffix(of: throughput, window: window)
+        return Self.suffix(of: throughput, window: window, endingAt: Date())
     }
 
     /// Same windows for the draft-acceptance curve, so both charts scroll together.
     func recentAcceptance(window: TimeInterval) -> [ThroughputSample] {
         guard window > 0 else { return acceptance }
-        return Self.suffix(of: acceptance, window: window)
+        return Self.suffix(of: acceptance, window: window, endingAt: Date())
     }
 
     /// 序列按时间升序排列，用二分找窗口起点；概览每秒都会为几张图各取一次，
-    /// 全表 `filter` 在千余个样本上没有必要。
+    /// 全表 `filter` 在千余个样本上没有必要。`endingAt` 是窗口右缘：冻结的
+    /// 曲线传收尾时刻，右缘之后（理论上没有）的迟到样本一并排除。
     private static func suffix(of samples: [ThroughputSample],
-                               window: TimeInterval) -> [ThroughputSample] {
+                               window: TimeInterval,
+                               endingAt end: Date) -> [ThroughputSample] {
         guard !samples.isEmpty else { return [] }
-        let cutoff = Date().addingTimeInterval(-window)
+        let cutoff = end.addingTimeInterval(-window)
         var low = 0
         var high = samples.count
         while low < high {
@@ -680,7 +789,7 @@ final class AppState: ObservableObject {
             }
         }
         guard low < samples.count else { return [] }
-        return Array(samples[low...])
+        return samples[low...].filter { $0.at <= end }
     }
 
     var endpointURL: String { "http://127.0.0.1:\(port)/v1" }
@@ -754,28 +863,10 @@ final class AppState: ObservableObject {
         }
 
         let now = Date()
-        // 网关按请求打点的聚合：概览 hero、曲线与「最近请求」同源。
-        // 每秒轮询读一次，数值真的变了才发布，空闲时不会让整页重绘。
-        let gatewayOverview = GatewayMeter.shared.overview()
-        if gatewayDecodeRate != gatewayOverview.decodeRate {
-            gatewayDecodeRate = gatewayOverview.decodeRate
-        }
-        if gatewayRateIsLive != gatewayOverview.isLive {
-            gatewayRateIsLive = gatewayOverview.isLive
-        }
-        // 生成期间按 0.5 秒采样（publishDecodeRate），空闲时按 1 秒；两者都
-        // 只落到同一个网关聚合值上。没有在跑会话时 overview 给的是最近一次
-        // 已结束请求的全程均值，`gatewayRateIsLive` 会把它标成 LAST。
-        if generating {
-            // pollTimer 每秒仍会走到这里。生成中即使某个瞬间没有 delta 也照常
-            // 落点，低通估计器会自己按停顿时长衰减，读数不会僵在旧值上。
-            if lastRateSampleAt.map({ now.timeIntervalSince($0) >= 0.5 }) ?? true {
-                lastRateSampleAt = now
-                publishDecodeRate(at: now)
-            }
-        } else {
-            sampleSpeed(at: now)
-        }
+        // 概览的速度读数统一在这里按 **1 秒一拍** 发布：引擎轮询是 1s，
+        // 应用内对话的分片回调只喂对话页直播条，不再顺带刷新概览。
+        // `@Published` 只在数值真的变化时发布，空闲时不重绘。
+        publishDecodeRate(at: now)
 
         // 回答结束后先保留最后一次平滑读数，5 秒后才撤掉，免得对话页直播条
         // 在收尾瞬间台阶式归零；概览速度不受这段保留影响。
@@ -807,13 +898,11 @@ final class AppState: ObservableObject {
         if switchingModel != nil { syncSwitchStage() }
     }
 
-    /// 流式回复的本地测速：每个增量按小数权重喂进连续时间低通估计器，
-    /// 再以固定节奏把平滑后的速率落成一个样本。
+    /// 流式回复的本地测速：每个增量按小数权重喂进连续时间低通估计器。
     ///
-    /// 旧实现的三个问题都在这里消掉：整数 `other / 4` 把只有一两个字符的
-    /// SSE 分片估成 0 后整片丢弃；0.9 秒非重叠窗口每次清零，相邻读数互不
-    /// 相关；窗口实际长度取决于最后一个 delta 何时到，分母自己也在抖。
-    /// 现在计数与分片边界无关，速率也只随真实解码节奏缓慢变化。
+    /// 这条低通只服务对话页直播条——那里要的是「最后一个脉冲的强度」，按
+    /// 分片节奏刷新是对的。概览的曲线 / 大数字按统一的 1 秒节拍读网关，
+    /// 不再被分片回调推着「立即变化」。
     private func recordStreamDelta(_ piece: String, at event: Date) {
         let tokens = TokenEstimator.fractional(piece)
         guard tokens > 0 else { return }
@@ -821,41 +910,110 @@ final class AppState: ObservableObject {
         // 一批回调会被挤在一起处理，若在此时取 `Date()`，估计器会以为几十个
         // token 是「瞬间」吐出来的，读数被抬出一个尖峰。
         decodeMeter.add(tokens: tokens, at: event)
-        let now = Date()
-        guard lastRateSampleAt.map({ now.timeIntervalSince($0) >= 0.5 }) ?? true else { return }
-        lastRateSampleAt = now
-        publishDecodeRate(at: now)
+        let chatRate = decodeMeter.rate(at: Date())
+        liveDecodeRate = chatRate > 0 ? chatRate : nil
     }
 
-    /// 把网关聚合值落到曲线上的唯一入口。
+    /// 概览速度的唯一节拍：读一次网关聚合、发布当前速度与平均速度、
+    /// 落一个 1 秒曲线点、判断是否该冻结曲线。
     ///
-    /// 应用内对话也注册在 `GatewayMeter` 里，所以这里和应用内生成期间的
-    /// `publishDecodeRate` 读的是同一份按请求打点，hero 大数字与曲线末端
-    /// 不会各算各的。没有在跑会话时，网关给的是最近一次已结束请求的
-    /// 全程均值，界面会按 `gatewayRateIsLive` 标成 LAST，不冒充当前速度。
-    private func sampleSpeed(at now: Date) {
+    /// 应用内对话也注册在 `GatewayMeter` 里，所以这里的实时值、曲线末端与
+    /// 「最近请求」读的是同一份按请求打点。收尾后 `overview.isLive` 立刻
+    /// 变 false：当前速度归零（不再挂 LAST），曲线冻结在最后一个采样点。
+    ///
+    /// 采样规则只有一条：**一拍最多一个点**。`publishDecodeRate` 自己已经
+    /// 按 1 秒闸住，所以这里不再做第二道时间门槛；按「值变了」加密采样
+    /// 更不行——同一秒内的多次 `syncController` 会把 60 秒曲线灌成非等距的点。
+    func publishDecodeRate(at now: Date) {
+        // 一秒一拍：同一拍里 `syncController` 可能被多个状态变化叫醒，
+        // 但概览的数字只该在整秒上变。0.95 留一点定时器抖动余量。
+        if let last = lastSpeedPublishAt, now.timeIntervalSince(last) < 0.95 { return }
+        lastSpeedPublishAt = now
+        // 累计均值的身份先对齐：引擎 / 进程 / 模型换代时清空上一台的成绩。
+        syncLifetimeIdentity()
+        let overview = GatewayMeter.shared.overview(now: now)
+        publishGatewayOverview(overview, at: now)
+        publishAverageDecodeRate()
+        // 直连引擎端口的请求网关看不见：引擎自己报的 activeRequests 也算
+        // 「还有东西在跑」，Chart 不该在它跑完之前冻结。
+        let live = overview.isLive || (stats?.activeRequests ?? 0) > 0
+        sampleSpeed(at: now, isLive: live)
+        updateChartFreeze(isLive: live, at: now)
+    }
+
+    /// 把网关的聚合读数发布成当前速度的两个 `@Published` 值，并盖上时间戳。
+    ///
+    /// `gatewayReadingAt` 是 owner 表的新鲜度门槛：读数只在真的发布过之后
+    /// 才有资格谈年龄。
+    private func publishGatewayOverview(_ overview: GatewayMeter.Overview, at now: Date) {
+        let changed = gatewayDecodeRate != overview.decodeRate || gatewayRateIsLive != overview.isLive
+        if changed {
+            gatewayDecodeRate = overview.decodeRate
+            gatewayRateIsLive = overview.isLive
+        }
+        // 时间戳每次同步都盖：读数稳定在同一个值时 `changed` 为 false，
+        // 但这一拍仍然是新鲜的。只在数值变化时盖章会把「稳定的高速」
+        // 误判成「过旧」，1 秒节拍下尤其明显。
+        gatewayReadingAt = now
+    }
+
+    /// 发布 HERO 的「模型启动以来平均」。网关累计量为 0 时保留 0，界面会
+    /// 去看引擎的 `.lifetimeMean`，两处都没有就画「—」。
+    private func publishAverageDecodeRate() {
+        let next = isRunning ? (GatewayMeter.shared.lifetimeAverage() ?? 0) : 0
+        guard abs(averageDecodeRate - next) > 0.0001 else { return }
+        averageDecodeRate = next
+    }
+
+    /// 把一次网关读数落到 60 秒曲线上。只有「在跑」且读数 > 0 时落点：
+    /// 静默段不拿 0 去填谷，曲线保留最后一段真实形状；请求收尾由
+    /// `updateChartFreeze` 冻结整张图。一拍一个点由调用方的 1 秒闸保证。
+    private func sampleSpeed(at now: Date, isLive: Bool) {
+        guard isLive else { return }
         let sample = totalDecodeRate
         guard sample > 0 else { return }
-        let changed = throughput.last.map { abs($0.value - sample) > 0.15 } ?? true
-        let due = throughput.last.map { now.timeIntervalSince($0.at) >= 0.9 } ?? true
-        guard changed, due else { return }
         throughput.append(ThroughputSample(at: now, value: sample))
         throughput.removeAll { $0.at < now.addingTimeInterval(-Self.sampleRetention) }
     }
 
-    /// 应用内生成期间按分片节奏刷新：先把 `liveDecodeRate` 留给对话页直播条，
-    /// 再把网关聚合值落到概览曲线。
-    private func publishDecodeRate(at now: Date) {
-        let rate = decodeMeter.rate(at: now)
-        liveDecodeRate = rate > 0 ? rate : nil
-        let overview = GatewayMeter.shared.overview()
-        if gatewayDecodeRate != overview.decodeRate {
-            gatewayDecodeRate = overview.decodeRate
-        }
-        if gatewayRateIsLive != overview.isLive {
-            gatewayRateIsLive = overview.isLive
-        }
-        sampleSpeed(at: now)
+    /// 请求全部收尾时把 60 秒曲线冻在收尾时刻；新请求一开始就解冻。
+    /// 冻结的是**右缘**（`overviewChartEnd`），不是样本数组：窗口不再随
+    /// 挂钟向前滑，曲线也就不会在空闲几分钟后被裁空。
+    private func updateChartFreeze(isLive: Bool, at now: Date) {
+        let next = Self.chartFrozenAt(previous: throughputFrozenAt,
+                                      wasLive: chartWasLive,
+                                      isLive: isLive,
+                                      now: now)
+        if throughputFrozenAt != next { throughputFrozenAt = next }
+        chartWasLive = isLive
+    }
+
+    /// 曲线冻结状态的纯逻辑：进行中永远解冻；1 → 0 的那一拍记下收尾时刻；
+    /// 一直空闲时不冻结（否则启动即冻，横轴永远停在开机时刻）。
+    /// 抽出来是为了在没有窗口的测试里钉住这三条。
+    nonisolated static func chartFrozenAt(previous: Date?,
+                                          wasLive: Bool,
+                                          isLive: Bool,
+                                          now: Date) -> Date? {
+        if isLive { return nil }
+        if let previous { return previous }
+        return wasLive ? now : nil
+    }
+
+    /// 累计均值的身份 = 引擎 + 进程 + 进程启动时刻 + 模型。任一变化都说明
+    /// 换了一台「模型启动以来」，上一台的累计量不该再算进来。
+    private func syncLifetimeIdentity() {
+        guard let stats else { return }
+        let key = [
+            activeEngine.rawValue,
+            stats.instancePid.map(String.init) ?? "-",
+            stats.startedAt.map { String(format: "%.3f", $0) } ?? "-",
+            stats.model ?? "-"
+        ].joined(separator: "|")
+        guard key != lifetimeIdentity else { return }
+        lifetimeIdentity = key
+        GatewayMeter.shared.resetLifetime()
+        if averageDecodeRate != 0 { averageDecodeRate = 0 }
     }
 
     func bootstrap() {
@@ -2031,7 +2189,6 @@ final class AppState: ObservableObject {
         liveDecodeRate = nil
         generationEndedAt = nil
         decodeMeter.reset()
-        lastRateSampleAt = nil
 
         // 最大生成 tokens：思考与正文共享的总输出上限。留空时取模型自身上限
         // 并按引擎生效窗口封顶（见 effectiveMaxTokens），4096 那种小默认会让

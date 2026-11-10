@@ -21,7 +21,8 @@ public enum EngineRateKind: String, Codable, Sendable {
     case live
 
     /// 上一个已完成请求的实测值。数字是真的，但它描述的是过去那一次，
-    /// 不是「此刻」。空闲时显示它必须带 `LAST`。
+    /// 不是「此刻」。解析层保留这个粒度；概览的 owner 表已取消 LAST
+    /// 采集入口，当前速度与预填充都不显示这一档。
     case lastRequest
 
     /// 进程或会话累计均值，只在请求结束跳一格。一个快的首轮会长期抬高它，
@@ -29,7 +30,8 @@ public enum EngineRateKind: String, Codable, Sendable {
     /// 两个累计计数器之比，oMLX 的 `avg_*_tps` 同）。
     case lifetimeMean
 
-    /// 引擎没有给出这个方向的速率。上层可以回落到网关的请求级打点。
+    /// 引擎没有给出这个方向的速率。速度格由网关按请求打点；预填充格
+    /// 没有可用的网关口径（TTFT 估算已废弃），显示「—」。
     case none
 
     /// 可信程度排序，用于多端点合并时选出「谁描述了这个数值」。

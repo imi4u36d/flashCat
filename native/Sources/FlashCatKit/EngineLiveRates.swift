@@ -54,12 +54,6 @@ public struct EngineLiveRates {
     }
 
     private var previous: Sample?
-    /// 最近一次**已完成**请求的实测预填充速度。
-    ///
-    /// 预填充是阵发的：计数器在请求做完才落账，空闲格没有增量。这个值必须留着
-    /// ——但只能以 `.lastRequest` 交出去，绝不能冒充「当前速度」。旧实现把它当
-    /// `.live` 贴回空闲格，概览页那个恒定不变的几千 tok/s 就是这么来的。
-    private var lastCompleted: Double?
 
     /// 当前这一轮预填充的采样点：`(时刻, 已前向 token)`。
     ///
@@ -94,7 +88,6 @@ public struct EngineLiveRates {
     /// 引擎换了进程或停止时调用，避免拿上一轮的计数当基线。
     public mutating func reset() {
         previous = nil
-        lastCompleted = nil
         forgetPrefillRound()
     }
 
@@ -112,8 +105,7 @@ public struct EngineLiveRates {
         }
         defer { previous = sample }
         guard !restarted else {
-            // 重启后上一轮的数字与当前进程无关，闩锁也得一起丢。
-            lastCompleted = nil
+            // 重启后上一轮的数字与当前进程无关，窗口也得一起丢。
             forgetPrefillRound()
             return Reading()
         }
@@ -146,28 +138,10 @@ public struct EngineLiveRates {
                         reading.decode = EngineRateSample(value: delta / elapsed, kind: .live)
                     }
                 }
-                // 完成了一个请求：分子只含真正前向的 token，分母只含预填充耗时，
-                // 缓存恢复的部分两边都不进。这一格描述的是「刚做完的那一次」，
-                // 所以是 `.lastRequest` 而不是 `.live`——它已经不是当前速度了。
-                if let currentTokens = sample.prefillTokens,
-                   let currentSeconds = sample.prefillSeconds,
-                   let lastTokens = last.prefillTokens,
-                   let lastSeconds = last.prefillSeconds,
-                   currentTokens > lastTokens, currentSeconds > lastSeconds {
-                    let deltaTokens = currentTokens - lastTokens
-                    let deltaSeconds = currentSeconds - lastSeconds
-                    if deltaSeconds > 0 {
-                        lastCompleted = deltaTokens / deltaSeconds
-                    }
-                }
             }
         }
-        // 没有在跑的预填充时，把最近一次实测值作为 `.lastRequest` 交出去，让
-        // 界面能显示「上一个请求跑了多少」并打上 `LAST`，而不是空成「—」。
-        // 关键是粒度如实：这个数字不再是当前速度。
-        if reading.prefill.kind == .none, let lastCompleted, lastCompleted > 0 {
-            reading.prefill = EngineRateSample(value: lastCompleted, kind: .lastRequest)
-        }
+        // 预填充结束就交空读数。上一请求的实测值不再作为 `.lastRequest`
+        // 挂出来——概览已取消 LAST 采集入口，空闲时宁可画「—」。
         return reading
     }
 

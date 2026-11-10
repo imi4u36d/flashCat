@@ -54,9 +54,9 @@ final class EngineLiveRatesTests: XCTestCase {
 
     // MARK: 预填充
 
-    /// 预填充的分子只能取「真正前向过」的 token。`prompt_tokens_total` 再大
-    /// 也不该进这个算式——那正是同会话第二轮虚高的来源。
-    func testPrefillUsesForwardedTokensNotWholePrompt() {
+    /// 完成请求的累计计数不再被换算成 `.lastRequest`：概览已取消 LAST
+    /// 采集入口，空闲时宁可画「—」，也不把上一请求的实测值挂成当前速度。
+    func testCompletedPrefillCountersDoNotProduceALastReading() {
         var meter = EngineLiveRates()
         var first = status(prefillTokens: 100, prefillSeconds: 1.0)
         first.extras["prompt_tokens_total"] = 108_000
@@ -64,28 +64,24 @@ final class EngineLiveRatesTests: XCTestCase {
         var second = status(prefillTokens: 400, prefillSeconds: 1.2)
         second.extras["prompt_tokens_total"] = 216_000
         let reading = meter.observe(second, at: epoch.addingTimeInterval(1))
-        // 300 个真正前向的 token / 0.2 秒预填充耗时 = 1500 tok/s。
-        XCTAssertEqual(reading.prefill.value ?? 0, 1_500, accuracy: 0.001)
-        // 这一格描述的是「刚做完的那一次」，已经不是当前速度。
-        XCTAssertEqual(reading.prefill.kind, .lastRequest)
+        XCTAssertNil(reading.prefill.value)
+        XCTAssertEqual(reading.prefill.kind, .none)
     }
 
-    /// 请求做完后计数器不再变化：读数要留着（否则卡片空成「—」），但粒度必须
-    /// 降成 `.lastRequest`。旧实现把它当 `.live` 一直贴在空闲格上——概览页那个
-    /// 恒定不变的几千 tok/s 就是这么来的。
-    func testIdlePrefillKeepsTheValueButDemotesItToLastRequest() {
+    /// 请求做完后计数器不再变化：没有正在进行的预填充，就不给读数。
+    /// 旧实现把上一请求的值作为 LAST 一直贴在空闲格上——概览页那个恒定
+    /// 不变的几千 tok/s 就是这么来的。
+    func testIdlePrefillReportsNothing() {
         var meter = EngineLiveRates()
         _ = meter.observe(status(prefillTokens: 100, prefillSeconds: 1.0), at: epoch)
         let reading = meter.observe(status(prefillTokens: 400, prefillSeconds: 1.2),
                                     at: epoch.addingTimeInterval(1))
-        XCTAssertEqual(reading.prefill.value ?? 0, 1_500, accuracy: 0.001)
-        XCTAssertEqual(reading.prefill.kind, .lastRequest)
+        XCTAssertNil(reading.prefill.value)
 
         let idle = meter.observe(status(prefillTokens: 400, prefillSeconds: 1.2, running: 0),
                                  at: epoch.addingTimeInterval(9))
-        XCTAssertEqual(idle.prefill.value ?? 0, 1_500, accuracy: 0.001)
-        XCTAssertEqual(idle.prefill.kind, .lastRequest)
-        XCTAssertFalse(idle.prefill.isLive)
+        XCTAssertNil(idle.prefill.value)
+        XCTAssertEqual(idle.prefill.kind, .none)
     }
 
     /// chunk 边界之间再轮询（gauge 没动）时，读数必须**保持**上一次的
@@ -122,10 +118,11 @@ final class EngineLiveRatesTests: XCTestCase {
                                  at: epoch.addingTimeInterval(4))
         XCTAssertEqual(next.prefill.value ?? 0, 8_000, accuracy: 0.001)
 
-        // 预填充结束（prefilling 归 0）：实时值作废，回到闩锁的 LAST。
+        // 预填充结束（prefilling 归 0）：实时值作废，不挂 LAST。
         let done = meter.observe(status(prefillTokens: 400, prefillSeconds: 1.2),
                                  at: epoch.addingTimeInterval(5))
-        XCTAssertEqual(done.prefill.kind, .lastRequest)
+        XCTAssertNil(done.prefill.value)
+        XCTAssertEqual(done.prefill.kind, .none)
     }
 
     /// 窗口要忘掉请求开头那段慢 chunk：读数跟着最近的 chunk 走，而不是
@@ -169,7 +166,7 @@ final class EngineLiveRatesTests: XCTestCase {
     }
 
     /// 真有一路在预填充时（`prefill_tokens_live` 在涨），必须报 `.live`。
-    func testInFlightPrefillOutranksTheLatchedValue() {
+    func testInFlightPrefillUsesTheLiveWindow() {
         var meter = EngineLiveRates()
         _ = meter.observe(status(prefillTokens: 100, prefillSeconds: 1.0), at: epoch)
         _ = meter.observe(status(prefillTokens: 400, prefillSeconds: 1.2),

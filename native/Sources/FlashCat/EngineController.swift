@@ -71,8 +71,6 @@ final class EngineController {
     /// oMLX applies MTP/DFlash through its own settings API, once per run.
     private var tuningApplied = false
     private var pollTimer: Timer?
-    /// 当前轮询间隔。预填充时缩短，结束时恢复；见 `adaptPolling(to:)`。
-    private var pollInterval: TimeInterval = 1.0
     /// mlx-serve 只报累计计数器，实时速率要靠相邻两次轮询差分。每个引擎进程
     /// 一份基线；换进程时清掉，否则会把上一轮的计数当起点。
     private var liveRates = EngineLiveRates()
@@ -915,12 +913,9 @@ final class EngineController {
         schedulePolling(every: 1.0)
     }
 
-    /// 预填充时把采样提到 chunk 节奏。`prefill_tokens_live` 每完成一个 chunk
-    /// 才动一次（常见 0.2~0.8 秒），1 Hz 采样会跨过整块、只能算出「这一秒
-    /// 平均」；跟上 chunk 之后，滑动窗口读到的才是当前这一段的真实吞吐。
-    /// 只在预填充期间提速：解码是连续量，1 Hz 已经够，没必要一直空转。
+    /// 统一的 1 Hz 轮询。预填充也从 0.4 秒改回 1 秒：概览的预填充格与
+    /// 解码曲线共用同一个节拍，读数只每秒变一次，而不是按 chunk 立即跳。
     private func schedulePolling(every interval: TimeInterval) {
-        pollInterval = interval
         pollTimer?.invalidate()
         let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
             Task { await self.poll() }
@@ -930,12 +925,6 @@ final class EngineController {
         // alerts from the engine page, so the poller used to freeze exactly when
         // the reader was staring at the stalled engine.
         RunLoop.main.add(timer, forMode: .common)
-    }
-
-    private func adaptPolling(to status: EngineStatus) {
-        let target: TimeInterval = status.isPrefilling ? 0.4 : 1.0
-        guard abs(target - pollInterval) > 0.05 else { return }
-        schedulePolling(every: target)
     }
 
     /// Give the launch a budget. `descriptor.startupTimeout` already encodes
@@ -1004,7 +993,6 @@ final class EngineController {
         var parsed = EngineStatusParser.parse(documents: documents, fallbackState: .ready)
         await adoptEngineReportedEfforts(into: &parsed)
         applyLiveRates(to: &parsed)
-        adaptPolling(to: parsed)
         status = parsed
         stats = ServerStats(engineStatus: parsed, previous: stats)
         if process == nil { logs.pollFollow() }

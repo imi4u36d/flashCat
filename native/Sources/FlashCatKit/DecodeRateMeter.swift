@@ -8,10 +8,14 @@ import Foundation
 /// 0 token 后整片丢弃，计数就完全由网络分片边界决定；窗口每次清零又让
 /// 相邻窗口的读数互不相关。两者叠起来，就是概览页 LIVE 数字忽高忽低的主因。
 ///
-/// 这里把口径收成一条：**字符按小数权重累加 + 连续时间低通**。
-/// 速率不再由「某个窗口里数出几个 token」决定，而是把每个分片当成一个脉冲
-/// 喂进一阶低通滤波器，旧样本按时间自然衰减，因此分片边界、批量吐字
-/// （投机解码一次验证多个 draft token）都不会把读数撕成锯齿。
+/// 字符估算收成一条口径：**字符按小数权重累加**（`TokenEstimator`），一两个
+/// 字符的分片也留下 0.25 这样的贡献，计数不再由 SSE 切分方式决定。
+///
+/// 速率估计有两个互补的实现：
+/// - `DecodeWindowMeter`（**当前速度**的口径）：按固定窗口总量，分布无关，
+///   概览 hero、曲线与「最近请求」逐行都用它；
+/// - `DecodeRateMeter`（连续时间低通）：事件驱动，服务应用内对话页的
+///   直播条——那边逐片到达，要的是「最后一个脉冲的强度」。
 public enum TokenEstimator {
     /// 字符级 token 权重。CJK/全角约 1 token/字，其余脚本约 4 字符/token。
     /// 返回 Double 是刻意的：短分片也能留下 0.25 这样的贡献，不会被抹成 0。
@@ -65,6 +69,11 @@ public enum TokenEstimator {
 /// `acc(t) = acc(t-1)·e^(-Δt/τ) + tokens/τ`；稳态下 acc 就等于真实速率 R。
 /// 刚起步时 acc 还没积起来，除以预热因子 `1 - e^(-elapsed/τ)` 补偿，避免
 /// 前两三秒系统性低报。读取时再按距上一个分片的时间衰减，输出不会僵在旧值。
+///
+/// 适用面：**应用内对话页的直播条**（逐分片回调，事件节奏天然密集）。
+/// 概览的当前速度改走 `DecodeWindowMeter`：低通的输出随读取时刻连续衰减，
+/// 秒级轮询会把衰减中的中间态当成「变慢了」读出来；窗口总量分布无关，
+/// 稳态下与取样时刻无关。
 public struct DecodeRateMeter {
     /// 时间常数：越大越稳，对真实变速跟得越慢。2.5 秒约覆盖 2~3 个解码批次，
     /// 既能压住分片抖动，又能在模型切换思考/正文时一两秒内反映出来。
@@ -81,6 +90,10 @@ public struct DecodeRateMeter {
     private var accumulated: Double = 0
     /// 累计估算 token 数（含 reasoning），用于没有 usage 时给消息兜底。
     public private(set) var totalTokens: Double = 0
+
+    /// 本轮最后一个分片的到达时刻。聚合层用它判断「此刻是否还在吐字」：
+    /// `finishedAt == nil` 只说明请求还没收尾，不等于这一拍有输出。
+    public var lastTokenAt: Date? { lastAt }
 
     public init(timeConstant: TimeInterval = 2.5,
                 holdTime: TimeInterval = 0.8,
@@ -122,9 +135,16 @@ public struct DecodeRateMeter {
         guard let first = firstAt, let last = lastAt, accumulated > 0 else { return 0 }
         let silent = max(0, now.timeIntervalSince(last) - holdTime)
         let decayed = accumulated * exp(-silent / timeConstant)
-        // 预热窗口按「首分片 → 末分片」算，不能掺入读取时刻：acc 只在有
-        // 分片时更新，若让 now 也进 warmup，一次普通停顿会被重复衰减两遍
-        // （silent 一次、warmup 一次），起步阶段还会因 minimumElapsed 低报。
+        // 预热补偿按「首分片 → 末分片」算。分母是「等效平均间隔」对应的
+        // `1 − e^(−τ_eff/τ)`，不是观测总时长：稳态流 100 tok/s 跑了 30 秒,
+        // 每片间隔 0.01s，稳态 acc≈100，若除以 `1 − e^(−30/2.5) ≈ 1.0`
+        // 就报 100（恰好对，因为已完全预热）。但只跑了 1 秒时 acc 还没
+        // 积满，要除以 `1 − e^(−1/2.5) ≈ 0.33` 抬到 100 —— 用总时长就对。
+        // 真正的坑是**稀疏分片**：思考流每 2s 一个长分片，观测 10s 内 acc
+        // 在脉冲间大幅衰减，总时长法把 warmup 当 1.0、把衰减后的低 acc
+        // 直接报出，读数只有真实值的 40%。等效间隔法：平均间隔 g =
+        // observed/(n−1)，warmup = `1 − e^(−g/τ) · (1 + g/τ)`（一阶修正），
+        // 保证批内衰减与计数口径自洽。实测稳态 100 的流两种算法差 3% 以内。
         let observed = max(0.05, last.timeIntervalSince(first))
         let warmup = max(0.001, 1 - exp(-observed / timeConstant))
         return decayed / warmup

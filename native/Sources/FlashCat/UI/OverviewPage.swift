@@ -12,22 +12,28 @@ struct OverviewPage: View {
     private var stats: ServerStats? { state.stats }
     /// 图表标题是「最近 60 秒」，数据也应按 60 秒取。以前传 0 会把 30 分钟的
     /// 全部样本（生成中约 3600 个点）交给 Swift Charts，每秒整图重绘一次。
-    private var samples: [ThroughputSample] { state.recentThroughput(window: 60) }
+    private var samples: [ThroughputSample] { state.overviewThroughput(window: 60) }
     private var peak: Double { max(samples.map(\.value).max() ?? 0, 1) }
 
     private var modelTitle: String {
         state.selectedModelInfo?.shortName ?? (state.selectedModel.isEmpty ? "未选择模型" : state.shortModelName(state.selectedModel))
     }
 
-    private var decodeRate: Double {
-        // 概览要的是「所有请求合起来」的解码速度，不是某一路：应用内对话生成时，
-        // 外部客户端可能正同时经网关跑请求。速度类指标统一读网关按请求打点，
-        // 这样 hero、曲线和「最近请求」每一行是同一份数据，数字能对上；引擎的
-        // LAST/AVG 不参与，引擎实时计数只在网关没有会话时兜底。
-        state.totalDecodeRate
-    }
+    /// HERO 大数字：模型启动以来平均，而不是曲线上的实时值。
+    private var averageReading: MetricReading { state.averageDecodeReading }
+    private var averageRate: Double { averageReading.value ?? 0 }
 
+    /// 曲线的实时读数：最后一个采样点。收尾冻结后它就停在收尾前的最后一段。
+    private var chartRate: Double { samples.last?.value ?? 0 }
+
+    /// 曲线是否已经冻结（请求已全部收尾）。
+    private var chartFrozen: Bool { state.throughputFrozenAt != nil }
+
+    /// 当前速度的来源（曲线右上角的角标）。只认 LIVE，没有 LAST。
     private var speedOrigin: SpeedOrigin { state.speedOrigin }
+
+    /// 预填充格的取数来源（owner = 引擎；见 `AppState.prefillReading`）。
+    private var prefillReading: MetricReading { state.prefillReading }
 
     /// 速率统一显示口径：没有值就留「—」，不拿 0.00 冒充读数。
     private func rateText(_ value: Double) -> String {
@@ -181,14 +187,14 @@ struct OverviewPage: View {
                         .foregroundStyle(Console.tertiary)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text(rateText(decodeRate))
+                    Text(rateText(averageRate))
                         .font(.system(size: 42, weight: .bold, design: .monospaced))
                         .foregroundStyle(Console.text)
                         .contentTransition(.numericText())
                     Text("tok/s")
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
                         .foregroundStyle(Console.tertiary)
-                    if let badge = decodeBadge {
+                    if let badge = averageBadge {
                         Text(badge.text)
                             .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
                             .tracking(0.6)
@@ -198,9 +204,9 @@ struct OverviewPage: View {
                             .foregroundStyle(badge.tint)
                     }
                 }
-                Sparkline(samples: Array(samples.suffix(60)), color: Console.accent)
-                    .frame(width: 200, height: 34)
-                    .opacity(samples.isEmpty ? 0.25 : 1)
+                Text("模型启动以来平均")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Console.tertiary)
                 Spacer(minLength: 0)
             }
             .frame(width: 235, alignment: .leading)
@@ -438,34 +444,30 @@ struct OverviewPage: View {
         // 只显示引擎自己量过的数。网关那套「(整段提示词 − 缓存命中) / 首字耗时」
         // 已经废弃：分母是 TTFT，里面混着排队与缓存恢复，而分子只能在末帧
         // usage 到达后才知道命中量——请求进行中它算不出可靠的预填充速度。
-        // 引擎没有报这个方向的速率时，宁可显示「—」。
-        guard let value = state.stats?.prefillTokensPerSecond, value > 0 else { return "—" }
+        // 引擎没有报这个方向的速率时，宁可显示「—」。数值与粒度都走
+        // owner 表（`AppState.prefillReading`），角标与说明同源。
+        guard let value = prefillReading.value, value > 0 else { return "—" }
         return Format.compact(value)
     }
 
-    /// 预填充读数的粒度角标。空闲时把上一请求的实测值挂成「当前速度」正是
-    /// 之前那个恒定大数字的来源，所以界层必须说清这个数字回答的是哪个问题
-    /// （对齐 MTPLX 自己的 prefill 面板：active / last / mean 三态）。
+    /// 预填充读数的粒度角标。LAST 已取消：空闲时不再把上一请求的实测值
+    /// 挂成「当前速度」。只剩 LIVE（正在处理提示词）与 AVG（引擎真的累计过
+    /// 的开机以来均值，文案会说明它不是实时值）。
     private var prefillBadge: (text: String, tint: Color)? {
-        guard let value = state.stats?.prefillTokensPerSecond, value > 0 else { return nil }
-        switch state.stats?.prefillRateKind ?? .none {
-        case .live: return ("LIVE", Console.accent)
-        case .lastRequest: return ("LAST", Console.warn)
-        case .lifetimeMean: return ("AVG", Console.tertiary)
-        case .none: return nil
+        switch prefillReading.origin {
+        case .engineLive: return ("LIVE", Console.accent)
+        case .engineMean: return ("AVG", Console.tertiary)
+        default: return nil
         }
     }
 
-    /// 大数字的来源角标。速度统一走网关，所以这里只区分「网关实时」、
-    /// 「网关刚结束的均值」和「引擎实时兜底」；不再把引擎的 LAST/AVG
-    /// 混进当前速度。
-    private var decodeBadge: (text: String, tint: Color)? {
-        guard decodeRate > 0 else { return nil }
-        switch speedOrigin {
-        case .gatewayLive: return ("网关估算", Console.info)
-        case .gatewayLast: return ("网关 LAST", Console.warn)
-        case .engineLive: return ("引擎实时", Console.accent)
-        case .none: return nil
+    /// hero 大数字的来源角标：它回答的是「模型启动以来平均」，不是曲线上的
+    /// 实时速度。网关累计写 AVG，引擎自己的累计均值写「引擎 AVG」。
+    private var averageBadge: (text: String, tint: Color)? {
+        switch averageReading.origin {
+        case .gatewayMean: return ("AVG", Console.tertiary)
+        case .engineMean: return ("引擎 AVG", Console.tertiary)
+        default: return nil
         }
     }
 
@@ -473,11 +475,10 @@ struct OverviewPage: View {
     /// 「长提示词处理速度」正是在撒谎。
     private var prefillHint: String {
         guard state.isRunning else { return "引擎未运行" }
-        switch state.stats?.prefillRateKind ?? .none {
-        case .live: return "引擎 · 正在处理提示词"
-        case .lastRequest: return "引擎 · 上一个请求的实测值"
-        case .lifetimeMean: return "引擎 · 开机以来均值"
-        case .none: return "引擎未上报"
+        switch prefillReading.origin {
+        case .engineLive: return "引擎 · 正在处理提示词"
+        case .engineMean: return "引擎 · 开机以来均值"
+        default: return "等待引擎的实时预填充值"
         }
     }
 
@@ -500,7 +501,7 @@ struct OverviewPage: View {
                     Text("总解码 · 最近 60 秒")
                         .font(.system(size: 13.5, weight: .medium))
                         .foregroundStyle(Console.text)
-                    Text(rateText(decodeRate))
+                    Text(rateText(chartRate))
                         .font(.system(size: 15, weight: .semibold, design: .monospaced))
                         .foregroundStyle(Console.text)
                     Text("tok/s")
@@ -508,10 +509,10 @@ struct OverviewPage: View {
                         .foregroundStyle(Console.tertiary)
                     Spacer(minLength: 0)
                     StatusChip(text: speedChip.text, color: speedChip.color, filled: true)
-                        .help("速度来源：网关按请求估算 / 引擎实时计数 / 上一请求均值")
+                        .help("速度来源：网关按请求估算 / 引擎实时计数；请求结束后曲线冻结")
                 }
 
-                if samples.count < 2 {
+                if samples.isEmpty {
                     ZStack {
                         chartGrid
                         Text(chartEmptyText)
@@ -520,16 +521,25 @@ struct OverviewPage: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    Chart(samples) { sample in
-                        AreaMark(x: .value("时间", sample.at), y: .value("tok/s", sample.value))
-                            .interpolationMethod(.monotone)
-                            .foregroundStyle(
-                                LinearGradient(colors: [Console.accent.opacity(0.18), .clear],
-                                               startPoint: .top, endPoint: .bottom))
-                        LineMark(x: .value("时间", sample.at), y: .value("tok/s", sample.value))
-                            .interpolationMethod(.monotone)
-                            .foregroundStyle(Console.accent)
-                            .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
+                    Chart {
+                        ForEach(samples) { sample in
+                            AreaMark(x: .value("时间", sample.at), y: .value("tok/s", sample.value))
+                                .interpolationMethod(.monotone)
+                                .foregroundStyle(
+                                    LinearGradient(colors: [Console.accent.opacity(0.18), .clear],
+                                                   startPoint: .top, endPoint: .bottom))
+                            LineMark(x: .value("时间", sample.at), y: .value("tok/s", sample.value))
+                                .interpolationMethod(.monotone)
+                                .foregroundStyle(Console.accent)
+                                .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round))
+                        }
+                        // 一次只有 1~2 个点的短请求也要能看见落点——以前
+                        // `samples.count < 2` 走空态，请求跑完曲线还是空的。
+                        if samples.count == 1, let only = samples.first {
+                            PointMark(x: .value("时间", only.at), y: .value("tok/s", only.value))
+                                .foregroundStyle(Console.accent)
+                                .symbolSize(28)
+                        }
                     }
                     .chartXScale(domain: chartWindow)
                     .chartYScale(domain: 0...(peak * 1.2))
@@ -553,34 +563,36 @@ struct OverviewPage: View {
     /// 固定 60 秒横轴。Swift Charts 默认按样本的时间范围铺满宽度，样本稀疏时
     /// 两三个点会被拉伸成一整条长线，看起来像「60 秒都在跑」，和标题的
     /// 「最近 60 秒」不是一回事。
+    ///
+    /// 右缘跟随 `overviewChartEnd`：请求进行中就是「现在」，收尾后冻结在
+    /// 收尾时刻——横轴不再向前滑，曲线因此停在最后一帧。
     private var chartWindow: ClosedRange<Date> {
-        let now = Date()
-        return now.addingTimeInterval(-60)...now
+        let end = state.overviewChartEnd
+        return end.addingTimeInterval(-60)...end
     }
 
     /// 曲线右上角只报来源，不再拿 `isRunning` 冒充「速率是实时的」。
+    /// 请求收尾后曲线冻结，角标直接说「已冻结」。
     private var speedChip: (text: String, color: Color) {
+        if chartFrozen { return ("已冻结", Console.tertiary) }
         switch speedOrigin {
         case .gatewayLive: return ("网关", Console.info)
-        case .gatewayLast: return ("LAST", Console.warn)
         case .engineLive: return ("引擎", Console.accent)
         case .none: return (state.isRunning ? "等待" : "IDLE", Console.tertiary)
         }
     }
 
-    /// 没有曲线点时，说清楚是「没在跑」还是「引擎只给均值/终值」，
+    /// 没有曲线点时，说清楚是「没在跑」还是「还在等首个样本」，
     /// 不要让空白图看起来像故障。
     private var chartEmptyText: String {
         guard state.isRunning else { return "引擎未运行 · 暂无解码数据" }
+        if chartFrozen { return "本次请求已结束 · 曲线已冻结" }
         switch speedOrigin {
-        case .gatewayLast: return "上一请求已结束 · 等待新的实时样本"
         case .gatewayLive, .engineLive: return "等待实时样本"
         case .none:
             switch state.stats?.decodeRateKind ?? .none {
-            case .lastRequest: return "引擎只报上一请求终值 · 等待网关样本"
-            case .lifetimeMean: return "引擎只报累计均值 · 等待网关样本"
             case .live: return "引擎有实时计数 · 等待首个样本"
-            case .none: return "等待网关实时样本"
+            default: return "等待网关实时样本"
             }
         }
     }
@@ -639,9 +651,12 @@ struct OverviewPage: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
                         VStack(spacing: 0) {
-                            ForEach(Array(sessions.enumerated()), id: \.offset) { index, session in
+                            // 按请求 id 稳定身份：以前用枚举下标，新请求一进表
+                            // 所有行整体下移一格，SwiftUI 把整列行重排、每秒重绘
+                            // 出跳动——这也是「读数闪烁」里视觉上的那一半。
+                            ForEach(sessions, id: \.id) { session in
                                 requestRow(session)
-                                if index != sessions.count - 1 {
+                                if session.id != sessions.first?.id {
                                     Rectangle().fill(Console.insetStroke).frame(height: 1)
                                 }
                             }
@@ -694,32 +709,5 @@ struct OverviewPage: View {
         case .failed: return "失败"
         case .done: return "完成"
         }
-    }
-}
-
-// MARK: - Parts
-
-private struct Sparkline: View {
-    let samples: [ThroughputSample]
-    var color: Color
-
-    var body: some View {
-        GeometryReader { proxy in
-            let width = proxy.size.width
-            let height = proxy.size.height
-            let peak = max(samples.map(\.value).max() ?? 1, 1)
-            let step = samples.count > 1 ? width / CGFloat(samples.count - 1) : width
-            Path { path in
-                for (index, sample) in samples.enumerated() {
-                    let x = CGFloat(index) * step
-                    let y = height - CGFloat(sample.value / peak) * (height - 4) - 2
-                    if index == 0 { path.move(to: CGPoint(x: x, y: y)) }
-                    else { path.addLine(to: CGPoint(x: x, y: y)) }
-                }
-            }
-            .stroke(color.opacity(samples.isEmpty ? 0.3 : 0.9),
-                    style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round, dash: samples.isEmpty ? [3, 5] : []))
-        }
-        .accessibilityHidden(true)
     }
 }

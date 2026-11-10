@@ -55,8 +55,25 @@ depends-on: [flashcat-manifest-contract]
 - **已装版本的目录里，只有用户根下的可删。** 判定按路径分量标准化后比较：`~/…/engines/x` 命中 `~/…/engines`，但 `~/…/engines-copy/x` 不命中。
 - **索引条目相对索引自身解析。** 索引可能来自 https，也可能是随包的或本地的一份 `file://`；同一份索引要在别的机器上也能用，条目就只能写相对索引位置的路径。相对条目在 `loadIndex` 解码时按拿到这份索引的那个地址解析（重定向之后算数——`/latest/pack-index.json` 转到 `/v1.4.1/…` 时，归档就放在后者旁边）；已经是绝对地址的条目原样通过；`install` 在碰网络之前就拒掉仍不是绝对的地址，因为那种地址只会在 `URLSession` 里无声失败。应用内「打包引擎」跑完 `make-pack-release.sh` / `make-pack-index.sh` 直接读 `.release.json` 就装，那份文件同样写相对名，`loadRelease` 按该文件所在目录解析——否则刚构建完的包装不上，而同一份 `.release.json` 还会被写回索引。
 
-- **实时速率由累计计数差分得出，不猜。** mlx-serve 的 `/metrics.json` 只给 `generation_tokens_live`、`prefill_tokens_live`、`prefill_tokens_total` 与 `prefill_time_seconds` 这些原始量；`EngineLiveRates` 用采样差分得到真实的解码 / 预填充速度。解码取相邻两拍；预填充取最近约 1.2 秒（1~2 个 chunk）的滑动窗口——chunk 之间 gauge 不动时保持住上一格，下一块完成才刷新，既不随时间衰减，也不会把整轮请求开头那几秒一直算进分母。预填充期间轮询提到 0.4 秒，跟得上 chunk 节奏；超过 3 秒没有新 chunk 才退回本轮累计均值。预填充的分子只含真正前向的 token，前缀缓存恢复的部分不进——否则同一会话第二轮的读数会被放大两个数量级。解析器保持无状态，只把计数放进 `extras`；时间由轮询侧注入。
-- **「是不是实时」不是布尔，是粒度。** 五家引擎全都自报速率，但它们回答的不是同一个问题，一个 `isLive` 分不出来。`EngineRateKind` 编码三档：`.live`（采样窗口内的计数差分，或引擎自报的瞬时场：splash 的 `current_*_batch.tokens_per_second`、strata 的 `live.prefill_tok_s_mean`、mtplx 的 `in_flight[].prefill_state`）、`.lastRequest`（上一个已完成请求的实测值：mtplx 的 `latest.*`、llama.cpp 风格的 `timings`）、`.lifetimeMean`（进程累计比值：splash 的 `metrics.*_tokens_per_second` 是 `prefillTokens_ * 1000 / prefillWallMilliseconds_` 两个只增不减的量相除，oMLX 的 `avg_*_tps` 同）。预填充天然不是连续量：请求一做完计数器就不动，"此刻多快"没有定义，所以界层按粒度打 `LIVE` / `LAST` / `AVG` 角标，并对空闲格给出对应文案，而不是把上一请求的终值或开机以来的均值说成当前速度。
+- **实时速率由累计计数差分得出，不猜。** mlx-serve 的 `/metrics.json` 只给 `generation_tokens_live`、`prefill_tokens_live`、`prefill_tokens_total` 与 `prefill_time_seconds` 这些原始量；`EngineLiveRates` 用采样差分得到真实的解码 / 预填充速度。解码取相邻两拍；预填充取最近约 1.2 秒（1~2 个 chunk）的滑动窗口——chunk 之间 gauge 不动时保持住上一格，下一块完成才刷新，既不随时间衰减，也不会把整轮请求开头那几秒一直算进分母。引擎轮询统一为 1 秒，预填充不再单独提到 0.4 秒——概览需要所有读数同一节拍；超过 3 秒没有新 chunk 才退回本轮累计均值。预填充的分子只含真正前向的 token，前缀缓存恢复的部分不进——否则同一会话第二轮的读数会被放大两个数量级。解析器保持无状态，只把计数放进 `extras`；时间由轮询侧注入。
+- **概览的当前速度读 `DecodeWindowMeter`，不读低通。** 旧口径每分片喂一个脉冲进
+  一阶低通、逐次读取：输出随取样时刻连续衰减（0.5s 静默掉 18%），秒拍与 0.4s
+  快拍各读各的，谷—峰交替就是「解码速度闪烁」的本体。`DecodeWindowMeter` 的
+  口径是**墙钟窗口**：`rate(at:)` = 窗 `[t−W, t]` 的量 ÷ 已观测跨度——稳态恒等于
+  吞吐，分子分母一起滑，分片边界、批量大小、轮询相位都不进读数。收尾形状是
+  设计的一部分：最后一个分片之后**保持**一个完整窗（右缘钳到最后一个事件，
+  窗口不许滑进空段自己掉），再**线性遗忘**一个窗归零——悬崖把曲线砸成深 V、
+  指数尾挂着半旧值冒充当前速度，两头都实测否掉。`windowTokens(endingAt:)`
+  另给分布无关的窗口总量供对账。`GatewayMeter.overview` 只把**没收尾**的会话
+  算作 `isLive`：收尾即停，不再有 LAST 宽限，也不再把上一请求终值挂成当前速度。
+  概览的 60 秒曲线在 `isLive` 从 true 变 false 的那一拍冻结右缘（`throughputFrozenAt`），
+  不再随挂钟把终点挤出窗口；新请求开始后解冻。
+- **应用内对话的直播条继续走低通。** `DecodeRateMeter`（τ=2.5s、hold=0.8s）
+  服务逐分片回调的对话页：那边要的是「最后一个脉冲的强度」，节奏天然密集。
+  两套估计器各管各的界面，不再混用（旧实现共用低通，概览的闪烁与对话页的
+  平滑互相牵制，参数两头不讨好）。
+
+- **「是不是实时」不是布尔，是粒度。** 五家引擎全都自报速率，但它们回答的不是同一个问题，一个 `isLive` 分不出来。`EngineRateKind` 编码三档：`.live`（采样窗口内的计数差分，或引擎自报的瞬时场：splash 的 `current_*_batch.tokens_per_second`、strata 的 `live.prefill_tok_s_mean`、mtplx 的 `in_flight[].prefill_state`）、`.lastRequest`（上一个已完成请求的实测值：mtplx 的 `latest.*`、llama.cpp 风格的 `timings`）、`.lifetimeMean`（进程累计比值：splash 的 `metrics.*_tokens_per_second` 是 `prefillTokens_ * 1000 / prefillWallMilliseconds_` 两个只增不减的量相除，oMLX 的 `avg_*_tps` 同）。预填充天然不是连续量：请求一做完计数器就不动，"此刻多快"没有定义。概览层因此**取消 LAST 采集入口**：当前速度与预填充都只认 `LIVE`；预填充另保留引擎真的累计过的 `AVG`（文案写明「开机以来均值」），空闲时画「—」，绝不把上一请求的终值挂成当前速度。
 - **速率与粒度必须成对合并。** `merge` 按 health → status → metrics → props → inventory 折叠，后到的文档会覆盖数值。如果只让数值覆盖、粒度在旁边独立地取最强，就会出现「数值是后来的累计均值、角标却写着 `LIVE`」。所以只有来源粒度 `rank` 不弱于当前时才整对替换（`.live` > `.lastRequest` > `.lifetimeMean` > `.none`）：更好的来源不会被后面端点的均值洗掉，均值也不会冒充实时。
-- **MTPLX 的预填充按「越接近此刻越优先」排序。** `in_flight[].prefill_state`（每 chunk 刷新）→ `.live`；`latest.prefill_tok_s`（上一请求终值）→ `.lastRequest`；`prefill_rates.tokens / compute_time_s`（最近 ≤100 chunk 的滚动均值）→ `.lifetimeMean`。同处的 `peak_tok_s` 是单 chunk 最大值，**不能**当读数——那正是「恒定不变的大数字」的来源，只留作诊断。
+- **MTPLX 的预填充按「越接近此刻越优先」排序。** `in_flight[].prefill_state`（每 chunk 刷新）→ `.live`；`latest.prefill_tok_s`（上一请求终值）→ `.lastRequest`；`prefill_rates.tokens / compute_time_s`（最近 ≤100 chunk 的滚动均值）→ `.lifetimeMean`。同处的 `peak_tok_s` 是单 chunk 最大值，**不能**当读数——那正是「恒定不变的大数字」的来源，只留作诊断。解析层仍如实标注 `.lastRequest`（数据本身是真的）；概览 owner 表不再把这一档当作可显示来源。
 - **预填充没有网关回落。** 1.5.2 起不再用「(整段提示词 − 缓存命中) / 首字耗时」估算：分母是 TTFT，混着排队与缓存恢复，分子要等末帧 `usage` 才知道命中量，请求进行中算不出可靠读数。引擎不上报该方向速率时显示「—」。

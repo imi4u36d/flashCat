@@ -26,20 +26,21 @@ struct SettingsPage: View {
 
     var body: some View {
         GeometryReader { proxy in
+            let wide = proxy.size.width >= Console.compactContentWidth
             ScrollView {
                 // 窄窗口下两列会互相挤压，改为单列依次排布并交给滚动承载。
-                if proxy.size.width < Console.compactContentWidth {
+                if !wide {
                     VStack(alignment: .leading, spacing: 18) {
-                        leftColumn
-                        rightColumn
+                        leftColumn(wide: false)
+                        rightColumn(wide: false)
                     }
                     .padding(.horizontal, Console.contentPadding)
                     .padding(.top, 78)
                     .padding(.bottom, 26)
                 } else {
                     HStack(alignment: .top, spacing: 18) {
-                        leftColumn
-                        rightColumn
+                        leftColumn(wide: true)
+                        rightColumn(wide: true)
                     }
                     .padding(.horizontal, Console.contentPadding)
                     .padding(.top, 78)
@@ -52,9 +53,9 @@ struct SettingsPage: View {
         .onChange(of: state.activeEngine) { _, _ in load() }
     }
 
-    private var leftColumn: some View {
+    private func leftColumn(wide: Bool) -> some View {
         VStack(spacing: 18) {
-            appearanceCard
+            appearanceCard(wide: wide)
             backgroundCard
             launchCard
             portsCard
@@ -62,11 +63,11 @@ struct SettingsPage: View {
         }
     }
 
-    private var rightColumn: some View {
+    private func rightColumn(wide: Bool) -> some View {
         VStack(spacing: 18) {
             gatewayCard
             cliCard
-            thinkingCard
+            thinkingCard(wide: wide)
             infoCard
         }
     }
@@ -84,13 +85,17 @@ struct SettingsPage: View {
 
     // MARK: Left column
 
-    private var appearanceCard: some View {
+    private func appearanceCard(wide: Bool) -> some View {
         SettingsCard {
             SettingsRow(title: "外观", detail: "跟随系统或固定外观") {
                 NativeSegmented(selection: Binding(
                     get: { state.theme.mode },
                     set: { state.theme.set($0) }),
                     options: AppAppearance.allCases.map { ($0, $0.label) })
+                    // 宽版式里把宽度交给标签：不参与行内剩余空间的分配，
+                    // 切换选中项时才不会把整行挤得一宽一窄。窄版式留出压缩
+                    // 余地，免得控件把文字列挤出卡片。
+                    .fixedSizeWhen(wide)
             }
         }
     }
@@ -276,6 +281,28 @@ struct SettingsPage: View {
         state.switchEnginePort(id, port: port)
     }
 
+    /// 网关 / 控制端口的输入胶囊。应用按钮放在胶囊外面：它是 32 pt 高的
+    /// 玻璃胶囊，塞进 28 pt 的输入框会上下溢出，还会在右端留下一圈
+    /// 「胶囊套胶囊」的毛边。缓存那一行也是「输入框 + 按钮」的排法。
+    private func portInput(_ text: Binding<String>, placeholder: String) -> some View {
+        HStack(spacing: 4) {
+            Text(":")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(Console.tertiary)
+            TextField(placeholder, text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11.5, design: .monospaced))
+                .frame(width: 54)
+        }
+        .padding(.horizontal, 9)
+        .frame(height: 28)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Console.inset))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Console.insetStroke, lineWidth: 0.8)
+        }
+    }
+
     private var cacheCard: some View {
         SettingsCard {
             SettingsRow(title: "下载缓存", detail: "Hugging Face 缓存目录，留空用默认") {
@@ -329,14 +356,8 @@ struct SettingsPage: View {
             Divider().overlay(Console.insetStroke)
 
             SettingsRow(title: "网关端口", detail: "固定入口，客户端不用改") {
-                HStack(spacing: 4) {
-                    Text(":")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(Console.tertiary)
-                    TextField("9000", text: $gatewayPort)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 11.5, design: .monospaced))
-                        .frame(width: 54)
+                HStack(spacing: 8) {
+                    portInput($gatewayPort, placeholder: "9000")
                     Button("应用") {
                         if let port = Int(gatewayPort), (1024...65535).contains(port) {
                             state.settings.setGatewayPort(port)
@@ -344,10 +365,8 @@ struct SettingsPage: View {
                         }
                     }
                     .buttonStyle(.consoleSoft)
+                    .fixedSize()
                 }
-                .padding(.horizontal, 9)
-                .frame(height: 28)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Console.inset))
             }
         }
     }
@@ -381,14 +400,8 @@ struct SettingsPage: View {
             Divider().overlay(Console.insetStroke)
 
             SettingsRow(title: "控制端口", detail: "被占用时会自动顺延，实际端口写在 control.json") {
-                HStack(spacing: 4) {
-                    Text(":")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(Console.tertiary)
-                    TextField("9100", text: $controlPort)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 11.5, design: .monospaced))
-                        .frame(width: 54)
+                HStack(spacing: 8) {
+                    portInput($controlPort, placeholder: "9100")
                     Button("应用") {
                         if let port = Int(controlPort), (1024...65535).contains(port) {
                             state.settings.setControlPort(port)
@@ -396,10 +409,8 @@ struct SettingsPage: View {
                         }
                     }
                     .buttonStyle(.consoleSoft)
+                    .fixedSize()
                 }
-                .padding(.horizontal, 9)
-                .frame(height: 28)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Console.inset))
             }
 
             Divider().overlay(Console.insetStroke)
@@ -413,7 +424,7 @@ struct SettingsPage: View {
         }
     }
 
-    private var thinkingCard: some View {
+    private func thinkingCard(wide: Bool) -> some View {
         SettingsCard {
             SettingsRow(title: "思考模式", detail: "回答前是否输出推理过程") {
                 NativeSegmented(selection: Binding(
@@ -423,6 +434,7 @@ struct SettingsPage: View {
                         state.settings.setThinkingMode($0)
                     }),
                     options: ThinkingMode.allCases.map { ($0, $0.label) })
+                    .fixedSizeWhen(wide)
             }
             Divider().overlay(Console.insetStroke)
             SettingsRow(title: "默认模型", detail: state.selectedModel.isEmpty ? "未选择" : state.selectedModel) {
@@ -463,6 +475,7 @@ struct SettingsPage: View {
                         state.settings.setReasoningEffort($0)
                     }),
                     options: ReasoningEffort.allCases.map { ($0, $0.label) })
+                    .fixedSizeWhen(wide)
                     .disabled(thinkingMode != .on)
             }
         }
@@ -572,5 +585,13 @@ struct SettingsRow<Trailing: View>: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 13)
         .frame(minHeight: 58)
+    }
+}
+
+private extension View {
+    /// 只在宽版式里把分段控件按标签宽度钉住；窄版式允许它压缩。
+    @ViewBuilder
+    func fixedSizeWhen(_ condition: Bool) -> some View {
+        if condition { fixedSize() } else { self }
     }
 }

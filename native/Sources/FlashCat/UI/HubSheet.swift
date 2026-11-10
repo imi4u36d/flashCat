@@ -315,20 +315,12 @@ struct HubSheet: View {
                     }
                 }
 
-                FlowLayout(spacing: 5, lineSpacing: 5) {
-                    Tag(text: detail.recommendedEngine.label,
-                        tone: detail.recommendedEngine.id == "none" ? .neutral : .accent)
-                    if let quantization = detail.quantization {
-                        Tag(text: quantization, tone: .neutral)
-                    }
-                    if let memory = detail.memoryRange {
-                        Tag(text: memoryRangeText(memory), tone: .neutral)
-                    }
-                    if let license = detail.license {
-                        Tag(text: license, tone: .neutral)
-                    }
-                    ForEach(detail.tags.filter { !$0.hasPrefix("license:") }.prefix(6), id: \.self) { tag in
-                        Tag(text: tag, tone: .neutral)
+                let tags = detailTagTexts(detail)
+                if !tags.isEmpty {
+                    FlowLayout(spacing: 5, lineSpacing: 5) {
+                        ForEach(Array(tags.enumerated()), id: \.offset) { _, tag in
+                            Tag(text: tag, tone: .neutral)
+                        }
                     }
                 }
 
@@ -386,6 +378,17 @@ struct HubSheet: View {
             .padding(20)
         }
         .scrollIndicators(.never)
+    }
+
+    /// 详情页的标签行：量化、内存下限、许可与 Hub 标签。推荐引擎不再占一枚
+    /// 标签——归属由下面下载条里的「默认授权给 …」交代，重复一遍只会抢注意力。
+    private func detailTagTexts(_ detail: HubModel) -> [String] {
+        var values: [String] = []
+        if let quantization = detail.quantization { values.append(quantization) }
+        if let memory = detail.memoryRange { values.append(memoryRangeText(memory)) }
+        if let license = detail.license { values.append(license) }
+        values.append(contentsOf: detail.tags.filter { !$0.hasPrefix("license:") }.prefix(6))
+        return values
     }
 
     private func downloadBar(_ detail: HubModel) -> some View {
@@ -553,8 +556,6 @@ private struct HubModelRowCard: View {
         ModelFamily.resolve(id: model.id, tags: model.tags)
     }
 
-    private var engine: (id: String, label: String) { model.recommendedEngine }
-
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 10) {
@@ -578,16 +579,16 @@ private struct HubModelRowCard: View {
                         .padding(.top, 4)
                 }
 
-                HStack(spacing: 5) {
-                    Tag(text: engine.label,
-                        tone: engine.id == "none" ? .neutral : .accent)
-                    if let quantization = model.quantization {
-                        Tag(text: quantization, tone: .neutral)
+                if model.quantization != nil || local {
+                    HStack(spacing: 5) {
+                        if let quantization = model.quantization {
+                            Tag(text: quantization, tone: .neutral)
+                        }
+                        if local {
+                            Tag(text: "已在本机", tone: .success, icon: "checkmark")
+                        }
+                        Spacer(minLength: 0)
                     }
-                    if local {
-                        Tag(text: "已在本机", tone: .success, icon: "checkmark")
-                    }
-                    Spacer(minLength: 0)
                 }
 
                 HStack(spacing: 14) {

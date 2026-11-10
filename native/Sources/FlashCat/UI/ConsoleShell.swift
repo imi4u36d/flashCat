@@ -70,6 +70,10 @@ struct ConsoleView: View {
                 .frame(height: Console.titlebarHeight)
                 .frame(maxWidth: .infinity, alignment: .top)
         }
+        // 画布之下还有一层：没有自定义图片时它兜住桌面，毛玻璃强度跟着
+        // 「背景模糊」走。放在这里而不是 App 的 scene body 里，保证它跟
+        // ConsoleView 一起观察背景参数，不至于一整轮更新都收不到。
+        .background { DesktopBackdrop().ignoresSafeArea() }
         .tint(Console.accent)
         .preferredColorScheme(preferredScheme)
         .overlay(alignment: .top) {

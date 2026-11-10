@@ -2,22 +2,63 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+/// 背景参数的纯数学映射。
+///
+/// 从视图里抽出来是因为「滑杆的值 → 实际画出来什么」这条链没有别的验证手段，
+/// 而它恰好是最容易出错的地方：透明度和模糊互相牵连的那个 bug 就出在这里。
+enum BackgroundMath {
+    /// 背景模糊滑杆（0…40pt）→ 桌面毛玻璃层的强度 0…1。
+    static func blurAlpha(_ blur: Double) -> Double {
+        min(max(blur / 40, 0), 1)
+    }
+
+    /// APP 透明度 → 图片上那层画布保底渐变的不透明度。
+    ///
+    /// 保底值保证图片再清晰、文字也还有足够对比度；透明度 100% 时正好落在
+    /// 保底值上，0 时完全遮住图片。以前直接写 `max(1 - opacity, floor)`，
+    /// 透明度超过 `1 - floor`（深色约 58%）之后滑杆就再也没有可见变化——
+    /// 一半行程是空的，看起来就像「拖了没反应」。这里把剩余行程线性映射到
+    /// 「保底值 → 全遮」，两端仍然落在原来的值上，不留死区。
+    static func veilOpacity(_ opacity: Double, dark: Bool) -> Double {
+        let floor = dark ? 0.42 : 0.36
+        let reveal = min(max(opacity, 0), 1)
+        return floor + (1 - floor) * (1 - reveal)
+    }
+
+    /// 桌面上那层毛玻璃的强度。有自定义图片时桌面不参与，恒为 0。
+    static func desktopFrost(blur: Double, hasImage: Bool) -> Double {
+        hasImage ? 0 : blurAlpha(blur)
+    }
+}
+
 /// 自定义背景：图片会被复制到应用支持目录，原图移动或删除后仍然可用。
 /// 「APP 透明度」控制画布色盖在图片上的强度：数值越高，图片越清晰。
 /// 「背景模糊」控制图片的柔化程度，数值越高越柔和、越不干扰文字。
+///
+/// 两个值都在 `didSet` 里直接调用 `BackgroundSurface.refresh()`：窗口表面
+/// （不透明与否、毛玻璃强度）必须随参数立刻更新，不能等某个视图碰巧重建。
+/// 细节见 `BackgroundSurface`。
 @MainActor
 final class BackgroundSettings: ObservableObject {
     static let shared = BackgroundSettings()
 
     /// 当前自定义背景图；nil 表示使用默认纯色画布。
-    @Published private(set) var image: NSImage?
+    @Published private(set) var image: NSImage? {
+        didSet { BackgroundSurface.shared.refresh() }
+    }
     /// 0…1 的透明度：0 = 完全遮住图片，1 = 图片完全露出。
     @Published var opacity: Double {
-        didSet { defaults.set(opacity, forKey: Keys.opacity) }
+        didSet {
+            defaults.set(opacity, forKey: Keys.opacity)
+            BackgroundSurface.shared.refresh()
+        }
     }
     /// 背景图的模糊半径（pt）；没有图片时也允许预设。
     @Published var blur: Double {
-        didSet { defaults.set(blur, forKey: Keys.blur) }
+        didSet {
+            defaults.set(blur, forKey: Keys.blur)
+            BackgroundSurface.shared.refresh()
+        }
     }
 
     private let defaults = UserDefaults.standard
@@ -48,6 +89,20 @@ final class BackgroundSettings: ObservableObject {
 
     /// 桌面透出强度 0…1；有图片时固定为 0，避免桌面和图片叠加。
     var desktopReveal: Double { image == nil ? opacity : 0 }
+
+    /// 毛玻璃层当前应有的强度，供视图首次搭建时对齐（之后由 `BackgroundSurface` 驱动）。
+    var blurAlpha: CGFloat {
+        CGFloat(BackgroundMath.desktopFrost(blur: blur, hasImage: image != nil))
+    }
+
+    /// 图片模糊的视图身份。
+    ///
+    /// SwiftUI 会把 `.blur` 的结果当成一个可复用的滤镜图层：只改半径时旧图层
+    /// 不重绘，要等同一帧里别的属性（例如那层保底渐变的 opacity）变化才顺带
+    /// 刷出来——这正是「拖模糊没反应、拖透明度之后模糊才生效」的另一半。
+    /// 把半径并进视图身份，半径一变就是一个新图层，滤镜必然按新值重算。
+    /// 按 0.25pt 分档，避免一次拖动里反复重建。
+    var blurIdentity: Int { Int((blur * 4).rounded()) }
 
     /// 弹出系统文件选择器，选中的图片会被复制到应用支持目录。
     func chooseImage() {

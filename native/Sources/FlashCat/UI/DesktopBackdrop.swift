@@ -5,10 +5,13 @@ import AppKit
 ///
 /// 窗口本身由 `Theme.apply(to:)` 设为非不透明；这一层用系统
 /// `NSVisualEffectView` 兜住桌面，避免透明窗口在切壁纸/外观后留下残影。
-/// `blur` 越大，毛玻璃层越不透明，桌面越柔化；为 0 时桌面保持清晰。
+/// 模糊滑杆越大，毛玻璃层越不透明，桌面越柔化；为 0 时桌面保持清晰。
+///
+/// 强度不由 SwiftUI 入参决定，而是登记到 `BackgroundSurface`：后者在背景参数
+/// 一变化时就改这一层的 `alphaValue`。带 `blur` 入参的版本会踩到「入参没变就
+/// 不回调 `updateNSView`」，只拖透明度时这一层根本收不到更新，桌面要等下一次
+/// 拖模糊才跟着出现（见 `BackgroundSurface` 的说明）。
 struct DesktopBackdrop: NSViewRepresentable {
-    var blur: Double
-
     func makeNSView(context: Context) -> BackdropContainerView {
         let container = BackdropContainerView()
         let effect = NSVisualEffectView()
@@ -16,25 +19,21 @@ struct DesktopBackdrop: NSViewRepresentable {
         effect.state = .active
         effect.material = .underWindowBackground
         effect.autoresizingMask = [.width, .height]
-        effect.alphaValue = blurAlpha
+        effect.alphaValue = BackgroundSettings.shared.blurAlpha
         container.addSubview(effect)
         context.coordinator.effect = effect
+        BackgroundSurface.shared.attach(effectView: effect)
         container.onWindowChange = { window in
-            AppState.shared.theme.apply(to: window)
+            // 只认主窗口：菜单栏面板、弹层里的窗口不该改窗口表面。
+            guard window.canBecomeMain else { return }
+            BackgroundSurface.shared.attach(window: window)
         }
         return container
     }
 
     func updateNSView(_ nsView: BackdropContainerView, context: Context) {
-        context.coordinator.effect?.alphaValue = blurAlpha
-        DispatchQueue.main.async {
-            guard let window = nsView.window else { return }
-            AppState.shared.theme.apply(to: window)
-        }
-    }
-
-    private var blurAlpha: CGFloat {
-        CGFloat(min(max(blur / 40, 0), 1))
+        // 重建或换窗口时再对齐一次；参数本身由 BackgroundSurface 驱动。
+        BackgroundSurface.shared.refresh()
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }

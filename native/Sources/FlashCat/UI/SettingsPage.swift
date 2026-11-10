@@ -142,9 +142,7 @@ struct SettingsPage: View {
             }
             Divider().overlay(Console.insetStroke)
             SettingsRow(title: "背景模糊",
-                        detail: background.isEnabled
-                            ? "数值越高背景越柔和，文字越清晰"
-                            : "数值越高桌面越柔和，文字越清晰") {
+                        detail: blurDetail) {
                 HStack(spacing: 10) {
                     Slider(value: $background.blur, in: 0...40)
                         .frame(width: 150)
@@ -154,8 +152,25 @@ struct SettingsPage: View {
                         .foregroundStyle(Console.tertiary)
                         .frame(width: 36, alignment: .trailing)
                 }
+                // 没有图片、透明度又是 0 时整窗不透明，模糊确实没有任何可见效果。
+                // 以前这里照常可拖，拖完什么都没发生，看起来就像滑杆坏了。
+                .disabled(frostIsInert)
+                .opacity(frostIsInert ? 0.45 : 1)
             }
         }
+    }
+
+    /// 没有自定义图片、且 APP 透明度为 0：窗口完全不透明，桌面没露出来，
+    /// 模糊再怎么调也看不见。
+    private var frostIsInert: Bool {
+        !background.isEnabled && background.opacity <= 0.001
+    }
+
+    private var blurDetail: String {
+        if frostIsInert { return "先把 APP 透明度调高，桌面露出来之后模糊才可见" }
+        return background.isEnabled
+            ? "数值越高背景越柔和，文字越清晰"
+            : "数值越高桌面越柔和，文字越清晰"
     }
 
     private var launchCard: some View {

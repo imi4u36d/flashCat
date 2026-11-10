@@ -116,7 +116,6 @@ final class ThemeController: ObservableObject {
     /// 表现为界面整体上移。这里固定两个实例，只在真正换皮肤时赋值。
     private static let aquaAppearance = NSAppearance(named: .aqua)
     private static let darkAppearance = NSAppearance(named: .darkAqua)
-    private static let canvasColor = NSColor.adaptive(dark: 0x14131A, light: 0xEAEEF7)
 
     private var resolved: NSAppearance? {
         switch mode {
@@ -151,15 +150,8 @@ final class ThemeController: ObservableObject {
         // 没有自定义图片时，透明度滑杆代表「透出桌面」。此时窗口需要非不透明，
         // 但必须由全窗口的 NSVisualEffectView 兜底（见 DesktopBackdrop），
         // 否则切换壁纸/外观后会残留旧画面。有图片时保持不透明画布，
-        // 避免桌面和图片叠在一起。
-        let revealsDesktop = BackgroundSettings.shared.revealsDesktop
-        if window.isOpaque == revealsDesktop {
-            window.isOpaque = !revealsDesktop
-        }
-        let targetColor: NSColor = revealsDesktop ? .clear : Self.canvasColor
-        if window.backgroundColor != targetColor {
-            window.backgroundColor = targetColor
-        }
+        // 避免桌面和图片叠在一起。具体逻辑与背景参数共用一份，见 BackgroundSurface。
+        BackgroundSurface.shared.applyWindowSurface(to: window)
     }
 
     /// Keeps "跟随系统" honest: re-resolve when macOS flips, and (as a backstop

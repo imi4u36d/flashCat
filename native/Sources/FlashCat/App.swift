@@ -15,8 +15,6 @@ struct FlashCatApp: App {
     // Scene 层的 `if state.isPresentingLaunchPage` 依赖这里的状态订阅：
     // 普通 let 不会让 SwiftUI 重新求值 body，点击「开始使用」就永远切不进控制台。
     @ObservedObject private var state = AppState.shared
-    // 没设置壁纸时，透明度/模糊控制的是窗口透出的桌面。
-    @ObservedObject private var background = BackgroundSettings.shared
 
     var body: some Scene {
         Window("flashCat", id: "main") {
@@ -81,10 +79,6 @@ struct FlashCatApp: App {
         ConsoleView(state: state)
             .frame(minWidth: MainWindowGeometry.minimumSize.width,
                    minHeight: MainWindowGeometry.minimumSize.height)
-            .background {
-                DesktopBackdrop(blur: background.blur)
-                    .ignoresSafeArea()
-            }
             .overlay(MainWindow.bridge())
             // 原生视图自己排标题栏那一行（红绿灯留白 + 侧栏折叠手柄），
             // 因此要吃掉安全区，让内容从窗口最顶端开始画。
@@ -157,6 +151,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Both the canvas colour and the appearance follow the selected skin so
         // the strip above the sidebar matches instead of flashing dark.
         AppState.shared.theme.apply(to: target)
+        // 登记主窗口：之后透明度 / 模糊一变，窗口表面立刻跟着变，不再等
+        // 某个视图碰巧重建（见 BackgroundSurface）。
+        BackgroundSurface.shared.attach(window: target)
         // The console has a compact layout down to this point. Below it the
         // navigation rail and one-column content no longer have a stable
         // readable width, so stop the window instead of letting it collapse

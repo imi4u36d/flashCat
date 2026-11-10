@@ -119,14 +119,20 @@ struct ConsoleBackdrop: View {
                             // 直接和侧栏、页面文字抢视觉。半径可在设置里调整。
                             .blur(radius: background.blur)
                             .scaleEffect(1.1)
+                            // SwiftUI 会复用 `.blur` 产生的滤镜图层，只改半径时
+                            // 不重绘；把半径并进身份，半径一变就重建图层。
+                            // 见 `BackgroundSettings.blurIdentity`。
+                            .id(background.blurIdentity)
                     }
                     .clipped()
 
                 // 无论图片多清晰，都盖一层画布渐变保底，保证文字始终有足够对比度。
-                // 「APP 透明度」越高，这层越淡，但不会完全消失。
+                // 「APP 透明度」越高，这层越淡，但不低于保底值；剩下的行程
+                // 线性铺开，滑杆不会有一半是空的。见 `BackgroundMath.veilOpacity`。
                 LinearGradient(colors: [Console.backgroundTop, Console.backgroundBottom],
                                startPoint: .topLeading, endPoint: .bottomTrailing)
-                    .opacity(max(1 - background.opacity, scheme == .dark ? 0.42 : 0.36))
+                    .opacity(BackgroundMath.veilOpacity(background.opacity,
+                                                        dark: scheme == .dark))
             }
 
             RadialGradient(colors: [accent.opacity(scheme == .dark ? 0.12 : 0.10), .clear],

@@ -420,6 +420,22 @@ final class EngineController {
             environment["MTPLX_THINKING_BUDGET"] = String(budget)
             environment["MTPLX_THINKING_GUARD_SCOPE"] = "all"
         }
+        // MTPLX 的 session bank 预算是「空闲上限」，但内存紧张时会先掉到
+        // 1 GiB 下限。它的 GDN boundary 记录每次约 90 MB、默认最多 8 个，
+        // 于是一个 19K token 的条目光 boundary 就要 700 MB 以上——put() 把
+        // 这笔开销算进 entry_nbytes 后整个条目被 skipped_oversized_snapshot
+        // 拒绝，bank 里只剩不含 boundary 的条目；而
+        // recurrent_boundary_at_or_below() 对无 boundary 条目返回 None，
+        // 近前缀恢复因此永远失败，报出来的却是 ssd_prefix_miss，把
+        // admission 的真因掩盖成了「SSD 没命中」。
+        //
+        // boundary 记录本身是可丢弃的加速件（重新 prefill 即可重建），
+        // 丢弃整个条目等于用一个 0.5 秒的恢复换一次 15.8 秒的冷预填充。
+        // 打开 shedding 后「能留下几条 boundary 就留几条」，条目得以进入
+        // bank。默认关；开关读在 SessionBank 构造时，一次启动一个策略。
+        if descriptor.adapter == .mtplx {
+            environment["MTPLX_SESSION_BANK_SHED_BOUNDARIES"] = "1"
+        }
         // flashcat_serve.py detaches a watchdog that ends the server when the
         // app is gone; it finds this app through the pid file.
         if descriptor.adapter == .splash {

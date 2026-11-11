@@ -48,6 +48,25 @@ final class StatusParserTests: XCTestCase {
         XCTAssertEqual(status.maximumContextTokens, nil)
     }
 
+    /// 缓存命中率的分母：三家引擎都把「提示词总量」原样交出来，上层才能和
+    /// `total_cached_tokens` 相除。oMLX 的 `cache_efficiency` 是百分数，
+    /// 但同一份 payload 里本来就有两个计数器，界面统一用比值，少一套单位。
+    func testEnginesExposePromptTotalsForCacheHitRate() {
+        let mtplx = EngineStatusParser.mtplx(snapshot: [
+            "lifetime": ["prompt_tokens_total": 16_000, "cached_tokens_total": 12_800],
+        ])
+        XCTAssertEqual(mtplx.extras["prompt_tokens_total"], 16_000)
+        XCTAssertEqual(mtplx.extras["total_cached_tokens"], 12_800)
+
+        let omlx = EngineStatusParser.omlx(status: [
+            "total_prompt_tokens": 16_000,
+            "total_cached_tokens": 12_800,
+            "cache_efficiency": 80.0,
+        ])
+        XCTAssertEqual(omlx.extras["prompt_tokens_total"], 16_000)
+        XCTAssertEqual(omlx.extras["total_cached_tokens"], 12_800)
+    }
+
     func testOMLXModelInventoryKeepsOptionalFieldsOptional() throws {
         let payload = try load("models-status.json", "omlx")
         let parsed = EngineStatusParser.omlxModels(payload)
@@ -274,9 +293,45 @@ final class StatusParserTests: XCTestCase {
         XCTAssertEqual(status.extras[EngineRateCounters.prefillTokens], 88_000)
         XCTAssertEqual(status.extras[EngineRateCounters.prefillSeconds], 66.5)
         XCTAssertEqual(status.extras["total_cached_tokens"], 16_000_000)
+        // 命中率的分母：与命中量同一代的提示词总量。
+        XCTAssertEqual(status.extras["prompt_tokens_total"], 16_100_000)
         // 解析器本身不报速率，粒度也就无从谈起；由轮询侧差分后标成 `.live`。
         XCTAssertNil(status.decodeTokensPerSecond)
         XCTAssertEqual(status.decodeRateKind, .none)
+    }
+
+    /// 进程级累计吞吐：两个计数器之比。它不是「此刻多快」（那是 `.live`），
+    /// 但网关一个样本都没有时（客户端直连引擎、或全是非流式请求），hero 与
+    /// 预填充格靠它至少还能说出一句真话，而不是一律画「—」。
+    func testMLXServeLifetimeRatiosFillDecodeAndPrefillMeans() {
+        let metrics = EngineTelemetrySource(role: .metrics, path: "/metrics.json", format: .prometheusJSON)
+        let status = EngineStatusParser.parse(documents: [
+            EngineTelemetryDocument(source: metrics, json: [
+                "counters": ["prefill_tokens_total": 3_318.0,
+                             "generation_tokens_total": 180.0],
+                "histograms": ["prefill_time_seconds": ["count": 6, "sum": 2.0],
+                               "decode_time_seconds": ["count": 6, "sum": 2.4]],
+            ]),
+        ])
+
+        XCTAssertEqual(status.decodeTokensPerSecond ?? 0, 75, accuracy: 0.001)
+        XCTAssertEqual(status.decodeRateKind, .lifetimeMean)
+        XCTAssertEqual(status.prefillTokensPerSecond ?? 0, 1_659, accuracy: 0.001)
+        XCTAssertEqual(status.prefillRateKind, .lifetimeMean)
+    }
+
+    /// 计数器还是 0（刚开机）时不能报 0 当速度：那会让界面把「还没样本」
+    /// 画成一个真实的零吞吐。
+    func testMLXServeEmptyCountersReportNoRate() {
+        let status = EngineStatusParser.prometheusJSON([
+            "counters": ["prefill_tokens_total": 0, "generation_tokens_total": 0],
+            "histograms": ["prefill_time_seconds": ["count": 0, "sum": 0],
+                           "decode_time_seconds": ["count": 0, "sum": 0]],
+        ])
+        XCTAssertNil(status.decodeTokensPerSecond)
+        XCTAssertNil(status.prefillTokensPerSecond)
+        XCTAssertEqual(status.decodeRateKind, .none)
+        XCTAssertEqual(status.prefillRateKind, .none)
     }
 
     // MARK: Strata

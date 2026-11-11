@@ -109,12 +109,41 @@ macOS 自己提供的文本编辑与剪贴板快捷键、关闭窗口与退出�
     角标写 `AVG`；没有网关样本时才退回引擎自己的 `.lifetimeMean`。
   - **采样节拍固定 1 秒**：曲线的点、当前速度、预填充格、hero 平均都在同一拍
     发布，不因 SSE 分片或预填充 chunk 而「立即变化」。
-- **生命体征仍由引擎上报，并自证粒度。** 预填充、首字延迟 p50、内存占用、上下文上限
-  与 `SESSIONS`（`activeRequests`）读引擎 status，卡片说明标明「引擎」。预填充不是
-  连续量，概览**取消 LAST 采集入口**：只显示 `LIVE`（正在处理提示词）或引擎真的累计过的
-  `AVG`（开机以来均值，文案会说明它不是实时值），空闲时画「—」而不是挂上一请求的终值。
+- **生命体征仍由引擎上报，并自证粒度。** 首字延迟 p50、上下文上限
+  与 `SESSIONS`（`activeRequests`）读引擎 status，卡片说明标明「引擎」。预填充
+  按请求实测，优先级写死在 owner 表里：**引擎 `timings`** →
+  **网关 TTFT 口径** → 引擎的 `LAST` / `AVG`。`timings` 是 llama.cpp 口径的
+  一块（`prompt_n` / `cached_n` / `prompt_ms`），mlx-serve 在**流式末片与
+  非流式正文里都带**，所以分子分母都是引擎量的，不依赖传输方式；网关口径只在
+  流式响应上成立（非流式回来时预填充早就结束，唯一的「首字时刻」是整段回答的
+  收尾）。两种口径都只算**真正前向**的量：`promptTokens − cached_tokens`，
+  前向不足 128 token 的样本一律不报——命中缓存后剩几十个 token 时耗时由缓存
+  恢复的固定开销主导，报出来的三位数既不是算力也不是缓存速度。概览按
+  `LIVE` / `LAST` / `AVG` 显示：`LIVE` = 此刻真的在预填充（只有引擎量得到）；
+  `LAST` = 最近一次完成的预填充（「网关 · 最近一次预填充实测」），客户端绕过
+  网关直连引擎端口时才回落成引擎的上一请求值；`AVG` = 引擎真的累计过的开机
+  以来均值（mlx-serve 的 `prefill_tokens_total / prefill_time_seconds.sum`）。
+  三档都没有时才画「—」。
   `LIVE` 的预填充值是最近约 1.2 秒（1~2 个 chunk）的窗口速度，不是整轮请求的累计平均；
-  灵动岛只说当前速度，因此只在 `.live` 时采用引擎读数。
+  灵动岛只说当前速度，因此只在引擎 `.live` 时采用引擎读数。
+- **缓存命中率格**（`CACHE`）owner = 网关按代累计：分子是 usage 里的
+  `cached_tokens`，分母是同一批请求的 `prompt_tokens`，**按 token 加权**而不是
+  各请求命中率的算术平均——一段 100K 的上下文命中 95%，比十次 1K 的冷请求更能
+  代表缓存效率。只统计真的收到 usage 的请求（客户端没开
+  `stream_options.include_usage` 时没有这个字段），窗口是会话表最近 ≤32 条；
+  换引擎 / 换模型 / 重启时 `epoch` 翻代，读数从「—」重新等样本。网关一个带
+  usage 的请求都没有时（客户端绕过网关直连引擎端口），退回引擎自己报的开机
+  以来比值：mlx-serve 的 `prefix_cache_tokens_total / prompt_tokens_total`、
+  MTPLX 的 `lifetime.cached_tokens_total / lifetime.prompt_tokens_total`、oMLX
+  的 `total_cached_tokens / total_prompt_tokens`（它的 `cache_efficiency` 是
+  百分数，统一走原始计数器，少一套单位）。两个口径都是累计平均，角标只有
+  `AVG`；0% 是合法读数（有样本、一次都没命中），「没样本」才画「—」。
+- **「最近请求」每行的速度同样是按请求的实测值。** 已结束的行读引擎 `timings`
+  的 `predicted_n / predicted_ms`；没有 `timings` 的引擎退回网关按分片到达时刻
+  估的窗口，且必须真的观测到解码跨度（首片到末片 ≥ 0.2 秒）。两样都没有就画
+  「—」：非流式响应的正文一口气回来，网关手里只有一个到达点，拿窗口下限
+  （0.35 秒）去除会把 14 155 token 的回答读成 40 443 tok/s——那正是「几万
+  tok/s」的来历。单点会话同样不进 hero 的累计均值。
 - **动作即方法调用。** 导航 `state.section = .models`，启停 `state.toggleService()`，
   换模型 `state.applyModelFromAnyEngine(id, engine:)`，下载 `state.downloadModel` /
   `state.downloadShared`。确认类交互由 `AppState` 持有（`confirmingModelSwitch`、

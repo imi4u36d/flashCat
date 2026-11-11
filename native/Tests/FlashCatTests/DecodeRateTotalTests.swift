@@ -99,14 +99,48 @@ final class DecodeRateTotalTests: XCTestCase {
 
     // MARK: 预填充格
 
-    /// 预填充的 owner 是引擎（网关只有已废弃的 TTFT 口径）：LIVE 与 AVG
-    /// 一对一翻译，LAST 不再是一个采集入口——空闲时上一请求的实测值不显示。
-    func testPrefillReadingDropsLastButKeepsLiveAndMean() {
+    /// 预填充的 owner 顺序：引擎 LIVE（此刻真的在预填充）→ 网关实测 LAST →
+    /// 引擎 LAST / AVG。网关值是应用自己按请求算的，换引擎不会让整格变空。
+    func testPrefillPrefersGatewayMeasurementUnlessEngineIsLive() {
+        // 没有引擎预填充字段（mlx-serve）：网关的实测值必须顶上。
+        XCTAssertEqual(AppState.prefillReading(gateway: 1_800,
+                                               engine: nil,
+                                               engineKind: .none).origin,
+                       .gatewayLast)
+        XCTAssertEqual(AppState.prefillReading(gateway: 1_800,
+                                               engine: nil,
+                                               engineKind: .none).value,
+                       1_800)
+        // 此刻真的在预填充：引擎的实时窗口比上一轮的网关值更新，优先。
+        XCTAssertEqual(AppState.prefillReading(gateway: 1_800,
+                                               engine: 2_100,
+                                               engineKind: .live).origin,
+                       .engineLive)
+        // 网关没有会话记录（客户端绕过网关直连引擎端口）：才用引擎的 LAST / AVG。
+        XCTAssertEqual(AppState.prefillReading(gateway: 0,
+                                               engine: 3_400,
+                                               engineKind: .lastRequest).origin,
+                       .engineLast)
+        XCTAssertEqual(AppState.prefillReading(gateway: 0,
+                                               engine: 900,
+                                               engineKind: .lifetimeMean).origin,
+                       .engineMean)
+        XCTAssertEqual(AppState.prefillReading(gateway: 0,
+                                               engine: nil,
+                                               engineKind: .none),
+                       .none)
+    }
+
+    /// 引擎自报速率的翻译层：LIVE、LAST 与 AVG 各翻译成自己的角标。
+    /// 预填充是一次性动作，短提示词在 1 秒采样里抓不到 LIVE，所以上一请求的
+    /// 实测值必须显示（LAST），不能永远画「—」。
+    func testPrefillReadingKeepsLiveLastAndMean() {
         XCTAssertEqual(AppState.prefillReading(engine: 2100, engineKind: .live).origin, .engineLive)
-        XCTAssertEqual(AppState.prefillReading(engine: 3400, engineKind: .lastRequest), .none)
+        XCTAssertEqual(AppState.prefillReading(engine: 3400, engineKind: .lastRequest).origin, .engineLast)
+        XCTAssertEqual(AppState.prefillReading(engine: 3400, engineKind: .lastRequest).value, 3400)
         XCTAssertEqual(AppState.prefillReading(engine: 900, engineKind: .lifetimeMean).origin, .engineMean)
-        XCTAssertEqual(AppState.prefillReading(engine: 900, engineKind: .none).origin, .none)
-        XCTAssertEqual(AppState.prefillReading(engine: 0, engineKind: .live).origin, .none)
+        XCTAssertEqual(AppState.prefillReading(engine: 900, engineKind: .none), .none)
+        XCTAssertEqual(AppState.prefillReading(engine: 0, engineKind: .live), .none)
         XCTAssertEqual(AppState.prefillReading(engine: nil, engineKind: .live), .none)
     }
 

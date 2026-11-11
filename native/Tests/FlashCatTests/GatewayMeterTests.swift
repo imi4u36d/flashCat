@@ -86,9 +86,15 @@ final class GatewayMeterTests: XCTestCase {
     /// 但列表与累计平均保留。
     func testFinishedRequestSurvivesLongAfterFinish() {
         let meter = GatewayMeter()
-        let id = meter.begin(model: "last-model", dialect: "test", promptTokens: 10)
-        meter.addTokens(id, 120, at: Date())
-        meter.finish(id)
+        let start = Date()
+        let id = meter.begin(model: "last-model", dialect: "test", promptTokens: 10,
+                             at: start)
+        // 逐片回来才有可测的到达跨度；一行数据也要按真实节奏喂，
+        // 单点（0.35 秒下限）不算速度。
+        for step in 0..<20 {
+            meter.addTokens(id, 6, at: start.addingTimeInterval(Double(step) * 0.1))
+        }
+        meter.finish(id, at: start.addingTimeInterval(2.0))
 
         let later = Date().addingTimeInterval(10 * 60)
         let rows = meter.snapshot(limit: 6, now: later)
@@ -136,11 +142,16 @@ final class GatewayMeterTests: XCTestCase {
     func testIdleOverviewReportsNothingButLifetimeAverageKeepsHistory() {
         let meter = GatewayMeter()
         let start = Date()
-        let first = meter.begin(model: "first", dialect: "test", promptTokens: 10)
-        meter.addTokens(first, 80, at: start)
+        let first = meter.begin(model: "first", dialect: "test", promptTokens: 10, at: start)
+        for step in 0..<8 {
+            meter.addTokens(first, 10, at: start.addingTimeInterval(Double(step) * 0.1))
+        }
         meter.finish(first, at: start.addingTimeInterval(0.7))
-        let second = meter.begin(model: "second", dialect: "test", promptTokens: 10)
-        meter.addTokens(second, 40, at: start.addingTimeInterval(0.72))
+        let second = meter.begin(model: "second", dialect: "test", promptTokens: 10,
+                                 at: start.addingTimeInterval(0.72))
+        for step in 0..<5 {
+            meter.addTokens(second, 8, at: start.addingTimeInterval(0.8 + Double(step) * 0.05))
+        }
         meter.finish(second, at: start.addingTimeInterval(1.0))
 
         let now = start.addingTimeInterval(3.0)
@@ -236,17 +247,288 @@ final class GatewayMeterTests: XCTestCase {
         XCTAssertEqual(meter.overview(now: start.addingTimeInterval(0.65)).decodeRate, 0)
     }
 
-    /// role-only 首帧不产生文字，但它是「流开始回东西」的第一个证据：
-    /// 首字时刻必须在它身上记下，TTFT 才不晚计。旧实现只在文字非空时
-    /// 打点，空 delta 被整帧忽略。
-    func testRoleOnlyDeltaRecordsFirstToken() {
+    /// role-only 首帧只是「连接建立」，不是首字：mlx-serve 在预填充开始前
+    /// 就先发它。把它记成首字会让 TTFT 只有几毫秒，网关的预填充读数被顶到
+    /// 上限。首字必须等第一个真的带内容的分片。
+    func testRoleOnlyPreambleDoesNotRecordFirstToken() {
         let meter = GatewayMeter()
-        let id = meter.begin(model: "m", dialect: "openai", promptTokens: 10)
-        let at = Date()
+        let start = Date()
+        let id = meter.begin(model: "m", dialect: "openai", promptTokens: 10, at: start)
         meter.ingest(id, chunk: ["choices": [["delta": ["role": "assistant"]]]])
-        // 首字时刻已记下：TTFT 由 snapshot 给出。
-        let row = meter.snapshot(now: at.addingTimeInterval(0.2)).first
-        XCTAssertEqual(row?.ttftMilliseconds ?? -1, 0, accuracy: 1)
-        XCTAssertEqual(row?.completionTokens, 0)
+        XCTAssertNil(meter.snapshot().first?.ttftMilliseconds)
+
+        meter.addTokens(id, 2, at: start.addingTimeInterval(1.2))
+        XCTAssertEqual(meter.snapshot().first?.ttftMilliseconds ?? 0, 1_200, accuracy: 1)
+        XCTAssertEqual(meter.snapshot().first?.completionTokens, 2)
+    }
+
+    // MARK: 网关侧的预填充
+
+    /// 预填充由网关自己算：分子扣掉前缀缓存命中量，分母是请求发出到首 token。
+    /// 引擎不报任何预填充速率字段时，这一格仍然有值。
+    func testRecentPrefillIsMeasuredFromRequestTimingAndCache() {
+        let meter = GatewayMeter()
+        let start = Date()
+        let id = meter.begin(model: "m", dialect: "test", promptTokens: 1_200, at: start)
+        // role-only 首帧：不算首字，不能把 TTFT 记成 10ms。
+        meter.addTokens(id, 0, at: start.addingTimeInterval(0.01))
+        XCTAssertNil(meter.recentPrefill())
+        meter.addTokens(id, 4, at: start.addingTimeInterval(0.5))
+        // usage 还没到：此时没有 cached 信息，不能报一个虚高的数。
+        XCTAssertNil(meter.recentPrefill())
+
+        meter.noteUsage(id,
+                        promptTokens: 1_200,
+                        completionTokens: 4,
+                        cachedPromptTokens: 400)
+        meter.finish(id, at: start.addingTimeInterval(1.0))
+        // (1200 - 400) / 0.5s = 1600 tok/s。
+        XCTAssertEqual(meter.recentPrefill() ?? 0, 1_600, accuracy: 0.5)
+    }
+
+    /// 应用内对话在引擎启动/加载之前就登记了会话；计时起点必须挪到真正发出
+    /// 请求的那一刻，否则冷启动的模型加载时间会被摊进预填充分母。
+    func testMarkStartedExcludesEngineStartupFromPrefill() {
+        let meter = GatewayMeter()
+        let start = Date()
+        let id = meter.begin(model: "m", dialect: "test", promptTokens: 1_000, at: start)
+        meter.markStarted(id, at: start.addingTimeInterval(10))
+        meter.addTokens(id, 4, at: start.addingTimeInterval(10.5))
+        meter.noteUsage(id, promptTokens: 1_000, completionTokens: 4)
+        meter.finish(id, at: start.addingTimeInterval(11))
+
+        XCTAssertEqual(meter.recentPrefill() ?? 0, 2_000, accuracy: 0.5)
+    }
+
+    /// 最新一路全命中缓存（没有前向 token）时不能把整格空掉：继续往前找
+    /// 最近一次真的算过的预填充。
+    func testRecentPrefillFallsBackPastFullyCachedRequest() {
+        let meter = GatewayMeter()
+        let start = Date()
+        let first = meter.begin(model: "m", dialect: "test", promptTokens: 1_200, at: start)
+        meter.addTokens(first, 4, at: start.addingTimeInterval(0.5))
+        meter.noteUsage(first, promptTokens: 1_200, completionTokens: 4, cachedPromptTokens: 400)
+        meter.finish(first, at: start.addingTimeInterval(1))
+
+        let cached = meter.begin(model: "m", dialect: "test", promptTokens: 1_200,
+                                 at: start.addingTimeInterval(2))
+        meter.addTokens(cached, 4, at: start.addingTimeInterval(2.01))
+        meter.noteUsage(cached, promptTokens: 1_200, completionTokens: 4, cachedPromptTokens: 1_200)
+        meter.finish(cached, at: start.addingTimeInterval(2.5))
+
+        XCTAssertEqual(meter.recentPrefill() ?? 0, 1_600, accuracy: 0.5)
+    }
+
+    /// 非流式响应拿不到 TTFT：正文回来时预填充和解码都已经结束。这种会话
+    /// 不参与预填充读数，免得把整段回答耗时当成首字耗时，报一个偏低的数。
+    func testNonStreamResponseDoesNotProducePrefillReading() throws {
+        let meter = GatewayMeter()
+        let start = Date()
+        let id = meter.begin(model: "m", dialect: "test", promptTokens: 1_000, at: start)
+        let body = try JSONSerialization.data(withJSONObject: [
+            "choices": [["message": ["content": "hi"]]],
+            "usage": ["prompt_tokens": 1_000, "completion_tokens": 2],
+        ])
+        meter.ingestResponse(id, body: body)
+        XCTAssertNil(meter.recentPrefill())
+    }
+
+    // MARK: 缓存命中率
+
+    /// 命中率按 token 加权，不是「各请求命中率的平均」：一段 4K 上下文命中
+    /// 3.6K，比一条 100 token 的冷请求更能代表缓存效率。
+    func testCacheHitIsWeightedByPromptTokens() {
+        let meter = GatewayMeter()
+        let start = Date()
+        let cold = meter.begin(model: "m", dialect: "openai", promptTokens: 100, at: start)
+        meter.addTokens(cold, 2, at: start.addingTimeInterval(0.2))
+        meter.noteUsage(cold, promptTokens: 100, completionTokens: 2)
+        meter.finish(cold, at: start.addingTimeInterval(0.5))
+
+        let warm = meter.begin(model: "m", dialect: "openai", promptTokens: 4_000,
+                               at: start.addingTimeInterval(1))
+        meter.addTokens(warm, 2, at: start.addingTimeInterval(1.2))
+        meter.noteUsage(warm, promptTokens: 4_000, completionTokens: 2,
+                        cachedPromptTokens: 3_600)
+        meter.finish(warm, at: start.addingTimeInterval(1.5))
+
+        let sample = meter.cacheHit()
+        XCTAssertEqual(sample?.requests, 2)
+        // (0 + 3_600) / (100 + 4_000)，而不是 (0% + 90%) / 2。
+        XCTAssertEqual(sample?.rate ?? 0, 3_600.0 / 4_100.0, accuracy: 0.0001)
+    }
+
+    /// 没有 usage 的请求不能进分母：客户端没开 `stream_options.include_usage`
+    /// 时没有 `cached_tokens`，把整段上下文当成未命中会让命中率凭客户端配置
+    /// 变低。一次 usage 都没有时返回 nil，界面画「—」。
+    func testCacheHitIgnoresRequestsWithoutUsage() {
+        let meter = GatewayMeter()
+        let start = Date()
+        let unknown = meter.begin(model: "m", dialect: "openai", promptTokens: 8_000, at: start)
+        meter.addTokens(unknown, 4, at: start.addingTimeInterval(0.4))
+        meter.finish(unknown, at: start.addingTimeInterval(1))
+        XCTAssertNil(meter.cacheHit())
+
+        let known = meter.begin(model: "m", dialect: "openai", promptTokens: 1_000,
+                                at: start.addingTimeInterval(2))
+        meter.addTokens(known, 2, at: start.addingTimeInterval(2.2))
+        meter.noteUsage(known, promptTokens: 1_000, completionTokens: 2,
+                        cachedPromptTokens: 900)
+        meter.finish(known, at: start.addingTimeInterval(2.5))
+
+        XCTAssertEqual(meter.cacheHit()?.requests, 1)
+        XCTAssertEqual(meter.cacheHit()?.rate ?? 0, 0.9, accuracy: 0.0001)
+    }
+
+    /// 全冷启动也是合法读数：0% 与「一次都没算过」不是一回事，前者要显示 0。
+    func testCacheHitReportsZeroForColdRequests() {
+        let meter = GatewayMeter()
+        let start = Date()
+        let cold = meter.begin(model: "m", dialect: "openai", promptTokens: 1_800, at: start)
+        meter.addTokens(cold, 2, at: start.addingTimeInterval(0.3))
+        meter.noteUsage(cold, promptTokens: 1_800, completionTokens: 2)
+        meter.finish(cold, at: start.addingTimeInterval(0.6))
+
+        XCTAssertEqual(meter.cacheHit()?.requests, 1)
+        XCTAssertEqual(meter.cacheHit()?.rate, 0)
+    }
+
+    /// 换引擎 / 换模型 / 重启后从零开始：上一台模型的命中率不该挂在新卡片上。
+    func testCacheHitBelongsToTheCurrentEpoch() {
+        let meter = GatewayMeter()
+        let start = Date()
+        let old = meter.begin(model: "previous", dialect: "openai", promptTokens: 1_000, at: start)
+        meter.noteUsage(old, promptTokens: 1_000, completionTokens: 2, cachedPromptTokens: 900)
+        meter.finish(old, at: start.addingTimeInterval(0.5))
+        XCTAssertEqual(meter.cacheHit()?.rate ?? 0, 0.9, accuracy: 0.0001)
+
+        meter.resetLifetime()
+        XCTAssertNil(meter.cacheHit())
+        // 会话表本身仍在：「最近请求」保留上一轮的行，直到被新请求挤出。
+        XCTAssertEqual(meter.snapshot().count, 1)
+    }
+
+    // MARK: 引擎自报的逐请求耗时（timings）
+
+    /// 非流式响应没有 `timings` 时不能报速度。正文整段回来，网关手里只有一个
+    /// 到达点；旧实现拿窗口下限 0.35 秒当分母，14 155 token 的回答被读成
+    /// 40 443 tok/s——概览「最近请求」里 37 769 / 12 558 / 11 551 tok/s 那几行
+    /// 就是同一条路径，它们和引擎自己记的 44～60 tok/s 差了两个数量级。
+    func testBufferedResponseWithoutTimingsReportsNoRate() throws {
+        let meter = GatewayMeter()
+        let start = Date()
+        let id = meter.begin(model: "m", dialect: "openai", promptTokens: 15_774, at: start)
+        let body = try JSONSerialization.data(withJSONObject: [
+            "choices": [["message": ["content": String(repeating: "。“", count: 4_718)]]],
+            "usage": ["prompt_tokens": 15_774, "completion_tokens": 14_155],
+        ])
+        meter.ingestResponse(id, body: body)
+
+        XCTAssertEqual(meter.snapshot().first?.decodeRate ?? -1, 0, accuracy: 0.001)
+        // 一个可测样本都没有时宁可返回 nil，界面画「—」。
+        XCTAssertNil(meter.lifetimeAverage())
+    }
+
+    /// mlx-serve 在非流式正文里也带 `timings`：这是「最近请求」与 hero 唯一
+    /// 诚实的来源（分子分母都是引擎量的那一段）。预填充的分子扣掉缓存命中量。
+    func testEngineTimingsMeasureBufferedRequests() throws {
+        let meter = GatewayMeter()
+        let start = Date()
+        let id = meter.begin(model: "m", dialect: "openai", promptTokens: 15_774, at: start)
+        let body = try JSONSerialization.data(withJSONObject: [
+            "choices": [["message": ["content": String(repeating: "。“", count: 4_718)]]],
+            "usage": ["prompt_tokens": 15_774, "completion_tokens": 14_155],
+            // 取自 mlx-serve 自己的日志：12052+… 一轮 prefill 6152ms、decode 235926ms。
+            "timings": ["prompt_n": 15_774, "cached_n": 0, "prompt_ms": 6_152.0,
+                        "predicted_n": 14_155, "predicted_ms": 235_926.0],
+        ])
+        meter.ingestResponse(id, body: body)
+
+        XCTAssertEqual(meter.snapshot().first?.decodeRate ?? 0, 60.0, accuracy: 0.2)
+        XCTAssertEqual(meter.recentPrefill() ?? 0, 2_563.9, accuracy: 1)
+        XCTAssertEqual(meter.lifetimeAverage() ?? 0, 60.0, accuracy: 0.2)
+    }
+
+    /// 流式末片的 `timings` 优先于网关按到达时刻估的窗口：同一路请求，
+    /// 引擎量的 50 tok/s 比「20 片摊在 0.5 秒里」的 40 tok/s 更接近真相。
+    func testTimingsFromStreamingChunkOverrideArrivalWindow() {
+        let meter = GatewayMeter()
+        let start = Date()
+        let id = meter.begin(model: "m", dialect: "openai", promptTokens: 900, at: start)
+        for step in 0..<20 {
+            meter.ingest(id, chunk: ["choices": [["delta": ["content": "字"]]]])
+            meter.addTokens(id, 1, at: start.addingTimeInterval(Double(step) * 0.025))
+        }
+        meter.ingest(id, chunk: ["choices": [], "usage": ["prompt_tokens": 900,
+                                                          "completion_tokens": 20],
+                                  "timings": ["prompt_n": 900, "cached_n": 0,
+                                              "prompt_ms": 300.0,
+                                              "predicted_n": 100,
+                                              "predicted_ms": 2_000.0]])
+        meter.finish(id, at: start.addingTimeInterval(1.0))
+
+        XCTAssertEqual(meter.snapshot().first?.decodeRate ?? 0, 50.0, accuracy: 0.1)
+        XCTAssertEqual(meter.recentPrefill() ?? 0, 3_000.0, accuracy: 1)
+        XCTAssertEqual(meter.lifetimeAverage() ?? 0, 50.0, accuracy: 0.1)
+    }
+
+    /// 换引擎 / 换模型 / 引擎重启会开启新一代：上一台模型的预填充读数不该
+    /// 挂在新模型卡片上，宁可从「—」重新等一个样本。
+    func testPrefillReadingBelongsToTheCurrentEngineEpoch() {
+        let meter = GatewayMeter()
+        let start = Date()
+        let old = meter.begin(model: "previous", dialect: "openai", promptTokens: 2_400, at: start)
+        meter.addTokens(old, 4, at: start.addingTimeInterval(1.0))
+        meter.noteTimings(old, GatewayMeter.RequestTimings(promptTokens: 2_400,
+                                                           cachedTokens: 0,
+                                                           promptMilliseconds: 1_000,
+                                                           predictedTokens: 40,
+                                                           predictedMilliseconds: 800))
+        meter.finish(old, at: start.addingTimeInterval(1.2))
+        XCTAssertEqual(meter.recentPrefill() ?? 0, 2_400, accuracy: 1)
+
+        meter.resetLifetime()
+        XCTAssertNil(meter.recentPrefill())
+        // 会话表本身仍在：「最近请求」要保留上一轮的行，直到被新请求挤出。
+        XCTAssertEqual(meter.snapshot().count, 1)
+
+        let fresh = meter.begin(model: "current", dialect: "openai", promptTokens: 1_600,
+                                at: start.addingTimeInterval(10))
+        meter.addTokens(fresh, 4, at: start.addingTimeInterval(10.5))
+        meter.noteTimings(fresh, GatewayMeter.RequestTimings(promptTokens: 1_600,
+                                                             cachedTokens: 0,
+                                                             promptMilliseconds: 800,
+                                                             predictedTokens: 30,
+                                                             predictedMilliseconds: 400))
+        meter.finish(fresh, at: start.addingTimeInterval(11))
+        XCTAssertEqual(meter.recentPrefill() ?? 0, 2_000, accuracy: 1)
+    }
+
+    /// 命中缓存后只剩几十个 token 的前向：耗时由缓存恢复的固定开销主导，
+    /// 报出来的 334 tok/s 既不是算力也不是缓存速度。这种样本不参与读数，
+    /// 继续往前找最近一次真的算过的那一轮。
+    func testTimingsSkipTinyForwardedSamples() {
+        let meter = GatewayMeter()
+        let start = Date()
+        let cold = meter.begin(model: "m", dialect: "openai", promptTokens: 2_400, at: start)
+        meter.addTokens(cold, 4, at: start.addingTimeInterval(1.0))
+        meter.noteTimings(cold, GatewayMeter.RequestTimings(promptTokens: 2_400,
+                                                           cachedTokens: 0,
+                                                           promptMilliseconds: 1_000,
+                                                           predictedTokens: 40,
+                                                           predictedMilliseconds: 800))
+        meter.finish(cold, at: start.addingTimeInterval(1.2))
+
+        let cached = meter.begin(model: "m", dialect: "openai", promptTokens: 2_195,
+                                 at: start.addingTimeInterval(5))
+        meter.addTokens(cached, 4, at: start.addingTimeInterval(5.2))
+        meter.noteTimings(cached, GatewayMeter.RequestTimings(promptTokens: 2_195,
+                                                             cachedTokens: 2_164,
+                                                             promptMilliseconds: 92.7,
+                                                             predictedTokens: 22,
+                                                             predictedMilliseconds: 272))
+        meter.finish(cached, at: start.addingTimeInterval(5.5))
+
+        XCTAssertEqual(meter.recentPrefill() ?? 0, 2_400.0, accuracy: 1)
     }
 }

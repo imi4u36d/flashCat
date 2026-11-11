@@ -32,7 +32,8 @@ struct OverviewPage: View {
     /// 当前速度的来源（曲线右上角的角标）。只认 LIVE，没有 LAST。
     private var speedOrigin: SpeedOrigin { state.speedOrigin }
 
-    /// 预填充格的取数来源（owner = 引擎；见 `AppState.prefillReading`）。
+    /// 预填充格的取数来源（owner = 网关实测值，引擎 LIVE 只在预填充进行中补位；
+    /// 见 `AppState.prefillReading`）。
     private var prefillReading: MetricReading { state.prefillReading }
 
     /// 速率统一显示口径：没有值就留「—」，不拿 0.00 冒充读数。
@@ -363,11 +364,12 @@ struct OverviewPage: View {
                    unit: "tok/s",
                    hint: prefillHint,
                    badge: prefillBadge)
-        metricCard(icon: "memorychip", tint: Console.info,
-                   title: "内存压力", tag: "MEM",
-                   value: memoryPercentText,
+        metricCard(icon: "arrow.triangle.2.circlepath", tint: Console.ok,
+                   title: "缓存命中率", tag: "CACHE",
+                   value: cacheHitText,
                    unit: "%",
-                   hint: memoryHint)
+                   hint: cacheHitHint,
+                   badge: cacheHitBadge)
     }
 
     private func metricCard(icon: String, tint: Color, title: String, tag: String,
@@ -430,32 +432,27 @@ struct OverviewPage: View {
         return (stats?.ttftMilliseconds ?? 0) > 0 ? "引擎 p50 · 从请求到首个 token" : "引擎未上报"
     }
 
-    private var memoryHint: String {
-        guard state.isRunning else { return "引擎未运行" }
-        return stats?.memoryBytes != nil ? "引擎 · 统一内存占用" : "引擎未上报"
-    }
-
     private var ttftText: String {
         guard let value = stats?.ttftMilliseconds, value > 0 else { return "—" }
         return String(format: "%.0f", value)
     }
 
     private var prefillText: String {
-        // 只显示引擎自己量过的数。网关那套「(整段提示词 − 缓存命中) / 首字耗时」
-        // 已经废弃：分母是 TTFT，里面混着排队与缓存恢复，而分子只能在末帧
-        // usage 到达后才知道命中量——请求进行中它算不出可靠的预填充速度。
-        // 引擎没有报这个方向的速率时，宁可显示「—」。数值与粒度都走
-        // owner 表（`AppState.prefillReading`），角标与说明同源。
+        // 网关按请求量：分子是 usage 里的提示词 token 减去前缀缓存命中量，
+        // 分母是请求发出到首 token 的墙钟。比「整段提示词 / 首字耗时」诚实，
+        // 也不依赖任何一家引擎自报的预填充字段——换引擎不会让这格变空。
+        // 数值与粒度都走 owner 表（`AppState.prefillReading`），角标与说明同源。
         guard let value = prefillReading.value, value > 0 else { return "—" }
         return Format.compact(value)
     }
 
-    /// 预填充读数的粒度角标。LAST 已取消：空闲时不再把上一请求的实测值
-    /// 挂成「当前速度」。只剩 LIVE（正在处理提示词）与 AVG（引擎真的累计过
-    /// 的开机以来均值，文案会说明它不是实时值）。
+    /// 预填充读数的粒度角标。LIVE = 正在处理提示词；LAST = 最近一次完成的
+    /// 预填充实测值（预填充太短、1 秒采样常常抓不到 LIVE，这是常态而不是
+    /// 异常）；AVG = 引擎真的累计过的开机以来均值，文案会说明它不是实时值。
     private var prefillBadge: (text: String, tint: Color)? {
         switch prefillReading.origin {
         case .engineLive: return ("LIVE", Console.accent)
+        case .gatewayLast, .engineLast: return ("LAST", Console.tertiary)
         case .engineMean: return ("AVG", Console.tertiary)
         default: return nil
         }
@@ -472,19 +469,55 @@ struct OverviewPage: View {
     }
 
     /// 预填充卡下方那行说明。它必须随粒度一起变：把开机以来的均值说成
-    /// 「长提示词处理速度」正是在撒谎。
+    /// 「长提示词处理速度」正是在撒谎；最近一次请求的值也必须说清它的来源
+    /// 与时间性。
     private var prefillHint: String {
         guard state.isRunning else { return "引擎未运行" }
         switch prefillReading.origin {
         case .engineLive: return "引擎 · 正在处理提示词"
-        case .engineMean: return "引擎 · 开机以来均值"
-        default: return "等待引擎的实时预填充值"
+        case .gatewayLast: return "网关 · 最近一次预填充实测"
+        case .engineLast: return "引擎 · 上一请求实测值"
+        // 引擎的均值是「真正前向的 token ÷ 每个请求的 prompt_ms」，缓存命中时
+        // 分母里还算着缓存恢复的耗时，于是这个数会被拖到几百——比模型的真实
+        // 预填充能力低一个量级。标清楚它含什么，别让人以为机器退化了。
+        case .engineMean: return "引擎 · 开机以来均值（含缓存恢复开销）"
+        default: return "等待引擎或网关的预填充读数"
         }
     }
 
-    private var memoryPercentText: String {
-        guard let bytes = stats?.memoryBytes, let total = stats?.physicalMemoryBytes, total > 0 else { return "—" }
-        return "\(Int((Double(bytes) / Double(total) * 100).rounded()))"
+    // MARK: Cache hit
+
+    /// 缓存命中率格的取数来源（owner = 网关按代累计，引擎开机以来兜底；
+    /// 见 `AppState.cacheHitReading`）。
+    private var cacheHitReading: MetricReading { state.cacheHitReading }
+
+    /// 命中率是 0…1 的比例，卡片按整数百分比显示：这一格是让人一眼判断
+    /// 前缀缓存有没有生效，小数位没有信息量。
+    private var cacheHitText: String {
+        guard let value = cacheHitReading.value else { return "—" }
+        return "\(Int((value * 100).rounded()))"
+    }
+
+    /// 两个口径都是累计平均：网关按代累计（按 token 加权），引擎开机以来。
+    /// 没有样本时画「—」，不把「没算过」说成 0%。
+    private var cacheHitBadge: (text: String, tint: Color)? {
+        switch cacheHitReading.origin {
+        case .gatewayMean: return ("AVG", Console.tertiary)
+        case .engineMean: return ("引擎 AVG", Console.tertiary)
+        default: return nil
+        }
+    }
+
+    /// 缓存命中率卡下方那行说明：说清这个百分比覆盖了多少请求、来自谁。
+    /// 网关的样本量写出来，是因为 1 条与 32 条的「平均」可信度差很多。
+    private var cacheHitHint: String {
+        guard state.isRunning else { return "引擎未运行" }
+        switch cacheHitReading.origin {
+        case .gatewayMean:
+            return "网关 · 最近 \(state.gatewayCacheHitRequests) 次请求合计"
+        case .engineMean: return "引擎 · 开机以来缓存复用"
+        default: return "等待带 usage 的请求"
+        }
     }
 
     private func shortTokens(_ value: Int) -> String {
@@ -574,7 +607,8 @@ struct OverviewPage: View {
     /// 曲线右上角只报来源，不再拿 `isRunning` 冒充「速率是实时的」。
     /// 请求收尾后曲线冻结，角标直接说「已冻结」。
     private var speedChip: (text: String, color: Color) {
-        if chartFrozen { return ("已冻结", Console.tertiary) }
+        // 冻结且空：这一轮根本没采到样本，说「已冻结」会让人以为图上还有东西。
+        if chartFrozen { return samples.isEmpty ? ("无样本", Console.tertiary) : ("已冻结", Console.tertiary) }
         switch speedOrigin {
         case .gatewayLive: return ("网关", Console.info)
         case .engineLive: return ("引擎", Console.accent)
@@ -586,7 +620,9 @@ struct OverviewPage: View {
     /// 不要让空白图看起来像故障。
     private var chartEmptyText: String {
         guard state.isRunning else { return "引擎未运行 · 暂无解码数据" }
-        if chartFrozen { return "本次请求已结束 · 曲线已冻结" }
+        // 冻结了却一个点都没有：这一段流量是非流式响应，正文整段回来，
+        // 网关连「此刻多快」都无从采样。速度仍然在右侧逐行给。
+        if chartFrozen { return "非流式响应整段返回 · 没有逐秒曲线（每行速度见右侧）" }
         switch speedOrigin {
         case .gatewayLive, .engineLive: return "等待实时样本"
         case .none:
@@ -627,7 +663,7 @@ struct OverviewPage: View {
                         Text("最近请求")
                             .font(.system(size: 13.5, weight: .medium))
                             .foregroundStyle(Console.text)
-                        Text("网关估算")
+                        Text("按请求")
                             .font(.system(size: 9, weight: .semibold, design: .monospaced))
                             .tracking(0.5)
                             .foregroundStyle(Console.tertiary)
@@ -639,7 +675,7 @@ struct OverviewPage: View {
                             .font(.system(size: 10.5, design: .monospaced))
                             .foregroundStyle(Console.tertiary)
                     }
-                    .help("速度与上下文由网关按流式分片估算，不是引擎上报；完成的行会保留到被后续请求挤出列表")
+                    .help("速度优先用引擎按请求上报的 timings（含非流式），没有时由网关按流式分片估算；量不出速度的行画「—」。完成的行会保留到被后续请求挤出列表")
                     if sessions.isEmpty {
                         VStack(spacing: 8) {
                             Spacer(minLength: 0)

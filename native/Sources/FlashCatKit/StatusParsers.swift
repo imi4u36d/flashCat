@@ -261,6 +261,11 @@ public enum EngineStatusParser {
         if let cached = JSONValue.digNumber(json, "total_cached_tokens") {
             result.extras["total_cached_tokens"] = cached
         }
+        // 缓存命中率的分母。`cache_efficiency` 是 percent，但它是这两个计数器
+        // 相除得来的；统一用原始计数，界面就不用按引擎分两套单位。
+        if let prompt = JSONValue.digNumber(json, "total_prompt_tokens") {
+            result.extras["prompt_tokens_total"] = prompt
+        }
         if let loadedCount = JSONValue.digNumber(json, "models_loaded") {
             result.extras["models_loaded"] = loadedCount
         }
@@ -416,6 +421,11 @@ public enum EngineStatusParser {
         if let cached = JSONValue.digNumber(json, "lifetime.cached_tokens_total") {
             result.extras["total_cached_tokens"] = cached
         }
+        // 命中率的分母：与 `cached_tokens_total` 同代（进程 / 模型启动以来）的
+        // 提示词总量，两者相除就是概览缓存卡在引擎侧的兜底读数。
+        if let prompt = JSONValue.digNumber(json, "lifetime.prompt_tokens_total") {
+            result.extras["prompt_tokens_total"] = prompt
+        }
         // 峰值只做诊断：它是最近若干 chunk 里的最高一块，不是当前速度。
         if let peak = JSONValue.digNumber(json, "prefill_rates.peak_tok_s") {
             result.extras["prefill_peak_tps"] = peak
@@ -508,6 +518,23 @@ public enum EngineStatusParser {
            count > 0,
            let sum = JSONValue.digNumber(json, "histograms.time_to_first_token_seconds.sum") {
             result.ttftMilliseconds = sum / Double(count) * 1000
+        }
+        // 进程级累计吞吐：分子分母都是同一个进程里真正算过/生成过的量。
+        // 这不是「此刻多快」（那要等 `EngineLiveRates` 用相邻两拍差分），
+        // 但它是一台 MLX 服务唯一能自报的均值——网关没有样本时（客户端直连
+        // 引擎端口、或者一次非流式请求都没有走网关），hero 与预填充格靠它
+        // 至少说出一句真话，而不是一律画「—」。
+        if let generated = JSONValue.digNumber(json, "counters.generation_tokens_total"),
+           let decodeSeconds = JSONValue.digNumber(json, "histograms.decode_time_seconds.sum"),
+           generated > 0, decodeSeconds > 0 {
+            result.decodeTokensPerSecond = generated / decodeSeconds
+            result.decodeRateKind = .lifetimeMean
+        }
+        if let prefilled = JSONValue.digNumber(json, "counters.prefill_tokens_total"),
+           let prefillSeconds = JSONValue.digNumber(json, "histograms.prefill_time_seconds.sum"),
+           prefilled > 0, prefillSeconds > 0 {
+            result.prefillTokensPerSecond = prefilled / prefillSeconds
+            result.prefillRateKind = .lifetimeMean
         }
         // 速率不在这里算：解析器是无状态纯函数，而实时速度只能靠相邻两次
         // 采样差分。把原始计数交给 `EngineLiveRates`，由轮询侧喂时间。

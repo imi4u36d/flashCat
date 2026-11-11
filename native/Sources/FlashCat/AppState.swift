@@ -50,18 +50,25 @@ enum SpeedOrigin: Equatable {
 /// 一个指标格当前的**取数来源**。owner 表算出来的就是这个值，界面直接按它
 /// 打角标与说明文案，不再各自 switch `EngineRateKind`/`SpeedOrigin`。
 ///
-/// 没有 `.gatewayLast` / `.engineLast`：概览的速度格只回答「此刻多快」，
-/// 上一请求的终值不参与。平均解码速度单独有 `.gatewayMean` / `.engineMean`
-/// 这一档，只服务 hero 的「模型启动以来平均」。
+/// 速度格只认 LIVE：它只回答「此刻多快」，上一请求的终值不参与。预填充格
+/// 是唯一的例外——预填充本来就是一次性的，短提示词在 1 秒采样里常常抓不到
+/// 正在处理的那一刻，所以它允许把**明确标成 LAST**的最近一次实测值留在卡片上。
+/// 这个实测值优先由网关自己按请求算（`.gatewayLast`），引擎的 `.engineLast`
+/// 只在网关没有会话记录（客户端绕过网关直连引擎端口）时兜底。平均解码速度
+/// 单独有 `.gatewayMean` / `.engineMean` 这一档，只服务 hero 的「模型启动以来平均」。
 enum MetricOrigin: Equatable {
     /// 没有任何可用读数（引擎未上报、或值 ≤ 0）。
     case none
     /// 网关按请求打点的实时读数（重采样窗口）。
     case gatewayLive
-    /// 网关按会话累计的「模型启动以来平均」——HERO 专用。
+    /// 网关按请求打点算出的最近一次预填充实测值。
+    case gatewayLast
+    /// 网关按会话累计的「模型启动以来平均」——hero 的解码均值与缓存命中率共用。
     case gatewayMean
     /// 引擎此刻正在量的实时值。
     case engineLive
+    /// 引擎测过的上一请求值：数字是真的，描述的是刚结束的那一次。
+    case engineLast
     /// 引擎进程 / 会话累计均值。
     case engineMean
 }
@@ -215,6 +222,17 @@ final class AppState: ObservableObject {
     /// `gatewayDecodeRate` 是否来自在跑会话。false = 没有在跑会话（或引擎
     /// 已经收尾），此时没有当前速度，读数不挂上一请求的终值。
     @Published private(set) var gatewayRateIsLive = false
+    /// 网关自己量出来的预填充速度（最近一次完成的预填充）。分子是 usage
+    /// 报告的提示词 token 减去前缀缓存命中量，分母是请求发出到首 token 的
+    /// 墙钟——不读任何引擎自报的预填充字段，所以换引擎不会让这格变空。
+    /// 0 = 还没有可用的实测值。
+    @Published private(set) var gatewayPrefillRate: Double = 0
+    /// 网关按代累计的缓存命中率（0…1）。分子是 usage 里的前缀缓存命中量，
+    /// 分母是同一批请求的提示词总量（按 token 加权）；只统计真的收到 usage
+    /// 的请求。0 = 还没有样本，界面不能把它当成「0% 命中」。
+    @Published private(set) var gatewayCacheHitRate: Double = 0
+    /// 上面这个读数覆盖的请求数，卡片的说明文案会原样引用它。
+    @Published private(set) var gatewayCacheHitRequests: Int = 0
     /// 模型启动以来的平均解码速度（网关按会话累计）。hero 大数字读它：
     /// 曲线回答「此刻多快」，大数字回答「这台模型平均吐字多快」。0 = 还没有
     /// 可算的样本，界面画「—」。
@@ -636,9 +654,9 @@ final class AppState: ObservableObject {
     // 现在所有界面（概览 / 灵动岛 / 菜单栏）都从下面这几个函数取数，一格一个
     // 来源、一个粒度，角标与说明文案由 `MetricOrigin` 直接给出。
     //
-    // 分工的物理边界：网关只看得见流里的东西（分片节奏、TTFT、请求合计），
-    // 队列深度、缓存命中、KV 驻留、显存、草稿接受率这些只有引擎量得到。
-    // 速度类指标 owner = 网关；引擎实时计数只在网关没有会话在跑时兜底
+    // 分工的物理边界：网关只看得见流里的东西（分片节奏、TTFT、请求合计、
+    // usage 里的缓存命中量），队列深度、KV 驻留、显存、草稿接受率这些只有引擎
+    // 量得到。速度类指标 owner = 网关；引擎实时计数只在网关没有会话在跑时兜底
     //（客户端直连引擎端口），LAST/AVG 永远不参与当前速度。
 
     /// 概览曲线与菜单栏的「当前解码速度」。应用内对话也注册在 `GatewayMeter`
@@ -685,27 +703,77 @@ final class AppState: ObservableObject {
 
     /// 预填充格的 owner 表输出。
     ///
-    /// 网关侧只有 TTFT 口径的估算——分母混着排队与缓存恢复，分子要等末帧
-    /// usage，1.5.3 已删——所以只走引擎自报的实时值；`.lastRequest` 不参与
-    /// （上一请求的终值会一直挂着冒充当前速度）。AVG 保留引擎真的累计过的
-    /// 「开机以来均值」，角标写清楚它不是实时值。
+    /// 预填充是一次性动作，短提示词（几百 token）在 1 秒采样里几乎抓不到
+    /// 引擎的 `in_flight` 实时窗口；换一台引擎，引擎自报字段的名字和粒度还会
+    /// 整个变掉。所以 LAST 这一档走**按请求的实测值**：引擎在响应里自报的
+    /// `timings`（`prompt_n − cached_n` / `prompt_ms`，流式与非流式都带）优先，
+    /// 没有它才退回网关自己算的 TTFT 口径（分子是 usage 里的提示词 token 减去
+    /// 前缀缓存命中量，分母是请求发出到首 token 的墙钟，只对流式响应成立）。
+    /// 只有「此刻真的在预填充」才用引擎的 `.live`（那时网关还没有首 token），
+    /// 其余时间按请求的实测值优先，引擎的 LAST/AVG 只在网关没有会话记录时兜底。
     var prefillReading: MetricReading {
         guard isRunning else { return .none }
-        return Self.prefillReading(engine: stats?.prefillTokensPerSecond,
+        return Self.prefillReading(gateway: gatewayPrefillRate,
+                                   engine: stats?.prefillTokensPerSecond,
                                    engineKind: stats?.prefillRateKind ?? .none)
     }
 
+    /// 预填充格的完整 owner 顺序：就地预填充（引擎 LIVE）→ 网关实测 LAST →
+    /// 引擎 LAST / AVG。抽成纯函数，测试可以钉住优先级。
+    nonisolated static func prefillReading(gateway: Double,
+                                           engine: Double?,
+                                           engineKind: EngineRateKind = .none) -> MetricReading {
+        let engineReading = prefillReading(engine: engine, engineKind: engineKind)
+        // 实时预填充只有引擎量得到：这时网关连首 token 都还没拿到。
+        if engineReading.origin == .engineLive { return engineReading }
+        if gateway > 0 { return MetricReading(value: gateway, origin: .gatewayLast) }
+        return engineReading
+    }
+
+    /// 引擎自报速率的翻译层，不含网关。保留给测试和网关缺席时的兜底。
     nonisolated static func prefillReading(engine: Double?,
                                            engineKind: EngineRateKind = .none) -> MetricReading {
         guard let engine, engine > 0 else { return .none }
         switch engineKind {
         case .live:
             return MetricReading(value: engine, origin: .engineLive)
+        case .lastRequest:
+            return MetricReading(value: engine, origin: .engineLast)
         case .lifetimeMean:
             return MetricReading(value: engine, origin: .engineMean)
-        case .lastRequest, .none:
+        case .none:
             return .none
         }
+    }
+
+    /// 缓存命中率格的 owner 表输出。
+    ///
+    /// 主口径是网关按代累计的「命中量 / 提示词总量」（按 token 加权）：它和
+    /// 其他格一样按请求打点，覆盖应用内对话与所有经过网关的客户端，也不依赖
+    /// 任何一家引擎自报字段——换引擎不会让这格变空。网关一个带 usage 的请求
+    /// 都没有时（客户端绕过网关直连引擎端口），退回引擎自己报的开机以来
+    /// 命中率：mlx-serve / MTPLX 的 `cached / prompt` 两个累计计数器、oMLX 的
+    /// `total_cached_tokens / total_prompt_tokens`。两个口径都是累计平均，
+    /// 所以角标只有 `AVG`；没有样本时画「—」，不拿 0% 冒充「一次都没命中」。
+    var cacheHitReading: MetricReading {
+        guard isRunning else { return .none }
+        return Self.cacheHitReading(gateway: gatewayCacheHitRate,
+                                    requests: gatewayCacheHitRequests,
+                                    engine: stats?.cacheHitRate)
+    }
+
+    /// 缓存命中率的 owner 顺序：网关按代累计 → 引擎开机以来。抽成纯函数，
+    /// 测试可以钉住「网关样本优先」与「0% 是合法读数、没样本才是 —」。
+    nonisolated static func cacheHitReading(gateway: Double,
+                                            requests: Int,
+                                            engine: Double?) -> MetricReading {
+        if requests > 0, gateway >= 0, gateway <= 1 {
+            return MetricReading(value: gateway, origin: .gatewayMean)
+        }
+        if let engine, engine >= 0, engine <= 1 {
+            return MetricReading(value: engine, origin: .engineMean)
+        }
+        return .none
     }
 
     /// 解码速度读数与它自己的时间基之间的最大跨度。超过这个跨度，重采样器
@@ -933,6 +1001,8 @@ final class AppState: ObservableObject {
         syncLifetimeIdentity()
         let overview = GatewayMeter.shared.overview(now: now)
         publishGatewayOverview(overview, at: now)
+        publishGatewayPrefill()
+        publishGatewayCacheHit()
         publishAverageDecodeRate()
         // 直连引擎端口的请求网关看不见：引擎自己报的 activeRequests 也算
         // 「还有东西在跑」，Chart 不该在它跑完之前冻结。
@@ -955,6 +1025,27 @@ final class AppState: ObservableObject {
         // 但这一拍仍然是新鲜的。只在数值变化时盖章会把「稳定的高速」
         // 误判成「过旧」，1 秒节拍下尤其明显。
         gatewayReadingAt = now
+    }
+
+    /// 发布网关自己算的预填充实测值。它不是「当前速度」，所以不走
+    /// `gatewayReadingAt` 的新鲜度门槛：预填充做完就固定了，只是标成 LAST。
+    private func publishGatewayPrefill() {
+        let next = GatewayMeter.shared.recentPrefill() ?? 0
+        guard abs(gatewayPrefillRate - next) > 0.5 else { return }
+        gatewayPrefillRate = next
+    }
+
+    /// 发布网关按代累计的缓存命中率。与预填充同样不走新鲜度门槛：它描述的是
+    /// 最近这批有 usage 的请求，做完就固定，直到下一条 usage 回来才跳一格。
+    /// 引擎停下时清回 0 / 0——界面靠 `requests == 0` 区分「没样本」与「0%」。
+    private func publishGatewayCacheHit() {
+        let next = isRunning ? GatewayMeter.shared.cacheHit() : nil
+        let rate = next?.rate ?? 0
+        let requests = next?.requests ?? 0
+        guard abs(gatewayCacheHitRate - rate) > 0.0001
+                || gatewayCacheHitRequests != requests else { return }
+        gatewayCacheHitRate = rate
+        gatewayCacheHitRequests = requests
     }
 
     /// 发布 HERO 的「模型启动以来平均」。网关累计量为 0 时保留 0，界面会
@@ -2240,6 +2331,9 @@ final class AppState: ObservableObject {
             }
             // 启动等待不算进首字时长，否则「思考了 N 秒」会把引擎启动时间也算上。
             let started = Date()
+            // 网关侧的打点也要从这里起算：`begin` 发生在 prepareChatSession
+            // 之前，冷启动时那段加载几十 GB 权重的时间不能摊进预填充。
+            GatewayMeter.shared.markStarted(meterID, at: started)
             let endpointPort = self.port
             let result = await chatClient.send(port: endpointPort, model: model, turns: turns, options: options,
                 onDelta: { piece, at in

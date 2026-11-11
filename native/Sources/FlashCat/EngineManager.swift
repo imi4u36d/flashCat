@@ -21,6 +21,7 @@ extension ServerStats {
         queuedRequests = status.queuedRequests
         memoryBytes = status.memoryBytes
         peakMemoryBytes = status.peakMemoryBytes
+        cacheHitRate = Self.cacheHitRate(from: status.extras)
         maximumContextTokens = status.maximumContextTokens
         model = status.model
         requestsCompleted = status.requestsCompleted
@@ -42,6 +43,21 @@ extension ServerStats {
         if let pressure = status.extras["memory_pressure_warn"] {
             memoryPressure = pressure == 0 ? "normal" : "warning"
         }
+    }
+
+    /// 引擎自报的缓存命中率（0…1）：命中量与提示词总量都是引擎自己的累计
+    /// 计数器，相除才是「命中量 / 提示词总量」的按代平均。
+    ///
+    /// - mlx-serve：`counters.prefix_cache_tokens_total / counters.prompt_tokens_total`
+    /// - MTPLX：`lifetime.cached_tokens_total / lifetime.prompt_tokens_total`
+    /// - oMLX：`total_cached_tokens / total_prompt_tokens`（它另给一个百分数
+    ///   `cache_efficiency`，本质是同一个比值，所以统一用计数器算，少一套单位）
+    ///
+    /// 分母为 0（进程刚起、还没有请求）时返回 nil，界面画「—」而不是 0%。
+    private static func cacheHitRate(from extras: [String: Double]) -> Double? {
+        guard let prompt = extras["prompt_tokens_total"], prompt > 0,
+              let cached = extras["total_cached_tokens"] else { return nil }
+        return min(1, max(0, cached / prompt))
     }
 }
 

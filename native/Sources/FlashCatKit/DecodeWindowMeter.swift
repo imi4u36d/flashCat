@@ -67,6 +67,17 @@ public struct DecodeWindowMeter {
         return max(minimumElapsed, last.timeIntervalSince(first))
     }
 
+    /// 真正观测到的跨度：首片到末片，**没有 `minimumElapsed` 兜底**。
+    /// 0 = 只有一个到达点（或没有），说明这一路根本没有可测的间隔。
+    ///
+    /// 聚合层拿它决定「能不能报全程平均」：单点会话除以 `decodingSeconds`
+    /// 得到的是 1/0.35 ≈ 2.9 的虚构速率；成批到达的非流式响应更夸张，
+    /// 14 155 token 会被摊成 37 769 tok/s。
+    public var observedDecodeSpan: TimeInterval {
+        guard let first = firstArrival, let last = lastArrival else { return 0 }
+        return max(0, last.timeIntervalSince(first))
+    }
+
     public mutating func reset() {
         arrivals.removeAll(keepingCapacity: true)
         firstArrival = nil

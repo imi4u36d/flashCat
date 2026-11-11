@@ -15,6 +15,9 @@ struct ServerStats: Equatable {
     var memoryPressure: String?
     var memoryBytes: Int?
     var peakMemoryBytes: Int?
+    /// 引擎自报的缓存命中率（0…1），只在引擎给出「命中量 / 提示词总量」两个
+    /// 累计计数器时才有值（mlx-serve / MTPLX / oMLX）。其余引擎为 nil。
+    var cacheHitRate: Double?
     var maximumContextTokens: Int?
     var model: String?
     var requestsCompleted: Int = 0

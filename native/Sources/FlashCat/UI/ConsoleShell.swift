@@ -201,12 +201,6 @@ struct ConsoleNavigationPanel: View {
 
     private var utilityRow: some View {
         HStack(spacing: 6) {
-            GlassUtilityButton(symbol: "slider.horizontal.3",
-                               title: "设置",
-                               help: "设置",
-                               active: state.section == .settings) {
-                state.section = .settings
-            }
             GlassUtilityButton(symbol: "bubble.left.and.bubble.right",
                                title: "反馈",
                                help: "反馈与交流",
@@ -216,9 +210,11 @@ struct ConsoleNavigationPanel: View {
         }
     }
 
+    /// 六个页面同属一个菜单组：设置是普通一页，排在最后，
+    /// 不再单独缩在底部工具行里。
     private var workspace: some View {
         VStack(spacing: 4) {
-            ForEach(Page.allCases.filter { $0 != .settings }) { page in
+            ForEach(Page.allCases) { page in
                 GlassNavRow(page: page,
                             active: state.section == page,
                             badge: page == .models ? modelCount : 0,

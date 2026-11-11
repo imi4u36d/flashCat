@@ -181,7 +181,11 @@ struct EnginesPage: View {
 
                 // 页脚只在真有话说的时候出现：安装进度、可更新、还没装。
                 // 「已安装」三个字已写在页头（5 / 5 已安装），再占一行只是空白。
-                if showsFooter(busy: busy, newer: newer, installed: installed) {
+                // 一行两张卡：页脚有内容的那张会长高，旁边那张底下就空出一个洞。
+                // 所以页脚占位恒定，空闲时只是空白（不画分割线），高度对齐。
+                Group {
+                  if showsFooter(busy: busy, newer: newer, installed: installed) {
+                    VStack(alignment: .leading, spacing: 10) {
                     Rectangle()
                         .fill(Console.insetStroke)
                         .frame(height: 1)
@@ -226,7 +230,10 @@ struct EnginesPage: View {
                             .buttonStyle(.consolePrimary)
                         }
                     }
+                    }
+                  }
                 }
+                .frame(height: 40, alignment: .bottom)
             }
         }
     }

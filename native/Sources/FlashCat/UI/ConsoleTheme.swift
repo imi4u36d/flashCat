@@ -221,7 +221,7 @@ struct ConsolePillStyle: ButtonStyle {
     private var foreground: Color {
         switch tone {
         case .primary: return Console.inkForeground
-        case .danger: return Native.red
+        case .danger: return Console.danger
         case .success: return Console.text
         case .secondary, .soft: return Console.text
         }
@@ -230,10 +230,17 @@ struct ConsolePillStyle: ButtonStyle {
     private var glassTint: Color? {
         switch tone {
         case .primary: return Console.ink
-        case .danger: return Native.red.opacity(0.55)
+        // 危险色不走玻璃 tint：tint 是层半透明色雾，红底叠红图标后图标
+        // 会被糊成一片（下载中心删除按钮的现状）。底色改由下面自绘。
+        case .danger: return nil
         case .success: return Console.ok.opacity(0.32)
         case .secondary, .soft: return nil
         }
+    }
+
+    private var isDanger: Bool {
+        if case .danger = tone { return true }
+        return false
     }
 
     func makeBody(configuration: Configuration) -> some View {
@@ -243,7 +250,15 @@ struct ConsolePillStyle: ButtonStyle {
             .padding(.horizontal, compact ? 11 : 14)
             .frame(height: compact ? 28 : 32)
             .background {
-                LiquidGlassSurface(shape: Capsule(), tint: glassTint, interactive: true)
+                ZStack {
+                    LiquidGlassSurface(shape: Capsule(), tint: glassTint, interactive: true)
+                    if isDanger {
+                        // 自绘的浅红底 + 发丝边：边缘是我们画的实色，不经玻璃
+                        // 模糊，图标保持满饱和度，任何背景下都清晰可读。
+                        Capsule().fill(Console.danger.opacity(0.12))
+                        Capsule().strokeBorder(Console.danger.opacity(0.34), lineWidth: 0.8)
+                    }
+                }
             }
             .opacity(isEnabled ? (configuration.isPressed ? 0.86 : 1) : 0.42)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)

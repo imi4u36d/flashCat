@@ -256,7 +256,11 @@ struct ConsoleNavigationPanel: View {
 
             ForEach(chat.threads.prefix(6)) { thread in
                 GlassRecentRow(title: thread.title,
-                               date: recentDate(thread.updatedAt),
+                               // 还在生成的那一段（可能已经切走、在后台跑）
+                               // 用「生成中」替掉时间，回答落在哪儿一目了然。
+                               date: state.generatingThreadID == thread.id
+                                   ? L10n.t("生成中")
+                                   : recentDate(thread.updatedAt),
                                active: state.currentThreadID == thread.id) {
                     state.openThread(thread)
                     state.section = .chat

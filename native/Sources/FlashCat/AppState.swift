@@ -167,6 +167,14 @@ final class AppState: ObservableObject {
     /// 侧栏「最近对话」用它高亮当前线程；threadID 本身只用于落盘。
     var currentThreadID: String { threadID }
 
+    /// 正在生成的是哪一段对话——可能是读者已经切走、在后台继续跑的那一段。
+    /// 侧栏据此把那一行标成「生成中」：不然切走后只剩下一个点不动的输入框，
+    /// 看不出回答正在哪儿长。
+    var generatingThreadID: String? {
+        guard generating else { return nil }
+        return background?.threadID ?? threadID
+    }
+
     static func newThreadID() -> String {
         String(Int(Date().timeIntervalSince1970 * 1_000_000))
     }
@@ -190,6 +198,16 @@ final class AppState: ObservableObject {
 
     /// The assistant message this generation owns, located by id.
     private var streamMessageID = ""
+    /// 读者切走了、但还在后台生成的那一段对话。
+    ///
+    /// 生成一旦开始就不能靠「当前页面显示哪段对话」来决定回答写到哪：切走时
+    /// 把整段对话连同它自己的 `threadID` 搬到这里，流式更新认这一份，跑完后
+    /// 按自己的 id 落回历史，读者回到这段对话时再整体接回 `messages`。
+    private struct BackgroundGeneration {
+        let threadID: String
+        var messages: [ChatMessage]
+    }
+    private var background: BackgroundGeneration?
     /// Persistent banner for errors that need the reader's attention.
     @Published var notice: String?
     /// 灵动岛上短暂展示的当前通知；过期后回到引擎状态。
@@ -2263,8 +2281,16 @@ final class AppState: ObservableObject {
     /// somebody else's message. Ids survive the replacement; indices do not.
     @discardableResult
     private func updateStreamingMessage(_ body: (inout ChatMessage) -> Void) -> Bool {
-        guard !streamMessageID.isEmpty,
-              let index = messages.firstIndex(where: { $0.id.uuidString == streamMessageID })
+        guard !streamMessageID.isEmpty else { return false }
+        // 读者切走后回答继续长在后台那一份里，不能写进他现在看的对话。
+        if var running = background {
+            guard let index = running.messages.firstIndex(where: { $0.id.uuidString == streamMessageID })
+            else { return false }
+            body(&running.messages[index])
+            background = running
+            return true
+        }
+        guard let index = messages.firstIndex(where: { $0.id.uuidString == streamMessageID })
         else { return false }
         body(&messages[index])
         return true
@@ -2323,6 +2349,11 @@ final class AppState: ObservableObject {
         messages.append(ChatMessage(role: "user", content: trimmed, model: selectedModel, createdAt: Date()))
         messages.append(ChatMessage(role: "assistant", content: "", model: selectedModel, createdAt: Date(), streaming: true))
         streamMessageID = messages[messages.count - 1].id.uuidString
+        // 先把「问题」这条写进最近对话：这样切走之后它在列表里就有自己的
+        // 一行（标着「生成中」），后台跑完再原地覆盖成完整的一问一答。
+        // 不给占位的话，一段刚开始的对话在跑完之前根本点不回来。
+        history.save(messages: messages, threadID: threadID)
+        threads = history.load()
         generating = true
         generationStatus = "生成中"
         sendGeneration &+= 1
@@ -2373,9 +2404,7 @@ final class AppState: ObservableObject {
                     }
                     self.chatStartupStage = nil
                     self.generating = false
-                    self.conversation.save(self.messages)
-                    self.history.save(messages: self.messages, threadID: self.threadID)
-                    self.threads = self.history.load()
+                    self.persistStreamingConversation()
                     return
                 }
                 self.chatStartupStage = nil
@@ -2493,11 +2522,35 @@ final class AppState: ObservableObject {
                 if !isCancellation(error) { notice = error.message }
             }
             updateStreamingMessage { $0.streaming = false }
+            // 这一轮已经被取消时不要再落盘：`messages` 现在可能已经是另一段
+            // 对话，按新的 `threadID` 写回会把那段对话整条覆盖掉。取消路径
+            // 自己负责把这一轮存盘。
+            guard self.sendGeneration == generation else { return }
             generating = false
-            conversation.save(messages)
-            history.save(messages: messages, threadID: threadID)
-            threads = history.load()
+            // 读者早就切走了：回答落回它自己的会话，再冒一条通知告诉他落在哪。
+            if let finished = self.persistStreamingConversation(),
+               let thread = self.threads.first(where: { $0.id == finished }) {
+                self.toast(L10n.format("「%@」已在后台生成完成", thread.title),
+                           kind: .success)
+            }
         }
+    }
+
+    /// 把刚跑完的这一轮落盘：切到后台的那一轮按它自己的 `threadID` 写回历史，
+    /// 还在前台的就照旧写当前会话。
+    /// - Returns: 写回的是后台那一段时返回它的 `threadID`，前台返回 nil。
+    @discardableResult
+    private func persistStreamingConversation() -> String? {
+        if let running = background {
+            background = nil
+            history.save(messages: running.messages, threadID: running.threadID)
+            threads = history.load()
+            return running.threadID
+        }
+        conversation.save(messages)
+        history.save(messages: messages, threadID: threadID)
+        threads = history.load()
+        return nil
     }
 
     /// 与网关共用 Kit 里的同一套估算，避免两个页面对同一段文本给出不同 token 数。
@@ -2516,11 +2569,25 @@ final class AppState: ObservableObject {
         chatClient.cancel()
         generating = false
         generationStatus = "已取消"
+        settleStreamingMessage()
+        // 后台那一轮也按它自己的会话收尾：点「停止」不该让它的半截回答消失。
+        persistStreamingConversation()
+    }
+
+    /// 把还在流式的那条标记为完成（空回复直接摘掉），前台与后台都认。
+    private func settleStreamingMessage() {
+        if var running = background {
+            if let index = running.messages.lastIndex(where: { $0.streaming }) {
+                running.messages[index].streaming = false
+                if running.messages[index].content.isEmpty { running.messages.remove(at: index) }
+            }
+            background = running
+            return
+        }
         if let index = messages.lastIndex(where: { $0.streaming }) {
             messages[index].streaming = false
             if messages[index].content.isEmpty { messages.remove(at: index) }
         }
-        conversation.save(messages)
     }
 
     /// Drop the trailing answer and ask again with the same prompt.
@@ -2532,15 +2599,39 @@ final class AppState: ObservableObject {
         send(lastUser.content)
     }
 
+    /// 切走会话：把正在生成的那一段连人带消息搬到后台，别中断、也别写串。
+    ///
+    /// 以前这里直接 `cancelGeneration()`，而它只写 `conversation.json`——
+    /// 「最近对话」里留着的还是上一轮的快照。于是「回复到一半切去概览 /
+    /// 从列表点回同一段对话」看到的就是：刚才那条回答不见了。现在生成继续
+    /// 在后台跑完，跑完按它自己的 `threadID` 落回历史。
+    private func detachGenerationForThreadSwitch() {
+        guard generating, background == nil else { return }
+        background = BackgroundGeneration(threadID: threadID, messages: messages)
+    }
+
     func newConversation() {
-        cancelGeneration()
+        detachGenerationForThreadSwitch()
         messages.removeAll()
         conversation.clear()
         threadID = Self.newThreadID()
     }
 
     func openThread(_ thread: ChatThread) {
-        cancelGeneration()
+        // 点回正在生成的那一段：把后台那份接回前台，后面的分片继续往这里写。
+        if let running = background, running.threadID == thread.id {
+            background = nil
+            messages = running.messages
+            threadID = thread.id
+            section = .chat
+            return
+        }
+        detachGenerationForThreadSwitch()
+        guard thread.id != threadID else {
+            // 点的就是当前这段：别用历史里的旧快照把正在流的回答盖掉。
+            section = .chat
+            return
+        }
         messages = thread.messages.map {
             ChatMessage(role: $0.role, content: $0.content, model: $0.model,
                         createdAt: $0.createdAt, usage: $0.usage,
@@ -2550,10 +2641,16 @@ final class AppState: ObservableObject {
                         reasoning: $0.reasoning)
         }
         threadID = thread.id
+        // 打开的这段对话就是「当前对话」：不写回 `conversation.json` 的话，
+        // 下次启动会拿 list 里旧的正文配上这里新的 `threadID`，下一轮保存
+        // 还会把旧正文写到新 id 名下。
+        conversation.save(messages)
         section = .chat
     }
 
     func deleteThread(_ thread: ChatThread) {
+        // 删掉的正是后台还在生成的那段：先停掉，别让它跑完再把这条写回来。
+        if background?.threadID == thread.id { cancelGeneration() }
         history.delete(id: thread.id)
         threads = history.load()
         // 删掉的是当前这段对话：下一轮算新会话，别写回刚删掉的 id。
@@ -2562,6 +2659,7 @@ final class AppState: ObservableObject {
     }
 
     func clearThreads() {
+        if background != nil { cancelGeneration() }
         for thread in threads { history.delete(id: thread.id) }
         threads = history.load()
         threadID = Self.newThreadID()

@@ -2221,6 +2221,16 @@
         }
       }
     },
+    "「%@」已在后台生成完成": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"%@\" finished generating in the background"
+          }
+        }
+      }
+    },
     "已删除对话「%@」": {
       "localizations": {
         "en": {

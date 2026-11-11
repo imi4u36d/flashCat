@@ -19,6 +19,17 @@ struct OverviewPage: View {
         state.selectedModelInfo?.shortName ?? (state.selectedModel.isEmpty ? "未选择模型" : state.shortModelName(state.selectedModel))
     }
 
+    /// 把 "{{SECRET_ab12}}" 拆成名字 + 量化档位：整串 28pt 一行放不下，
+    /// 硬折行会断在 "-" 上，读起来像两个模型。档位单独做成小胶囊更好认。
+    private var modelTitleParts: (name: String, variant: String?) {
+        let title = modelTitle
+        guard let colon = title.lastIndex(of: ":") else { return (title, nil) }
+        let name = String(title[title.startIndex..<colon])
+        let variant = String(title[title.index(after: colon)...])
+        guard !name.isEmpty, !variant.isEmpty, variant.count <= 16 else { return (title, nil) }
+        return (name, variant)
+    }
+
     /// HERO 大数字：模型启动以来平均，而不是曲线上的实时值。
     private var averageReading: MetricReading { state.averageDecodeReading }
     private var averageRate: Double { averageReading.value ?? 0 }
@@ -130,16 +141,27 @@ struct OverviewPage: View {
                 .frame(height: 26)
                 .background(Capsule().fill(Console.inset))
 
-                Text(modelTitle)
-                    .font(.system(size: 28, weight: .bold))
-                    .tracking(-0.5)
-                    .foregroundStyle(Console.text)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.72)
-                    .truncationMode(.tail)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 14)
+                HStack(alignment: .center, spacing: 9) {
+                    Text(modelTitleParts.name)
+                        .font(.system(size: 28, weight: .bold))
+                        .tracking(-0.5)
+                        .foregroundStyle(Console.text)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.62)
+                        .truncationMode(.tail)
+                    if let variant = modelTitleParts.variant {
+                        Text(variant)
+                            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                            .tracking(0.2)
+                            .foregroundStyle(Console.secondary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(Console.inset))
+                            .overlay(Capsule().strokeBorder(Native.hairline, lineWidth: 0.8))
+                            .fixedSize()
+                    }
+                }
+                .padding(.top, 14)
 
                 HStack(spacing: 10) {
                     ModelPickerButton(state: state) {

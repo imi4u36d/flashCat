@@ -304,8 +304,10 @@ public enum AnthropicCodec {
         private let model: String
         private var inputTokens = 0
         private var outputTokens = 0
-        private var textBlockOpen = false
-        private var thinkingBlockOpen = false
+        private enum BlockKind { case text, thinking }
+        /// 当前打开的块。两个布尔量 + 「下标总是 nextBlockIndex-1」的写法在
+        /// 「文本后又来思考」时会算错下标，把正文写进思考块。
+        private var openBlock: (index: Int, kind: BlockKind)?
         /// OpenAI tool-call index → Anthropic block index, for tools that
         /// stream their arguments across several chunks.
         private var toolBlocks: [Int: Int] = [:]
@@ -381,6 +383,7 @@ public enum AnthropicCodec {
                 frames.append(frame(object: ["type": "content_block_stop", "index": index]))
             }
             openBlocks.removeAll()
+            openBlock = nil
             // A tool block that streamed without the engine ever sending an
             // explicit finish_reason still ends as a tool call.
             let reason = stopReason ?? (toolBlocks.isEmpty ? "end_turn" : "tool_use")
@@ -402,45 +405,38 @@ public enum AnthropicCodec {
         }
 
         private func close(_ index: Int) -> String {
+            if openBlock?.index == index { openBlock = nil }
             openBlocks.removeAll { $0 == index }
             return frame(object: ["type": "content_block_stop", "index": index])
         }
 
-        private func openTextBlock() -> [String] {
-            guard !textBlockOpen else { return [] }
+        private func openTextBlock() -> [String] { ensureBlock(.text) }
+        private func openThinkingBlock() -> [String] { ensureBlock(.thinking) }
+
+        /// Anthropic 的块不能交错：换类型时先把上一个块停掉，再开新的。
+        private func ensureBlock(_ kind: BlockKind) -> [String] {
+            if let current = openBlock, current.kind == kind { return [] }
             var frames: [String] = []
-            if thinkingBlockOpen {
-                let index = nextBlockIndex - 1
-                frames.append(close(index))
-                thinkingBlockOpen = false
+            if let current = openBlock {
+                frames.append(close(current.index))
+                openBlock = nil
             }
             let index = nextBlockIndex
             nextBlockIndex += 1
-            textBlockOpen = true
+            openBlock = (index, kind)
             openBlocks.append(index)
             frames.append(frame(object: [
                 "type": "content_block_start",
                 "index": index,
-                "content_block": ["type": "text", "text": ""],
+                "content_block": kind == .text
+                    ? ["type": "text", "text": ""]
+                    : ["type": "thinking", "thinking": ""],
             ]))
             return frames
         }
 
-        private func openThinkingBlock() -> [String] {
-            guard !thinkingBlockOpen else { return [] }
-            let index = nextBlockIndex
-            nextBlockIndex += 1
-            thinkingBlockOpen = true
-            openBlocks.append(index)
-            return [frame(object: [
-                "type": "content_block_start",
-                "index": index,
-                "content_block": ["type": "thinking", "thinking": ""],
-            ])]
-        }
-
         private func textDelta(_ text: String) -> String {
-            let index = textBlockOpen ? nextBlockIndex - 1 : 0
+            let index = openBlock?.index ?? 0
             return frame(event: "content_block_delta", object: [
                 "type": "content_block_delta",
                 "index": index,
@@ -449,7 +445,7 @@ public enum AnthropicCodec {
         }
 
         private func thinkingDelta(_ text: String) -> String {
-            let index = max(nextBlockIndex - 1, 0)
+            let index = openBlock?.index ?? 0
             return frame(event: "content_block_delta", object: [
                 "type": "content_block_delta",
                 "index": index,
@@ -464,13 +460,9 @@ public enum AnthropicCodec {
             if toolBlocks[openaiIndex] == nil {
                 // Close any open text/thinking block first: Anthropic blocks
                 // never interleave.
-                if textBlockOpen {
-                    frames.append(close(nextBlockIndex - 1))
-                    textBlockOpen = false
-                }
-                if thinkingBlockOpen {
-                    frames.append(close(nextBlockIndex - 1))
-                    thinkingBlockOpen = false
+                if let current = openBlock {
+                    frames.append(close(current.index))
+                    openBlock = nil
                 }
                 let function = call["function"] as? [String: Any] ?? [:]
                 let blockIndex = nextBlockIndex
@@ -615,7 +607,10 @@ public enum AnthropicCodec {
     public static func frame(event: String? = nil, object: Any) -> String {
         let data = (try? JSONSerialization.data(withJSONObject: object)) ?? Data("{}".utf8)
         var result = ""
-        if let event { result += "event: \(event)\n" }
+        // 官方 API 每一帧都带 `event:`，SDK 靠它分发；只给 data 的话
+        // content_block_start / message_stop 会被丢掉，客户端一直等不到结尾。
+        let name = event ?? (object as? [String: Any])?["type"] as? String
+        if let name { result += "event: \(name)\n" }
         result += "data: \(String(data: data, encoding: .utf8) ?? "{}")\n\n"
         return result
     }

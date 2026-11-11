@@ -131,7 +131,7 @@ struct SettingsPage: View {
                 }
             }
             Divider().overlay(Console.insetStroke)
-            SettingsRow(title: "APP 透明度",
+            SettingsRow(title: "界面透明度",
                         detail: background.isEnabled
                             ? "数值越高图片越清晰；会自动柔化以保证可读性"
                             : "数值越高越透出桌面；会自动柔化以保证可读性") {
@@ -152,7 +152,7 @@ struct SettingsPage: View {
                     Slider(value: $background.blur, in: 0...40)
                         .frame(width: 150)
                         .tint(Console.accent)
-                    Text("\(Int(background.blur.rounded()))pt")
+                    Text(background.blur < 0.5 ? "关闭" : "\(Int(background.blur.rounded())) pt")
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(Console.tertiary)
                         .frame(width: 36, alignment: .trailing)
@@ -172,7 +172,7 @@ struct SettingsPage: View {
     }
 
     private var blurDetail: String {
-        if frostIsInert { return "先把 APP 透明度调高，桌面露出来之后模糊才可见" }
+        if frostIsInert { return "先把界面透明度调高，桌面露出来之后模糊才可见" }
         return background.isEnabled
             ? "数值越高背景越柔和，文字越清晰"
             : "数值越高桌面越柔和，文字越清晰"

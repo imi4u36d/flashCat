@@ -195,11 +195,15 @@ private struct ModelCard: View {
                     .foregroundStyle(Console.text)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(model.id)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(Console.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 11, design: monoSubtitle ? .monospaced : .default))
+                        .foregroundStyle(Console.secondary)
+                        .lineLimit(monoSubtitle ? 1 : 2)
+                        .truncationMode(monoSubtitle ? .middle : .tail)
+                        .fixedSize(horizontal: false, vertical: !monoSubtitle)
+                        .help(model.id)
+                }
             }
             SpecTable(items: [
                 ("ENGINE", entry.engine.displayName),
@@ -241,6 +245,23 @@ private struct ModelCard: View {
     private var displayTitle: String {
         model.shortName
     }
+
+    /// 卡片副标题。仓库 id 经常和标题逐字相同（"owner/Repo" → "Repo"），
+    /// 那样印两遍只是占位；改用目录里的说明，完整 id 留在悬停提示里。
+    private var subtitlePair: (text: String, mono: Bool) {
+        if let summary = entry.recommendation?.summary, !summary.isEmpty {
+            return (summary, false)
+        }
+        if model.id != displayTitle { return (model.id, true) }
+        return ("", false)
+    }
+
+    private var subtitle: String? {
+        let pair = subtitlePair
+        return pair.text.isEmpty ? nil : pair.text
+    }
+
+    private var monoSubtitle: Bool { subtitlePair.mono }
 
     /// Quantization for the spec row. Scanned weights carry their own label;
     /// a suggestion falls back to the catalog's chosen variant or tag, then to
@@ -344,9 +365,12 @@ private struct ModelCard: View {
     }
 
     private var memoryText: String {
-        if let memory = entry.recommendation?.minimumMemory, memory > 0 {
-            return L10n.format("%lld GB 内存起", memory)
-        }
+        let catalog = entry.recommendation?.minimumMemory ?? 0
+        // SIZE 格是实测、内存是目录里的估算。估算值不可能低于权重本身，
+        // 否则同一张卡片自相矛盾（68.5 GB 的权重配"64 GB 内存起"）。
+        let weightsGB = model.bytes > 0 ? Int((Double(model.bytes) / 1_000_000_000).rounded(.up)) : 0
+        let memory = max(catalog, weightsGB)
+        if memory > 0 { return L10n.format("%lld GB 内存起", memory) }
         return L10n.t("内存需求未标注")
     }
 

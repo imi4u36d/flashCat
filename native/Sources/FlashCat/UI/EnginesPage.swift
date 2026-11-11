@@ -156,7 +156,7 @@ struct EnginesPage: View {
                             configuring = id
                         }
                         .disabled(versions.isEmpty)
-                        EngineIconButton(systemImage: "trash", help: "删除", tint: Native.red) {
+                        EngineIconButton(systemImage: "trash", help: "删除") {
                             pendingRemoval = id
                         }
                         .disabled(busy || versions.isEmpty || (isActive && state.isRunning))
@@ -179,12 +179,15 @@ struct EnginesPage: View {
                     .padding(.vertical, 2)
                 }
 
-                Rectangle()
-                    .fill(Console.insetStroke)
-                    .frame(height: 1)
+                // 页脚只在真有话说的时候出现：安装进度、可更新、还没装。
+                // 「已安装」三个字已写在页头（5 / 5 已安装），再占一行只是空白。
+                if showsFooter(busy: busy, newer: newer, installed: installed) {
+                    Rectangle()
+                        .fill(Console.insetStroke)
+                        .frame(height: 1)
 
-                HStack(spacing: 10) {
-                    if busy {
+                    HStack(spacing: 10) {
+                        if busy {
                         ProgressRing(fraction: installs.progress[id] ?? 0,
                                      tint: accent, size: 20, lineWidth: 3)
                         Text(L10n.t(installs.progressStep[id] ?? phase.label))
@@ -199,33 +202,37 @@ struct EnginesPage: View {
                             .font(.system(size: 11))
                             .foregroundStyle(Console.secondary)
                             .lineLimit(1)
-                    } else {
-                        Text(installed ? installSummary(id, versions: versions)
-                             : L10n.t("首次安装会从 GitHub 构建"))
-                            .font(.system(size: 11))
-                            .foregroundStyle(Console.tertiary)
-                            .lineLimit(1)
-                    }
-
-                    Spacer(minLength: 0)
-
-                    if !busy && newer != nil {
-                        Button("更新") { performUpdateAction(id) }
-                            .buttonStyle(.consolePrimary)
-                            .disabled(checking.contains(id))
-                    }
-
-                    if !busy && !installed {
-                        Button {
-                            install(id)
-                        } label: {
-                            Label("下载", systemImage: "arrow.down.circle.fill")
+                        } else if !installed {
+                            Text(L10n.t("首次安装会从 GitHub 构建"))
+                                .font(.system(size: 11))
+                                .foregroundStyle(Console.tertiary)
+                                .lineLimit(1)
                         }
-                        .buttonStyle(.consolePrimary)
+
+                        Spacer(minLength: 0)
+
+                        if !busy && newer != nil {
+                            Button("更新") { performUpdateAction(id) }
+                                .buttonStyle(.consolePrimary)
+                                .disabled(checking.contains(id))
+                        }
+
+                        if !busy && !installed {
+                            Button {
+                                install(id)
+                            } label: {
+                                Label("下载", systemImage: "arrow.down.circle.fill")
+                            }
+                            .buttonStyle(.consolePrimary)
+                        }
                     }
                 }
             }
         }
+    }
+
+    private func showsFooter(busy: Bool, newer: EngineUpstreamRelease?, installed: Bool) -> Bool {
+        busy || newer != nil || !installed
     }
 
     private func metaRow(_ label: String, _ value: String) -> some View {
@@ -241,14 +248,6 @@ struct EnginesPage: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
-    }
-
-    private func installSummary(_ id: EngineID, versions: [String]) -> String {
-        guard !versions.isEmpty else { return L10n.t("未安装") }
-        if versions.count > 1 {
-            return L10n.format("已安装 %lld 个版本", versions.count)
-        }
-        return L10n.t("已安装")
     }
 
     private func statusChip(installed: Bool, active: Bool, busy: Bool) -> some View {

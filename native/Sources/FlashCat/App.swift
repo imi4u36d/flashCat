@@ -174,14 +174,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                        height: max(target.contentLayoutRect.height, MainWindowGeometry.defaultSize.height))
             )
         }
-        clampToVisibleScreen(target)
+        Self.clampToVisibleScreen(target)
+        // frame autosave 的还原发生在窗口创建之后：同步那一次夹到的可能还是
+        // "还原前"的 frame，等这一轮 runloop 收尾再夹一次才夹得住真正显示的版本。
+        DispatchQueue.main.async { [weak target] in
+            guard let target else { return }
+            Self.clampToVisibleScreen(target)
+        }
         offsetTrafficLights(in: target)
     }
 
     /// autosave 的窗口坐标可能属于一块已经拔掉的副屏：恢复出来的 frame 整体在
     /// 可见区域之外，用户点了图标却什么都看不到，只能以为应用没启动。这里的
     /// 判据是"和任意一块屏幕有足够的重叠"，没有就挪回主屏居中。
-    private func clampToVisibleScreen(_ window: NSWindow) {
+    private static func clampToVisibleScreen(_ window: NSWindow) {
         let frame = window.frame
         let onScreen = NSScreen.screens.contains { screen in
             let overlap = screen.visibleFrame.intersection(frame)

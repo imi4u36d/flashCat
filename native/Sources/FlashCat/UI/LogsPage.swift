@@ -193,7 +193,7 @@ struct LogsPage: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 1) {
                             if data.lines.isEmpty {
-                                Text("启动服务后，引擎日志会实时出现在这里")
+                                Text("启动引擎后，日志会实时出现在这里")
                                     .font(.system(size: 11.5))
                                     .foregroundStyle(Console.tertiary)
                                     .frame(maxWidth: .infinity)

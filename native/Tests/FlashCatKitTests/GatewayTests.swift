@@ -292,6 +292,59 @@ final class GatewayTests: XCTestCase {
         XCTAssertEqual(finish[0].object["type"] as? String, "content_block_stop")
     }
 
+    func testEveryStreamFrameCarriesItsEventName() {
+        // 官方 SDK 按 `event:` 分发；只有 data 的话 content_block_start /
+        // content_block_stop / message_stop 都会被当成无名字的消息丢掉。
+        let translator = AnthropicCodec.StreamTranslator(model: "m")
+        var frames: [(event: String?, object: [String: Any])] = []
+        frames += translator.startEvents().map(parseFrame)
+        frames += translator.consume(chunk: [
+            "choices": [["index": 0, "delta": ["reasoning_content": "想"]]],
+        ]).map(parseFrame)
+        frames += translator.consume(chunk: [
+            "choices": [["index": 0, "delta": ["content": "答"]]],
+        ]).map(parseFrame)
+        frames += translator.finishEvents().map(parseFrame)
+
+        for frame in frames {
+            guard let type = frame.object["type"] as? String else {
+                return XCTFail("frame without type: \(frame)")
+            }
+            XCTAssertEqual(frame.event, type, "event 名与 payload type 不一致")
+        }
+        XCTAssertTrue(frames.contains { $0.object["type"] as? String == "message_stop" })
+    }
+
+    func testTextThenThinkingKeepsBlockIndicesStraight() {
+        // 文本中途又冒出思考：旧实现只关「nextBlockIndex-1」，会把后面的正文
+        // 继续写到思考块的 index 上，客户端看到的就是「思考里夹着答案」。
+        let translator = AnthropicCodec.StreamTranslator(model: "m")
+        _ = translator.startEvents()
+
+        let firstText = translator.consume(chunk: [
+            "choices": [["index": 0, "delta": ["content": "先"]]],
+        ]).map(parseFrame)
+        XCTAssertEqual(firstText[0].object["index"] as? Int, 0)
+
+        let thinking = translator.consume(chunk: [
+            "choices": [["index": 0, "delta": ["reasoning_content": "等等"]]],
+        ]).map(parseFrame)
+        XCTAssertEqual(thinking[0].object["type"] as? String, "content_block_stop")
+        XCTAssertEqual(thinking[0].object["index"] as? Int, 0, "文本块必须先关掉")
+        XCTAssertEqual(thinking[1].object["index"] as? Int, 1)
+        XCTAssertEqual(thinking[2].object["index"] as? Int, 1)
+
+        let text = translator.consume(chunk: [
+            "choices": [["index": 0, "delta": ["content": "后"]]],
+        ]).map(parseFrame)
+        XCTAssertEqual(text[0].object["type"] as? String, "content_block_stop")
+        XCTAssertEqual(text[0].object["index"] as? Int, 1)
+        XCTAssertEqual(text[2].object["index"] as? Int, 2, "新正文必须落在一个新块上")
+
+        let finish = translator.finishEvents().map(parseFrame)
+        XCTAssertEqual(finish[0].object["index"] as? Int, 2)
+    }
+
     func testStreamToolCallWithArguments() {
         let translator = AnthropicCodec.StreamTranslator(model: "m")
         _ = translator.startEvents()

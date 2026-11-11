@@ -3,6 +3,8 @@ build/
 dist/
 native/.build/
 .build/
+# SwiftPM scratch dirs created by editor/LSP builds (--scratch-path .build-sc)
+.build-sc/
 .swiftpm/
 xcuserdata/
 *.xcuserstate

@@ -69,8 +69,20 @@ fi
 echo "==> Disk image"
 if command -v hdiutil >/dev/null 2>&1; then
     DMG="$OUT_DIR/flashCat-$VERSION.dmg"
-    hdiutil create -volname "flashCat" -srcfolder "$APP" -ov -format UDZO "$DMG" >/dev/null
-    echo "     $DMG ($(du -sh "$DMG" | cut -f1))"
+    # dmg 是分发用的副产物，不该把整条构建拦在 install 之前：hdiutil 造镜像时
+    # 要把中间镜像挂到 /Volumes/flashCat，上一次的 dmg 没正常卸载、或者跑在
+    # 受限沙箱里挂不了盘，都会只丢一句「目录非空」然后退出。所以第一次失败
+    # 换一次性卷名再试一次，还不行就只警告——pkg 已经在手上了，app 照样装。
+    if DMG_LOG="$(hdiutil create -volname "flashCat" -srcfolder "$APP" -ov \
+            -format UDZO "$DMG" 2>&1)"; then
+        echo "     $DMG ($(du -sh "$DMG" | cut -f1))"
+    elif DMG_LOG="$(hdiutil create -volname "flashCat-$$" -srcfolder "$APP" -ov \
+            -format UDZO "$DMG" 2>&1)"; then
+        echo "     $DMG ($(du -sh "$DMG" | cut -f1))（卷名 flashCat 被占，改用临时卷名）"
+    else
+        echo "warning: .dmg 生成失败，已跳过（.pkg 不受影响）：$(printf '%s\n' "$DMG_LOG" | tail -1)" >&2
+        rm -f "$DMG" 2>/dev/null || true
+    fi
 else
     echo "warning: hdiutil not available; skipped the .dmg" >&2
 fi

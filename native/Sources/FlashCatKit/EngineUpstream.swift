@@ -71,6 +71,10 @@ public enum EngineUpstream {
     public static func normalizedVersion(_ tag: String) -> String {
         var version = tag.trimmingCharacters(in: .whitespacesAndNewlines)
         if version.hasPrefix("v") || version.hasPrefix("V") { version.removeFirst() }
+        // 版本号会拼进 shell 命令、文件名和下载 URL：只留安全字符。GitHub 的
+        // tag 是远端可控输入，`1.2'; rm -rf ~` 这种必须在拼命令之前就拆掉。
+        let allowed = CharacterSet(charactersIn: "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._+-")
+        version = String(String.UnicodeScalarView(version.unicodeScalars.filter(allowed.contains)))
         return version
     }
 

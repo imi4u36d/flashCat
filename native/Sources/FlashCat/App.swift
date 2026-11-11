@@ -174,7 +174,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                        height: max(target.contentLayoutRect.height, MainWindowGeometry.defaultSize.height))
             )
         }
+        clampToVisibleScreen(target)
         offsetTrafficLights(in: target)
+    }
+
+    /// autosave 的窗口坐标可能属于一块已经拔掉的副屏：恢复出来的 frame 整体在
+    /// 可见区域之外，用户点了图标却什么都看不到，只能以为应用没启动。这里的
+    /// 判据是"和任意一块屏幕有足够的重叠"，没有就挪回主屏居中。
+    private func clampToVisibleScreen(_ window: NSWindow) {
+        let frame = window.frame
+        let onScreen = NSScreen.screens.contains { screen in
+            let overlap = screen.visibleFrame.intersection(frame)
+            return overlap.width >= 160 && overlap.height >= 120
+        }
+        guard !onScreen, let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        let visible = screen.visibleFrame
+        let size = NSSize(width: min(max(frame.width, MainWindowGeometry.minimumSize.width), visible.width),
+                          height: min(max(frame.height, MainWindowGeometry.minimumSize.height), visible.height))
+        let origin = NSPoint(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2)
+        window.setFrame(NSRect(origin: origin, size: size), display: true)
     }
 
     /// 红绿灯往右下挪 6pt，让自绘标题栏可以稍微离开窗口上沿，

@@ -4,6 +4,23 @@ import XCTest
 
 final class EngineInstallerTests: XCTestCase {
 
+    func testSymlinkEntriesAreRejected() throws {
+        // `tar -tzf` 只给名字，看不出软链；`tar -tvzf` 的首列才是类型。
+        XCTAssertThrowsError(try EngineInstaller.validateTypes([
+            "-rw-r--r--  0 zhuo staff 12 Nov 11 15:00 pack/run",
+            "lrwxr-xr-x  0 zhuo staff  0 Nov 11 15:00 pack/link -> /Users/zhuo/.ssh/id_rsa",
+        ])) { error in
+            guard case EngineInstallError.unsafeArchiveEntry = error else {
+                return XCTFail("wrong error: \(error)")
+            }
+        }
+        XCTAssertNoThrow(try EngineInstaller.validateTypes([
+            "-rw-r--r--  0 zhuo staff 12 Nov 11 15:00 pack/run",
+            "drwxr-xr-x  0 zhuo staff  0 Nov 11 15:00 pack/bin",
+        ]))
+    }
+
+
     private var workDirectory: URL!
     private var packsDirectory: URL!
 

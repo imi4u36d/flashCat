@@ -1,10 +1,10 @@
 ---
 title: flashCat 整改待办
 date: 2026-11-04
-updated: 2026-11-08
+updated: 2026-11-11
 scope: native/（Swift 38,000 行 / 135 个文件：App、FlashCatKit、FlashCatCLICore 与 flashcat-cli）
 method: 全量静态扫描 + 关键路径人工通读 + 干净构建/测试实测
-status: 阶段 0/1/2 已完成；WebUI 已随原生重写删除；本轮命令行/控制接口精修完成，只剩 P0-2 与 P2 规范项
+status: 阶段 0/1/2 已完成；WebUI 已随原生重写删除；11-11 终审修掉并发/引擎/面板/安装器缺陷，严格并发清零；只剩 P0-2 与 P2 规范项
 ---
 
 # flashCat 整改待办
@@ -20,11 +20,14 @@ status: 阶段 0/1/2 已完成；WebUI 已随原生重写删除；本轮命令�
 | 11-04 | 阶段 0 护栏：CI、lint/format 配置、版本号收敛（`scripts/version.sh`）、治理文件、编译警告清零 | `swift build` 0 warning |
 | 11-04 | 阶段 1：P1-1…8（退出异步收尾、进程身份校验、进程树快照、就绪超时、快照清洗、日志 sink、流式按 id 寻址、导航策略 + CSP） | 真机退出 0.20 s、零残留 |
 | 11-05 | 阶段 2：WebUI 分层与渲染治理 | 已随 1.5.x 原生重写作废，WebUI 目录整体删除 |
+| 11-11 | 终审：流式请求状态按请求隔离、引擎兜底/预留/看门狗/超时归位、面板单位统一、采样滑杆跟手、dmg 由 diskutil 生成且缺件报错、严格并发 11→0、模型 id 路径穿越与 pack 入口越界封堵 | `swift test` 372 个用例全过；严格并发 0；`make dmg` 产出 5.3M 镜像；详见 `2026-11-11-final-review.md` |
 | 11-08 | 命令行/控制接口精修：`engines uninstall` 不再把指定版本回退成最新版、`chat -` 与确认提示改看 stdin、重复 `--for` 累加、表格按显示宽度对齐、`control.json` 从创建起 0600、`--control-url` 限制回环或 HTTPS、日志级别过滤统一、控制服务启停竞态 | `swift build -Xswiftc -warnings-as-errors` 通过；`swift test` 294 个用例全过；严格并发 25→11 |
 
 当前质量门禁：`swift build -Xswiftc -warnings-as-errors` 零告警；`swift test` 全过；
-严格并发棘轮基线 **11**（`.strict-concurrency-baseline`；CI 口径：干净构建、去重后的
-唯一 `文件:行:列`——增量编译只报被改文件的告警，读数不可信）。
+严格并发棘轮基线 **0**（`.strict-concurrency-baseline`；CI 口径：干净构建、去重后的
+唯一 `文件:行:列`——增量编译只报被改文件的告警，读数不可信）。11-11 之前的 11 条
+历史告警已按"按请求隔离 / 加锁缓冲区 / 本地滑杆状态"三条线修完，门禁从"别变多"
+改成"一条都不许有"。
 
 ---
 
@@ -48,7 +51,7 @@ status: 阶段 0/1/2 已完成；WebUI 已随原生重写删除；本轮命令�
 
 ### P0-2 · 拆分 `AppState`（唯一剩下的阻断项）
 
-3,184 行、53 个 `@Published`、123 个方法、约 95 个存储属性、13 处直接读写 `UserDefaults`：导航、引擎生命周期、模型切换状态机、下载队列、Hub、对话流式、硬件推荐混在一层。
+3,584 行、61 个 `@Published`、123 个方法（11-11 实测；数字只会往上走，这是它必须被拆的理由）、约 95 个存储属性、13 处直接读写 `UserDefaults`：导航、引擎生命周期、模型切换状态机、下载队列、Hub、对话流式、硬件推荐混在一层。
 
 - `syncController()` 在每秒一次的快照路径里做采样决策、EMA 平滑、接受率落点——业务规则写进了"读状态"的函数。
 - `send()` 里 4 个回调各自 `Task { @MainActor in … }`，依赖下标式防御（P1-7 已修症状，根因在这里）。
@@ -72,7 +75,7 @@ AppState（薄，只做组合与转发）
 ### 阶段 3 · 结构（持续）
 
 - [ ] 引擎差异回归 Kit：`if engine == …` / `descriptor.adapter == …` 分支统计，逐个搬回 adapter。
-- [ ] 严格并发剩余 11 条（`AppState` 9、`Chat` 1、`ChatPage` 1）。`AppState` 的流式缓冲捕获是主要难点：它应当随 P0-2 拆到 `ChatSession` 时一起处理，而不是单独打补丁。
+- [x] 严格并发 11 条已清零（11-11）：流式回调改 `@Sendable`、`TailReader` 的缓冲区收进加锁的 `LineSplitter`、`ChatClient` 按请求隔离、滑杆用本地 `@State`。
 - [ ] 在线/离线两套文档收敛：`StatusCommand.offlineReport`、`EnginesCommand.offlineEngines` 与 `ControlServer+Documents` 的配置表各写一份，已经出现行为漂移（例如离线的 `thinkingMode` 不接受 `none`）。把离线文档做成 Kit 里的纯函数，命令只负责取数。
 
 ### P2 规范类（开源前）

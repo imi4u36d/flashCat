@@ -67,22 +67,47 @@ else
 fi
 
 echo "==> Disk image"
-if command -v hdiutil >/dev/null 2>&1; then
-    DMG="$OUT_DIR/flashCat-$VERSION.dmg"
-    # dmg 是分发用的副产物，不该把整条构建拦在 install 之前：hdiutil 造镜像时
-    # 要把中间镜像挂到 /Volumes/flashCat，上一次的 dmg 没正常卸载、或者跑在
-    # 受限沙箱里挂不了盘，都会只丢一句「目录非空」然后退出。所以第一次失败
-    # 换一次性卷名再试一次，还不行就只警告——pkg 已经在手上了，app 照样装。
-    if DMG_LOG="$(hdiutil create -volname "flashCat" -srcfolder "$APP" -ov \
-            -format UDZO "$DMG" 2>&1)"; then
-        echo "     $DMG ($(du -sh "$DMG" | cut -f1))"
-    elif DMG_LOG="$(hdiutil create -volname "flashCat-$$" -srcfolder "$APP" -ov \
-            -format UDZO "$DMG" 2>&1)"; then
-        echo "     $DMG ($(du -sh "$DMG" | cut -f1))（卷名 flashCat 被占，改用临时卷名）"
-    else
-        echo "warning: .dmg 生成失败，已跳过（.pkg 不受影响）：$(printf '%s\n' "$DMG_LOG" | tail -1)" >&2
-        rm -f "$DMG" 2>/dev/null || true
+DMG="$OUT_DIR/flashCat-$VERSION.dmg"
+DMG_LOG_FILE="${TMPDIR:-/tmp}/flashcat-dmg.log"
+: > "$DMG_LOG_FILE"
+# 造镜像要新建一块临时 APFS 卷，依赖「能写原始磁盘」这个权限：受限沙箱里
+# newfs_apfs 直接 EPERM，hdiutil 只会丢一句「目录非空」，看不出真因。这里把
+# 真正的原因捞出来打给人看，并把「dmg 必须存在」交给 FLASHCAT_REQUIRE_DMG
+# 决定：发布机器上设成 1，产物缺了就退出非零。
+dmg_cause() {
+    grep -iE "operation not permitted|not permitted|no space left|denied" "$DMG_LOG_FILE" | tail -1
+}
+create_dmg() {
+    # macOS 27 起 `hdiutil create` 已标记弃用，官方替代是 diskutil；旧系统没有
+    # 这个子命令，所以先试 diskutil，再退回 hdiutil。
+    if command -v diskutil >/dev/null 2>&1 \
+        && diskutil image create from "$APP" --volumeName "flashCat" --format UDZO "$DMG" >>"$DMG_LOG_FILE" 2>&1; then
+        return 0
     fi
+    if ! command -v hdiutil >/dev/null 2>&1; then
+        echo "hdiutil not available" >>"$DMG_LOG_FILE"
+        return 1
+    fi
+    # 上一次没卸载干净的卷会让 hdiutil 直接失败，先摘掉。
+    hdiutil detach "/Volumes/flashCat" -force >/dev/null 2>&1 || true
+    if hdiutil create -volname "flashCat" -srcfolder "$APP" -ov \
+            -format UDZO "$DMG" >>"$DMG_LOG_FILE" 2>&1; then
+        return 0
+    fi
+    # 卷名被别的镜像占着时，换一次性卷名再试一次。
+    hdiutil create -volname "flashCat-$$" -srcfolder "$APP" -ov \
+        -format UDZO "$DMG" >>"$DMG_LOG_FILE" 2>&1
+}
+if create_dmg; then
+    echo "     $DMG ($(du -sh "$DMG" | cut -f1))"
+    rm -f "$DMG_LOG_FILE"
 else
-    echo "warning: hdiutil not available; skipped the .dmg" >&2
+    cause="$(dmg_cause)"
+    rm -f "$DMG" "$DMG_LOG_FILE" 2>/dev/null || true
+    if [ "${FLASHCAT_REQUIRE_DMG:-0}" = "1" ]; then
+        echo "error: .dmg 未生成${cause:+（$cause）}。发布要求 .pkg 与 .dmg 同时在 dist/。" >&2
+        exit 1
+    fi
+    echo "warning: .dmg 未生成${cause:+（$cause）}，.pkg 不受影响。" >&2
+    echo "         受限沙箱里造镜像要写原始磁盘；发布时设 FLASHCAT_REQUIRE_DMG=1 并在有权限的会话重跑。" >&2
 fi

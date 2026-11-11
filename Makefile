@@ -23,8 +23,9 @@ install:
 ## dist/flashCat-<version>.pkg (double-click installs) and .dmg (drag to Applications).
 pkg: dmg
 
+## 显式要 dmg 的时候不吞错：沙箱里造不出镜像就让目标失败，而不是「构建成功但没有镜像」。
 dmg:
-	VERSION=$(VERSION) BUILD_NUMBER=$(BUILD_NUMBER) ./scripts/make-installer.sh
+	VERSION=$(VERSION) BUILD_NUMBER=$(BUILD_NUMBER) FLASHCAT_REQUIRE_DMG=1 ./scripts/make-installer.sh
 
 ## Launch the installed app and confirm the native process stays alive.
 verify: install

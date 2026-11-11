@@ -205,12 +205,19 @@ public enum EnginesCommand {
                            exit: .conflict,
                            hint: "应用 bundle 和 checkout 里的 pack 由构建/签名管理")
         }
-        if let location = try? context.control,
-           let engines: [ControlEngineState] = try? await location.client.get(
-               "/v1/engines", timeout: context.timeout),
-           let running = engines.first(where: { $0.id == id.rawValue && $0.isRunning }) {
-            throw CLIError("\(running.name) 正在运行，先停止再卸载", exit: .conflict,
-                           hint: "flashcat engines stop \(id.rawValue)")
+        if let location = try? context.control {
+            let engines: [ControlEngineState]
+            do {
+                engines = try await location.client.get("/v1/engines", timeout: context.timeout)
+            } catch let error as CLIError where error.exit == .notRunning {
+                engines = []
+            }
+            // 只有「应用确实没在跑」才跳过这个检查。401 / 超时当成「没在跑」，
+            // 等于在活的进程底下删掉它的 pack。
+            if let running = engines.first(where: { $0.id == id.rawValue && $0.isRunning }) {
+                throw CLIError("\(running.name) 正在运行，先停止再卸载", exit: .conflict,
+                               hint: "flashcat engines stop \(id.rawValue)")
+            }
         }
         guard try context.confirm("删除 \(id.displayName) \(target.version)（\(target.root.path)）？") else {
             context.output.note("已取消")

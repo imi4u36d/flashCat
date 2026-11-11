@@ -12,10 +12,33 @@ struct EngineConfiguration: Codable, Equatable {
     /// Per-engine knobs edited on that engine's config page. Optional so a file
     /// written before the config page existed still decodes.
     var tuning: EngineTuning?
+
     /// Which auxiliary DFlash2 draft each main model runs with, keyed by model
     /// id. Engine scoping comes free: the map lives inside this engine's own
     /// configuration. Absent key = follow the engine-level tuning.
     var draftAssignments: [String: String]?
+}
+
+// 解码放在扩展里：合成解码要求 `enabled` / `autoStart` 必须存在，手写的半份
+// `engines.json` 会让整本字典解析失败、退化成空配置，下一次 `save()` 再把文件
+// 覆盖成 `{}`。
+extension EngineConfiguration {
+    private enum CodingKeys: String, CodingKey {
+        case enabled, version, port, lastModel, autoStart, tuning, draftAssignments
+    }
+
+    /// 缺键即用默认值：`enabled` 忽略等于把引擎按停用处理，`autoStart` 忽略
+    /// 等于悄悄改用户的启动偏好，两者都不该因为少写一行 JSON 就发生。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        version = try container.decodeIfPresent(String.self, forKey: .version)
+        port = try container.decodeIfPresent(Int.self, forKey: .port)
+        lastModel = try container.decodeIfPresent(String.self, forKey: .lastModel)
+        autoStart = try container.decodeIfPresent(Bool.self, forKey: .autoStart) ?? false
+        tuning = try? container.decodeIfPresent(EngineTuning.self, forKey: .tuning)
+        draftAssignments = try? container.decodeIfPresent([String: String].self, forKey: .draftAssignments)
+    }
 }
 
 /// Reads and writes `engines.json`, and tells the UI where every engine's pack
@@ -32,6 +55,9 @@ final class EngineStore {
         Notification.Name("FlashCatEngineTuningDidChange")
 
     private(set) var configurations: [String: EngineConfiguration] = [:]
+    /// 这一版读不懂的条目（例如更新的字段类型）。原样保存、原样写回，避免
+    /// 因为「读不动」就把用户的文件改小。
+    private var undecodable: [String: Any] = [:]
     private let fileURL: URL
 
     init(directory: String = Paths.supportDirectory, file: String = "engines.json") {
@@ -138,19 +164,43 @@ final class EngineStore {
         // Old tuning documents predate newer knobs and must not read as "leave
         // it to the engine" when the page showed the switch as on.
         let migrated = EngineTuning.backfillPLEOffload(in: document)
-        guard let encoded = try? JSONSerialization.data(withJSONObject: migrated),
-              let decoded = try? JSONDecoder().decode([String: EngineConfiguration].self, from: encoded) else {
-            return
+        // 逐条解码：一条坏配置只丢那一条，不该把其它引擎的设置一起带走。
+        var decoded: [String: EngineConfiguration] = [:]
+        var preserved: [String: Any] = [:]
+        for (key, raw) in migrated {
+            if let entry = Self.decode(raw) {
+                decoded[key] = entry
+            } else {
+                // 解不动的条目原样留着，`save()` 时写回去——用户的文件不该
+                // 因为应用这一版读不懂就被改写。
+                preserved[key] = raw
+            }
         }
         configurations = decoded
+        undecodable = preserved
     }
 
     private func save() {
         Paths.ensureDirectory(Paths.supportDirectory)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(configurations) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        var document = undecodable
+        if let data = try? encoder.encode(configurations),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            for (key, value) in object { document[key] = value }
+        }
+        guard JSONSerialization.isValidJSONObject(document),
+              let data = try? JSONSerialization.data(withJSONObject: document, options: [.prettyPrinted, .sortedKeys]) else {
+            return
+        }
+        do { try data.write(to: fileURL, options: .atomic) }
+        catch { NSLog("flashCat: engines.json 写入失败：%@", error.localizedDescription) }
+    }
+
+    private static func decode(_ raw: Any) -> EngineConfiguration? {
+        guard JSONSerialization.isValidJSONObject(raw),
+              let data = try? JSONSerialization.data(withJSONObject: raw) else { return nil }
+        return try? JSONDecoder().decode(EngineConfiguration.self, from: data)
     }
 }
 

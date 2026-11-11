@@ -252,6 +252,9 @@ enum ModelInstaller {
         if !Paths.fileExists(link) {
             try? FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: modelsRoot)
         }
+        guard FlashCatPaths.isSafeRepository(model) else {
+            throw Failure.message("模型 id 要写成 owner/repo，不能包含路径分隔符或 `..`")
+        }
         let repo = model.split(separator: ":", maxSplits: 1).first.map(String.init) ?? model
         let destination = modelsRoot + "/" + repo
         var environment = self.environment(pythonRoot: installation.root.path, cache: cache)

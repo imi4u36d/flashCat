@@ -52,7 +52,7 @@ graph TD
 
 代码已经在执行的规则，不是愿望。
 
-1. **`FlashCatKit` 不许引 UI。** 它只 `import` `Foundation` / `Network` / `CryptoKit`。这决定它能在无窗口的测试进程里跑——`FlashCatKitTests` 有 18 个测试文件、214 个测试函数，`FlashCatTests` 覆盖壳层纯函数与「不得再出现快捷键」的源码守卫，`FlashCatCLICoreTests` 覆盖命令行解析、SSE 解码与控制协议。
+1. **`FlashCatKit` 不许引 UI。** 它只 `import` `Foundation` / `Network` / `CryptoKit`。这决定它能在无窗口的测试进程里跑——`FlashCatKitTests` 有 20 个测试文件、242 个测试函数，`FlashCatTests` 覆盖壳层纯函数与「不得再出现快捷键」的源码守卫，`FlashCatCLICoreTests` 覆盖命令行解析、SSE 解码与控制协议。
 2. **依赖单向。** `FlashCat` 与 `FlashCatCLICore` → `FlashCatKit`；CLI 不 import 应用目标，Kit 里出现任何应用侧符号都是破坏。
 3. **端口段不重叠。** 默认端口由引擎 descriptor/manifest 声明：`splash 8000` / `omlx 8100` / `mtplx 8200` / `mlx-serve 8300` / `strata 8400`，可用范围默认是 `defaultPort...defaultPort+19`；分配器在段内跳过被占端口，段外放弃。
 4. **切换方式是能力，不是选项。** `omlx` 与 `mlx-serve` 是 `hot`，其余当前为 `restart`。应用只按 descriptor 声明的能力执行，不按引擎 id 猜测。
@@ -87,5 +87,5 @@ graph TD
 
 ## 已知限制
 
-- **应用层的测试仍然偏薄。** 187 个用例在 `FlashCatKit`，`FlashCatTests` 只覆盖从壳层沉淀出来的纯函数（`LogStore` 的尾部切片、快照的数值清洗、进程树的存活探测）。`AppState` 本身（状态机、引擎启停、页面的动作分发）没有单元测试，拆分它的原因之一就是让它可测，见 `CONTRIBUTING.md`。
+- **应用层的测试仍然偏薄。** 242 个用例在 `FlashCatKit`，`FlashCatTests` 只覆盖从壳层沉淀出来的纯函数（`LogStore` 的尾部切片、快照的数值清洗、进程树的存活探测）。`AppState` 本身（状态机、引擎启停、页面的动作分发）没有单元测试，拆分它的原因之一就是让它可测，见 `CONTRIBUTING.md`。
 - **界面没有自动化测试。** 六个页面与弹窗仍只能手工回归；`FlashCatTests` 覆盖的是壳层沉淀出来的纯函数，以及一条扫描源码、防止快捷键被加回来的守卫。真要自动化，需要补一个能在无头环境里驱动 SwiftUI 的宿主，这不在当前范围内。

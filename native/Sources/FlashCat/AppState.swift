@@ -2752,6 +2752,11 @@ final class AppState: ObservableObject {
             toast("正在下载另一个模型，先等它结束")
             return false
         }
+        reloadModels()
+        guard !repoIsLocal(id) else {
+            notice = "「\(id)」已经在本机了，不用重复下载"
+            return false
+        }
         let recommendation = ModelRecommendations.recommendation(for: id)
         let draft = engine.adapter == .splash
             ? (catalog.draftRepository(id, family: family) ?? recommendation?.draftRepository)
@@ -2991,7 +2996,11 @@ final class AppState: ObservableObject {
         downloadWatchDirectories = []
         downloadWatchBaselines = [:]
         downloadIncompleteMarker = plan.incompleteMarker
-        if let marker = plan.incompleteMarker {
+        // 标记只下在「本来就不存在」的目标上，且必须落在模型目录内：否则一次
+        // 失败的重复下载会给已装好的模型盖章，之后「移除」就会删掉好权重。
+        if let marker = plan.incompleteMarker,
+           !Paths.fileExists(plan.destination),
+           FlashCatPaths.contains(plan.destination, in: EnginePaths.modelsRoot) {
             Paths.ensureDirectory((marker as NSString).deletingLastPathComponent)
             FileManager.default.createFile(atPath: marker, contents: nil)
         }
@@ -3079,11 +3088,13 @@ final class AppState: ObservableObject {
             }
         }
 
-        process.terminationHandler = { [weak self] finished in
-            DispatchQueue.main.async {
-                self?.finishDownload(engine: engine,
-                                     model: id,
-                                     status: finished.terminationStatus)
+        process.terminationHandler = { finished in
+            let status = finished.terminationStatus
+            // 走到这里时下载进程已经退出，回调只带三个可发送的值；用
+            // `Task { @MainActor }` 而不是闭包里的 `self?`——弱引用在
+            // `@Sendable` 闭包里被当成「可变捕获」，严格并发会报错。
+            Task { @MainActor in
+                AppState.shared.finishDownload(engine: engine, model: id, status: status)
             }
         }
 
@@ -3250,7 +3261,8 @@ final class AppState: ObservableObject {
             path = EnginePaths.modelPath(for: task.engine, model: task.model)
         }
         let marker = ModelInstaller.incompleteMarker(for: path)
-        guard Paths.fileExists(marker) else { return }
+        guard Paths.fileExists(marker),
+              FlashCatPaths.contains(path, in: EnginePaths.modelsRoot) else { return }
         try? FileManager.default.removeItem(atPath: path)
         try? FileManager.default.removeItem(atPath: marker)
         EngineModelStore.invalidateMetaCache()
@@ -3557,28 +3569,64 @@ final class AppState: ObservableObject {
 let SPLASH_VERSION = "1.4.0"
 
 /// Streams a child process pipe line by line without blocking the main thread.
-final class TailReader {
-    static func read(_ pipe: Pipe, onLine: @escaping (String) -> Void) {
-        var buffer = Data()
+///
+/// 缓冲区必须是引用类型：`readabilityHandler` 是 `@Sendable` 的，把 `var buffer`
+/// 直接捕获进去，等于允许两条线程同时改同一块数据。锁只保护缓冲区，回调在锁外
+/// 执行——`onLine` 里通常还要再跳一次主线程，持锁回调会把锁序搞乱。
+final class TailReader: @unchecked Sendable {
+    private let lock = NSLock()
+    private var splitter = LineSplitter()
+
+    static func read(_ pipe: Pipe, onLine: @escaping @Sendable (String) -> Void) {
+        let reader = TailReader()
         pipe.fileHandleForReading.readabilityHandler = { handle in
             let chunk = handle.availableData
             if chunk.isEmpty {
                 handle.readabilityHandler = nil
-                if !buffer.isEmpty, let text = String(data: buffer, encoding: .utf8) {
-                    onLine(text)
-                }
+                reader.flush(onLine)
                 return
             }
-            buffer.append(chunk)
-            // huggingface_hub's tqdm redraws its bar with carriage returns, so
-            // a Splash download only ever speaks \r until it exits. Split on
-            // both; a bare \r line is a redraw, not a new log entry.
-            while let index = buffer.firstIndex(where: { $0 == 0x0A || $0 == 0x0D }) {
-                let line = buffer.prefix(upTo: index)
-                buffer.removeSubrange(...index)
-                guard !line.isEmpty, let text = String(data: line, encoding: .utf8) else { continue }
-                onLine(text)
+            reader.consume(chunk, onLine: onLine)
+        }
+    }
+
+    private func consume(_ chunk: Data, onLine: @Sendable (String) -> Void) {
+        lock.lock()
+        let lines = splitter.consume(chunk)
+        lock.unlock()
+        // 回调在锁外：`onLine` 里通常还要再跳一次主线程，持锁回调会把锁序搞乱。
+        for line in lines { onLine(line) }
+    }
+
+    private func flush(_ onLine: @Sendable (String) -> Void) {
+        lock.lock()
+        let rest = splitter.flush()
+        lock.unlock()
+        if let rest { onLine(rest) }
+    }
+}
+
+/// 按行切分命令行输出。huggingface_hub 的 tqdm 用回车重画进度条，所以 Splash
+/// 的下载在退出前只会吐 `\r`；两种换行都要切，空行（纯重画）丢掉。
+struct LineSplitter {
+    private var buffer = Data()
+
+    mutating func consume(_ chunk: Data) -> [String] {
+        buffer.append(chunk)
+        var lines: [String] = []
+        while let index = buffer.firstIndex(where: { $0 == 0x0A || $0 == 0x0D }) {
+            let line = buffer.prefix(upTo: index)
+            buffer.removeSubrange(...index)
+            if !line.isEmpty, let text = String(data: line, encoding: .utf8) {
+                lines.append(text)
             }
         }
+        return lines
+    }
+
+    mutating func flush() -> String? {
+        defer { buffer = Data() }
+        guard !buffer.isEmpty, let text = String(data: buffer, encoding: .utf8) else { return nil }
+        return text
     }
 }

@@ -132,8 +132,19 @@ public struct LocalState {
         public var port: [String: Int] = [:]
     }
 
+    /// 文件在、却读不动。调用方据此打一行警告：以前这种情况会被静默当成
+    /// 「没有引擎」，`status` 于是输出一份看起来很正常的假文档。
+    public static func engineConfigurationIsUnreadable() -> Bool {
+        let path = FlashCatPaths.engineConfigurationFile
+        guard FileManager.default.fileExists(atPath: path) else { return false }
+        guard let data = FileManager.default.contents(atPath: path) else { return true }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] == nil
+    }
+
     public var engineConfiguration: EngineConfiguration {
-        guard let data = FileManager.default.contents(atPath: FlashCatPaths.engineConfigurationFile),
+        let path = FlashCatPaths.engineConfigurationFile
+        guard FileManager.default.fileExists(atPath: path) else { return EngineConfiguration() }
+        guard let data = FileManager.default.contents(atPath: path),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return EngineConfiguration()
         }
@@ -287,7 +298,9 @@ public struct CLIContext {
     /// non-interactive stdin refuses instead of hanging forever on readLine.
     public func confirm(_ prompt: String) throws -> Bool {
         if invocation.flag("yes") { return true }
-        guard !stdinIsTTY else {
+        // 反过来写会把两个世界都对调：真终端里每个不可逆操作都直接拒绝，而
+        // `flashcat ... < /dev/null` 反倒能读到 EOF、静默取消或删除。
+        guard stdinIsTTY else {
             throw CLIError("这是一个不可逆操作，非交互环境需要加 --yes", exit: .conflict)
         }
         output.note(prompt + " [y/N]")

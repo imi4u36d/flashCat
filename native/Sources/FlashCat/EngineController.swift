@@ -223,15 +223,19 @@ final class EngineController {
     /// assembly/target pair. Other engines take a model identifier.
     func start(localModel: ModelInfo? = nil, requestedModel: String? = nil) async {
         if process != nil || preparing { return }
+        // 预约要覆盖整个启动过程，不能只盖准备阶段：`claimPort` 为了回收上一次
+        // 遗留的引擎可能等上 90 秒，这段时间里第二次点击（或 CLI 的并发启动）
+        // 必须看到「正在启动」，否则两个 `start()` 会各起一个进程，后一个覆盖
+        // 前一个的 `process`，前一个的退出被 `finished === process` 静默丢掉。
+        preparing = true
+        defer { preparing = false }
+        let attempt = stopRequests
         // 「已等待」从点下启动这一刻起表。准备阶段（下载 draft 草稿、等端口）
         // 也算同一次等待：之前要等进程真的拉起来才记起点，几 GB 的预下载全程
         // 显示「已等待 0:00」，之后又开始从零数，计数器看起来像坏了。
         busySince = Date()
         var localModel = localModel
         if let prepareForStart {
-            preparing = true
-            defer { preparing = false }
-            let attempt = stopRequests
             // The preparation can take minutes (a draft is a few GB), so the
             // click has to look taken instead of ignored.
             state = .starting
@@ -262,6 +266,14 @@ final class EngineController {
         guard let claimed = await claimPort(plan.model) else {
             state = .failed
             busySince = nil
+            onChange()
+            return
+        }
+        // 等端口的这段时间里用户点了停止：`stop()` 已经把状态改成「已停止」，
+        // 这次启动不能再装作没发生过，把进程拉起来。
+        guard attempt == stopRequests else {
+            busySince = nil
+            state = .stopped
             onChange()
             return
         }
@@ -449,6 +461,17 @@ final class EngineController {
                           model: selected)
     }
 
+    /// 就绪即撤掉启动看门狗。它只为「这一次启动」计时；跑完之后还挂着的话，
+    /// 之后一次热切换（`state` 又回到 `.starting`，`process` 还是同一个）会在
+    /// 计时器到期时被误判成启动超时，把一个健康的引擎标成失败。
+    private func markReady() {
+        startupWatchdog?.cancel()
+        startupWatchdog = nil
+        guard state != .ready else { return }
+        state = .ready
+        onChange()
+    }
+
     private func fail(_ message: String) {
         state = .failed
         failureMessage = message
@@ -507,9 +530,18 @@ final class EngineController {
             tree.signal(SIGINT)
             let grace: TimeInterval = descriptor.adapter == .strata ? 75 : 20
             DispatchQueue.main.asyncAfter(deadline: .now() + grace) { [weak self] in
-                guard let self, let current = self.process, processPid(current) == pid else { return }
-                self.logs.append("==> 服务未在 \(Int(grace)) 秒内退出，强制结束", level: .system)
-                tree.signal(SIGKILL)
+                guard let self else { return }
+                // 不能用 `self.process` 当门：python 主干收到 SIGINT 就先退了，
+                // `processExited` 会把 `self.process` 清空，而下面的推理二进制
+                // 和池 worker 可能还在抱着权重。只看快照里仍然活着、并且确实
+                // 属于本引擎 pack 的 pid（pid 被复用时不误杀别人）。
+                let survivors = tree.pids.filter {
+                    $0 > 1 && self.processAlive($0) && self.processBelongsToPack($0)
+                }
+                guard !survivors.isEmpty else { return }
+                self.logs.append("==> 服务未在 \(Int(grace)) 秒内完全退出，强制结束残留进程（\(survivors.count) 个）",
+                                 level: .system)
+                for victim in survivors { kill(victim, SIGKILL) }
             }
         }
     }
@@ -915,8 +947,7 @@ final class EngineController {
         if line.contains("Ready ·") {
             lastError = nil
             if state == .starting {
-                state = .ready
-                onChange()
+                markReady()
             }
         } else if line.contains("Error ·") || line.lowercased().hasPrefix("error:") {
             // flashcat_serve.py reports preparation failures as "error: ..." on
@@ -969,6 +1000,9 @@ final class EngineController {
             guard self.process === task, self.state == .starting else { return }
             self.logs.append("==> 启动超时：\(Int(budget)) 秒内未就绪", level: .error)
             self.fail("启动超时：\(Int(budget)) 秒内没有就绪。看日志页最后几行——多半是端口被占或模型放不进内存。")
+            // 超时的进程留着只会占端口和显存，而且会把下一次启动挡在
+            // `process != nil` 上——「启动」按钮看起来像坏了。
+            self.stop()
         }
     }
 
@@ -1011,8 +1045,7 @@ final class EngineController {
            descriptor.switchMode != .hot
             || desiredModel == nil
             || status?.loadedModels.contains(desiredModel ?? "") == true {
-            state = .ready
-            onChange()
+            markReady()
         }
         await applyTuningIfNeeded()
         await ensureDesiredModelLoaded()
@@ -1295,13 +1328,11 @@ final class EngineController {
             failureMessage = status == 507
                 ? "内存不足，无法加载 \(target)"
                 : "加载 \(target) 失败（HTTP \(status)）"
-            state = .ready
         } else {
             failureMessage = nil
             lastHotLoad = (target, Date())
-            state = .ready
         }
-        onChange()
+        markReady()
         return status < 300
     }
 

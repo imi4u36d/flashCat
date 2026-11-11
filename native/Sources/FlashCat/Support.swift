@@ -79,16 +79,27 @@ enum Paths {
     static func fileExists(_ path: String) -> Bool {
         FlashCatPaths.fileExists(path)
     }
+
+    static func contains(_ path: String, in root: String) -> Bool {
+        FlashCatPaths.contains(path, in: root)
+    }
 }
 
 enum Format {
+    /// 磁盘容量只有一个口径：十进制 1 GB = 10^9 B，和 Finder、系统设置、
+    /// 模型页上的「≈4.3 GB」一致。下载进度必须用同一个函数，否则同一份模型
+    /// 在卡片上是「4.3 GB」、在下载中心是「4.0 GB」，读者会以为算错了。
     static func size(_ bytes: Int) -> String {
         let gigabytes = Double(bytes) / 1_000_000_000
         if gigabytes >= 1 { return String(format: "%.1f GB", gigabytes) }
-        return "\(Int(round(Double(bytes) / 1_000_000))) MB"
+        if bytes >= 1_000_000 { return "\(Int(round(Double(bytes) / 1_000_000))) MB" }
+        // 低于 1 MB 时四舍五入成「0 MB」是个假读数，退回 KB。
+        return "\(max(1, Int(round(Double(bytes) / 1000)))) KB"
     }
 
-    static func bytes(_ bytes: Int) -> String {
+    /// 内存是另一回事：它按二进制 GiB 报（8 GB 统一内存真实就是 8 GiB），
+    /// 和活动监视器的口径一致。别拿它去格式化磁盘容量。
+    static func memory(_ bytes: Int) -> String {
         let gigabytes = Double(bytes) / 1_073_741_824
         if gigabytes >= 1 { return String(format: "%.1f GB", gigabytes) }
         let megabytes = Double(bytes) / 1_048_576
@@ -97,14 +108,22 @@ enum Format {
     }
 
     /// Transfer speed for the download center, from the folder-watch deltas.
+    /// 十进制，和上面的容量同口径：100 MB 的文件 10 MB/s 就是 10 秒。
     static func rate(_ bytesPerSecond: Double) -> String {
-        if bytesPerSecond >= 1_048_576 { return String(format: "%.1f MB/s", bytesPerSecond / 1_048_576) }
-        if bytesPerSecond >= 1024 { return String(format: "%.0f KB/s", bytesPerSecond / 1024) }
+        if bytesPerSecond >= 1_000_000 { return String(format: "%.1f MB/s", bytesPerSecond / 1_000_000) }
+        if bytesPerSecond >= 1000 { return String(format: "%.0f KB/s", bytesPerSecond / 1000) }
         return "—"
     }
 
     static func tokens(_ value: Int) -> String {
         if value >= 1000 { return String(format: "%.1fK", Double(value) / 1000) }
+        return "\(value)"
+    }
+
+    /// 上下文窗口那种「整千」的读法：131072 → 131K。和 `tokens` 的 12.3K
+    /// 是两种用途，别混用。
+    static func tokensShort(_ value: Int) -> String {
+        if value >= 1000 { return "\(Int((Double(value) / 1000).rounded()))K" }
         return "\(value)"
     }
 

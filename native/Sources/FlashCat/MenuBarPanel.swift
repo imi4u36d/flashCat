@@ -553,7 +553,7 @@ private struct MetricStrip: View {
             divider
             cell("首字", value(stats?.ttftMilliseconds.map { "\(Int($0))" }), unit: "ms")
             divider
-            cell("内存", value(stats?.memoryBytes.map { Format.bytes($0) }), unit: nil)
+            cell("内存", value(stats?.memoryBytes.map { Format.memory($0) }), unit: nil)
         }
         .background(Console.inset, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(

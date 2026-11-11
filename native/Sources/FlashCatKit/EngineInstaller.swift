@@ -274,11 +274,21 @@ public actor EngineInstaller {
         if url.isFileURL {
             return (try Data(contentsOf: url), url)
         }
+        // 索引决定了「下哪个包、校验和是多少」，走明文 http 等于让对方直接
+        // 换掉权重。远程索引只接受 https；回环地址留给测试和本机镜像。
+        guard url.scheme?.lowercased() == "https" || Self.isLoopback(url) else {
+            throw EngineInstallError.indexUnavailable
+        }
         let (data, response) = try await URLSession.shared.data(from: url)
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
             throw EngineInstallError.downloadFailed("服务器返回 HTTP \(http.statusCode)")
         }
         return (data, response.url ?? url)
+    }
+
+    static func isLoopback(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "http", let host = url.host?.lowercased() else { return false }
+        return host == "localhost" || host == "127.0.0.1" || host == "::1"
     }
 
     // MARK: Paths
@@ -371,6 +381,7 @@ public actor EngineInstaller {
             progress(.unpacking)
             let entries = try listArchive(archive)
             try Self.validate(entries: entries)
+            try Self.validateTypes(try listArchiveTypes(archive))
             let strip = Self.stripComponents(for: entries)
             let unpacked = staging.appendingPathComponent("\(id.rawValue)-\(release.version)-\(UUID().uuidString)")
             try fm.createDirectory(at: unpacked, withIntermediateDirectories: true)
@@ -378,7 +389,7 @@ public actor EngineInstaller {
             try extract(archive, into: unpacked, stripComponents: strip)
 
             progress(.validating)
-            let installation = try validate(unpacked, expecting: id)
+            let installation = try validate(unpacked, expecting: id, version: release.version)
 
             progress(.activating)
             // Quarantine removal is best effort: a pack without the attribute
@@ -445,17 +456,28 @@ public actor EngineInstaller {
             let doomed = trash.appendingPathComponent("\(id.rawValue)-\(version)-\(UUID().uuidString)",
                                                       isDirectory: true)
             try fm.moveItem(at: destination, to: doomed)
-            try? fm.removeItem(at: doomed)
+            do {
+                try fm.moveItem(at: unpacked, to: destination)
+            } catch {
+                // 新版本没就位就把旧的搬回去：否则失败一次就变成「引擎没了」。
+                do { try fm.moveItem(at: doomed, to: destination) }
+                catch {
+                    NSLog("flashCat: 回滚引擎 %@ 失败，旧版本仍在 %@", id.rawValue, doomed.path)
+                }
+                throw error
+            }
+            do { try fm.removeItem(at: doomed) }
+            catch { NSLog("flashCat: 清理旧版本 %@ 失败：%@", doomed.path, error.localizedDescription) }
             pruneIfEmpty(trash)
+        } else {
+            try fm.moveItem(at: unpacked, to: destination)
         }
-
-        try fm.moveItem(at: unpacked, to: destination)
         return destination
     }
 
     // MARK: Validation
 
-    private func validate(_ root: URL, expecting id: EngineID) throws -> EngineInstallation {
+    private func validate(_ root: URL, expecting id: EngineID, version: String) throws -> EngineInstallation {
         guard let installation = EngineInstallation.load(root: root) else {
             throw EngineInstallError.invalidManifest("无法解码 manifest.json")
         }
@@ -464,8 +486,26 @@ public actor EngineInstaller {
                 "清单中的引擎标识为 \(installation.manifest.id.rawValue)，与期望的 \(id.rawValue) 不一致")
         }
 
+        // 目录名来自 release.version，启动却读 manifest.version：两者不一致时
+        // 卸载/清理会按清单去删另一个目录，删错或者删不掉。
+        guard installation.manifest.version == version else {
+            throw EngineInstallError.invalidManifest(
+                "清单版本 \(installation.manifest.version) 与发布版本 \(version) 不一致")
+        }
+
         let fm = FileManager.default
-        let entrypoint = root.appendingPathComponent(installation.manifest.entrypoint)
+        let relative = installation.manifest.entrypoint
+        guard !relative.hasPrefix("/"), !relative.hasPrefix("~"),
+              !Self.pathComponents(relative).contains("..") else {
+            throw EngineInstallError.unsafeArchiveEntry(relative)
+        }
+        let entrypoint = root.appendingPathComponent(relative)
+        // 软链解析后仍必须落在 pack 内；否则 chmod 与启动都会打到包外。
+        let resolvedRoot = root.resolvingSymlinksInPath().path
+        let resolvedEntry = entrypoint.resolvingSymlinksInPath().path
+        guard resolvedEntry == resolvedRoot || resolvedEntry.hasPrefix(resolvedRoot + "/") else {
+            throw EngineInstallError.unsafeArchiveEntry(relative)
+        }
         guard fm.fileExists(atPath: entrypoint.path) else {
             throw EngineInstallError.missingEntrypoint(installation.manifest.entrypoint)
         }
@@ -494,8 +534,30 @@ public actor EngineInstaller {
             .map(String.init)
     }
 
+    /// `tar -tvzf` 的每行以权限位开头：`l` 是软链、`h` 是硬链。只列名字看不出
+    /// 这两种条目，而它们能把包外的文件（甚至 `~/.ssh`）拉进 pack 里。
+    private func listArchiveTypes(_ archive: URL) throws -> [String] {
+        let result = try run(settings.tarPath, ["-tvzf", archive.path])
+        guard result.status == 0 else {
+            throw EngineInstallError.commandFailed("tar 无法列出归档内容：\(Self.text(result.stderr))")
+        }
+        return Self.text(result.stdout)
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map(String.init)
+    }
+
     /// A tar entry that is absolute or climbs out with `..` would land outside
     /// the staging directory, so the whole archive is rejected.
+    /// 拒绝软链/硬链条目。pack 是自包含的归档，不需要链接，出现即视为越界。
+    static func validateTypes(_ listing: [String]) throws {
+        for line in listing {
+            guard let first = line.first else { continue }
+            if first == "l" || first == "h" {
+                throw EngineInstallError.unsafeArchiveEntry(line)
+            }
+        }
+    }
+
     static func validate(entries: [String]) throws {
         for entry in entries {
             if entry.hasPrefix("/") || entry.hasPrefix("~/") {

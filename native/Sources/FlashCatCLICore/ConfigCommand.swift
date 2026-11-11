@@ -114,10 +114,20 @@ public enum ConfigCommand {
     }
 
     private static func readEntries(_ context: CLIContext) async throws -> [ControlConfigEntry] {
-        if let location = try? context.control,
-           let document: ControlConfigDocument = try? await location.client.get("/v1/config",
-                                                                                timeout: context.timeout) {
-            return document.entries
+        if let location = try? context.control {
+            do {
+                let document: ControlConfigDocument = try await location.client.get(
+                    "/v1/config", timeout: context.timeout)
+                return document.entries
+            } catch let error as CLIError where error.exit == .notRunning {
+                // 应用没在跑：磁盘上的配置就是当下的事实。
+            }
+            // 401 / 超时 / 后端 500 不能「降级成磁盘上的旧值」——那会把一个
+            // 出错的运行时报成一份看起来正常的配置。
+        }
+        if LocalState.engineConfigurationIsUnreadable() {
+            context.output.warning("engines.json 无法解析，引擎相关的值读不到；文件路径："
+                                   + FlashCatPaths.engineConfigurationFile)
         }
         return OfflineConfig.entries(context)
     }
@@ -185,12 +195,16 @@ enum OfflineConfig {
         var rows: [ControlConfigEntry] = [
             entry("appearance", "外观", "enum", appearance),
             entry("autoStart", "随应用启动引擎", "bool", CLIFormat.bool(bool("autoStart", fallback: false))),
-            entry("launchAtLogin", "登录时启动", "bool", CLIFormat.bool(bool("launchAtLogin", fallback: false))),
-            entry("gatewayEnabled", "API 网关", "bool", CLIFormat.bool(local.gatewayEnabled)),
-            entry("gatewayPort", "API 网关端口", "int", String(local.gatewayPort)),
-            entry("controlAPIEnabled", "命令行接口", "bool", CLIFormat.bool(local.controlEnabled)),
-            entry("controlPort", "命令行接口端口", "int", String(local.controlPort)),
-            entry("port", "默认引擎端口", "int", String(int("port", fallback: 8000))),
+            // 这几项由应用持有（要同步 LaunchAgent / 启停监听），离线写不进去，
+            // 所以如实报 mutable:false，而不是先答应再 exit 6。
+            entry("launchAtLogin", "登录时启动", "bool", CLIFormat.bool(bool("launchAtLogin", fallback: false)), mutable: false),
+            entry("gatewayEnabled", "API 网关", "bool", CLIFormat.bool(local.gatewayEnabled), mutable: false),
+            entry("gatewayPort", "API 网关端口", "int", String(local.gatewayPort), mutable: false),
+            entry("controlAPIEnabled", "命令行接口", "bool", CLIFormat.bool(local.controlEnabled), mutable: false),
+            entry("controlPort", "命令行接口端口", "int", String(local.controlPort), mutable: false),
+            // 0 是「还没写过」，在线文档会归一成 8000；离线也照同一个口径报，
+            // 否则同一条命令在线离线读出两个端口。
+            entry("port", "默认引擎端口", "int", String(normalizedPort(int("port", fallback: 8000)))),
             entry("model", "当前模型", "string", local.selectedModel, mutable: false),
             entry("thinkingMode", "思考模式", "enum", thinking),
             entry("reasoningEffort", "推理等级", "enum", reasoning),
@@ -211,7 +225,8 @@ enum OfflineConfig {
             rows.append(entry("engines.\(id.rawValue).port",
                               "\(id.displayName) 端口",
                               "int",
-                              String(local.engineConfiguration.port[id.rawValue] ?? id.defaultPort)))
+                              String(normalizedPort(local.engineConfiguration.port[id.rawValue] ?? id.defaultPort)),
+                              mutable: false))
         }
         return rows
     }
@@ -301,6 +316,11 @@ enum OfflineConfig {
         }
         _ = context
         defaults.synchronize()
+    }
+
+    /// `0` 与负数都表示「没配置」，对外统一显示默认端口。
+    private static func normalizedPort(_ value: Int) -> Int {
+        value > 0 ? value : 8000
     }
 
     private static func entry(_ key: String, _ title: String, _ kind: String,

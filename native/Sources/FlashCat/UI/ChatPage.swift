@@ -82,7 +82,7 @@ struct ChatPage: View {
             .fixedSize()
             .disabled(chat.generating)
 
-            Text("\(Format.tokens(state.contextUsedTokens)) / \(state.contextWindowCeiling.map { shortTokens($0) } ?? "—")")
+            Text("\(Format.tokens(state.contextUsedTokens)) / \(state.contextWindowCeiling.map { Format.tokensShort($0) } ?? "—")")
                 .font(.system(size: 10.5, design: .monospaced))
                 .foregroundStyle(Console.tertiary)
 
@@ -108,10 +108,6 @@ struct ChatPage: View {
         }
         .padding(.horizontal, Console.contentPadding + 8)
         .frame(height: 44)
-    }
-
-    private func shortTokens(_ value: Int) -> String {
-        value >= 1000 ? "\(Int((Double(value) / 1000).rounded()))K" : "\(value)"
     }
 
     private var threadList: some View {
@@ -642,10 +638,10 @@ struct ChatParametersSheet: View {
     private var samplingCard: some View {
         Card("采样", subtitle: "每条消息都会带上这组默认值") {
             VStack(spacing: 14) {
-                slider("温度", value: state.settings.temperature, range: 0...2,
-                       format: "%.2f") { state.settings.setTemperature($0) }
-                slider("top-p", value: state.settings.topP, range: 0...1,
-                       format: "%.2f") { state.settings.setTopP($0) }
+                SamplingSlider(label: "温度", value: state.settings.temperature, range: 0...2,
+                               format: "%.2f") { state.settings.setTemperature($0) }
+                SamplingSlider(label: "top-p", value: state.settings.topP, range: 0...1,
+                               format: "%.2f") { state.settings.setTopP($0) }
                 HStack(spacing: 10) {
                     Text("最大输出")
                         .font(Native.bodyFont)
@@ -710,19 +706,44 @@ struct ChatParametersSheet: View {
         .padding(.vertical, 12)
     }
 
-    private func slider(_ label: String, value: Double, range: ClosedRange<Double>,
-                        format: String, set: @escaping (Double) -> Void) -> some View {
+}
+
+/// 采样参数的一行：滑杆 + 右侧实时读数。
+///
+/// 读数跟着滑杆走，靠的是本地 `@State`——`AppSettings` 直接把值写进
+/// UserDefaults，不会触发 SwiftUI 重绘；早先把 `value` 当常量传进来时，
+/// 拖动滑杆数字要等别的刷新才更新，看起来像「读数卡住了」。
+private struct SamplingSlider: View {
+    let label: String
+    let range: ClosedRange<Double>
+    let format: String
+    let commit: (Double) -> Void
+    @State private var current: Double
+
+    init(label: String, value: Double, range: ClosedRange<Double>,
+         format: String, commit: @escaping (Double) -> Void) {
+        self.label = label
+        self.range = range
+        self.format = format
+        self.commit = commit
+        _current = State(initialValue: value)
+    }
+
+    var body: some View {
         HStack(spacing: 10) {
             Text(L10n.t(label))
                 .font(Native.bodyFont)
                 .foregroundStyle(Native.secondary)
                 .frame(width: 72, alignment: .leading)
-            Slider(value: Binding(get: { value }, set: set), in: range)
+            Slider(value: $current, in: range)
                 .tint(Native.accent)
-            Text(String(format: format, value))
+            Text(String(format: format, current))
                 .font(Native.monoSmall)
                 .foregroundStyle(Native.tertiary)
+                .monospacedDigit()
+                .contentTransition(.numericText())
                 .frame(width: 40, alignment: .trailing)
         }
+        .onChange(of: current) { _, value in commit(value) }
     }
 }

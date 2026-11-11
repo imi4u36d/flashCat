@@ -134,9 +134,11 @@ struct OverviewPage: View {
                     .font(.system(size: 28, weight: .bold))
                     .tracking(-0.5)
                     .foregroundStyle(Console.text)
-                    .lineLimit(1)
+                    .lineLimit(2)
                     .minimumScaleFactor(0.72)
-                    .truncationMode(.middle)
+                    .truncationMode(.tail)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 14)
 
                 HStack(spacing: 10) {
@@ -350,7 +352,7 @@ struct OverviewPage: View {
         metricCard(icon: "square.stack.3d.up.fill", tint: Console.accent,
                    title: "当前上下文", tag: "CTX",
                    value: Format.tokens(state.contextUsedTokens),
-                   unit: state.contextWindowCeiling.map { "/ \(shortTokens($0))" } ?? "/ —",
+                   unit: state.contextWindowCeiling.map { "/ \(Format.tokensShort($0))" } ?? "/ —",
                    hint: contextHint,
                    badge: contextBadge)
         metricCard(icon: "timer", tint: Console.warn,
@@ -395,9 +397,11 @@ struct OverviewPage: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                         .contentTransition(.numericText())
-                    Text(unit)
-                        .font(.system(size: 11.5, design: .monospaced))
-                        .foregroundStyle(Console.tertiary)
+                    if value != "—" {
+                        Text(unit)
+                            .font(.system(size: 11.5, design: .monospaced))
+                            .foregroundStyle(Console.tertiary)
+                    }
                     if let badge {
                         Text(badge.text)
                             .font(.system(size: 9, weight: .semibold, design: .monospaced))
@@ -520,11 +524,6 @@ struct OverviewPage: View {
         }
     }
 
-    private func shortTokens(_ value: Int) -> String {
-        if value >= 1000 { return "\(Int((Double(value) / 1000).rounded()))K" }
-        return "\(value)"
-    }
-
     // MARK: Charts
 
     private var decodeChart: some View {
@@ -548,9 +547,16 @@ struct OverviewPage: View {
                 if samples.isEmpty {
                     ZStack {
                         chartGrid
-                        Text(chartEmptyText)
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(Console.tertiary)
+                        VStack(spacing: 7) {
+                            Image(systemName: state.isRunning ? "waveform.path.ecg" : "bolt.slash")
+                                .font(.system(size: 17, weight: .regular))
+                                .foregroundStyle(Console.tertiary.opacity(0.55))
+                            Text(chartEmptyText)
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(Console.tertiary)
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: 320)
+                        }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -677,11 +683,19 @@ struct OverviewPage: View {
                     }
                     .help("速度优先用引擎按请求上报的 timings（含非流式），没有时由网关按流式分片估算；量不出速度的行画「—」。完成的行会保留到被后续请求挤出列表")
                     if sessions.isEmpty {
-                        VStack(spacing: 8) {
+                        VStack(spacing: 7) {
                             Spacer(minLength: 0)
+                            Image(systemName: "arrow.left.arrow.right")
+                                .font(.system(size: 15, weight: .regular))
+                                .foregroundStyle(Console.tertiary.opacity(0.55))
                             Text("还没有经过网关的请求")
                                 .font(.system(size: 11.5))
                                 .foregroundStyle(Console.tertiary)
+                            Text("把客户端指向 127.0.0.1:8000 后，这里按条显示速度与上下文")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(Console.tertiary.opacity(0.7))
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: 190)
                             Spacer(minLength: 0)
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)

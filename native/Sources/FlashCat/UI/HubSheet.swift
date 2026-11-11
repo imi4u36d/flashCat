@@ -356,7 +356,7 @@ struct HubSheet: View {
                                     .truncationMode(.middle)
                                 Spacer(minLength: 8)
                                 if let size = file.size {
-                                    Text(Format.bytes(Int(clamping: size)))
+                                    Text(Format.size(Int(clamping: size)))
                                         .font(Native.monoSmall)
                                         .foregroundStyle(Native.tertiary)
                                 }

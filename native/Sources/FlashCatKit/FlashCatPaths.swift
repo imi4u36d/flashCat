@@ -77,6 +77,23 @@ public enum FlashCatPaths {
         enginesDirectory + "/" + id.rawValue
     }
 
+    /// 仓库 id 会被直接拼进路径，所以只接受 `owner/name`：`../../..`、绝对路径
+    /// 和空段必须在进入文件系统之前就被挡住。
+    public static func isSafeRepository(_ model: String) -> Bool {
+        let base = model.split(separator: ":", maxSplits: 1).first.map(String.init) ?? model
+        let pattern = #"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$"#
+        return base.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    /// `path` 是否落在 `root` 之内。两边都标准化（吃掉 `..`），再按路径分量
+    /// 比较，避免 `/models2` 被当成 `/models` 的子路径。
+    public static func contains(_ path: String, in root: String) -> Bool {
+        let target = URL(fileURLWithPath: path).standardizedFileURL.path
+        let base = URL(fileURLWithPath: root).standardizedFileURL.path
+        guard base != "/" else { return true }
+        return target == base || target.hasPrefix(base + "/")
+    }
+
     /// Resolve a model selection to its on-disk directory. Most pack engines
     /// use flat `owner--repo` names; Hugging Face-native engines preserve the
     /// nested repository path.
@@ -85,7 +102,9 @@ public enum FlashCatPaths {
         let base = model.split(separator: ":", maxSplits: 1).first.map(String.init) ?? model
         switch engine.descriptor.modelLayout {
         case .nested:
-            return root + "/" + base
+            // 嵌套布局直接拼仓库路径；不认的名字退化成扁平目录名，免得
+            // `owner/../../x` 把权重写到模型目录之外。
+            return root + "/" + (isSafeRepository(base) ? base : modelFolderName(for: base))
         case .flat, .external:
             return root + "/" + modelFolderName(for: base)
         }

@@ -55,7 +55,7 @@ let package = Package(
         // the shell testable, see CONTRIBUTING.md.
         .testTarget(
             name: "FlashCatTests",
-            dependencies: ["FlashCat"],
+            dependencies: ["FlashCat", "FlashCatKit"],
             path: "Tests/FlashCatTests"
         ),
         // The CLI's parser, SSE decoder and output formatting are pure; they

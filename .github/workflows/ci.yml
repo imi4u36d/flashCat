@@ -29,12 +29,9 @@ jobs:
       - name: Build (warnings are errors)
         run: swift build -Xswiftc -warnings-as-errors
 
-      # A ratchet, not a zero-tolerance check: the codebase carries 11
-      # concurrency warnings today (25 before the 2026-11-08 CLI/control pass
-      # fixed the Sendable-boundary and observer-token cases), so asserting
-      # "no warnings" would make this job red on its first run and teach
-      # everyone to ignore CI. It fails only when the count goes *up*;
-      # lowering the baseline as they are fixed is how this reaches zero.
+      # 基线已经收到 0：11 条历史告警在这轮里逐条修掉了（TailReader 的缓冲区
+      # 变成加锁的引用类型、ChatClient 改为每请求一份状态、滑杆读数改用本地
+      # @State），所以这一项现在是零点检查——再多出一条就是新债。
       - name: Strict concurrency must not regress
         run: |
           set -o pipefail

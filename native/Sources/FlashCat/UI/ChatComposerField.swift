@@ -98,6 +98,9 @@ struct ChatComposerField: NSViewRepresentable {
         }
     }
 
+    /// 文本视图的代理回调都在主线程，整类挂到 MainActor 上，
+    /// 省得在 AppKit 回调里来回 assumeIsolated。
+    @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ChatComposerField
         weak var container: ComposerContainer?

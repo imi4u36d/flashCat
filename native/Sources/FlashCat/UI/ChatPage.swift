@@ -13,6 +13,10 @@ struct ChatPage: View {
     @State private var atBottom = true
     /// 超长对话只渲染最近这些消息，往上翻时再按批放出来。
     @State private var messageLimit = 80
+    /// 对话区量到的真实高度。切页回来的头一两帧它是 0，那时候不能 scrollTo。
+    @State private var transcriptHeight: CGFloat = 0
+    /// 欠着一次「落到底部」：等对话区量出高度再补。
+    @State private var needsBottomRestore = false
     /// 输入框的第一响应者状态由 `ChatComposerField` 回报。
     @State private var composerFocused = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -213,6 +217,16 @@ struct ChatPage: View {
             } action: { _, bottom in
                 if atBottom != bottom { withAnimation(Motion.quick) { atBottom = bottom } }
             }
+            // 对话区量出真实高度之后才补「落到底部」。切页回来时 ChatPage 刚
+            // 重建、过渡动画还在跑，ScrollView 报的是 0 高度；这时候 scrollTo
+            // 会按 0 视口算偏移，等高度补齐就落到内容之外——整块对话区空白。
+            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                geometry.containerSize.height
+            } action: { _, height in
+                transcriptHeight = height
+                guard height > 0, needsBottomRestore, !chat.messages.isEmpty else { return }
+                restoreBottom(proxy)
+            }
             .onChange(of: chat.messages.count) { _, count in
                 // 换会话 / 清空后内容高度骤变，等这一帧布局完成再定位，
                 // 否则会滚到尚不存在的旧位置。
@@ -230,26 +244,17 @@ struct ChatPage: View {
             }
             .onChange(of: state.currentThreadID) { _, _ in
                 messageLimit = 80
-                DispatchQueue.main.async {
-                    if chat.messages.isEmpty {
-                        atBottom = true
-                        proxy.scrollTo("top", anchor: .top)
-                    } else {
-                        scroll(proxy, animated: false, force: true)
-                    }
+                if chat.messages.isEmpty {
+                    atBottom = true
+                    proxy.scrollTo("top", anchor: .top)
+                } else {
+                    restoreBottom(proxy)
                 }
             }
             .onAppear {
-                // 切页回来时 ChatPage 会重建，LazyVStack 此刻还没量出高度。
-                // 必须等这一帧布局完成再滚到底；在 onAppear 里同步 scrollTo
-                // 会把滚动位置落到内容之外，整块对话区看起来就是空白。
-                if chat.messages.isEmpty {
-                    atBottom = true
-                } else {
-                    DispatchQueue.main.async {
-                        scroll(proxy, animated: false, force: true)
-                    }
-                }
+                // 切页回来时 ChatPage 会重建，此刻对话区还没有高度：先挂上
+                // 「等高度出来再落到底部」，由上面的几何回调补这一次滚动。
+                restoreBottom(proxy)
             }
             .overlay {
                 // 空会话只留一句问候，压在输入卡上方的视觉中心。
@@ -273,6 +278,33 @@ struct ChatPage: View {
                     .buttonStyle(.plainHit)
                     .padding(.bottom, 150)
                 }
+            }
+        }
+    }
+
+    /// 把对话区落到底部。
+    ///
+    /// 高度还是 0 时不能动手：`scrollTo` 会按 0 视口算偏移，等布局补齐后整块
+    /// 对话区落在内容之外——看起来就是空白。这种情况先记一笔，由几何回调在
+    /// 高度出来之后补上。超大回答（长代码块）首次布局只量到一部分高度，滚动
+    /// 位置会在布局补齐后落回内容中段，所以再补一次，让人真的停在最后一条上。
+    private func restoreBottom(_ proxy: ScrollViewProxy) {
+        guard !chat.messages.isEmpty else {
+            atBottom = true
+            needsBottomRestore = false
+            return
+        }
+        guard transcriptHeight > 0 else {
+            needsBottomRestore = true
+            return
+        }
+        needsBottomRestore = false
+        DispatchQueue.main.async {
+            scroll(proxy, animated: false, force: true)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                // 这 150ms 里读者自己往上翻了，就别把位置抢回来。
+                guard atBottom else { return }
+                scroll(proxy, animated: false, force: true)
             }
         }
     }

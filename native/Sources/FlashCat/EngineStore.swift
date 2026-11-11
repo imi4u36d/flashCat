@@ -39,11 +39,19 @@ final class EngineStore {
         load()
     }
 
-    /// Engine the app should open on: explicit env override (tests, scripts)
-    /// then the last engine the reader used, then splash.
+    /// Engine the app should open on: explicit env override (tests, scripts),
+    /// then the saved startup default, then the last engine that ran, then
+    /// splash.
+    ///
+    /// `default` is deliberately separate from `active`. Picking a default in
+    /// Settings must not move the engine that is serving right now; only an
+    /// explicit switch (or the next launch) reads this key.
     var preferredEngine: EngineID {
         if let raw = ProcessInfo.processInfo.environment["FLASHCAT_ENGINE"],
            let id = EngineID(rawValue: raw) {
+            return id
+        }
+        if let raw = configurations["default"]?.version, let id = EngineID(rawValue: raw) {
             return id
         }
         if let raw = configurations["active"]?.version, let id = EngineID(rawValue: raw) {
@@ -52,11 +60,31 @@ final class EngineStore {
         return .splash
     }
 
+    /// The engine flashCat will open with next time, or nil before one has been
+    /// chosen. This has no effect on the engine currently running.
+    var defaultEngineID: EngineID? {
+        configurations["default"]?.version.flatMap(EngineID.init(rawValue:))
+    }
+
+    /// Record a startup preference only. `active` is left alone so the engine
+    /// currently holding the weights keeps running.
+    func setDefaultEngine(_ id: EngineID) {
+        var value = configurations["default"] ?? EngineConfiguration()
+        value.version = id.rawValue
+        configurations["default"] = value
+        save()
+    }
+
     func rememberActive(_ id: EngineID) {
         update(id) { _ in }
         var value = configurations["active"] ?? EngineConfiguration()
         value.version = id.rawValue
         configurations["active"] = value
+        // An explicit switch is also the reader's latest answer to "which one
+        // should the next launch use", so it moves the default with it.
+        var fallback = configurations["default"] ?? EngineConfiguration()
+        fallback.version = id.rawValue
+        configurations["default"] = fallback
         save()
     }
 

@@ -4940,6 +4940,26 @@
           }
         }
       }
+    },
+    "已把 %@ 设为 %@ 的默认模型，下次启动生效；当前运行的 %@ 不受影响": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Set %@ as the default model for %@; it takes effect on next launch and %@ keeps running."
+          }
+        }
+      }
+    },
+    "%@ · %@（下次启动）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · %@ (next launch)"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

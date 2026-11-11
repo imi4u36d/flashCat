@@ -143,7 +143,10 @@ public struct LocalState {
             configuration.active = version
         }
         for (key, raw) in object {
-            guard key != "active", let value = raw as? [String: Any] else { continue }
+            // `active` and `default` are bookkeeping rows, not engines: the
+            // former is the engine that ran last, the latter the startup
+            // preference. Neither carries per-engine model/port fields.
+            guard key != "active", key != "default", let value = raw as? [String: Any] else { continue }
             if let model = value["lastModel"] as? String, !model.isEmpty {
                 configuration.lastModel[key] = model
             }

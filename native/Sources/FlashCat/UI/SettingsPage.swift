@@ -424,6 +424,16 @@ struct SettingsPage: View {
         }
     }
 
+    /// The row names the startup default, which can belong to an engine that is
+    /// not the one serving right now. Say so instead of showing a model id that
+    /// looks like the live selection.
+    private var defaultModelDetail: String {
+        guard let selection = state.defaultSelection else { return "未选择" }
+        let name = state.shortModelName(selection.model)
+        guard selection.engine != state.activeEngine else { return name }
+        return L10n.format("%@ · %@（下次启动）", name, selection.engine.displayName)
+    }
+
     private func thinkingCard(wide: Bool) -> some View {
         SettingsCard {
             SettingsRow(title: "思考模式", detail: "回答前是否输出推理过程") {
@@ -437,18 +447,21 @@ struct SettingsPage: View {
                     .fixedSizeWhen(wide)
             }
             Divider().overlay(Console.insetStroke)
-            SettingsRow(title: "默认模型", detail: state.selectedModel.isEmpty ? "未选择" : state.selectedModel) {
+            SettingsRow(title: "默认模型", detail: defaultModelDetail) {
                 Menu {
                     ForEach(EngineCatalog.allIDs.filter { state.engineIsInstalled($0) }, id: \.self) { id in
                         let models = state.engineModels(for: id)
                             .filter { !$0.hidden && !$0.helper && !ModelLibraryEntry.isDraftModel($0.id) }
+                        let selection = state.defaultSelection
                         if !models.isEmpty {
                             Section(id.displayName) {
                                 ForEach(models) { model in
                                     Button {
-                                        state.applyModelFromAnyEngine(model.id, engine: id)
+                                        // 只记下默认选择，不在这里切换引擎：正在跑的
+                                        // 引擎可能属于另一台，切过去会停掉它的服务。
+                                        state.setDefaultModel(model.id, engine: id)
                                     } label: {
-                                        if model.id == state.selectedModel, id == state.activeEngine {
+                                        if selection?.engine == id, selection?.model == model.id {
                                             Label(state.shortModelName(model.id), systemImage: "checkmark")
                                         } else {
                                             Text(state.shortModelName(model.id))

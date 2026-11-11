@@ -84,7 +84,7 @@ final class EngineManager {
     init(settings: AppSettings, catalog: ModelCatalog) {
         self.settings = settings
         self.catalog = catalog
-        rebuild()
+        rebuild(preferring: EngineStore.shared.preferredEngine)
     }
 
     var active: EngineController? {
@@ -101,7 +101,12 @@ final class EngineManager {
     /// Rebuild the controller list. Every engine is now an installed pack —
     /// splash included — so an engine without a pack simply has no controller
     /// and the launch page offers to download one.
-    func rebuild() {
+    ///
+    /// `preference` may move `activeID` only on launch and first adoption. A
+    /// background rebuild (an install or uninstall landing) must leave the
+    /// engine that is currently running exactly where it is; otherwise writing
+    /// a startup default in Settings would silently move the active engine.
+    func rebuild(preferring preference: EngineID? = nil) {
         let previous = controllers
         var next: [EngineController] = []
         for id in EngineCatalog.allIDs {
@@ -122,9 +127,8 @@ final class EngineManager {
         controllers = next.map { fresh in
             previous.first { $0.id == fresh.id && $0.installation.root == fresh.installation.root } ?? fresh
         }
-        let preferred = EngineStore.shared.preferredEngine
-        if controllers.contains(where: { $0.id == preferred }), preferred != activeID {
-            activeID = preferred
+        if let preference, controllers.contains(where: { $0.id == preference }) {
+            activeID = preference
         }
         if !controllers.contains(where: { $0.id == activeID }) {
             activeID = controllers.first?.id ?? .splash

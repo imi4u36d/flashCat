@@ -105,6 +105,10 @@ final class AppState: ObservableObject {
     @Published var logs: [LogLine] = []
     @Published var catalog = ModelCatalog()
     @Published var selectedModel: String = ""
+    /// Bumped when the startup engine/model preference changes. The value lives
+    /// in `EngineStore` (and is written with the *current* engine untouched),
+    /// so the settings row needs this tick to re-render.
+    @Published private(set) var defaultRevision = 0
     /// Non-nil while newly selected weights are loading. The switchers show an
     /// inline spinner and the overview swaps live metrics for skeletons.
     @Published private(set) var switchingModel: String?
@@ -424,6 +428,24 @@ final class AppState: ObservableObject {
     var controller: EngineController? { engines?.active }
     var activeEngine: EngineID { engines?.activeID ?? .splash }
     var availableEngines: [EngineID] { engines?.installedIDs ?? [] }
+
+    /// Engine + model the app should open with next time. This is a preference,
+    /// not the engine that is running: the settings page writes it without
+    /// performing a handoff, so the live engine keeps serving its own model.
+    var defaultSelection: (engine: EngineID, model: String)? {
+        _ = defaultRevision
+        guard !needsEngineSetup else { return nil }
+        let preferred = EngineStore.shared.defaultEngineID ?? activeEngine
+        let engine = engineIsInstalled(preferred) ? preferred : activeEngine
+        guard engineIsInstalled(engine) else { return nil }
+        let saved = EngineStore.shared.configuration(for: engine).lastModel ?? ""
+        // 当前引擎的真相是 `selectedModel`：少数路径（splash 的即时选择）只写
+        // 这里、不写 `engines.json` 的 `lastModel`，回落时不能把行里的模型读丢。
+        let remembered = engine == activeEngine && !selectedModel.isEmpty ? selectedModel : saved
+        let models = engineModels(for: engine).map(\.id)
+        guard let model = EngineModelSelection.resolve(saved: remembered, available: models) else { return nil }
+        return (engine, model)
+    }
 
     init() {
         theme = ThemeController(settings: settings)
@@ -1254,7 +1276,7 @@ final class AppState: ObservableObject {
     func adoptEngine(_ id: EngineID) {
         EngineStore.shared.update(id) { $0.enabled = true }
         EngineStore.shared.rememberActive(id)
-        engines?.rebuild()
+        engines?.rebuild(preferring: id)
         EngineModelStore.adoptExistingWeights(id)
         reloadModels()
         adoptSavedModel(for: id)
@@ -1917,6 +1939,35 @@ final class AppState: ObservableObject {
             return
         }
         hopEngine(engine, model: id)
+    }
+
+    /// Choose the model the settings page should remember for the next launch.
+    ///
+    /// The menu spans every installed engine, but this is a preference, not a
+    /// model switch: picking a model that belongs to another engine used to hop
+    /// engines immediately and stop the live one. Now the pick is remembered on
+    /// that engine's configuration and the running process is left alone; the
+    /// default engine only moves in `EngineStore`, never in `EngineManager`.
+    func setDefaultModel(_ id: String, engine: EngineID) {
+        guard engineIsInstalled(engine) else {
+            requestEngineInstall(engine)
+            return
+        }
+        guard engineModels(for: engine).contains(where: { $0.id == id }) else {
+            toast(L10n.format("%@ 没有模型 %@", engine.displayName, shortModelName(id)))
+            return
+        }
+        EngineStore.shared.setDefaultEngine(engine)
+        engines?.setModel(id, for: engine)
+        defaultRevision += 1
+        guard engine != activeEngine else {
+            // This engine is already the one that runs; keeping the old
+            // immediate-apply behaviour is what "默认模型" meant for it.
+            applyModelFromAnyEngine(id, engine: engine)
+            return
+        }
+        toast(L10n.format("已把 %@ 设为 %@ 的默认模型，下次启动生效；当前运行的 %@ 不受影响",
+                          shortModelName(id), engine.displayName, activeEngine.displayName))
     }
 
     /// Make `engine` the running one and load `model` on it in one motion.

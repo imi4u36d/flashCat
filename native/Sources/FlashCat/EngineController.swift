@@ -581,11 +581,22 @@ final class EngineController {
     /// 模型列进 loaded_models。
     func waitForSwitchReady(_ target: String, timeout: TimeInterval) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
+        // `startService()` 把启动丢进一个 Task，控制器要到下一次 actor 跳转才
+        // 进 `.starting`；调用方紧接着来等就绪，第一眼看到的还是 `.stopped`。
+        // 旧实现把这一眼当成「启动失败」，于是 `flashcat engines start` 在引擎
+        // 正常加载时报「未能就绪：等待超时」——命令失败、引擎其实起来了。
+        let began = Date()
+        let startGrace: TimeInterval = 5
+        var sawStarting = false
         while Date() < deadline {
             if Task.isCancelled { return false }
             switch state {
-            case .failed, .stopped: return false
-            case .starting, .stopping: break
+            case .failed: return false
+            case .stopped:
+                // 宽限期内允许「还没开始」；见过 `.starting` 之后再停就是真的停了。
+                if sawStarting || Date().timeIntervalSince(began) > startGrace { return false }
+            case .starting, .stopping:
+                sawStarting = true
             case .ready:
                 if descriptor.switchMode != .hot { return true }
                 if status?.model == target { return true }

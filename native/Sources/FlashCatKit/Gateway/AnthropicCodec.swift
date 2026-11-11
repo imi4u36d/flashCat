@@ -93,6 +93,17 @@ public enum AnthropicCodec {
         }
 
         let stream = (payload["stream"] as? Bool) ?? false
+        // 上游必须**知道**这是流式请求：网关按 SSE 逐行转发、逐片打点，
+        // 而引擎默认按非流式处理。以前这里只把 `stream` 交回调用方、没有写进
+        // 上游请求体，引擎于是回一整块 JSON；转发层按 `data:` 行解析，一行都
+        // 认不出来——Claude 的流式客户端只会收到 message_start / message_stop，
+        // 正文全空，概览里这一路连 token 都没有。
+        openai["stream"] = stream
+        if stream {
+            // 末片的 usage 带上 prompt/completion 与缓存命中量；网关要靠它
+            // 校正计数，Anthropic 侧也要在 message_delta 里报 output_tokens。
+            openai["stream_options"] = ["include_usage": true]
+        }
         return (openai, stream)
     }
 

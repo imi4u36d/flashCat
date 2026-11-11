@@ -48,6 +48,38 @@ final class GatewayTests: XCTestCase {
         XCTAssertEqual(messages[1]["content"] as? String, "你好")
     }
 
+    /// 上游请求体必须自己带上 `stream`：引擎默认按非流式回一整块 JSON，
+    /// 而网关是按 SSE 逐行转发、逐片打点的。少了这个字段，Claude 的流式
+    /// 客户端只会收到 message_start / ping / message_stop，正文全空，
+    /// 概览里这一路连一个 token 都没有。
+    func testStreamingRequestAsksUpstreamForAStream() throws {
+        let payload: [String: Any] = [
+            "model": "Qwen3.8-27B",
+            "max_tokens": 64,
+            "stream": true,
+            "messages": [["role": "user", "content": "你好"]],
+        ]
+        let result = try AnthropicCodec.translateRequest(payload)
+        XCTAssertTrue(result.stream)
+        XCTAssertEqual(result.openai["stream"] as? Bool, true)
+        // usage 走末片：否则 completion_tokens 与缓存命中量都拿不到。
+        let options = result.openai["stream_options"] as? [String: Any]
+        XCTAssertEqual(options?["include_usage"] as? Bool, true)
+    }
+
+    /// 非流式请求不能平白多出 `stream_options`：引擎会因此多发一片 usage，
+    /// 而这条路上根本没有人逐片读。
+    func testNonStreamingRequestStaysBuffered() throws {
+        let result = try AnthropicCodec.translateRequest([
+            "model": "m",
+            "max_tokens": 8,
+            "messages": [["role": "user", "content": "hi"]],
+        ])
+        XCTAssertFalse(result.stream)
+        XCTAssertEqual(result.openai["stream"] as? Bool, false)
+        XCTAssertNil(result.openai["stream_options"])
+    }
+
     func testRequestRequiresModelAndMaxTokens() {
         XCTAssertThrowsError(try AnthropicCodec.translateRequest([
             "messages": [["role": "user", "content": "hi"]],

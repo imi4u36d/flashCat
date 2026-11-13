@@ -38,7 +38,12 @@ jobs:
           swift build -Xswiftc -strict-concurrency=complete 2>&1 \
             | sed -E 's/\x1b\[[0-9;]*m//g' | tee /tmp/concurrency.log
           baseline="$(cat .strict-concurrency-baseline)"
-          count="$(grep -oE '\.swift:[0-9]+:[0-9]+: warning:' /tmp/concurrency.log | sort -u | wc -l | tr -d ' ')"
+          # 基线已经收到 0，所以「一条都没匹配到」是正常且期望的结果。但 grep
+          # 无匹配时退出码是 1，pipefail 会把整条命令替换判成失败，bash -e 直接
+          # 退出——连下面那行读数都打不出来。`|| true` 只兜这个分支，读数照常
+          # 比较；真出现新告警时 grep 返回 0，count 仍然正确。
+          count="$(grep -oE '\.swift:[0-9]+:[0-9]+: warning:' /tmp/concurrency.log \
+            | sort -u | wc -l | tr -d ' ' || true)"
           echo "strict-concurrency warnings: $count (baseline $baseline)"
           if [ "$count" -gt "$baseline" ]; then
             echo "::error::strict-concurrency warnings rose to $count (baseline $baseline)"

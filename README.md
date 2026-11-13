@@ -7,6 +7,8 @@
 
 **优雅 · 流畅 · 高能**
 
+**简体中文** | [English](README.en.md)
+
 [![flashCat 介绍视频（无旁白版）](https://github.com/imi4u36d/flashCat/releases/download/v1.5.1/flashCat-1.5.1-poster.png)](https://github.com/imi4u36d/flashCat/releases/download/v1.5.1/flashCat-1.5.1-intro.mp4)
 
 <sub>▶ 50 秒介绍片 · 无旁白，建议开声音听垫乐 · 画面来自真实运行的 flashCat</sub>
@@ -169,7 +171,7 @@ curl http://127.0.0.1:9000/v1/messages \
 - 模型名填 `/v1/models` 里返回的名字；网关会按它确保对应模型已加载，概览页也能看到当前加载的是哪个
 - Claude 格式会完整翻译给引擎：system 提示、图片、工具调用、stop 序列、
   思考块、以及 `end_turn` / `max_tokens` / `tool_use` 等停止原因都支持
-- 也可以直连引擎自己（8000 / 8100 / 8200），但地址会随引擎切换变化，
+- 也可以直连引擎自己的端口，但地址会随引擎切换变化，
   所以一般还是接网关
 
 ## 命令行 `flashcat`

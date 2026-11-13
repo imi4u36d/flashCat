@@ -160,6 +160,12 @@ method: 干净构建 + 全量测试 + 严格并发零点化 + 真机安装启动
   `tar -tvzf` 再列一遍，首列是 `l`/`h` 的条目直接拒绝；`manifest.version` 与
   release version 不一致即失败（目录名与清单各说各话时，卸载会删错目录）。
   远程 pack 索引只接受 https（回环地址除外），否则中间人换掉索引就等于换掉权重。
+- **追记（1.5.6）**：「首列是 `l`/`h` 的条目直接拒绝」后来被证明过宽——Python 发行包
+  （splash、mtplx、omlx、strata 都是）自带同目录相对软链，一律拒绝等于这些引擎全装不上，
+  Splash 1.6.1 就卡在 `python/share/man/man1/python3.1 -> python3.13.1`。现在改为按**目标**
+  判定：相对路径、按 `--strip-components` 解析后仍在 pack 根内即放行；绝对路径、`~`、
+  爬出根的 `..` 仍整包拒绝（错误文案「归档中包含指向包外的链接」）。见
+  `native/Sources/FlashCatKit/SPEC.md` 的「链接可以留，但不能出包」。
 
 ### 12. GitHub tag 可以变成 shell 命令
 

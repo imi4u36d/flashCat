@@ -9,13 +9,13 @@ tags: [macos, swift, packaging]
 
 # flashCat 架构
 
-一个 SwiftPM 工作区 + 一组构建脚本。应用本体只有两层：可测试的无界面引擎核心（`FlashCatKit`）和包着它的 macOS 壳（`FlashCat`）。表现层是壳里的六个 SwiftUI 页面，没有网页层。
+一个 SwiftPM 工作区 + 一组构建脚本。应用本体只有两层：可测试的无界面引擎核心（`FlashCatKit`）和包着它的 macOS 壳（`FlashCat`）。表现层是壳里的七个 SwiftUI 页面，没有网页层。
 
 ## 拓扑
 
 ```mermaid
 graph TD
-  App["FlashCat（可执行壳）<br/>SwiftUI/AppKit + 状态 + 六个页面"]
+  App["FlashCat（可执行壳）<br/>SwiftUI/AppKit + 状态 + 七个页面"]
   Kit["FlashCatKit（库）<br/>引擎核心，无 UI"]
   Control["ControlServer<br/>本机控制接口"]
   CLI["flashcat（命令行）<br/>FlashCatCLICore"]
@@ -37,8 +37,8 @@ graph TD
 
 | 模块 | 职责 | spec |
 | --- | --- | --- |
-| `FlashCat` | macOS 壳：全部可变状态、进程启停、模型库、对话、菜单栏、六个原生页面 | [flashcat-app](native/Sources/FlashCat/SPEC.md) |
-| `UI` | 六个 SwiftUI 页面与控制台壳 | [flashcat-ui](native/Sources/FlashCat/UI-SPEC.md) |
+| `FlashCat` | macOS 壳：全部可变状态、进程启停、模型库、对话、菜单栏、七个原生页面 | [flashcat-app](native/Sources/FlashCat/SPEC.md) |
+| `UI` | 七个 SwiftUI 页面与控制台壳 | [flashcat-ui](native/Sources/FlashCat/UI-SPEC.md) |
 | `FlashCatKit` | 引擎身份/端口/能力、清单解码、状态解析、路由、包安装、启动阶段判定 | [flashcat-kit](native/Sources/FlashCatKit/SPEC.md) |
 | `FlashCatKit/Gateway` | 只监听本机的双方言 HTTP 网关 | [flashcat-gateway](native/Sources/FlashCatKit/Gateway/SPEC.md) |
 | `FlashCatCLICore` / `FlashCatCLI` | `flashcat` 命令：解析、输出、控制客户端、离线读取与引擎安装 | [flashcat-cli](native/Sources/FlashCatCLICore/SPEC.md) |
@@ -52,7 +52,7 @@ graph TD
 
 代码已经在执行的规则，不是愿望。
 
-1. **`FlashCatKit` 不许引 UI。** 它只 `import` `Foundation` / `Network` / `CryptoKit`。这决定它能在无窗口的测试进程里跑——`FlashCatKitTests` 有 20 个测试文件、242 个测试函数，`FlashCatTests` 覆盖壳层纯函数与「不得再出现快捷键」的源码守卫，`FlashCatCLICoreTests` 覆盖命令行解析、SSE 解码与控制协议。
+1. **`FlashCatKit` 不许引 UI。** 它只 `import` `Foundation` / `Network` / `CryptoKit`。这决定它能在无窗口的测试进程里跑——`FlashCatKitTests` 有 20 个测试文件、252 个测试函数，`FlashCatTests` 覆盖壳层纯函数与「不得再出现快捷键」的源码守卫，`FlashCatCLICoreTests` 覆盖命令行解析、SSE 解码与控制协议。
 2. **依赖单向。** `FlashCat` 与 `FlashCatCLICore` → `FlashCatKit`；CLI 不 import 应用目标，Kit 里出现任何应用侧符号都是破坏。
 3. **端口段不重叠。** 默认端口由引擎 descriptor/manifest 声明：`splash 8000` / `omlx 8100` / `mtplx 8200` / `mlx-serve 8300` / `strata 8400`，可用范围默认是 `defaultPort...defaultPort+19`；分配器在段内跳过被占端口，段外放弃。
 4. **切换方式是能力，不是选项。** `omlx` 与 `mlx-serve` 是 `hot`，其余当前为 `restart`。应用只按 descriptor 声明的能力执行，不按引擎 id 猜测。
@@ -87,5 +87,5 @@ graph TD
 
 ## 已知限制
 
-- **应用层的测试仍然偏薄。** 242 个用例在 `FlashCatKit`，`FlashCatTests` 只覆盖从壳层沉淀出来的纯函数（`LogStore` 的尾部切片、快照的数值清洗、进程树的存活探测）。`AppState` 本身（状态机、引擎启停、页面的动作分发）没有单元测试，拆分它的原因之一就是让它可测，见 `CONTRIBUTING.md`。
-- **界面没有自动化测试。** 六个页面与弹窗仍只能手工回归；`FlashCatTests` 覆盖的是壳层沉淀出来的纯函数，以及一条扫描源码、防止快捷键被加回来的守卫。真要自动化，需要补一个能在无头环境里驱动 SwiftUI 的宿主，这不在当前范围内。
+- **应用层的测试仍然偏薄。** 475 个用例里 252 个在 `FlashCatKit`，`FlashCatTests` 的 189 个只覆盖从壳层沉淀出来的纯函数（`LogStore` 的尾部切片、快照的数值清洗、进程树的存活探测、画廊编码与分页网格换算）。`AppState` 本身（状态机、引擎启停、页面的动作分发）没有单元测试，拆分它的原因之一就是让它可测，见 `CONTRIBUTING.md`。
+- **界面没有自动化测试。** 七个页面与弹窗仍只能手工回归；`FlashCatTests` 覆盖的是壳层沉淀出来的纯函数，以及一条扫描源码、防止快捷键被加回来的守卫。真要自动化，需要补一个能在无头环境里驱动 SwiftUI 的宿主，这不在当前范围内。

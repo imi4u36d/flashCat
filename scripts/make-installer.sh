@@ -75,7 +75,7 @@ DMG_LOG_FILE="${TMPDIR:-/tmp}/flashcat-dmg.log"
 # 真正的原因捞出来打给人看，并把「dmg 必须存在」交给 FLASHCAT_REQUIRE_DMG
 # 决定：发布机器上设成 1，产物缺了就退出非零。
 dmg_cause() {
-    grep -iE "operation not permitted|not permitted|no space left|denied" "$DMG_LOG_FILE" | tail -1
+    grep -iE "operation not permitted|not permitted|no space left|denied|OSStatus error|create failed" "$DMG_LOG_FILE" | tail -1
 }
 create_dmg() {
     # macOS 27 起 `hdiutil create` 已标记弃用，官方替代是 diskutil；旧系统没有
@@ -102,12 +102,14 @@ if create_dmg; then
     echo "     $DMG ($(du -sh "$DMG" | cut -f1))"
     rm -f "$DMG_LOG_FILE"
 else
-    cause="$(dmg_cause)"
+    # grep 没匹配到原因时返回 1；`set -e` 下直接赋值会让脚本静默退出，
+    # 连下面「只警告」的分支都走不到。这里显式兜底。
+    cause="$(dmg_cause || true)"
     rm -f "$DMG" "$DMG_LOG_FILE" 2>/dev/null || true
     if [ "${FLASHCAT_REQUIRE_DMG:-0}" = "1" ]; then
-        echo "error: .dmg 未生成${cause:+（$cause）}。发布要求 .pkg 与 .dmg 同时在 dist/。" >&2
+        echo "error: .dmg 未生成${cause:+（${cause}）}。发布要求 .pkg 与 .dmg 同时在 dist/。" >&2
         exit 1
     fi
-    echo "warning: .dmg 未生成${cause:+（$cause）}，.pkg 不受影响。" >&2
+    echo "warning: .dmg 未生成${cause:+（${cause}）}，.pkg 不受影响。" >&2
     echo "         受限沙箱里造镜像要写原始磁盘；发布时设 FLASHCAT_REQUIRE_DMG=1 并在有权限的会话重跑。" >&2
 fi

@@ -31,7 +31,7 @@ struct EnginesPage: View {
         VStack(alignment: .leading, spacing: 0) {
             header
                 .padding(.horizontal, Console.contentPadding)
-                .padding(.top, 78)
+                .padding(.top, Console.contentTopInset)
                 .padding(.bottom, 22)
 
             ScrollView {
@@ -41,10 +41,11 @@ struct EnginesPage: View {
                     }
                 }
                 .padding(.horizontal, Console.contentPadding)
-                .padding(.bottom, 26)
             }
             .scrollIndicators(.never)
         }
+        // 和侧栏玻璃同一条下边界，滚动视口不会一直贴到窗口底沿。
+        .padding(.bottom, Console.contentBottomInset)
         .task {
             installs.refreshInstalled()
             await installs.loadIndexIfNeeded()
@@ -138,12 +139,24 @@ struct EnginesPage: View {
                                 .font(.system(size: 16.5, weight: .semibold))
                                 .foregroundStyle(Console.text)
                                 .lineLimit(1)
-                            statusChip(installed: installed, active: isActive, busy: busy)
+                            // 更新时进度收进状态胶囊，卡片底部不再多出一行；
+                            // 首次安装仍走页脚，那张卡本来就有这一行。
+                            if busy, installed {
+                                updateChip(id: id, tint: accent)
+                            } else {
+                                statusChip(installed: installed, active: isActive, busy: busy)
+                            }
                             Spacer(minLength: 0)
                         }
                     }
 
                     HStack(spacing: 6) {
+                        // 新版本提示跟在动作按钮左边：此时刷新图标就是更新动作，
+                        // 提示不再占页脚一行，卡片底部因此可以收干净。
+                        if installed, !busy, let newer {
+                            updateHint(newer)
+                                .padding(.trailing, 4)
+                        }
                         if installed {
                             EngineIconButton(systemImage: "arrow.clockwise",
                                              help: updateHelp(id),
@@ -173,73 +186,66 @@ struct EnginesPage: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                     VStack(alignment: .leading, spacing: 7) {
-                        metaRow("版本", versions.last ?? "未安装")
+                        // `installed` 从新到旧排；卡片读的是实际会运行的那一份，
+                        // 所以取 `.first`。取 `.last` 会显示成最旧的 1.6.0。
+                        metaRow("版本", versions.first ?? "未安装")
                     }
                     .frame(width: 148, alignment: .leading)
                     .padding(.vertical, 2)
                 }
 
-                // 页脚只在真有话说的时候出现：安装进度、可更新、还没装。
-                // 「已安装」三个字已写在页头（5 / 5 已安装），再占一行只是空白。
-                // 一行两张卡：页脚有内容的那张会长高，旁边那张底下就空出一个洞。
-                // 所以页脚占位恒定，空闲时只是空白（不画分割线），高度对齐。
-                Group {
-                  if showsFooter(busy: busy, newer: newer, installed: installed) {
+                // 更新不另起页脚：进度已经收进标题旁的状态胶囊，卡片不会因为
+                // 开始更新而长高。页脚只留给还没装过的引擎——它在空闲时本来
+                // 就有这一行，开始安装时高度不变，一行两张卡也就不会错位。
+                if !installed {
                     VStack(alignment: .leading, spacing: 10) {
-                    Rectangle()
-                        .fill(Console.insetStroke)
-                        .frame(height: 1)
+                        Rectangle()
+                            .fill(Console.insetStroke)
+                            .frame(height: 1)
 
-                    HStack(spacing: 10) {
-                        if busy {
-                        ProgressRing(fraction: installs.progress[id] ?? 0,
-                                     tint: accent, size: 20, lineWidth: 3)
-                        Text(L10n.t(installs.progressStep[id] ?? phase.label))
-                            .font(.system(size: 11))
-                            .foregroundStyle(Console.secondary)
-                            .lineLimit(1)
-                    } else if let newer {
-                        Image(systemName: "arrow.down.circle.fill")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(accent)
-                        Text(L10n.format("可更新至 %@", newer.version))
-                            .font(.system(size: 11))
-                            .foregroundStyle(Console.secondary)
-                            .lineLimit(1)
-                        } else if !installed {
-                            Text(L10n.t("首次安装会从 GitHub 构建"))
-                                .font(.system(size: 11))
-                                .foregroundStyle(Console.tertiary)
-                                .lineLimit(1)
-                        }
-
-                        Spacer(minLength: 0)
-
-                        if !busy && newer != nil {
-                            Button("更新") { performUpdateAction(id) }
-                                .buttonStyle(.consolePrimary)
-                                .disabled(checking.contains(id))
-                        }
-
-                        if !busy && !installed {
-                            Button {
-                                install(id)
-                            } label: {
-                                Label("下载", systemImage: "arrow.down.circle.fill")
+                        HStack(spacing: 10) {
+                            if busy {
+                                ProgressRing(fraction: installs.progress[id] ?? 0,
+                                             tint: accent, size: 20, lineWidth: 3)
+                                Text(L10n.t(installs.progressStep[id] ?? phase.label))
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Console.secondary)
+                                    .lineLimit(1)
+                            } else {
+                                Text(L10n.t("首次安装会从 GitHub 构建"))
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Console.tertiary)
+                                    .lineLimit(1)
                             }
-                            .buttonStyle(.consolePrimary)
+
+                            Spacer(minLength: 0)
+
+                            if !busy {
+                                Button {
+                                    install(id)
+                                } label: {
+                                    Label("下载", systemImage: "arrow.down.circle.fill")
+                                }
+                                .buttonStyle(.consolePrimary)
+                            }
                         }
                     }
-                    }
-                  }
                 }
-                .frame(height: 40, alignment: .bottom)
             }
         }
     }
 
-    private func showsFooter(busy: Bool, newer: EngineUpstreamRelease?, installed: Bool) -> Bool {
-        busy || newer != nil || !installed
+    /// 新版本提示：紧贴在检查更新按钮左侧，刷新图标此时就是更新动作。
+    /// 只留一行字——图标按钮已经是同色的强调动作，再加一枚箭头只会抢视线。
+    private func updateHint(_ release: EngineUpstreamRelease) -> some View {
+        Text(L10n.format("可更新至 %@", release.version))
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(Console.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
+            // 与 30pt 的图标按钮同高、对齐按钮中心，读起来像按钮的注解。
+            .frame(height: 30)
+            .help(L10n.format("更新到 %@", release.version))
     }
 
     private func metaRow(_ label: String, _ value: String) -> some View {
@@ -277,6 +283,25 @@ struct EnginesPage: View {
             return StatusChip(text: "异常", color: Console.warn, filled: true)
         }
         return StatusChip(text: "已停止", color: Console.tertiary)
+    }
+
+    /// 更新中的状态胶囊：进度环（百分比在环里）和当前步骤取代「安装中」，
+    /// 卡片底部不再长出一行进度。步骤文案过长时截断，完整内容留给悬停提示。
+    private func updateChip(id: EngineID, tint: Color) -> some View {
+        let step = L10n.t(installs.progressStep[id] ?? "安装中")
+        return HStack(spacing: 6) {
+            ProgressRing(fraction: installs.progress[id] ?? 0,
+                         tint: tint, size: 20, lineWidth: 3)
+            Text(step)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Console.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 2)
+        .background(Capsule().fill(Console.warn.opacity(0.10)))
+        .help(step)
     }
 
     private func updateHelp(_ id: EngineID) -> String {

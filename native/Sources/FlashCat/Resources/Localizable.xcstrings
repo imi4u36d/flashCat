@@ -591,6 +591,26 @@
         }
       }
     },
+    "图像模型常驻": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep the image model resident"
+          }
+        }
+      }
+    },
+    "画完图后图像模型留在显存里，下一轮生图不必重新加载；内存不够时引擎仍会自己换出": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep the image model in memory after drawing so the next round does not reload it; the engine still swaps it out when memory runs low."
+          }
+        }
+      }
+    },
     "QQ 群号": {
       "localizations": {
         "en": {
@@ -2187,6 +2207,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Download stopped. Resume or remove it from Downloads."
+          }
+        }
+      }
+    },
+    "已停止生成": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stopped generating"
           }
         }
       }

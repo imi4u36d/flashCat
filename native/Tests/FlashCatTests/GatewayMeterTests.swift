@@ -256,10 +256,62 @@ final class GatewayMeterTests: XCTestCase {
         let id = meter.begin(model: "m", dialect: "openai", promptTokens: 10, at: start)
         meter.ingest(id, chunk: ["choices": [["delta": ["role": "assistant"]]]])
         XCTAssertNil(meter.snapshot().first?.ttftMilliseconds)
+        XCTAssertNil(meter.recentTTFTMilliseconds())
 
         meter.addTokens(id, 2, at: start.addingTimeInterval(1.2))
         XCTAssertEqual(meter.snapshot().first?.ttftMilliseconds ?? 0, 1_200, accuracy: 1)
         XCTAssertEqual(meter.snapshot().first?.completionTokens, 2)
+    }
+
+    // MARK: 网关侧的首字
+
+    /// 「最近一次首字」按 firstTokenAt 排，而不是按会话开始的先后：并发时
+    /// 先发起的请求可能后拿到首字，它才是更新的那次观测。
+    func testRecentTTFTPicksTheLatestFirstToken() {
+        let meter = GatewayMeter()
+        let start = Date()
+        let slow = meter.begin(model: "m", dialect: "test", promptTokens: 10, at: start)
+        let quick = meter.begin(model: "m", dialect: "test", promptTokens: 10,
+                                at: start.addingTimeInterval(0.1))
+        // quick 先拿到首字（100ms），slow 后拿到（400ms）：最新的是 slow。
+        meter.addTokens(quick, 2, at: start.addingTimeInterval(0.2))
+        XCTAssertEqual(meter.recentTTFTMilliseconds() ?? 0, 100, accuracy: 1)
+        meter.addTokens(slow, 2, at: start.addingTimeInterval(0.4))
+        XCTAssertEqual(meter.recentTTFTMilliseconds() ?? 0, 400, accuracy: 1)
+    }
+
+    /// 非流式响应没有首字时刻：正文一口气回来，网关手里只有一个到达点，
+    /// 不能把它当成首字耗时。这种请求不参与读数。
+    func testRecentTTFTIgnoresNonStreamingResponses() throws {
+        let meter = GatewayMeter()
+        let start = Date()
+        let id = meter.begin(model: "m", dialect: "test", promptTokens: 1_000, at: start)
+        let body = try JSONSerialization.data(withJSONObject: [
+            "choices": [["message": ["content": "hi"]]],
+            "usage": ["prompt_tokens": 1_000, "completion_tokens": 2],
+        ])
+        meter.ingestResponse(id, body: body)
+        XCTAssertNil(meter.recentTTFTMilliseconds())
+    }
+
+    /// 换引擎 / 换模型 / 引擎重启会翻代：上一台模型的首字不能留在这格，
+    /// 新一代重新等样本。会话表本身仍保留给「最近请求」。
+    func testRecentTTFTBelongsToTheCurrentEpoch() {
+        let meter = GatewayMeter()
+        let start = Date()
+        let old = meter.begin(model: "previous", dialect: "test", promptTokens: 10, at: start)
+        meter.addTokens(old, 2, at: start.addingTimeInterval(0.8))
+        meter.finish(old, at: start.addingTimeInterval(1))
+        XCTAssertEqual(meter.recentTTFTMilliseconds() ?? 0, 800, accuracy: 1)
+
+        meter.resetLifetime()
+        XCTAssertNil(meter.recentTTFTMilliseconds())
+        XCTAssertEqual(meter.snapshot().count, 1)
+
+        let fresh = meter.begin(model: "current", dialect: "test", promptTokens: 10,
+                                at: start.addingTimeInterval(10))
+        meter.addTokens(fresh, 2, at: start.addingTimeInterval(10.3))
+        XCTAssertEqual(meter.recentTTFTMilliseconds() ?? 0, 300, accuracy: 1)
     }
 
     // MARK: 网关侧的预填充

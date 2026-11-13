@@ -86,6 +86,7 @@ public enum EngineInstallError: Error, LocalizedError, Equatable {
     case unsupportedArchive(String)
     case checksumMismatch(expected: String, actual: String)
     case unsafeArchiveEntry(String)
+    case unsafeArchiveLink(String)
     case missingEntrypoint(String)
     case invalidManifest(String)
     case downloadFailed(String)
@@ -103,6 +104,8 @@ public enum EngineInstallError: Error, LocalizedError, Equatable {
             return "SHA256 校验失败：期望 \(expected)，实际 \(actual)"
         case .unsafeArchiveEntry(let entry):
             return "归档中包含不安全的路径：\(entry)"
+        case .unsafeArchiveLink(let link):
+            return "归档中包含指向包外的链接：\(link)"
         case .missingEntrypoint(let path):
             return "安装包缺少可执行入口：\(path)"
         case .invalidManifest(let reason):
@@ -222,6 +225,27 @@ public struct EngineInstallEnvironment: Sendable {
         guard let raw, !raw.isEmpty else { return nil }
         return URL(string: raw)
     }
+}
+
+// MARK: - Archive links
+
+/// A `tar -tvzf` entry whose type is a link.
+///
+/// pack 可以带链接——Python 发行包本来就有一批同目录的软链——但目标不能出包：
+/// `pack/link -> ~/.ssh/id_rsa` 能把包外文件拉进来，`validate` 再给它 `chmod 755`
+/// 并启动，就成了在包外执行东西。
+struct ArchiveLink: Equatable, Sendable {
+    enum Kind: Equatable, Sendable {
+        /// `l` 开头：目标相对链接自己所在的目录。
+        case symbolic
+        /// `h` 开头：目标相对归档根。
+        case hard
+    }
+
+    var kind: Kind
+    /// 归档里的条目名（解包前的位置）。
+    var path: String
+    var target: String
 }
 
 // MARK: - Installer
@@ -381,14 +405,16 @@ public actor EngineInstaller {
             progress(.unpacking)
             let entries = try listArchive(archive)
             try Self.validate(entries: entries)
-            try Self.validateTypes(try listArchiveTypes(archive))
             let strip = Self.stripComponents(for: entries)
+            let links = try Self.links(inListing: try listArchiveDetails(archive), names: entries)
+            try Self.validate(links: links, stripComponents: strip)
             let unpacked = staging.appendingPathComponent("\(id.rawValue)-\(release.version)-\(UUID().uuidString)")
             try fm.createDirectory(at: unpacked, withIntermediateDirectories: true)
             stagingDirectory = unpacked
             try extract(archive, into: unpacked, stripComponents: strip)
 
             progress(.validating)
+            try Self.validateExtractedLinks(in: unpacked)
             let installation = try validate(unpacked, expecting: id, version: release.version)
 
             progress(.activating)
@@ -534,9 +560,9 @@ public actor EngineInstaller {
             .map(String.init)
     }
 
-    /// `tar -tvzf` 的每行以权限位开头：`l` 是软链、`h` 是硬链。只列名字看不出
-    /// 这两种条目，而它们能把包外的文件（甚至 `~/.ssh`）拉进 pack 里。
-    private func listArchiveTypes(_ archive: URL) throws -> [String] {
+    /// `tar -tvzf` 的原始行。软链与硬链只有在带类型的列表里才看得出：`tar -tzf`
+    /// 只给名字，而这两种条目的目标可能指向包外。
+    private func listArchiveDetails(_ archive: URL) throws -> [String] {
         let result = try run(settings.tarPath, ["-tvzf", archive.path])
         guard result.status == 0 else {
             throw EngineInstallError.commandFailed("tar 无法列出归档内容：\(Self.text(result.stderr))")
@@ -548,16 +574,6 @@ public actor EngineInstaller {
 
     /// A tar entry that is absolute or climbs out with `..` would land outside
     /// the staging directory, so the whole archive is rejected.
-    /// 拒绝软链/硬链条目。pack 是自包含的归档，不需要链接，出现即视为越界。
-    static func validateTypes(_ listing: [String]) throws {
-        for line in listing {
-            guard let first = line.first else { continue }
-            if first == "l" || first == "h" {
-                throw EngineInstallError.unsafeArchiveEntry(line)
-            }
-        }
-    }
-
     static func validate(entries: [String]) throws {
         for entry in entries {
             if entry.hasPrefix("/") || entry.hasPrefix("~/") {
@@ -565,6 +581,135 @@ public actor EngineInstaller {
             }
             if pathComponents(entry).contains("..") {
                 throw EngineInstallError.unsafeArchiveEntry(entry)
+            }
+        }
+    }
+
+    /// 从带类型的列表里挑出链接。看不懂的一行按失败处理：那可能正是被塞进来的
+    /// 一条链接。
+    static func links(inListing listing: [String], names: [String]) throws -> [ArchiveLink] {
+        let known = names.sorted { $0.count > $1.count }
+        var links: [ArchiveLink] = []
+        for line in listing {
+            guard let first = line.first, first == "l" || first == "h" else { continue }
+            let kind: ArchiveLink.Kind = first == "l" ? .symbolic : .hard
+            let separator = kind == .symbolic ? " -> " : " link to "
+            guard let (path, target) = splitName(line, at: separator, known: known),
+                  !target.isEmpty else {
+                throw EngineInstallError.unsafeArchiveLink(line)
+            }
+            links.append(ArchiveLink(kind: kind, path: path, target: target))
+        }
+        return links
+    }
+
+    /// 切出「条目名 + 目标」。名字里可以有空格，甚至可以带 ` -> ` 这串字面量，
+    /// 所以既不按列数、也不按第一个分隔符切：在归档的名字表里找正好停在这里的
+    /// 最长后缀——tar 打印的一定是归档里的原名。GNU tar 与 bsdtar 的列数不同，
+    /// 这样也不受影响。
+    private static func splitName(_ line: String,
+                                  at separator: String,
+                                  known: [String]) -> (path: String, target: String)? {
+        var start = line.startIndex
+        while let range = line.range(of: separator, range: start..<line.endIndex) {
+            let head = line[..<range.lowerBound]
+            if let name = known.first(where: { nameStops(head: head, name: $0) }) {
+                return (name, String(line[range.upperBound...]))
+            }
+            start = range.upperBound
+        }
+        return nil
+    }
+
+    /// `head` 是「元数据 + 名字」，元数据以空白收尾；名字里也可能有空格，所以
+    /// 只要求名字前面是空白，不假设有多少列。
+    private static func nameStops(head: Substring, name: String) -> Bool {
+        guard head.hasSuffix(name) else { return false }
+        let before = head.dropLast(name.count)
+        return before.isEmpty || before.last == " " || before.last == "\t"
+    }
+
+    /// 链接本身可以留，它去哪才是问题。软链的目标相对链接自己所在的目录、硬链
+    /// 的目标相对归档根；两者都按 `--strip-components` 之后的坐标解析，任何一步
+    /// 越出 pack 根都整包拒绝。
+    static func validate(links: [ArchiveLink], stripComponents: Int) throws {
+        for link in links where !staysInsideRoot(link, stripComponents: stripComponents) {
+            let arrow = link.kind == .symbolic ? "->" : "link to"
+            throw EngineInstallError.unsafeArchiveLink("\(link.path) \(arrow) \(link.target)")
+        }
+    }
+
+    /// 解析链接目标，看它是否还留在解包目录里：绝对路径与 `~` 直接拒绝，`..`
+    /// 从根往上爬也拒绝。
+    static func staysInsideRoot(_ link: ArchiveLink, stripComponents: Int) -> Bool {
+        let target = link.target
+        guard !target.hasPrefix("/"), !target.hasPrefix("~") else { return false }
+
+        // 软链从链接所在的目录出发，硬链从归档根出发。
+        var stack: [String]
+        switch link.kind {
+        case .symbolic:
+            let components = strippedComponents(link.path, stripComponents: stripComponents)
+            guard !components.isEmpty else { return false }
+            stack = Array(components.dropLast())
+        case .hard:
+            stack = []
+        }
+
+        for component in pathComponents(target) {
+            if component == ".." {
+                guard !stack.isEmpty else { return false }
+                stack.removeLast()
+            } else {
+                stack.append(component)
+            }
+        }
+
+        // 硬链要指向一个真条目：`--strip-components` 之后什么都不剩也就不算。
+        if link.kind == .hard {
+            let strip = min(max(stripComponents, 0), stack.count)
+            return !stack.dropFirst(strip).isEmpty
+        }
+        return true
+    }
+
+    /// 条目在解包后的位置：tar 会先去掉最前面的 N 段。
+    private static func strippedComponents(_ entry: String, stripComponents: Int) -> [String] {
+        var components = pathComponents(entry)
+        components.removeFirst(min(max(stripComponents, 0), components.count))
+        return components
+    }
+
+    /// 解包后的兜底审计。列表解析依赖 tar 的文本格式，这里直接看落盘的每一个
+    /// 软链，层级按真实目录算，且不跟随链接（链接目录不再进去逐层展开）：链套链
+    /// 时，越界的那一条自己会被抓到。硬链由上面那轮解析负责——tar 造不出指向
+    /// 包外的硬链。
+    static func validateExtractedLinks(in root: URL) throws {
+        try auditLinks(inDirectory: root.path, relative: "", fm: FileManager.default)
+    }
+
+    private static func auditLinks(inDirectory path: String,
+                                   relative: String,
+                                   fm: FileManager) throws {
+        let names: [String]
+        do {
+            names = try fm.contentsOfDirectory(atPath: path)
+        } catch {
+            throw EngineInstallError.commandFailed("无法检查归档中的链接：\(error.localizedDescription)")
+        }
+        for name in names {
+            let childPath = path + "/" + name
+            let childRelative = relative.isEmpty ? name : relative + "/" + name
+            if let target = try? fm.destinationOfSymbolicLink(atPath: childPath) {
+                let link = ArchiveLink(kind: .symbolic, path: childRelative, target: target)
+                guard staysInsideRoot(link, stripComponents: 0) else {
+                    throw EngineInstallError.unsafeArchiveLink("\(childRelative) -> \(target)")
+                }
+                continue
+            }
+            var isDirectory: ObjCBool = false
+            if fm.fileExists(atPath: childPath, isDirectory: &isDirectory), isDirectory.boolValue {
+                try auditLinks(inDirectory: childPath, relative: childRelative, fm: fm)
             }
         }
     }

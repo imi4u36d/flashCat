@@ -64,15 +64,21 @@ struct IslandNotice: Identifiable, Equatable {
     let title: String
     let message: String
     let date: Date
+    /// 一过性提示：只在胶囊上停几秒，不进历史、不计未读。模型加载、切换这类
+    /// 过程本来就看得见（阶段行、模型选择器里的进度），把它留在通知列表里，
+    /// 只是把读者刚看过的东西再写一遍。
+    let transient: Bool
 
     init(title: String,
          message: String,
          kind: Kind? = nil,
-         date: Date = Date()) {
+         date: Date = Date(),
+         transient: Bool = false) {
         self.id = UUID()
         self.kind = kind ?? Kind(message: message)
         self.title = title
         self.message = message
         self.date = date
+        self.transient = transient
     }
 }

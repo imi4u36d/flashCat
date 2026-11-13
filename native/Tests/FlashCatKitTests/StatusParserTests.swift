@@ -447,4 +447,34 @@ final class StatusParserTests: XCTestCase {
         XCTAssertEqual(status.queuedRequests, 3)
         XCTAssertEqual(status.requestsCompleted, 9)
     }
+    /// 视觉对话模型只有能力位被认出来，对话页才会把成品图回传给模型。
+    /// 三家引擎的写法各不相同，这里把见过的形状都过一遍。
+    func testModelCapabilitiesRecognizeVisionSpellings() {
+        let entries: [[String: Any]] = [
+            ["id": "splash-vlm", "vision": true, "input_modalities": ["text", "image"]],
+            ["id": "mtplx-vlm", "supports_vision": true,
+             "modalities": ["input": ["text", "image"], "output": ["text"]]],
+            ["id": "named-vl", "model_type": "qwen3_vl"],
+            ["id": "arch-vl", "architecture": "Qwen2VLForConditionalGeneration"],
+            ["id": "plain", "modalities": ["input": ["text"], "output": ["text"]]],
+        ]
+        let models = EngineStatusParser.openAIModels(["data": entries], engine: .mlxServe)
+        XCTAssertEqual(models.count, 5)
+        for id in ["splash-vlm", "mtplx-vlm", "named-vl", "arch-vl"] {
+            let model = models.first { $0.id == id }
+            XCTAssertEqual(model?.capabilities, ["chat", "vision"], id)
+            XCTAssertTrue(model?.supportsVision == true, id)
+            XCTAssertTrue(model?.supportsChat == true, id)
+        }
+        let plain = models.first { $0.id == "plain" }
+        XCTAssertEqual(plain?.capabilities, [])
+        XCTAssertFalse(plain?.supportsVision == true)
+
+        let inventory = EngineStatusParser.omlxModels(["models": [
+            ["id": "omlx-vlm", "engine_type": "qwen3_vl"],
+        ]])
+        XCTAssertEqual(inventory.models.first?.capabilities, ["chat", "vision"])
+        XCTAssertTrue(inventory.models.first?.supportsVision == true)
+    }
+
 }

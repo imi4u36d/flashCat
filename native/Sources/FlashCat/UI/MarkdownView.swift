@@ -11,6 +11,8 @@ struct MarkdownView: View {
     /// 流式消息每次分片都会变成长字符串；把它塞进 LRU 会把已完成消息挤出
     /// 缓存，下一帧又要全部重解析。流式内容走独立的单槽缓存。
     var caching: Bool = true
+    /// 对话气泡按文字自身宽度收拢；资料卡等页面仍铺满可用宽度。
+    var fillsWidth: Bool = true
 
     private var blocks: [MarkdownBlock] { MarkdownBlock.parse(text, caching: caching) }
 
@@ -22,7 +24,7 @@ struct MarkdownView: View {
             .textSelection(.enabled)
             .lineSpacing(3)
             .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: fillsWidth ? .infinity : nil, alignment: .leading)
     }
 }
 

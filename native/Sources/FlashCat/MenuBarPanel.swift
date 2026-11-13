@@ -344,10 +344,15 @@ struct MenuBarPanel: View {
             }
             .padding(.horizontal, 9)
             .frame(height: 28)
-            .background(Console.inset, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background {
+                LiquidGlassSurface(
+                    shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
+                    interactive: true
+                )
+            }
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Console.insetStroke, lineWidth: 0.8)
+                    .stroke(Console.glassStroke, lineWidth: 0.8)
             )
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
@@ -363,10 +368,13 @@ struct MenuBarPanel: View {
             if state.isModelBusy {
                 // 进程在跑但权重还没就位（启动、切换、加载权重、预热）：给一条
                 // 带转圈的生命周期行；下面的读数条保留，只是暂时没有数据。
-                NoticeRow(symbol: nil,
-                          text: stageText,
-                          tint: Console.warn,
-                          showsSpinner: true)
+                // 换权重的空窗里没有话可说——不编一句「切换中」，直接不占这一行。
+                if !stageText.isEmpty {
+                    NoticeRow(symbol: nil,
+                              text: stageText,
+                              tint: Console.warn,
+                              showsSpinner: true)
+                }
             } else {
                 switch state.serverState {
                 case .ready:
@@ -393,8 +401,10 @@ struct MenuBarPanel: View {
             }
 
             // 读数条常驻：没有实时数据时显示「—」，面板不会因为停止或加载而少一截。
-            MetricStrip(stats: state.serverState == .ready ? state.stats : nil,
-                        rate: currentRate)
+            // 面板没有概览那样的说明文案，所以 LIVE / LAST / AVG 角标直接标在格子里。
+            MetricStrip(decode: state.serverState == .ready ? state.menuBarDecodeReading : .none,
+                        ttft: state.serverState == .ready ? state.ttftReading : .none,
+                        prefill: state.serverState == .ready ? state.prefillReading : .none)
             if state.serverState == .ready, let peak = sparklinePeak {
                 Sparkline(values: state.recentThroughput(window: 300).map(\.value),
                           peak: peak,
@@ -403,19 +413,11 @@ struct MenuBarPanel: View {
         }
     }
 
-    /// "启动中 · 预热 · 已等待 3:20". 和灵动岛、概览共用 `engineStageText`：
-    /// 三个地方的措辞和秒数以前是三份拷贝，改一处就漏两处（灵动岛的计时停下时，
-    /// 菜单栏还在按另一套规则算）。
+    /// "启动中 · 预热 · 已等待 3:20". 和灵动岛、概览、命令面板共用
+    /// `engineStageText`：几个地方的措辞和秒数以前是几份拷贝，改一处就漏两处
+    /// （灵动岛的计时停下时，菜单栏还在按另一套规则算），而且换模型时都忍不住
+    /// 各自复述一遍「切换中 / 加载新模型」。现在只有一句：引擎真实所处的阶段。
     private var stageText: String { state.engineStageText }
-
-    /// 菜单栏没有角标位，所以只显示真正的当前速度；收尾后的终值不挂。
-    private var currentRate: Double? {
-        guard state.serverState == .ready else { return nil }
-        switch state.speedOrigin {
-        case .gatewayLive, .engineLive: return state.decodeReading.value
-        case .none: return nil
-        }
-    }
 
     private var sparklinePeak: Double? {
         let samples = state.recentThroughput(window: 300).map(\.value)
@@ -541,19 +543,26 @@ private struct StatusPill: View {
 
 // MARK: - 指标条
 
-/// 三列读数：解码速度 / 首字延迟 / 内存占用。值用等宽数字，列间发丝线分隔。
+/// 三列读数：解码速度 / 首字延迟 / 预填充速度。值用等宽数字，列间发丝线分隔。
+///
+/// 每格的值与角标都来自 `AppState` 的 owner 表，面板只负责排版：解码有实时
+/// 读数时标 `LIVE`，空闲时退回模型启动以来平均、标 `AVG`；首字优先引擎
+/// status，没有就退回网关实测（两侧都没有画「—」）；预填充做完标 `LAST`，
+/// 真的在预填充时才标 `LIVE`。
 private struct MetricStrip: View {
-    let stats: ServerStats?
-    /// 与概览、吞吐曲线同源（网关按请求聚合）；没有当前速度时显示「—」。
-    let rate: Double?
+    let decode: MetricReading
+    let ttft: TTFTReading
+    let prefill: MetricReading
 
     var body: some View {
         HStack(spacing: 0) {
-            cell("解码", value(rate.map { Format.compact($0) }), unit: "tok/s")
+            cell("解码", value: number(decode.value), unit: "tok/s",
+                 tag: decodeTag, tagTint: decodeTagTint)
             divider
-            cell("首字", value(stats?.ttftMilliseconds.map { "\(Int($0))" }), unit: "ms")
+            cell("首字", value: milliseconds(ttft.milliseconds), unit: "ms")
             divider
-            cell("内存", value(stats?.memoryBytes.map { Format.memory($0) }), unit: nil)
+            cell("预填充", value: number(prefill.value), unit: "tok/s",
+                 tag: prefillTag, tagTint: prefillTagTint)
         }
         .background(Console.inset, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
@@ -570,11 +579,24 @@ private struct MetricStrip: View {
             .frame(width: 1)
     }
 
-    private func cell(_ label: String, _ value: String, unit: String?) -> some View {
+    private func cell(_ label: String,
+                      value: String,
+                      unit: String?,
+                      tag: String? = nil,
+                      tagTint: Color = Console.tertiary) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(L10n.t(label))
-                .font(.system(size: 9.5, weight: .semibold))
-                .foregroundStyle(Console.tertiary)
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text(L10n.t(label))
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(Console.tertiary)
+                if let tag, value != "—" {
+                    Text(tag)
+                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                        .tracking(0.4)
+                        .foregroundStyle(tagTint)
+                        .lineLimit(1)
+                }
+            }
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(value)
                     .font(.system(size: 14.5, weight: .semibold, design: .monospaced))
@@ -594,9 +616,44 @@ private struct MetricStrip: View {
         .padding(.vertical, 8)
     }
 
-    private func value(_ raw: String?) -> String {
-        guard let raw, !raw.isEmpty else { return "—" }
-        return raw
+    /// 解码格的角标：实时读数标 `LIVE`，退回模型平均时标 `AVG`。
+    private var decodeTag: String? {
+        switch decode.origin {
+        case .gatewayLive, .engineLive: return "LIVE"
+        case .gatewayMean, .engineMean: return "AVG"
+        default: return nil
+        }
+    }
+
+    private var decodeTagTint: Color {
+        switch decode.origin {
+        case .gatewayLive, .engineLive: return Console.accent
+        default: return Console.tertiary
+        }
+    }
+
+    /// 预填充格的角标：此刻在处理才 `LIVE`，做完的实测值标 `LAST`，累计均值标 `AVG`。
+    private var prefillTag: String? {
+        switch prefill.origin {
+        case .engineLive: return "LIVE"
+        case .gatewayLast, .engineLast: return "LAST"
+        case .gatewayMean, .engineMean: return "AVG"
+        default: return nil
+        }
+    }
+
+    private var prefillTagTint: Color {
+        prefill.origin == .engineLive ? Console.accent : Console.tertiary
+    }
+
+    private func number(_ value: Double?) -> String {
+        guard let value, value > 0 else { return "—" }
+        return Format.compact(value)
+    }
+
+    private func milliseconds(_ value: Double?) -> String {
+        guard let value, value > 0 else { return "—" }
+        return "\(Int(value.rounded()))"
     }
 }
 

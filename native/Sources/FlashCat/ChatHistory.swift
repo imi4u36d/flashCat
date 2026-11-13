@@ -32,6 +32,29 @@ final class ChatHistory {
         /// 「思考了 8.4 秒」。两者都是可选的，缺字段的老历史照常解码。
         var reasoning: String?
         var thinkingSeconds: Double?
+        /// 这一轮是用户点「停止」收掉的。旧历史没有该字段，解码为 false。
+        var interrupted: Bool?
+        /// 图像结果：PNG 落在 support/images 下，历史只记路径与那行说明。
+        /// 与 interrupted 一样全部可选，缺字段的老历史照常解码。
+        var imagePath: String?
+        var imageNote: String?
+        var imageSourcePath: String?
+        var imageStrength: Double?
+        var imageSeed: Int?
+        /// 一轮工具调用画出的整组图（同一 seed 的系列）。老历史没有这个键，
+        /// 解码为 nil，读取时退回单张的 imagePath。
+        var imagePaths: [String]?
+        /// 工具调用与结果：回放上下文要原样带给引擎，重启后也得能接上。
+        var toolCalls: [ChatToolCall]?
+        var toolResults: [ChatToolResult]?
+        /// 视频结果：MP4 落在 support/videos 下，历史只记路径与说明。
+        var videoPath: String?
+        var videoNote: String?
+        var videoSourcePath: String?
+        var videoLastFramePath: String?
+        /// REF2VA 的参考素材。旧历史没有这两个键，解码为 nil。
+        var videoReferenceImagePaths: [String]?
+        var videoReferenceClipPaths: [String]?
     }
 
     /// 磁盘上线程列表的进程内副本。`load()` 以前每轮回答结束都会重读并
@@ -94,7 +117,22 @@ final class ChatHistory {
                                                  tokensPerSecond: message.tokensPerSecond,
                                                  firstTokenSeconds: message.firstTokenSeconds,
                                                  thinkingSeconds: message.thinkingSeconds,
-                                                 reasoning: message.reasoning)
+                                                 reasoning: message.reasoning,
+                                                 interrupted: message.interrupted ?? false,
+                                                 imagePath: message.imagePath,
+                                                 imageNote: message.imageNote,
+                                                 imageSourcePath: message.imageSourcePath,
+                                                 imageStrength: message.imageStrength,
+                                                 imageSeed: message.imageSeed,
+                                                 imagePaths: message.imagePaths ?? [],
+                                                 toolCalls: message.toolCalls ?? [],
+                                                 toolResults: message.toolResults ?? [],
+                                                 videoPath: message.videoPath,
+                                                 videoNote: message.videoNote,
+                                                 videoSourcePath: message.videoSourcePath,
+                                                 videoLastFramePath: message.videoLastFramePath,
+                                                 videoReferenceImagePaths: message.videoReferenceImagePaths,
+                                                 videoReferenceClipPaths: message.videoReferenceClipPaths)
                           })
             }
         }
@@ -145,7 +183,22 @@ final class ChatHistory {
                       tokensPerSecond: message.tokensPerSecond,
                       firstTokenSeconds: message.firstTokenSeconds,
                       reasoning: message.reasoning,
-                      thinkingSeconds: message.thinkingSeconds)
+                      thinkingSeconds: message.thinkingSeconds,
+                      interrupted: message.interrupted ? true : nil,
+                      imagePath: message.imagePath,
+                      imageNote: message.imageNote,
+                      imageSourcePath: message.imageSourcePath,
+                      imageStrength: message.imageStrength,
+                      imageSeed: message.imageSeed,
+                      imagePaths: message.imagePaths.isEmpty ? nil : message.imagePaths,
+                      toolCalls: message.toolCalls.isEmpty ? nil : message.toolCalls,
+                      toolResults: message.toolResults.isEmpty ? nil : message.toolResults,
+                      videoPath: message.videoPath,
+                      videoNote: message.videoNote,
+                      videoSourcePath: message.videoSourcePath,
+                      videoLastFramePath: message.videoLastFramePath,
+                      videoReferenceImagePaths: message.videoReferenceImagePaths,
+                      videoReferenceClipPaths: message.videoReferenceClipPaths)
     }
 
     static func parseLegacyDate(_ raw: String?) -> Date? {
@@ -198,11 +251,26 @@ final class ChatHistory {
         writeQueue.sync {}
     }
 
+    /// 落盘的对话只收已经收尾的消息。被「停止」的空回答也要留下——否则
+    /// 答案一删，历史里就只剩一句没有回应的提问。
+    static func savable(_ messages: [ChatMessage]) -> [ChatMessage] {
+        // 图像/视频消息的正文是空的：媒体在 imagePath/videoPath 里，不能按文本判空丢掉。
+        messages.filter {
+            !$0.streaming && (!$0.content.isEmpty || $0.interrupted
+                              || $0.imagePath != nil || !$0.imagePaths.isEmpty
+                              || !$0.toolCalls.isEmpty
+                              || $0.videoPath != nil
+                              || $0.videoLastFramePath != nil
+                              || !($0.videoReferenceImagePaths ?? []).isEmpty
+                              || !($0.videoReferenceClipPaths ?? []).isEmpty)
+        }
+    }
+
     /// 同一段对话只占一条：`threadID` 已存在就原地覆盖并提到最前，只有新会话
     /// 才 insert。以前这里无条件 insert 新 id，而每轮生成结束都会调一次，于是
     /// 一段三轮对话会在「最近对话」里留下 6/8 两条、侧栏看起来像两段。
     func save(messages: [ChatMessage], threadID: String) {
-        let completed = messages.filter { !$0.streaming && !$0.content.isEmpty }
+        let completed = Self.savable(messages)
         guard !completed.isEmpty else { return }
 
         var threads = load()
@@ -233,6 +301,21 @@ final class ConversationStore {
         let createdAt: Double?
         let reasoning: String?
         let thinkingSeconds: Double?
+        let interrupted: Bool?
+        let imagePath: String?
+        let imageNote: String?
+        let imageSourcePath: String?
+        let imageStrength: Double?
+        let imageSeed: Int?
+        let imagePaths: [String]?
+        let toolCalls: [ChatToolCall]?
+        let toolResults: [ChatToolResult]?
+        let videoPath: String?
+        let videoNote: String?
+        let videoSourcePath: String?
+        let videoLastFramePath: String?
+        let videoReferenceImagePaths: [String]?
+        let videoReferenceClipPaths: [String]?
     }
 
     func load() -> [ChatMessage] {
@@ -253,7 +336,22 @@ final class ConversationStore {
                                tokensPerSecond: item.tokensPerSecond,
                                firstTokenSeconds: item.firstTokenSeconds,
                                thinkingSeconds: item.thinkingSeconds,
-                               reasoning: item.reasoning)
+                               reasoning: item.reasoning,
+                               interrupted: item.interrupted ?? false,
+                               imagePath: item.imagePath,
+                               imageNote: item.imageNote,
+                               imageSourcePath: item.imageSourcePath,
+                               imageStrength: item.imageStrength,
+                               imageSeed: item.imageSeed,
+                               imagePaths: item.imagePaths ?? [],
+                               toolCalls: item.toolCalls ?? [],
+                               toolResults: item.toolResults ?? [],
+                               videoPath: item.videoPath,
+                               videoNote: item.videoNote,
+                               videoSourcePath: item.videoSourcePath,
+                               videoLastFramePath: item.videoLastFramePath,
+                               videoReferenceImagePaths: item.videoReferenceImagePaths,
+                               videoReferenceClipPaths: item.videoReferenceClipPaths)
         }
     }
 
@@ -293,7 +391,22 @@ final class ConversationStore {
                           model: message.model,
                           createdAt: message.createdAt?.timeIntervalSince1970,
                           reasoning: message.reasoning,
-                          thinkingSeconds: message.thinkingSeconds)
+                          thinkingSeconds: message.thinkingSeconds,
+                          interrupted: message.interrupted ? true : nil,
+                          imagePath: message.imagePath,
+                          imageNote: message.imageNote,
+                          imageSourcePath: message.imageSourcePath,
+                          imageStrength: message.imageStrength,
+                          imageSeed: message.imageSeed,
+                          imagePaths: message.imagePaths.isEmpty ? nil : message.imagePaths,
+                          toolCalls: message.toolCalls.isEmpty ? nil : message.toolCalls,
+                          toolResults: message.toolResults.isEmpty ? nil : message.toolResults,
+                          videoPath: message.videoPath,
+                          videoNote: message.videoNote,
+                          videoSourcePath: message.videoSourcePath,
+                          videoLastFramePath: message.videoLastFramePath,
+                          videoReferenceImagePaths: message.videoReferenceImagePaths,
+                          videoReferenceClipPaths: message.videoReferenceClipPaths)
         }
         guard !stored.isEmpty else { return }
         writeQueue.async {

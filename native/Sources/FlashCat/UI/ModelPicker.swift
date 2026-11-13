@@ -25,6 +25,8 @@ struct ModelPickerPopover: View {
     @ObservedObject var state: AppState
     var onPick: () -> Void
 
+    @State private var hoveredID: String?
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 2) {
@@ -40,7 +42,13 @@ struct ModelPickerPopover: View {
                             .padding(.top, 8)
                             .padding(.bottom, 2)
                         ForEach(models) { model in
-                            row(model, engine: id)
+                            row(model, engine: id, hovered: hoveredID == model.id) { inside in
+                                if inside {
+                                    hoveredID = model.id
+                                } else if hoveredID == model.id {
+                                    hoveredID = nil
+                                }
+                            }
                         }
                     }
                 }
@@ -51,7 +59,10 @@ struct ModelPickerPopover: View {
         .frame(maxHeight: 380)
     }
 
-    private func row(_ model: EngineModel, engine: EngineID) -> some View {
+    private func row(_ model: EngineModel,
+                     engine: EngineID,
+                     hovered: Bool,
+                     onHover: @escaping (Bool) -> Void) -> some View {
         let selected = model.id == state.selectedModel && engine == state.activeEngine
         let switching = state.switchingModel == model.id && engine == state.activeEngine
         return Button {
@@ -84,11 +95,17 @@ struct ModelPickerPopover: View {
             .padding(.horizontal, 10)
             .frame(height: 30)
             .background {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(selected ? Console.inset : Color.clear)
+                LiquidGlassSurface(
+                    shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
+                    tint: selected ? Console.accent.opacity(0.12) : nil,
+                    interactive: true
+                )
+                .opacity(selected || hovered ? 1 : 0)
             }
+            .animation(Motion.quick, value: selected || hovered)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plainHit)
+        .onHover(perform: onHover)
     }
 }

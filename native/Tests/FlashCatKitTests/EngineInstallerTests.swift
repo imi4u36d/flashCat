@@ -4,20 +4,128 @@ import XCTest
 
 final class EngineInstallerTests: XCTestCase {
 
-    func testSymlinkEntriesAreRejected() throws {
-        // `tar -tzf` 只给名字，看不出软链；`tar -tvzf` 的首列才是类型。
-        XCTAssertThrowsError(try EngineInstaller.validateTypes([
-            "-rw-r--r--  0 zhuo staff 12 Nov 11 15:00 pack/run",
-            "lrwxr-xr-x  0 zhuo staff  0 Nov 11 15:00 pack/link -> /Users/zhuo/.ssh/id_rsa",
-        ])) { error in
-            guard case EngineInstallError.unsafeArchiveEntry = error else {
-                return XCTFail("wrong error: \(error)")
+    // MARK: - Archive links
+
+    /// splash 的真实归档里就带这四条软链（Python 发行包自带的）。它们全部是同
+    /// 目录内的相对链接，一条都不能拦——拦了就是「Splash 安装失败」。
+    func testSplashPackLinksStayInsideThePack() throws {
+        let names = [
+            "splash-1.6.1/",
+            "splash-1.6.1/python/",
+            "splash-1.6.1/python/bin/",
+            "splash-1.6.1/python/bin/python3",
+            "splash-1.6.1/python/bin/python3.13",
+            "splash-1.6.1/python/lib/pkgconfig/python3.pc",
+            "splash-1.6.1/python/lib/pkgconfig/python-3.13.pc",
+            "splash-1.6.1/python/lib/pkgconfig/python3-embed.pc",
+            "splash-1.6.1/python/lib/pkgconfig/python-3.13-embed.pc",
+            "splash-1.6.1/python/share/man/man1/python3.1",
+            "splash-1.6.1/python/share/man/man1/python3.13.1",
+        ]
+        let listing = [
+            "lrwxr-xr-x 0 wangzhuo staff 0 Nov 11 19:13 splash-1.6.1/python/bin/python3 -> python3.13",
+            "lrwxr-xr-x 0 wangzhuo staff 0 Nov 11 19:13 splash-1.6.1/python/lib/pkgconfig/python3.pc -> python-3.13.pc",
+            "lrwxr-xr-x 0 wangzhuo staff 0 Nov 11 19:13 splash-1.6.1/python/lib/pkgconfig/python3-embed.pc -> python-3.13-embed.pc",
+            "lrwxr-xr-x 0 wangzhuo staff 0 Nov 11 19:13 splash-1.6.1/python/share/man/man1/python3.1 -> python3.13.1",
+        ]
+
+        let links = try EngineInstaller.links(inListing: listing, names: names)
+        XCTAssertEqual(links, [
+            ArchiveLink(kind: .symbolic, path: "splash-1.6.1/python/bin/python3", target: "python3.13"),
+            ArchiveLink(kind: .symbolic, path: "splash-1.6.1/python/lib/pkgconfig/python3.pc", target: "python-3.13.pc"),
+            ArchiveLink(kind: .symbolic, path: "splash-1.6.1/python/lib/pkgconfig/python3-embed.pc", target: "python-3.13-embed.pc"),
+            ArchiveLink(kind: .symbolic, path: "splash-1.6.1/python/share/man/man1/python3.1", target: "python3.13.1"),
+        ])
+        XCTAssertNoThrow(try EngineInstaller.validate(links: links, stripComponents: 1))
+    }
+
+    func testLinksThatLeaveThePackAreRejected() throws {
+        let names = ["omlx-0.7.3/run", "omlx-0.7.3/bin/python3", "omlx-0.7.3/link"]
+        let rejected = [
+            // 绝对路径：就是终审修掉的那条「pack/link -> ~/.ssh/id_rsa」
+            "lrwxr-xr-x 0 zhuo staff 0 Nov 11 15:00 omlx-0.7.3/run -> /Users/zhuo/.ssh/id_rsa",
+            "lrwxr-xr-x 0 zhuo staff 0 Nov 11 15:00 omlx-0.7.3/run -> ~/.ssh/id_rsa",
+            // 相对但爬出根
+            "lrwxr-xr-x 0 zhuo staff 0 Nov 11 15:00 omlx-0.7.3/bin/python3 -> ../../../../etc/passwd",
+            // 去掉顶层目录之后 `..` 已经无处可退
+            "lrwxr-xr-x 0 zhuo staff 0 Nov 11 15:00 omlx-0.7.3/link -> ../outside",
+            // 硬链的目标相对归档根，同样不许出包
+            "hrw-r--r-- 0 zhuo staff 0 Nov 11 15:00 omlx-0.7.3/bin/python3 link to ../outside",
+            "hrw-r--r-- 0 zhuo staff 0 Nov 11 15:00 omlx-0.7.3/bin/python3 link to /etc/passwd",
+        ]
+        for line in rejected {
+            let links = try EngineInstaller.links(inListing: [line], names: names)
+            XCTAssertThrowsError(try EngineInstaller.validate(links: links, stripComponents: 1),
+                                 "应当拒绝：\(line)") { error in
+                guard case EngineInstallError.unsafeArchiveLink = error else {
+                    return XCTFail("期望 unsafeArchiveLink，实际 \(error)")
+                }
             }
         }
-        XCTAssertNoThrow(try EngineInstaller.validateTypes([
-            "-rw-r--r--  0 zhuo staff 12 Nov 11 15:00 pack/run",
-            "drwxr-xr-x  0 zhuo staff  0 Nov 11 15:00 pack/bin",
-        ]))
+
+        // 看不懂的链接行按失败处理，不跳过：跳过等于把决定权交给 tar。
+        XCTAssertThrowsError(try EngineInstaller.links(
+            inListing: ["lrwxr-xr-x 0 zhuo staff 0 Nov 11 15:00 omlx-0.7.3/run"],
+            names: names)) { error in
+            guard case EngineInstallError.unsafeArchiveLink = error else {
+                return XCTFail("期望 unsafeArchiveLink，实际 \(error)")
+            }
+        }
+    }
+
+    func testLinksMayClimbAsLongAsTheyStayInsideThePack() throws {
+        let names = [
+            "omlx-0.7.3/python/bin/python3",
+            "omlx-0.7.3/python/lib/python3.13",
+            "omlx-0.7.3/link",
+            "omlx-0.7.3/bin/pair",
+        ]
+        let allowed = [
+            "lrwxr-xr-x 0 zhuo staff 0 Nov 11 15:00 omlx-0.7.3/python/bin/python3 -> ../lib/python3.13",
+            "lrwxr-xr-x 0 zhuo staff 0 Nov 11 15:00 omlx-0.7.3/link -> python/bin/python3",
+            "hrw-r--r-- 0 zhuo staff 0 Nov 11 15:00 omlx-0.7.3/bin/pair link to omlx-0.7.3/bin/pair",
+        ]
+        for line in allowed {
+            let links = try EngineInstaller.links(inListing: [line], names: names)
+            XCTAssertNoThrow(try EngineInstaller.validate(links: links, stripComponents: 1),
+                             "不应当拒绝：\(line)")
+        }
+    }
+
+    /// 链接名字里带空格、名字里带 ` -> ` 时，靠归档名字表里最长的后缀认出名字。
+    func testLinkNamesWithSpacesOrArrowsStillParse() throws {
+        let names = ["omlx-0.7.3/My Dir/python3", "omlx-0.7.3/weird -> name"]
+        let links = try EngineInstaller.links(inListing: [
+            "lrwxr-xr-x 0 zhuo staff 0 Nov 11 15:00 omlx-0.7.3/My Dir/python3 -> python3.13",
+            "lrwxr-xr-x 0 zhuo staff 0 Nov 11 15:00 omlx-0.7.3/weird -> name -> python3.13",
+        ], names: names)
+        XCTAssertEqual(links.map(\.path), ["omlx-0.7.3/My Dir/python3", "omlx-0.7.3/weird -> name"])
+        XCTAssertEqual(links.map(\.target), ["python3.13", "python3.13"])
+    }
+
+    /// 解包后的兜底审计：列表解析漏了什么，落盘的链接还要再看一遍。
+    func testExtractionAuditRejectsLinksThatLeaveThePack() throws {
+        let root = workDirectory.appendingPathComponent("audit", isDirectory: true)
+        let bin = root.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        try Data("#!/bin/sh\n".utf8).write(to: bin.appendingPathComponent("python3.13"))
+        try FileManager.default.createSymbolicLink(atPath: bin.appendingPathComponent("python3").path,
+                                                    withDestinationPath: "python3.13")
+        XCTAssertNoThrow(try EngineInstaller.validateExtractedLinks(in: root))
+
+        try FileManager.default.createSymbolicLink(atPath: bin.appendingPathComponent("escape").path,
+                                                    withDestinationPath: "../../../../etc/passwd")
+        XCTAssertThrowsError(try EngineInstaller.validateExtractedLinks(in: root)) { error in
+            guard case EngineInstallError.unsafeArchiveLink(let link) = error else {
+                return XCTFail("期望 unsafeArchiveLink，实际 \(error)")
+            }
+            XCTAssertTrue(link.contains("bin/escape"), link)
+        }
+
+        try FileManager.default.removeItem(at: bin.appendingPathComponent("escape"))
+        try FileManager.default.createSymbolicLink(atPath: bin.appendingPathComponent("absolute").path,
+                                                    withDestinationPath: "/etc/passwd")
+        XCTAssertThrowsError(try EngineInstaller.validateExtractedLinks(in: root))
     }
 
 
@@ -175,6 +283,66 @@ final class EngineInstallerTests: XCTestCase {
         XCTAssertEqual(installation.manifest.version, "0.7.4")
         XCTAssertTrue(FileManager.default.fileExists(
             atPath: installation.root.appendingPathComponent("manifest.json").path))
+    }
+
+    /// 回归：1.5.6 把软链一律拒了，splash 的 Python 发行包装不上。同包内的相对
+    /// 软链必须能装，而且装完还是软链（不是被 tar 解成副本）。
+    func testInstallsArchiveWithRelativeSymlinks() async throws {
+        let archive = try makeArchive(version: "1.6.1",
+                                      topLevelDirectory: "splash-1.6.1",
+                                      engineID: "splash",
+                                      links: [
+                                        ("python/lib/pkgconfig/python3.pc", "python-3.13.pc"),
+                                        ("python/share/man/man1/python3.1", "python3.13.1"),
+                                      ])
+        let release = EnginePackRelease(version: "1.6.1",
+                                        url: archive.absoluteString,
+                                        sha256: try sha256Hex(of: archive))
+
+        let installer = EngineInstaller(environment: makeEnvironment())
+        let installation = try await installer.install(release, for: .splash) { _ in }
+        XCTAssertEqual(installation.manifest.version, "1.6.1")
+
+        let fm = FileManager.default
+        let pc = installation.root.appendingPathComponent("python/lib/pkgconfig/python3.pc")
+        XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: pc.path), "python-3.13.pc")
+        let man = installation.root.appendingPathComponent("python/share/man/man1/python3.1")
+        XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: man.path), "python3.13.1")
+        let entrypoint = installation.root.appendingPathComponent("python/bin/python3")
+        XCTAssertTrue(fm.isExecutableFile(atPath: entrypoint.path))
+        XCTAssertTrue(residue(in: stagingDirectory).isEmpty, "\(residue(in: stagingDirectory))")
+    }
+
+    /// 指向包外的链接在 tar 写盘之前就被拒，暂存目录与下载残留都要清干净。
+    func testInstallRejectsLinkThatLeavesThePack() async throws {
+        let archive = try makeArchive(version: "1.6.1",
+                                      topLevelDirectory: "splash-1.6.1",
+                                      engineID: "splash",
+                                      links: [("python/lib/escape", "../../../../etc/passwd")])
+        let release = EnginePackRelease(version: "1.6.1",
+                                        url: archive.absoluteString,
+                                        sha256: try sha256Hex(of: archive))
+
+        let installer = EngineInstaller(environment: makeEnvironment())
+        let phases = PhaseBox()
+        await XCTAssertThrowsErrorAsync {
+            _ = try await installer.install(release, for: .splash) { phases.append($0) }
+        } verify: { error in
+            guard case EngineInstallError.unsafeArchiveLink(let link) = error else {
+                return XCTFail("期望 unsafeArchiveLink，实际 \(error)")
+            }
+            XCTAssertTrue(link.contains("python/lib/escape"), link)
+        }
+
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: packsDirectory.appendingPathComponent("splash").path))
+        XCTAssertTrue(residue(in: downloadsDirectory).isEmpty, "\(residue(in: downloadsDirectory))")
+        XCTAssertTrue(residue(in: stagingDirectory).isEmpty, "\(residue(in: stagingDirectory))")
+        if case .failed(let message)? = phases.phases.last {
+            XCTAssertTrue(message.contains("指向包外"), message)
+        } else {
+            XCTFail("最后一个阶段应是 failed")
+        }
     }
 
     // MARK: - Index
@@ -422,7 +590,8 @@ final class EngineInstallerTests: XCTestCase {
     /// (the layout the installer must strip) or flat.
     private func makeArchive(version: String,
                              topLevelDirectory: String?,
-                             engineID: String = "omlx") throws -> URL {
+                             engineID: String = "omlx",
+                             links: [(path: String, target: String)] = []) throws -> URL {
         let fm = FileManager.default
         let buildRoot = workDirectory.appendingPathComponent("build-\(UUID().uuidString)", isDirectory: true)
         let contentRoot = topLevelDirectory.map { buildRoot.appendingPathComponent($0, isDirectory: true) } ?? buildRoot
@@ -456,6 +625,13 @@ final class EngineInstallerTests: XCTestCase {
         let entrypoint = binDirectory.appendingPathComponent("python3")
         try Data("#!/bin/sh\nexit 0\n".utf8).write(to: entrypoint, options: .atomic)
         try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: entrypoint.path)
+
+        for link in links {
+            let url = contentRoot.appendingPathComponent(link.path)
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? fm.removeItem(at: url)
+            try fm.createSymbolicLink(atPath: url.path, withDestinationPath: link.target)
+        }
 
         let archive = workDirectory.appendingPathComponent("\(engineID)-\(version)-\(UUID().uuidString).tar.gz")
         var arguments = ["-czf", archive.path, "-C", buildRoot.path]

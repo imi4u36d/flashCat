@@ -21,32 +21,8 @@ struct LogsPage: View {
         return formatter
     }()
 
-    /// 一次遍历同时得到「按级别计数」和「按级别 + 搜索词过滤后的行」。
-    /// 以前 body 里会多次求值 `lines`，每求值一次就全表过滤一遍，还要为
-    /// 四个级别各扫一次日志。
-    private struct Display {
-        var lines: [LogLine] = []
-        var counts: [LogsFilter: Int] = [:]
-    }
-
-    private func display() -> Display {
-        let source = paused ? frozen : state.logs
-        let level = self.level
-        let query = self.appliedQuery
-        var result = Display()
-        result.lines.reserveCapacity(source.count)
-        for line in source {
-            result.counts[.all, default: 0] += 1
-            switch line.level {
-            case .warning: result.counts[.warning, default: 0] += 1
-            case .error: result.counts[.error, default: 0] += 1
-            default: result.counts[.info, default: 0] += 1
-            }
-            guard level.matches(line.level) else { continue }
-            if !query.isEmpty, !line.text.localizedCaseInsensitiveContains(query) { continue }
-            result.lines.append(line)
-        }
-        return result
+    private func display() -> LogsDigest {
+        LogsDigest.make(from: paused ? frozen : state.logs, level: level, query: appliedQuery)
     }
 
     var body: some View {
@@ -56,8 +32,8 @@ struct LogsPage: View {
             console(data)
         }
         .padding(.horizontal, Console.contentPadding)
-        .padding(.top, 78)
-        .padding(.bottom, 22)
+        .padding(.top, Console.contentTopInset)
+        .padding(.bottom, Console.contentBottomInset)
         .task(id: query) {
             if query == appliedQuery { return }
             try? await Task.sleep(nanoseconds: 200_000_000)
@@ -66,7 +42,7 @@ struct LogsPage: View {
         }
     }
 
-    private func topBar(_ data: Display) -> some View {
+    private func topBar(_ data: LogsDigest) -> some View {
         // 窄窗口下过滤条和右侧动作放不进一行，自动折成上下两行。
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 14) {
@@ -84,7 +60,7 @@ struct LogsPage: View {
         }
     }
 
-    private func filterBar(_ data: Display) -> some View {
+    private func filterBar(_ data: LogsDigest) -> some View {
         GlassFilterBar(selection: $level,
                        options: LogsFilter.allCases.map { item in
                            (item, "\(item.label) (\(data.counts[item] ?? 0))")
@@ -94,7 +70,7 @@ struct LogsPage: View {
     }
 
     @ViewBuilder
-    private func actionButtons(_ data: Display) -> some View {
+    private func actionButtons(_ data: LogsDigest) -> some View {
         Button {
             state.copy(data.lines.map(\.text).joined(separator: "\n"), label: "已复制筛选后的日志")
         } label: {
@@ -165,7 +141,7 @@ struct LogsPage: View {
         .help("清空日志")
     }
 
-    private func console(_ data: Display) -> some View {
+    private func console(_ data: LogsDigest) -> some View {
         ScrollViewReader { proxy in
             GlassCard(padding: 0, content: {
                 VStack(spacing: 0) {
@@ -192,6 +168,8 @@ struct LogsPage: View {
 
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 1) {
+                            // 新行从顶上插入，跟随「最新」的方式就是回到顶部。
+                            Color.clear.frame(height: 1).id("logTop")
                             if data.lines.isEmpty {
                                 Text("启动引擎后，日志会实时出现在这里")
                                     .font(.system(size: 11.5))
@@ -203,14 +181,14 @@ struct LogsPage: View {
                                     row(line).id(line.id)
                                 }
                             }
-                            Color.clear.frame(height: 1).id("logBottom")
                         }
                         .padding(12)
                     }
                     .scrollIndicators(.never)
+                    .defaultScrollAnchor(.top)
                     .onChange(of: data.lines.count) { _, _ in
                         guard !paused else { return }
-                        proxy.scrollTo("logBottom", anchor: .bottom)
+                        proxy.scrollTo("logTop", anchor: .top)
                     }
                 }
             })
@@ -337,6 +315,35 @@ struct LogsPage: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(Console.insetStroke, lineWidth: 1)
         }
+    }
+}
+
+/// 日志页要展示的行与计数。一次遍历同时得到「按级别计数」和「按级别 +
+/// 搜索词过滤后的行」；以前 body 里会多次求值 `lines`，每求值一次就全表
+/// 过滤一遍，还要为四个级别各扫一次日志。
+///
+/// 页面按「最新在最上面」阅读，所以这里把过滤后的行翻成倒序；`LogStore`
+/// 仍是追加顺序——`AppState` 靠 `logs.last?.id` 判断有没有新行。
+struct LogsDigest {
+    var lines: [LogLine] = []
+    var counts: [LogsFilter: Int] = [:]
+
+    static func make(from source: [LogLine], level: LogsFilter, query: String) -> LogsDigest {
+        var result = LogsDigest()
+        result.lines.reserveCapacity(source.count)
+        for line in source {
+            result.counts[.all, default: 0] += 1
+            switch line.level {
+            case .warning: result.counts[.warning, default: 0] += 1
+            case .error: result.counts[.error, default: 0] += 1
+            default: result.counts[.info, default: 0] += 1
+            }
+            guard level.matches(line.level) else { continue }
+            if !query.isEmpty, !line.text.localizedCaseInsensitiveContains(query) { continue }
+            result.lines.append(line)
+        }
+        result.lines.reverse()
+        return result
     }
 }
 

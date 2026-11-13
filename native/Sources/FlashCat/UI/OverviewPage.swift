@@ -46,14 +46,19 @@ struct OverviewPage: View {
     /// 预填充格的取数来源（owner = 网关实测值，引擎 LIVE 只在预填充进行中补位；
     /// 见 `AppState.prefillReading`）。
     private var prefillReading: MetricReading { state.prefillReading }
+    /// 首字格与菜单栏同源：引擎 status 优先，引擎没有这个字段时退回网关实测。
+    private var ttftReading: TTFTReading { state.ttftReading }
 
     /// 速率统一显示口径：没有值就留「—」，不拿 0.00 冒充读数。
     private func rateText(_ value: Double) -> String {
         value > 0 ? Format.compact(value) : "—"
     }
 
+    /// 换权重的空窗里阶段行会短暂为空，那时只留引擎名，不留一个孤零零的分隔点。
     private var runningText: String {
-        state.engineStageText
+        let stage = state.engineStageText
+        guard !stage.isEmpty else { return state.activeEngine.displayName }
+        return "\(state.activeEngine.displayName) · \(stage)"
     }
 
     private let columnGap: CGFloat = 18
@@ -83,17 +88,20 @@ struct OverviewPage: View {
                     .frame(height: 340)
             }
             .padding(.horizontal, Console.contentPadding)
-            .padding(.top, 78)
-            .padding(.bottom, 26)
+            .padding(.top, Console.contentTopInset)
         }
         .scrollIndicators(.never)
+        // 滚动视口止于侧栏玻璃的下沿，窄窗口下和宽版式共用同一条底线。
+        .padding(.bottom, Console.contentBottomInset)
     }
 
     /// 宽窗口：保持原本刚好铺满一屏的版式。
     private func wideLayout(_ proxy: GeometryProxy) -> some View {
-        let topInset: CGFloat = 78
-        let bottomInset: CGFloat = 26
-        let availableHeight = max(proxy.size.height - topInset - bottomInset, 0)
+        // 首屏区按内容区自己的高度算：上下边界同导航列一致，
+        // 侧栏玻璃的上下两条边正好压在最外侧卡片的外沿上。
+        let availableHeight = max(proxy.size.height
+                                  - Console.contentTopInset
+                                  - Console.contentBottomInset, 0)
         // 概览要刚好铺满一屏：首屏区占约 30%，指标行保持固定高度，
         // 底部图表行吃掉剩余空间，窗口变矮时也只有图表行收缩。
         let heroHeight = min(max(availableHeight * 0.30, 220), 300)
@@ -119,8 +127,8 @@ struct OverviewPage: View {
             .frame(maxHeight: .infinity)
         }
         .padding(.horizontal, Console.contentPadding)
-        .padding(.top, topInset)
-        .padding(.bottom, bottomInset)
+        .padding(.top, Console.contentTopInset)
+        .padding(.bottom, Console.contentBottomInset)
     }
 
     // MARK: Hero
@@ -133,7 +141,7 @@ struct OverviewPage: View {
                         .fill(state.canChat ? Console.ok
                               : state.isModelBusy ? Console.warn : Console.tertiary)
                         .frame(width: 6, height: 6)
-                    Text("\(state.activeEngine.displayName) · \(runningText)")
+                    Text(runningText)
                         .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(Console.secondary)
                 }
@@ -381,7 +389,8 @@ struct OverviewPage: View {
                    title: "首字延迟", tag: "TTFT",
                    value: ttftText,
                    unit: "ms",
-                   hint: ttftHint)
+                   hint: ttftHint,
+                   badge: ttftBadge)
         metricCard(icon: "arrow.up.circle.fill", tint: Color(console: 0x7C5CFF),
                    title: "预填充", tag: "PREFILL",
                    value: prefillText,
@@ -455,12 +464,22 @@ struct OverviewPage: View {
 
     private var ttftHint: String {
         guard state.isRunning else { return "引擎未运行" }
-        return (stats?.ttftMilliseconds ?? 0) > 0 ? "引擎 p50 · 从请求到首个 token" : "引擎未上报"
+        switch ttftReading.source {
+        case .engine: return "引擎 p50 · 从请求到首个 token"
+        case .gateway: return "网关实测 · 最近一次首字"
+        case .none: return "引擎未上报"
+        }
     }
 
     private var ttftText: String {
-        guard let value = stats?.ttftMilliseconds, value > 0 else { return "—" }
+        guard let value = ttftReading.milliseconds, value > 0 else { return "—" }
         return String(format: "%.0f", value)
+    }
+
+    /// 首字读数的来源角标：网关那一档不是引擎的统计分布，标 LAST 说明它是
+    /// 最近一次实测，不冒充 p50。
+    private var ttftBadge: (text: String, tint: Color)? {
+        ttftReading.source == .gateway ? ("LAST", Console.tertiary) : nil
     }
 
     private var prefillText: String {

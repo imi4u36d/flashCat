@@ -42,7 +42,16 @@ let package = Package(
             // `Resources/app-icon.png` is the single master artwork: the build
             // script turns it into AppIcon.icns and the in-app brand mark draws
             // it, so Dock, Finder and window chrome always show the same icon.
-            resources: [.process("Resources")]
+            resources: [.process("Resources")],
+            // AVKit must be linked explicitly, even though `import AVKit` is in
+            // the source. SwiftUI's `VideoPlayer` lives in the `_AVKit_SwiftUI`
+            // overlay, so nothing in our code references an AVKit symbol and
+            // autolinking pulls in only the overlay — AVKit itself never loads.
+            // Its hidden `VideoPlayerView` subclasses `AVPlayerView`, so the
+            // first render aborts in the Swift runtime with "failed to demangle
+            // superclass of VideoPlayerView" (SIGABRT, i.e. a hard crash right
+            // when a generated video appears in the chat).
+            linkerSettings: [.linkedFramework("AVKit")]
         ),
         .testTarget(
             name: "FlashCatKitTests",

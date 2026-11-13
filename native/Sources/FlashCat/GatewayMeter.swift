@@ -459,6 +459,29 @@ final class GatewayMeter: @unchecked Sendable {
         return nil
     }
 
+    /// 最近一次真的量到首字的耗时（毫秒）。
+    ///
+    /// 首字和预填充一样是逐请求的一次性观测：引擎的 `ttft_ms.p50` 要等有
+    /// 样本才出现，oMLX / strata 的 status 干脆没有这个字段。网关每收到第一
+    /// 个非空增量就记下 `firstTokenAt`，这里取**当代**里首字时刻最新的那一路
+    /// ——不是数组顺序：并发时先发起的请求可能后拿到首字。非流式响应没有
+    /// 首字时刻，自然不参与。
+    func recentTTFTMilliseconds() -> Double? {
+        lock.lock()
+        defer { lock.unlock() }
+        let current = epoch
+        let latest = sessions
+            .filter { $0.epoch == current }
+            .compactMap { session -> (at: Date, start: Date)? in
+                guard let first = session.firstTokenAt else { return nil }
+                return (first, session.startedAt)
+            }
+            .max { $0.at < $1.at }
+        guard let latest else { return nil }
+        let milliseconds = latest.at.timeIntervalSince(latest.start) * 1000
+        return milliseconds > 0 ? milliseconds : nil
+    }
+
     /// 一次缓存命中率的汇总。
     struct CacheHitSample: Equatable, Sendable {
         /// 0…1，按 token 加权（不是各请求命中率的算术平均）。

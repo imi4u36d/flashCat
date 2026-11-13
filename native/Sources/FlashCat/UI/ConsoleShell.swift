@@ -14,8 +14,9 @@ struct ConsoleView: View {
     @State private var showFeedback = false
     @State private var islandExpanded = false
 
-    /// 悬浮导航列的尺寸。列本身不再占满窗口高度到底，
-    /// 而是留出左右与底部的空间，让主视口能透出来。
+    /// 悬浮导航列的尺寸。列本身不再占满窗口高度到底：顶部对齐主视口的
+    /// `contentTopInset`、底部对齐 `contentBottomInset`，玻璃边和页面内容的
+    /// 起止线共用同一条，左右留白则让画布从两侧透出来。
     private enum NavPanel {
         static let width: CGFloat = 208
         static let leadingInset: CGFloat = 12
@@ -36,13 +37,12 @@ struct ConsoleView: View {
             HStack(spacing: 0) {
                 if state.showsSidebar {
                     ConsoleNavigationPanel(state: state,
-                                           chat: state.chat,
-                                           openFeedback: { showFeedback = true })
+                                           chat: state.chat)
                         .frame(width: NavPanel.width)
                         .padding(.leading, NavPanel.leadingInset)
                         .padding(.trailing, NavPanel.trailingGap)
-                        .padding(.top, Console.titlebarHeight)
-                        .padding(.bottom, 14)
+                        .padding(.top, Console.contentTopInset)
+                        .padding(.bottom, Console.contentBottomInset)
                         .transition(.move(edge: .leading).combined(with: .opacity))
                 }
 
@@ -65,7 +65,8 @@ struct ConsoleView: View {
 
             ConsoleTitlebar(state: state,
                             navReservedWidth: navReservedWidth,
-                            openDownloads: { showDownloads = true })
+                            openDownloads: { showDownloads = true },
+                            openFeedback: { showFeedback = true })
                 .frame(height: Console.titlebarHeight)
                 .frame(maxWidth: .infinity, alignment: .top)
         }
@@ -144,6 +145,7 @@ struct ConsoleView: View {
         case .engines: EnginesPage(state: state, installs: state.installs)
         case .logs: LogsPage(state: state)
         case .settings: SettingsPage(state: state)
+        case .lab: LabPage(state: state)
         }
     }
 
@@ -176,7 +178,6 @@ struct ConsoleView: View {
 struct ConsoleNavigationPanel: View {
     @ObservedObject var state: AppState
     @ObservedObject var chat: ChatStore
-    var openFeedback: () -> Void = {}
 
     @Namespace private var selection
 
@@ -187,11 +188,6 @@ struct ConsoleNavigationPanel: View {
 
                 recents
                     .padding(.top, 14)
-
-                Spacer(minLength: 12)
-
-                utilityRow
-                    .padding(.top, 10)
             }
             .padding(10)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -199,22 +195,10 @@ struct ConsoleNavigationPanel: View {
         .animation(Motion.standard, value: state.section)
     }
 
-    private var utilityRow: some View {
-        HStack(spacing: 6) {
-            GlassUtilityButton(symbol: "bubble.left.and.bubble.right",
-                               title: "反馈",
-                               help: "反馈与交流",
-                               active: false) {
-                openFeedback()
-            }
-        }
-    }
-
-    /// 六个页面同属一个菜单组：设置是普通一页，排在最后，
-    /// 不再单独缩在底部工具行里。
+    /// 主工作区：概览到设置，最后一行是实验室。
     private var workspace: some View {
         VStack(spacing: 4) {
-            ForEach(Page.allCases) { page in
+            ForEach(Page.workspace) { page in
                 GlassNavRow(page: page,
                             active: state.section == page,
                             badge: page == .models ? modelCount : 0,
@@ -237,76 +221,38 @@ struct ConsoleNavigationPanel: View {
     }
 
     private var recents: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Rectangle()
-                .fill(Console.glassStroke)
-                .frame(height: 0.5)
-                .padding(.horizontal, 6)
-                .padding(.bottom, 12)
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 2) {
+                Rectangle()
+                    .fill(Console.glassStroke)
+                    .frame(height: 0.5)
+                    .padding(.horizontal, 6)
+                    .padding(.bottom, 12)
 
-            Text("最近对话")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Console.secondary)
-                .padding(.horizontal, 8)
-                .padding(.bottom, 6)
+                Text("最近对话")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Console.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 6)
 
-            ForEach(chat.threads.prefix(6)) { thread in
-                GlassRecentRow(title: thread.title,
-                               // 还在生成的那一段（可能已经切走、在后台跑）
-                               // 用「生成中」替掉时间，回答落在哪儿一目了然。
-                               date: state.generatingThreadID == thread.id
-                                   ? L10n.t("生成中")
-                                   : recentDate(thread.updatedAt),
-                               active: state.currentThreadID == thread.id) {
-                    state.openThread(thread)
-                    state.section = .chat
+                ForEach(chat.threads.prefix(6)) { thread in
+                    GlassRecentRow(title: thread.title,
+                                   // 还在生成的那一段（可能已经切走、在后台跑）
+                                   // 用「生成中」替掉时间，回答落在哪儿一目了然。
+                                   date: state.generatingThreadID == thread.id
+                                       ? L10n.t("生成中")
+                                       : recentDate(thread.updatedAt),
+                                   active: state.currentThreadID == thread.id) {
+                        state.openThread(thread)
+                        state.section = .chat
+                    }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-private struct GlassUtilityButton: View {
-    let symbol: String
-    let title: String
-    let help: String
-    let active: Bool
-    let action: () -> Void
-
-    @State private var hovering = false
-
-    private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: 11, style: .continuous)
-    }
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: symbol)
-                    .font(.system(size: 13.5, weight: .medium))
-                    .frame(width: 18)
-                    .symbolRenderingMode(.hierarchical)
-                Text(title)
-                    .font(.system(size: 12.5))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(active ? Console.text
-                                    : (hovering ? Console.text : Console.secondary))
-            .frame(maxWidth: .infinity)
-            .frame(height: 32)
-            .background {
-                if active || hovering {
-                    shape
-                        .fill(active ? Console.glassSelected.opacity(0.72) : Console.glassGroup)
-                        .overlay(shape.strokeBorder(Console.glassStroke, lineWidth: 0.7))
-                }
-            }
-            .contentShape(shape)
-        }
-        .buttonStyle(.plainHit)
-        .help(help)
-        .onHover { value in withAnimation(Motion.quick) { hovering = value } }
+        .scrollIndicators(.never)
+        // 剩余高度都给最近对话：窗口压到最矮时只在列表内部滚动。
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 }
 
@@ -379,8 +325,9 @@ private struct GlassNavRow: View {
 
     /// Hover：中性玻璃底，不做位移和缩放。
     private var hoverCapsule: some View {
-        Capsule()
-            .fill(Console.glassGroup)
+        LiquidGlassSurface(shape: Capsule(),
+                           tint: Console.glassGroup,
+                           interactive: true)
             .overlay {
                 Capsule().strokeBorder(Console.glassStroke, lineWidth: 0.8)
             }
@@ -418,8 +365,13 @@ private struct GlassRecentRow: View {
             .padding(.horizontal, 8)
             .frame(height: 30)
             .background {
-                shape.fill(active ? Console.inset
-                                  : (hovering ? Console.inset.opacity(0.6) : .clear))
+                ZStack {
+                    if active {
+                        shape.fill(Console.inset)
+                    }
+                    LiquidGlassSurface(shape: shape, interactive: true)
+                        .opacity(hovering && !active ? 1 : 0)
+                }
             }
             .contentShape(shape)
         }
@@ -436,6 +388,7 @@ struct ConsoleTitlebar: View {
     /// 导航隐藏后回落到红绿灯右侧的最小安全位置。
     var navReservedWidth: CGFloat = 0
     var openDownloads: () -> Void
+    var openFeedback: () -> Void
 
     private var downloadCount: Int {
         state.downloadTasks.count + (state.downloadingModel == nil ? 0 : 1)
@@ -477,6 +430,15 @@ struct ConsoleTitlebar: View {
                 }
                 .buttonStyle(.plainHit)
                 .help("下载中心")
+
+                // 下载与反馈之间只留一道细线：两个按钮同一排，
+                // 但反馈是独立入口，不该读成下载旁边的小挂件。
+                Rectangle()
+                    .fill(Console.tertiary.opacity(0.3))
+                    .frame(width: 1, height: 15)
+                    .accessibilityHidden(true)
+
+                feedbackButton
             }
             .padding(.horizontal, 16)
         }
@@ -486,6 +448,24 @@ struct ConsoleTitlebar: View {
         .padding(.top, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(WindowDragArea())
+    }
+
+    /// 反馈入口：和下载中心同排同尺寸，放在标题栏最右，
+    /// 侧栏不再重复挂一个「反馈」按钮。
+    private var feedbackButton: some View {
+        Button(action: openFeedback) {
+            Image(systemName: "bubble.left.and.bubble.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Console.text.opacity(0.8))
+                .frame(width: 32, height: 32)
+                .background {
+                    LiquidGlassSurface(shape: Circle(), interactive: true)
+                }
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plainHit)
+        .help(L10n.t("反馈与交流"))
+        .accessibilityLabel(L10n.t("反馈与交流"))
     }
 
     /// macOS 26 原生玻璃按钮：贴在侧栏右缘，和红绿灯同一水平线。

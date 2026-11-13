@@ -432,6 +432,10 @@ enum EngineModelStore {
         // has config.json + tokenizer on disk, but it must not become a model.
         if manager.fileExists(atPath: path + ".flashcat-incomplete") { return false }
         if hasGGUF(path) { return true }
+        // 扩散包（图像/视频）是 diffusers 布局：没有 LLM 的 tokenizer，
+        // 但一定有 model_index.json。少了这一条，本地 Qwen-Image 会被当成
+        // 普通目录跳过，图像模型根本不出现在模型菜单里。
+        if manager.fileExists(atPath: path + "/model_index.json") { return true }
         guard manager.fileExists(atPath: path + "/config.json") else { return false }
         let tokenizerFiles = ["tokenizer.json", "tokenizer_config.json", "chat_template.jinja",
                               "merges.txt", "vocab.json", "tokenizer.model"]

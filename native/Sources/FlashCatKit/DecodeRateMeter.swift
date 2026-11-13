@@ -42,14 +42,25 @@ public enum TokenEstimator {
             if let text = message["content"] as? String {
                 total += estimate(text)
             } else if let parts = message["content"] as? [[String: Any]] {
-                for part in parts where (part["type"] as? String) == "text" {
-                    if let text = part["text"] as? String { total += estimate(text) }
+                for part in parts {
+                    switch part["type"] as? String {
+                    case "text":
+                        if let text = part["text"] as? String { total += estimate(text) }
+                    case "image_url":
+                        total += approximateImageTokens
+                    default:
+                        break
+                    }
                 }
             }
         }
         // 每条消息的角色/分隔开销，量级参考 OpenAI 的 4 token/条。
         return total + list.count * 4
     }
+
+    /// 一张 1024px 图在 Qwen 系视觉塔上的量级。只用于界面上的上下文估算，
+    /// 引擎回报的真实 usage 会覆盖它；不同视觉塔会差几百 token，不必精确。
+    public static let approximateImageTokens = 1024
 
     /// CJK 表意文字与假名、韩文、全角标点/字母。两处旧实现的分段在这里合并。
     private static func isWide(_ value: UInt32) -> Bool {

@@ -173,6 +173,13 @@ public struct EngineModel: Identifiable, Sendable, Equatable {
     public var loading: Bool
     /// `engine_type` / `model_type` from the engine, shown as a subtitle.
     public var kind: String?
+    /// `/v1/models` 的 `meta.architecture`（如 `qwen_image_21`、`flux2`）。
+    /// 图像参数面板靠它选该模型自己的分辨率预设；引擎没报时退回按 id 猜。
+    public var architecture: String?
+    /// 引擎在 `/v1/models` 里给这个模型报的能力串（`chat` / `image` /
+    /// `vision` / `video` …）。空数组表示引擎没报，按对话模型处理。
+    /// 同一个引擎可以同时挂对话模型和图像模型，所以能力要看模型，不是看引擎。
+    public var capabilities: [String]
     public var hidden: Bool
     public var helper: Bool
     public var engine: EngineID
@@ -184,6 +191,8 @@ public struct EngineModel: Identifiable, Sendable, Equatable {
                 loaded: Bool = false,
                 loading: Bool = false,
                 kind: String? = nil,
+                architecture: String? = nil,
+                capabilities: [String] = [],
                 hidden: Bool = false,
                 helper: Bool = false,
                 engine: EngineID) {
@@ -194,6 +203,8 @@ public struct EngineModel: Identifiable, Sendable, Equatable {
         self.loaded = loaded
         self.loading = loading
         self.kind = kind
+        self.architecture = architecture
+        self.capabilities = capabilities
         self.hidden = hidden
         self.helper = helper
         self.engine = engine
@@ -202,6 +213,26 @@ public struct EngineModel: Identifiable, Sendable, Equatable {
     public var shortName: String {
         id.split(separator: "/").last.map(String.init) ?? id
     }
+
+    public var supportsImage: Bool { capabilities.contains("image") }
+
+    public var supportsChat: Bool { capabilities.isEmpty || capabilities.contains("chat") }
+
+    /// mlx-serve 的视频模型（LTX-Video / MiniMax-H3）报 `video`。
+    public var supportsVideo: Bool { capabilities.contains("video") }
+
+    /// 能读图（图进文出）的对话模型。和 `supportsImage`（文生图）不是一回事：
+    /// Splash/MTPLX/oMLX 的视觉模型会报 `vision`，离线扫描也会补这个能力位。
+    public var supportsVision: Bool { capabilities.contains("vision") }
+
+    /// 参考图/参考视频只有 REF2VA 包收：`/v1/models` 不单列这个能力位，
+    /// 只能从包名认。REF2VA 不接受首尾帧，两者在界面上互斥。
+    public var supportsVideoReferences: Bool {
+        supportsVideo && id.lowercased().contains("ref2va")
+    }
+
+    /// 能出现在对话页模型菜单里的模型：对话、图像与视频。嵌入之类仍然隐藏。
+    public var appearsInChatPicker: Bool { supportsChat || supportsImage || supportsVideo }
 }
 
 // MARK: - Endpoint

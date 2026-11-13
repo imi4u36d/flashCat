@@ -293,6 +293,7 @@ public enum EngineStatusParser {
                 loaded: JSONValue.bool(entry["loaded"]) ?? false,
                 loading: JSONValue.bool(entry["is_loading"]) ?? false,
                 kind: JSONValue.string(entry["engine_type"]) ?? JSONValue.string(entry["model_type"]),
+                capabilities: capabilities(of: entry),
                 hidden: JSONValue.bool(entry["is_hidden"]) ?? false,
                 helper: JSONValue.bool(entry["is_helper"]) ?? false,
                 engine: .omlx))
@@ -437,6 +438,54 @@ public enum EngineStatusParser {
         return result
     }
 
+    /// 从 `/v1/models`（或 `/v1/models/status`）的一条记录里读能力位。
+    /// 各引擎写法不一致：mlx-serve/strata 报 `capabilities`，Splash 报
+    /// `vision` + `input_modalities`，MTPLX 报 `supports_vision` +
+    /// `modalities.input`。视觉模型统一补 `chat`，否则按能力位筛对话模型的
+    /// 界面会把它当成非对话权重藏起来。
+    private static func capabilities(of entry: [String: Any]) -> [String] {
+        var capabilities = entry["capabilities"] as? [String] ?? []
+        let lower = Set(capabilities.map { $0.lowercased() })
+        if lower.contains("image") || lower.contains("video") { return capabilities }
+
+        var seesImages = lower.contains("vision")
+        if JSONValue.digBool(entry, "vision", "supports_vision", "has_vision",
+                             "vision.enabled") == true {
+            seesImages = true
+        }
+        let modalities = (entry["input_modalities"] as? [String])
+            ?? (JSONValue.dig(entry, "modalities.input") as? [String])
+            ?? (JSONValue.dig(entry, "meta.input_modalities") as? [String])
+        if let modalities, modalities.contains(where: { $0.lowercased() == "image" }) {
+            seesImages = true
+        }
+        let kinds = [entry["model_type"], entry["engine_type"], entry["architecture"],
+                     JSONValue.dig(entry, "meta.model_type"),
+                     JSONValue.dig(entry, "meta.architecture")]
+            .compactMap { JSONValue.string($0)?.lowercased() }
+        if kinds.contains(where: isVisionKind) { seesImages = true }
+
+        guard seesImages else { return capabilities }
+        if !capabilities.contains(where: { $0.lowercased() == "chat" }) {
+            capabilities.append("chat")
+        }
+        if !capabilities.contains(where: { $0.lowercased() == "vision" }) {
+            capabilities.append("vision")
+        }
+        return capabilities
+    }
+
+    /// `qwen2_5_vl` / `qwen3-vl` / `llava` 这类命名算视觉模型。
+    private static func isVisionKind(_ text: String) -> Bool {
+        if text.contains("vision") || text.contains("llava") || text.contains("internvl")
+            || text.contains("paligemma") || text.contains("idefics") || text.contains("minicpmv")
+            || text.contains("vlfor") || text.contains("vlmodel") {
+            return true
+        }
+        let tokens = text.split { !$0.isLetter && !$0.isNumber }
+        return tokens.contains("vl") || tokens.contains("vlm")
+    }
+
     /// `/v1/models` is OpenAI-shaped on every engine; packs add context fields
     /// and may list both loaded and unloaded models.
     public static func openAIModels(_ json: [String: Any], engine: EngineID) -> [EngineModel] {
@@ -449,7 +498,7 @@ public enum EngineStatusParser {
                 ?? (state.map { $0.lowercased() == "loaded" || $0.lowercased() == "ready" })
                 ?? (state?.lowercased() == "unloaded" ? false : true)
             let loading = state?.lowercased() == "loading"
-            let capabilities = entry["capabilities"] as? [String]
+            let parsedCapabilities = capabilities(of: entry)
             models.append(EngineModel(
                 id: id,
                 path: nil,
@@ -459,9 +508,16 @@ public enum EngineStatusParser {
                     ?? JSONValue.digInt(entry, "meta.n_ctx", "meta.context_length"),
                 loaded: loaded,
                 loading: loading,
-                kind: capabilities?.first ?? JSONValue.string(entry["capability"])
+                kind: parsedCapabilities.first ?? JSONValue.string(entry["capability"])
                     ?? JSONValue.digString(entry, "meta.engine", "meta.architecture"),
-                hidden: capabilities.map { !$0.contains("chat") } ?? false,
+                architecture: JSONValue.digString(entry, "meta.architecture"),
+                capabilities: parsedCapabilities,
+                // 图像与视频模型都是对话页的合法选择，不再按「不含 chat 就隐藏」
+                // 处理；嵌入这类辅助权重继续藏起来。
+                hidden: parsedCapabilities.isEmpty ? false : {
+                    let lower = Set(parsedCapabilities.map { $0.lowercased() })
+                    return !lower.contains("chat") && !lower.contains("image") && !lower.contains("video")
+                }(),
                 helper: false,
                 engine: engine))
         }
@@ -474,15 +530,22 @@ public enum EngineStatusParser {
         let entries = (json["data"] as? [[String: Any]]) ?? []
         for entry in entries {
             guard let id = JSONValue.string(entry["id"]), !id.isEmpty else { continue }
-            let capabilities = entry["capabilities"] as? [String] ?? []
-            if !capabilities.isEmpty, !capabilities.contains("chat") { continue }
+            let parsedCapabilities = capabilities(of: entry)
+            let isChat = parsedCapabilities.isEmpty || parsedCapabilities.contains("chat")
+            let isImage = parsedCapabilities.contains("image")
+            let isVideo = parsedCapabilities.contains("video")
+            // 图像/视频模型也要进 loadedModels：网关与对话页换模型时靠它确认
+            // 「目标权重已经常驻」，否则 waitForSwitchReady 会一直等到超时。
+            if !parsedCapabilities.isEmpty, !isChat, !isImage, !isVideo { continue }
             let state = JSONValue.digString(entry, "status.value", "state")?.lowercased()
             let loaded = JSONValue.bool(entry["loaded"])
                 ?? (state.map { $0 == "loaded" || $0 == "ready" })
                 ?? (state == "unloaded" ? false : true)
             if loaded { result.loadedModels.append(id) }
             if state == "loading" { result.state = .loading }
-            if loaded, result.model == nil {
+            // 只有对话模型能充当「当前模型」：图像权重不提供上下文窗口，
+            // 当成当前模型会让顶栏的上下文用量与聊天参数全部错位。
+            if loaded, isChat, result.model == nil {
                 result.model = id
                 result.maximumContextTokens = JSONValue.int(entry["max_model_len"])
                     ?? JSONValue.int(entry["context_length"])

@@ -64,4 +64,14 @@ final class LogStoreTests: XCTestCase {
         XCTAssertEqual(store.tail(2).map(\.text), ["plain engine output", "==> 启动"])
         XCTAssertEqual(store.tail(2).map(\.level), [.info, .system])
     }
+
+    /// 页面上的「最新在上」只在视图层翻序。存储层必须保持追加顺序：
+    /// `AppState` 用 `logs.last?.id` 判断有没有新行，反过来的话日志页
+    /// 会停在旧内容上不再刷新。
+    func testSnapshotKeepsAppendOrder() {
+        let store = LogStore(path: path)
+        for index in 1...3 { store.append("line \(index)") }
+
+        XCTAssertEqual(store.snapshot().map(\.text), ["line 1", "line 2", "line 3"])
+    }
 }

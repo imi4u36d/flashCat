@@ -263,7 +263,14 @@ struct GlassFilterBar<Value: Hashable>: View {
                 }
                 .padding(.horizontal, 10)
                 .frame(width: maxSearchWidth, height: 34)
-                .background { LiquidGlassSurface(shape: Capsule()) }
+                .background {
+                    LiquidGlassSurface(
+                        shape: Capsule(),
+                        tint: focused ? Console.accent.opacity(0.08) : nil,
+                        interactive: true
+                    )
+                }
+                .animation(Motion.quick, value: focused)
                 .transition(.opacity.combined(with: .move(edge: .trailing)))
             } else {
                 Button {

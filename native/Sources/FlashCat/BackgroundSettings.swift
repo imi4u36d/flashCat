@@ -95,15 +95,6 @@ final class BackgroundSettings: ObservableObject {
         CGFloat(BackgroundMath.desktopFrost(blur: blur, hasImage: image != nil))
     }
 
-    /// 图片模糊的视图身份。
-    ///
-    /// SwiftUI 会把 `.blur` 的结果当成一个可复用的滤镜图层：只改半径时旧图层
-    /// 不重绘，要等同一帧里别的属性（例如那层保底渐变的 opacity）变化才顺带
-    /// 刷出来——这正是「拖模糊没反应、拖透明度之后模糊才生效」的另一半。
-    /// 把半径并进视图身份，半径一变就是一个新图层，滤镜必然按新值重算。
-    /// 按 0.25pt 分档，避免一次拖动里反复重建。
-    var blurIdentity: Int { Int((blur * 4).rounded()) }
-
     /// 弹出系统文件选择器，选中的图片会被复制到应用支持目录。
     func chooseImage() {
         let panel = NSOpenPanel()

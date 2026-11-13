@@ -11,7 +11,7 @@ depends-on: [flashcat-kit, flashcat-manifest-contract]
 
 ## 职责
 
-macOS 壳。它持有全部可变状态，驱动引擎进程，并把自己画成六个原生页面。界面与状态在同一进程、同一语言里，没有网页层。
+macOS 壳。它持有全部可变状态，驱动引擎进程，并把自己画成七个原生页面。界面与状态在同一进程、同一语言里，没有网页层。
 
 - **状态中枢。** `AppState`（`@MainActor` 单例）——当前页面、服务状态与统计、模型选择与切换阶段、会话与线程、下载队列、设置、外观、侧栏。表现层的每一帧数据都从它出来。
 - **进程编排。** `EngineController` / `EngineManager` / `EngineRuntime` —— 把 pack 清单和 engine descriptor 解析成启动计划、spawn 入口、健康轮询、pid 文件、日志采集、启停与切换。模型 load/unload/rescan 由 descriptor 的 `modelControl` 驱动，状态由多个 telemetry source 合并；Strata 这类特例只允许出现在专用 adapter。
@@ -20,13 +20,13 @@ macOS 壳。它持有全部可变状态，驱动引擎进程，并把自己画�
 - **对话。** `Chat` / `ChatHistory` / `LocalAPI` —— `URLSession` 流式、usage 与 `finish_reason`、本地历史（上限 6 条）。
 - **网关控制。** `GatewayController` 持有网关对象与路由，`GatewayMeter` 打点。
 - **命令行控制接口。** `ControlServer` / `ControlServer+Documents` —— 只在回环上监听的控制通道，供随包的 `flashcat` 使用：状态、引擎启停与切换、模型加载/下载/删除、日志、设置、医生检查与退出。令牌每次启动随机生成并写入 `control.json`（`0600`）；它与推理网关是两个服务器，网关可以关闭，控制接口负责驱动应用。
-- **外壳与界面。** 窗口与场景、菜单栏面板、状态栏图标、登录项、日志缓冲、外观主题、设计 token，以及六个原生页面（`UI/`，见 [flashcat-ui](UI-SPEC.md)）。
+- **外壳与界面。** 窗口与场景、菜单栏面板、状态栏图标、登录项、日志缓冲、外观主题、设计 token，以及七个原生页面（`UI/`，见 [flashcat-ui](UI-SPEC.md)）。
 
 ## 边界
 
 - **允许依赖 `FlashCatKit`；Kit 不许反向依赖本模块。**
 - **只通过 [manifest 契约](../../../scripts/engines/manifest-template.md) 驱动 pack。** pack 里的 `manifest.json` 之外的文件，应用不解释。
-- **表现层就是 SwiftUI 视图。** 六个页面属于 [flashcat-ui](UI-SPEC.md)，只读 `AppState`、只调它的方法；视图不取数、不写盘。
+- **表现层就是 SwiftUI 视图。** 七个页面属于 [flashcat-ui](UI-SPEC.md)，只读 `AppState`、只调它的方法；视图不取数、不写盘。
 - **只走回环。** 不监听、不连接非本机地址。
 - **磁盘布局固定**（清理、备份、支持都依赖它）：
 
@@ -61,5 +61,5 @@ macOS 壳。它持有全部可变状态，驱动引擎进程，并把自己画�
 
 ## 已知限制
 
-- **这一层没有端到端测试。** `FlashCatKitTests` 针对 Kit；`AppState` 的状态机、`EngineController` 的启停与切换、六个页面的交互仍靠手工回归。`FlashCatTests` 覆盖壳层纯函数与「不得再出现快捷键」的源码守卫。
+- **这一层没有端到端测试。** `FlashCatKitTests` 针对 Kit；`AppState` 的状态机、`EngineController` 的启停与切换、七个页面的交互仍靠手工回归。`FlashCatTests` 覆盖壳层纯函数与「不得再出现快捷键」的源码守卫。
 - **`AppState` 是单一大类**（约 77 KB），界面状态集中在一个 `@MainActor` 对象上。边界靠约定维持，不靠类型系统。

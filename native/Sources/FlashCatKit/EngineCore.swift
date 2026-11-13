@@ -265,6 +265,27 @@ public enum EngineTemplate {
         values.map { expand($0, context: context) }
     }
 
+    /// Ensures `flag` is followed by an integer of at least `minimum`. A template
+    /// that never mentions the flag gets it appended. Rewriting the existing
+    /// value (instead of appending a duplicate) keeps the command line the app
+    /// echoes in its banner honest.
+    public static func raisingIntegerFlag(_ flag: String,
+                                          toAtLeast minimum: Int,
+                                          in arguments: [String]) -> [String] {
+        guard let index = arguments.lastIndex(of: flag) else {
+            return arguments + [flag, String(minimum)]
+        }
+        guard index + 1 < arguments.count else {
+            return arguments + [String(minimum)]
+        }
+        guard let current = Int(arguments[index + 1]), current < minimum else {
+            return arguments
+        }
+        var result = arguments
+        result[index + 1] = String(minimum)
+        return result
+    }
+
     /// Placeholders left in the result mean the profile asked for something the
     /// caller did not supply (usually `{model}` before a model is picked).
     public static func unresolvedPlaceholders(_ values: [String]) -> [String] {

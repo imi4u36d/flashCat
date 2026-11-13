@@ -144,6 +144,35 @@ final class DecodeRateTotalTests: XCTestCase {
         XCTAssertEqual(AppState.prefillReading(engine: nil, engineKind: .live), .none)
     }
 
+    // MARK: 首字格
+
+    /// 引擎有样本时优先：它覆盖所有经过引擎的请求，splash 给的还是 p50；
+    /// 网关只量得到经过网关的那一次。
+    func testTTFTPrefersEngineSample() {
+        let reading = AppState.ttftReading(engine: 101.8, gateway: 250)
+        XCTAssertEqual(reading.milliseconds ?? 0, 101.8, accuracy: 0.001)
+        XCTAssertEqual(reading.source, .engine)
+    }
+
+    /// 引擎没有样本（oMLX / strata 没有 TTFT 字段，splash 首个请求前报 0）
+    /// 时，网关最近一次实测让这一格仍然有值。
+    func testTTFTFallsBackToGatewayMeasurement() {
+        let reading = AppState.ttftReading(engine: 0, gateway: 250)
+        XCTAssertEqual(reading.milliseconds ?? 0, 250, accuracy: 0.001)
+        XCTAssertEqual(reading.source, .gateway)
+
+        let missing = AppState.ttftReading(engine: nil, gateway: 250)
+        XCTAssertEqual(missing.source, .gateway)
+        XCTAssertEqual(missing.milliseconds ?? 0, 250, accuracy: 0.001)
+    }
+
+    /// 0 不是「首字很快」：两侧都没有正样本时画「—」。
+    func testTTFTWithoutPositiveSampleReadsNothing() {
+        XCTAssertEqual(AppState.ttftReading(engine: 0, gateway: 0), .none)
+        XCTAssertEqual(AppState.ttftReading(engine: -1, gateway: -1), .none)
+        XCTAssertEqual(AppState.ttftReading(engine: nil, gateway: 0), .none)
+    }
+
     // MARK: 曲线冻结
 
     /// 进行中不冻结；收尾那一拍记下时刻；空闲保持原时刻；新请求解冻。

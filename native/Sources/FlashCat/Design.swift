@@ -1252,6 +1252,8 @@ extension Page {
             return [Color(hex: 0xFFD60A), Color(hex: 0xFF9F0A), Color(hex: 0xFF453A)]
         case .settings:
             return [Color(hex: 0x5E5CE6), Color(hex: 0xBF5AF2), Color(hex: 0xFF375F)]
+        case .lab:
+            return [Color(hex: 0xFF9F0A), Color(hex: 0xBF5AF2), Color(hex: 0x0A84FF)]
         }
     }
 

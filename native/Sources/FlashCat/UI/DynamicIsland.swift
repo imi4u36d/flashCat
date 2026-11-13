@@ -205,6 +205,8 @@ struct DynamicIsland: View {
                         .foregroundStyle(ink)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
+                    // 换模型是读者刚做过的事，这里不复述「切换中 / 加载新模型」，
+                    // 只报引擎此刻真实的阶段（见 `AppState.engineStageText`）。
                     Text(state.engineStageText)
                         .font(.system(size: 11))
                         .foregroundStyle(ink.opacity(0.5))
@@ -283,7 +285,8 @@ struct DynamicIsland: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plainHit)
-            .help("查看通知")
+            // 一过性提示不写历史；没有历史可翻的时候，展开看到的是引擎详情。
+            .help(L10n.t(hasNotices ? "查看通知" : "引擎详情"))
         } else {
             Button {
                 state.toggleService()

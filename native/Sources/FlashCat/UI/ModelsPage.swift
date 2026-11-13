@@ -52,7 +52,7 @@ struct ModelsPage: View {
         VStack(alignment: .leading, spacing: 0) {
             topBar
                 .padding(.horizontal, Console.contentPadding)
-                .padding(.top, 78)
+                .padding(.top, Console.contentTopInset)
                 .padding(.bottom, 18)
 
             ScrollViewReader { proxy in
@@ -81,7 +81,6 @@ struct ModelsPage: View {
                     }
                     .padding(.horizontal, Console.contentPadding)
                     .padding(.top, 2)
-                    .padding(.bottom, 26)
                 }
                 .scrollIndicators(.never)
                 // 切换引擎后内容高度会骤减；不回到顶部时滚动位置可能落在
@@ -94,6 +93,9 @@ struct ModelsPage: View {
                 }
             }
         }
+        // 网格的滚动视口止于这条线：和侧栏玻璃的底边同高，
+        // 滚到底时最后一行卡片也不会糊在窗口边缘上。
+        .padding(.bottom, Console.contentBottomInset)
         .sheet(isPresented: $showingHub) { HubSheet(state: state, engine: scope.engine ?? engine) }
         .sheet(isPresented: $showingDownloads) { DownloadCenterSheet(state: state) }
         .alert("删除 \(removeTarget?.model.shortName ?? "")？",
@@ -224,10 +226,7 @@ private struct ModelCard: View {
             }
         }
         .padding(18)
-        .consoleCardSurface(tint: cardTint == .clear
-                                ? nil
-                                : cardTint.opacity(selected ? 0.18 : 0.10),
-                            interactive: cardTint == .clear)
+        .consoleCardSurface(tint: cardTint, interactive: true)
         .contextMenu {
             if !model.path.isEmpty {
                 Button("在 Finder 中显示") {
@@ -285,10 +284,12 @@ private struct ModelCard: View {
         return "GGUF"
     }
 
-    private var cardTint: Color {
-        if selected { return Console.accent }
-        if activeFraction != nil || task != nil { return Console.warn }
-        return .clear
+    /// 卡面只在下载中铺一层暖色底。使用中的卡不再整块染色——「正在用哪个模型」
+    /// 由卡片右下角的「使用中」标识说明，卡面本身和普通卡保持同一种玻璃。
+    private var cardTint: Color? {
+        if selected { return nil }
+        if activeFraction != nil || task != nil { return Console.warn.opacity(0.10) }
+        return nil
     }
 
     private var family: ModelFamily {
@@ -324,14 +325,17 @@ private struct ModelCard: View {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Console.secondary)
-                    .frame(width: 28, height: 28)
-                    .background {
-                        LiquidGlassSurface(shape: Circle(), interactive: true)
-                    }
             }
+            // 无边框 Menu 把标签当模板压平：标签里的 frame / background 会被丢掉，
+            // 图标颜色也得靠 .tint 而不是 foregroundStyle。所以 28pt 的玻璃圆底
+            // 挂在外层的 frame 上，Menu 本身只负责那三个点。
+            .tint(Console.secondary)
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
+            .frame(width: 28, height: 28)
+            .contentShape(Circle())
+            .background { LiquidGlassSurface(shape: Circle(), interactive: true) }
         }
     }
 
@@ -381,7 +385,7 @@ private struct ModelCard: View {
             } label: {
                 Label(L10n.format("下载 %@", fraction.formatted(.percent.precision(.fractionLength(0)))), systemImage: "pause.fill")
             }
-            .buttonStyle(ConsolePillStyle(tone: .secondary))
+            .buttonStyle(CardActionStyle(tone: .neutral))
         } else if let task {
             Button {
                 state.resumeDownload(task)
@@ -389,7 +393,7 @@ private struct ModelCard: View {
                 Label(task.status == .paused ? L10n.format("继续 %@", (task.fraction ?? 0).formatted(.percent.precision(.fractionLength(0)))) : L10n.t("重试"),
                       systemImage: "play.fill")
             }
-            .buttonStyle(ConsolePillStyle(tone: .secondary))
+            .buttonStyle(CardActionStyle(tone: .neutral))
         } else if entry.installed {
             if selected {
                 HStack(spacing: 6) {
@@ -409,7 +413,7 @@ private struct ModelCard: View {
                 } label: {
                     Label("使用", systemImage: "play.fill")
                 }
-                .buttonStyle(ConsolePillStyle(tone: .success))
+                .buttonStyle(CardActionStyle(tone: .accent))
             }
         } else {
             Button {
@@ -417,12 +421,55 @@ private struct ModelCard: View {
             } label: {
                 Label("下载", systemImage: "arrow.down.circle.fill")
             }
-            .buttonStyle(.consoleSecondary)
+            .buttonStyle(CardActionStyle(tone: .neutral))
             .disabled(state.downloadingModel != nil)
         }
     }
 }
 
+
+/// 模型卡上的按钮不铺底色。卡片本身就是一层玻璃，按钮再叠一个玻璃胶囊会在
+/// 卡面上多出一块更亮的椭圆；现在按钮只留文字和图标，悬停时提亮、按下时轻微
+/// 收缩，命中区仍覆盖整块内边距。
+private struct CardActionStyle: ButtonStyle {
+    enum Tone { case accent, neutral }
+
+    var tone: Tone = .neutral
+
+    func makeBody(configuration: Configuration) -> some View {
+        CardActionBody(configuration: configuration, tone: tone)
+    }
+}
+
+private struct CardActionBody: View {
+    let configuration: ButtonStyleConfiguration
+    let tone: CardActionStyle.Tone
+
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hovering = false
+
+    private var tint: Color {
+        switch tone {
+        case .accent: return Console.accent
+        case .neutral: return Console.text
+        }
+    }
+
+    var body: some View {
+        configuration.label
+            .font(.system(size: 12.5, weight: .semibold))
+            .foregroundStyle(isEnabled ? tint.opacity(hovering ? 1 : 0.82)
+                                       : Console.tertiary.opacity(0.6))
+            .padding(.horizontal, 8)
+            .frame(height: 32)
+            .contentShape(Rectangle())
+            .opacity(configuration.isPressed ? 0.55 : 1)
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(Motion.quick, value: configuration.isPressed)
+            .animation(Motion.quick, value: hovering)
+            .onHover { hovering = $0 }
+    }
+}
 
 enum ModelScope: Hashable {
     case all

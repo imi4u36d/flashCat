@@ -15,6 +15,12 @@ struct ChatComposerField: NSViewRepresentable {
     @Binding var isFocused: Bool
     var isEnabled: Bool
     var onSend: () -> Void
+    /// 图片文件拖进输入框：返回 true 表示已接手，AppKit 不再按文本拖放处理。
+    var onDropImage: ((URL) -> Bool)?
+    /// 拖拽悬停状态，交给外层画投放高亮。
+    var onDragTargetChange: ((Bool) -> Void)?
+    /// 当前模型能不能收图；不能时把文件拖放原样还给 NSTextView。
+    var acceptsImageDrop: Bool = false
 
     /// 竖排上限：超过之后输入框内部滚动，不再继续长高。
     static let maxLines = 6
@@ -51,7 +57,18 @@ struct ChatComposerField: NSViewRepresentable {
         textView.isContinuousSpellCheckingEnabled = false
         textView.isGrammarCheckingEnabled = false
 
+        // NSTextView 默认只会把拖进来的东西当文本插入。显式注册文件 URL，
+        // 由 `ComposerTextView` 判断是不是图片，再交给 SwiftUI 记成底图。
+        textView.registerForDraggedTypes([.fileURL])
+
         context.coordinator.container = container
+        textView.onDropImage = { [weak coordinator = context.coordinator] url in
+            coordinator?.parent.onDropImage?(url) ?? false
+        }
+        textView.onDragTargetChange = { [weak coordinator = context.coordinator] targeted in
+            coordinator?.parent.onDragTargetChange?(targeted)
+        }
+        textView.acceptsImageDrop = acceptsImageDrop
         textView.onSend = { [weak coordinator = context.coordinator] in
             coordinator?.parent.onSend()
         }
@@ -72,6 +89,7 @@ struct ChatComposerField: NSViewRepresentable {
 
         let textView = nsView.textView
         textView.isEditable = isEnabled
+        textView.acceptsImageDrop = acceptsImageDrop
         // 只有「草稿被外部改写」时才写回视图。不能拿 `textView.string` 直接跟
         // Binding 比：输入法组字中的 marked text 已经在文本存储里，却还没进
         // Binding，比一下就会把没确认的拼音清掉——旧实现正是这么丢掉输入的。
@@ -211,6 +229,56 @@ final class ComposerContainer: NSView {
 final class ComposerTextView: NSTextView {
     var onSend: (() -> Void)?
     var onFocusChange: ((Bool) -> Void)?
+    var onDropImage: ((URL) -> Bool)?
+    var onDragTargetChange: ((Bool) -> Void)?
+    var acceptsImageDrop = false
+
+    private static let imageExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "heic", "heif", "webp", "tif", "tiff", "bmp", "gif",
+    ]
+
+    /// 只认本地图片文件；其它文件继续走 NSTextView 原来的拖放逻辑。
+    private func imageURL(from info: NSDraggingInfo) -> URL? {
+        guard acceptsImageDrop else { return nil }
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self],
+                                                       options: options) as? [URL]
+        return urls?.first {
+            Self.imageExtensions.contains($0.pathExtension.lowercased())
+        }
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if imageURL(from: sender) != nil {
+            onDragTargetChange?(true)
+            return .copy
+        }
+        return super.draggingEntered(sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        if imageURL(from: sender) != nil { return .copy }
+        return super.draggingUpdated(sender)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        onDragTargetChange?(false)
+        super.draggingExited(sender)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if imageURL(from: sender) != nil { return true }
+        return super.prepareForDragOperation(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if let url = imageURL(from: sender) {
+            onDragTargetChange?(false)
+            return onDropImage?(url) ?? false
+        }
+        onDragTargetChange?(false)
+        return super.performDragOperation(sender)
+    }
 
     /// Return（主键盘）与 Enter（小键盘）。
     private static let returnKeyCodes: Set<UInt16> = [36, 76]

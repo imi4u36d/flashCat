@@ -411,6 +411,17 @@ final class EngineController {
             arguments += ["--default-reasoning-effort", effort]
         }
 
+        // 对话里画图要同时挂着对话模型和图像模型，mlx-serve 的包模板却把常驻
+        // 上限钉在 1。这里抬到 2：它只是上限，不会因此多加载任何权重，真正的
+        // 占用仍由 --max-resident-mem 按本机内存把关。包是下载来的，改本机的
+        // manifest 只能修开发机，所以在装配参数时统一纠正；放在调优参数之后，
+        // 自定义参数里写下的旧上限也会被这一行盖掉。
+        if descriptor.adapter == .mlxServe {
+            arguments = EngineTemplate.raisingIntegerFlag("--max-resident-models",
+                                                          toAtLeast: 2,
+                                                          in: arguments)
+        }
+
         if !arguments.contains(String(port)) {
             // A manifest that forgot `{port}` would silently bind its default.
             logs.append("==> 警告：\(id.displayName) 的启动模板未包含 {port}", level: .warning)
@@ -1173,17 +1184,7 @@ final class EngineController {
     func switchModel(_ target: String, stage: @escaping (String) -> Void) async -> ModelSwitchOutcome {
         let wanted = target.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !wanted.isEmpty else { return .failed("模型标识为空") }
-        // 上一次切换可能刚被读者取消/被新选择接管：主线程已经放弃了它，但它还
-        // 没走完 defer（正在等 unload 或 load 收尾）。等它让出单飞位，而不是把
-        // 这次新选择判成失败——那正是「再点一次没反应」的另一半原因。
-        if switchInFlight {
-            let deadline = Date().addingTimeInterval(8)
-            while switchInFlight, Date() < deadline, !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 150_000_000)
-            }
-        }
-        guard !switchInFlight else { return .failed("已有切换在进行") }
-        switchInFlight = true
+        guard await claimSwitchSlot() else { return .failed("已有切换在进行") }
         defer { switchInFlight = false }
 
         if descriptor.switchMode == .hot, isRunning {
@@ -1234,6 +1235,41 @@ final class EngineController {
         return .ready
     }
 
+    /// 只把 `target` 加载进来，不动已经常驻的模型。对话里画图时用：图像模型
+    /// 进来的时候对话模型还要接着写这一轮，卸掉它就得多等一次几十秒的加载。
+    ///
+    /// 只有热加载引擎能同时挂两份权重；别的引擎没有这个能力，退回原来的独占
+    /// 切换，保证行为是「换过去」而不是「加载失败」。
+    func loadModelKeepingResident(_ target: String,
+                                  stage: @escaping (String) -> Void) async -> ModelSwitchOutcome {
+        let wanted = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !wanted.isEmpty else { return .failed("模型标识为空") }
+        guard descriptor.switchMode == .hot, isRunning else {
+            return await switchModel(wanted, stage: stage)
+        }
+        guard await claimSwitchSlot() else { return .failed("已有切换在进行") }
+        defer { switchInFlight = false }
+        if Task.isCancelled { return .failed("切换已取消") }
+        stage("加载新模型")
+        let loaded = await loadModelHot(wanted)
+        return loaded ? .ready : .failed(failureMessage ?? "加载 \(wanted) 失败")
+    }
+
+    /// 等上一趟切换让出单飞位，再占住它。上一次切换可能刚被读者取消/被新选择
+    /// 接管：主线程已经放弃了它，但它还没走完 defer（正在等 unload 或 load
+    /// 收尾）。等它，而不是把这次新选择判成失败——那正是「再点一次没反应」
+    /// 的另一半原因。
+    private func claimSwitchSlot() async -> Bool {
+        if switchInFlight {
+            let deadline = Date().addingTimeInterval(8)
+            while switchInFlight, Date() < deadline, !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+            }
+        }
+        guard !switchInFlight else { return false }
+        switchInFlight = true
+        return true
+    }
 
     /// Models the engine itself reports as resident. `nil` means the status
     /// document could not be read at all.

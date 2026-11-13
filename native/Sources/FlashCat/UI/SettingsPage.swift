@@ -35,20 +35,20 @@ struct SettingsPage: View {
                         rightColumn(wide: false)
                     }
                     .padding(.horizontal, Console.contentPadding)
-                    .padding(.top, 78)
-                    .padding(.bottom, 26)
+                    .padding(.top, Console.contentTopInset)
                 } else {
                     HStack(alignment: .top, spacing: 18) {
                         leftColumn(wide: true)
                         rightColumn(wide: true)
                     }
                     .padding(.horizontal, Console.contentPadding)
-                    .padding(.top, 78)
-                    .padding(.bottom, 26)
+                    .padding(.top, Console.contentTopInset)
                 }
             }
             .scrollIndicators(.never)
         }
+        // 设置页没有独立标题栏，滚动视口的下沿同样收在侧栏底边上。
+        .padding(.bottom, Console.contentBottomInset)
         .onAppear(perform: load)
         .onChange(of: state.activeEngine) { _, _ in load() }
     }
@@ -68,6 +68,7 @@ struct SettingsPage: View {
             gatewayCard
             cliCard
             thinkingCard(wide: wide)
+            imageCard
             infoCard
         }
     }
@@ -490,6 +491,21 @@ struct SettingsPage: View {
                     options: ReasoningEffort.allCases.map { ($0, $0.label) })
                     .fixedSizeWhen(wide)
                     .disabled(thinkingMode != .on)
+            }
+        }
+    }
+
+    private var imageCard: some View {
+        SettingsCard {
+            SettingsRow(title: "图像模型常驻",
+                        detail: "画完图后图像模型留在显存里，下一轮生图不必重新加载；内存不够时引擎仍会自己换出") {
+                Toggle("", isOn: Binding(
+                    get: { state.imageToolResident },
+                    set: { state.imageToolResident = $0 }))
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+                    .tint(Console.accent)
             }
         }
     }

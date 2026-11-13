@@ -68,6 +68,7 @@ struct FlashCatApp: App {
                 Button("引擎") { state.section = .engines }
                 Button("日志") { state.section = .logs }
                 Button("设置") { state.section = .settings }
+                Button("实验室") { state.section = .lab }
             }
         }
 

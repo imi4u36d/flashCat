@@ -33,6 +33,10 @@ public struct EngineCapability: RawRepresentable, Codable, Hashable, Sendable {
     public static let chat = EngineCapability("chat")
     public static let streaming = EngineCapability("streaming")
     public static let vision = EngineCapability("vision")
+    /// 图像生成/编辑：引擎提供 `/v1/images/generations`（以及 edits），
+    /// 且模型自己的 `capabilities` 里带 `image`。视觉（vision）是图片进、
+    /// 文本出；这一项反过来，别把两者混为一谈。
+    public static let image = EngineCapability("image")
     public static let reasoning = EngineCapability("reasoning")
     public static let multiModel = EngineCapability("multi-model")
     public static let hotLoad = EngineCapability("hot-load")
@@ -49,6 +53,7 @@ public struct EngineCapability: RawRepresentable, Codable, Hashable, Sendable {
         case .chat: return "对话"
         case .streaming: return "流式"
         case .vision: return "视觉"
+        case .image: return "图像"
         case .reasoning: return "推理"
         case .multiModel: return "多模型"
         case .hotLoad: return "热加载"
@@ -350,7 +355,7 @@ public enum EngineCatalog {
             summary: "原生 MLX / GGUF 通用引擎，多模型热加载，无需 Python。",
             accentColor: "#0A84FF", adapter: .mlxServe,
             defaultPort: 8300, minMacOS: "26.4", startupTimeout: 600, switchMode: .hot,
-            capabilities: [.chat, .streaming, .vision, .reasoning, .multiModel,
+            capabilities: [.chat, .streaming, .vision, .reasoning, .image, .multiModel,
                            .hotLoad, .hotUnload, .modelRescan, .toolUse],
             modelLayout: .nested,
             modelControl: EngineModelControlSpec(

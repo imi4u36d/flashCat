@@ -15,6 +15,8 @@ struct HubSheet: View {
     @State private var sort: HubSort = .trending
     @State private var filter: HubFilter = .all
     @State private var directRepo = ""
+    @FocusState private var searchFocused: Bool
+    @FocusState private var directRepoFocused: Bool
 
     private var models: [HubModel] { state.hubResults }
 
@@ -98,7 +100,7 @@ struct HubSheet: View {
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 12)
                                     .background {
-                                        LiquidGlassSurface(shape: Capsule())
+                                        LiquidGlassSurface(shape: Capsule(), interactive: true)
                                     }
                             }
                             .buttonStyle(.plainHit)
@@ -124,6 +126,7 @@ struct HubSheet: View {
                 TextField("搜索模型仓库，例如 Qwen3 Coder", text: $query)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12.5))
+                    .focused($searchFocused)
                 if !query.isEmpty {
                     Button {
                         query = ""
@@ -142,7 +145,8 @@ struct HubSheet: View {
             .frame(height: 34)
             .background {
                 LiquidGlassSurface(
-                    shape: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    shape: RoundedRectangle(cornerRadius: 9, style: .continuous),
+                    tint: searchFocused ? Native.accent.opacity(0.08) : nil
                 )
             }
 
@@ -443,6 +447,7 @@ struct HubSheet: View {
                 TextField("直接填 owner/repo 下载", text: $directRepo)
                     .textFieldStyle(.plain)
                     .font(Native.monoFont)
+                    .focused($directRepoFocused)
                 Button("下载", action: downloadDirect)
                     .buttonStyle(.consoleSecondary)
                     .disabled(directRepo.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -451,7 +456,8 @@ struct HubSheet: View {
             .frame(height: 32)
             .background {
                 LiquidGlassSurface(
-                    shape: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
+                    tint: directRepoFocused ? Native.accent.opacity(0.08) : nil
                 )
             }
             .frame(maxWidth: 360)
@@ -605,7 +611,7 @@ private struct HubModelRowCard: View {
             .padding(13)
             .frame(maxWidth: .infinity, alignment: .leading)
             .consoleCardSurface(tint: selected ? Console.accent.opacity(0.10) : nil,
-                                interactive: !selected)
+                                interactive: true)
             .contentShape(shape)
         }
         .buttonStyle(.plainHit)

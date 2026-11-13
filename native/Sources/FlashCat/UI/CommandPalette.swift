@@ -69,7 +69,9 @@ struct CommandPalette: View {
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(Native.secondary)
                     .frame(width: 22, height: 22)
-                    .background(Circle().fill(Native.overlay(0.07)))
+                    .background {
+                        LiquidGlassSurface(shape: Circle(), interactive: true)
+                    }
                     .contentShape(Circle())
             }
             .buttonStyle(.plainHit)
@@ -130,9 +132,14 @@ struct CommandPalette: View {
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
         .background {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(selected ? Native.accent.opacity(0.10) : Color.clear)
+            LiquidGlassSurface(
+                shape: RoundedRectangle(cornerRadius: 7, style: .continuous),
+                tint: selected ? Native.accent.opacity(0.10) : nil,
+                interactive: true
+            )
+            .opacity(selected ? 1 : 0)
         }
+        .animation(Motion.quick, value: selected)
         .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 
@@ -152,6 +159,13 @@ struct CommandPalette: View {
 
     // MARK: Commands
 
+    /// 换权重的空窗里阶段行会短暂为空，那时只留引擎名，别留一个「 · 」的尾巴。
+    private var engineToggleDetail: String {
+        let stage = state.engineStageText
+        guard !stage.isEmpty else { return state.activeEngine.displayName }
+        return "\(state.activeEngine.displayName) · \(stage)"
+    }
+
     private var commands: [CommandItem] {
         var list: [CommandItem] = Page.allCases.map { page in
             CommandItem(id: "nav.\(page.rawValue)",
@@ -163,7 +177,7 @@ struct CommandPalette: View {
         }
         list.append(CommandItem(id: "engine.toggle",
                                 title: state.isRunning ? "停止推理引擎" : "启动推理引擎",
-                                detail: "\(state.activeEngine.displayName) · \(state.engineStageText)",
+                                detail: engineToggleDetail,
                                 icon: state.isRunning ? "stop.fill" : "play.fill") {
             state.toggleService()
         })
@@ -217,6 +231,7 @@ private extension Page {
         case .engines: return "安装、启停与调优"
         case .logs: return "实时输出与过滤"
         case .settings: return "外观、服务与默认参数"
+        case .lab: return "对话中生成的图片与视频"
         }
     }
 }

@@ -39,6 +39,16 @@ enum Console {
     static let accentDeep = Color.adaptive(dark: 0xD94A7C, light: 0xBE3568)
     static let accentSoft = Color.adaptive(dark: 0x3A2230, light: 0xFBE8F0)
 
+    // Chat bubbles: a neutral pair that deliberately does not derive from
+    // `accent`. The conversation must not repaint when the brand colour does,
+    // and the bubbles should read as message surfaces, not accent callouts.
+    // Opaque on purpose: the canvas washes a little accent pink into the top
+    // right, and a translucent bubble would pick that tint back up.
+    static let userBubble = Color.adaptive(dark: 0x3A3745, light: 0xDCE2EC)
+    static let userBubbleStroke = Color.adaptive(dark: 0x474352, light: 0xCBD2E0)
+    static let assistantBubble = Color.adaptive(dark: 0x24222C, light: 0xFFFFFF)
+    static let assistantBubbleStroke = Color.adaptive(dark: 0x383441, light: 0xE2E6F0)
+
     static let ok = Color.adaptive(dark: 0x4CC96B, light: 0x2F9E5B)
     static let warn = Color.adaptive(dark: 0xE8A33D, light: 0xB97A16)
     static let danger = Color.adaptive(dark: 0xF26B58, light: 0xC43A2F)
@@ -65,6 +75,15 @@ enum Console {
     static let sidebarWidth: CGFloat = 200
     static let titlebarHeight: CGFloat = 54
     static let contentPadding: CGFloat = 24
+    /// 主视口的上下边界。导航列和六个页面都读这两个值，窗口一缩放，
+    /// 侧栏玻璃边和右侧内容的起止线始终是同一条，不会一高一低。
+    ///
+    /// 顶部 = 标题栏 + 12pt：标题栏自己占 54pt，内容只从它下沿借半档间距，
+    /// 页面标题既不会贴住标题栏的渐变，整块视口又不会显得往下坠；
+    /// 底部离窗口下沿 24pt，和左右留白同宽。
+    static let titlebarGap: CGFloat = 12
+    static let contentTopInset: CGFloat = titlebarHeight + titlebarGap
+    static let contentBottomInset: CGFloat = contentPadding
     /// 内容区宽度低于这个值时，多栏页面切换为单栏纵向排布。
     /// 侧栏展开时对应约 1180pt 的窗口宽度，缩放窗口时页面会先于内容被挤坏前重排。
     static let compactContentWidth: CGFloat = 980
@@ -119,10 +138,10 @@ struct ConsoleBackdrop: View {
                             // 直接和侧栏、页面文字抢视觉。半径可在设置里调整。
                             .blur(radius: background.blur)
                             .scaleEffect(1.1)
-                            // SwiftUI 会复用 `.blur` 产生的滤镜图层，只改半径时
-                            // 不重绘；把半径并进身份，半径一变就重建图层。
-                            // 见 `BackgroundSettings.blurIdentity`。
-                            .id(background.blurIdentity)
+                            // 不要给这一层加 `.id`：半径一变就换身份，SwiftUI 会
+                            // 把整块图片图层销毁重建，拖动时窗口出帧掉到一半、
+                            // 画面整块跳变（用户看到的就是「拖模糊条闪屏」）。
+                            // 现在的 `.blur` 会跟着半径重绘，不需要抖身份。
                     }
                     .clipped()
 
@@ -172,7 +191,8 @@ private struct ConsoleCardSurfaceModifier: ViewModifier {
             .background {
                 LiquidGlassSurface(
                     shape: RoundedRectangle(cornerRadius: radius, style: .continuous),
-                    tint: glassTint
+                    tint: glassTint,
+                    interactive: interactive
                 )
             }
             .onHover { value in

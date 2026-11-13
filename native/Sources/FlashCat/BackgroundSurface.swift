@@ -50,9 +50,11 @@ final class BackgroundSurface {
         let settings = BackgroundSettings.shared
         let alpha = CGFloat(BackgroundMath.desktopFrost(blur: settings.blur,
                                                         hasImage: settings.image != nil))
-        if abs(effectView.alphaValue - alpha) > 0.0005 {
-            effectView.alphaValue = alpha
-        }
+        // 只有强度真的变了才碰这一层：它铺满整窗、又是 behindWindow 混合，
+        // 每帧标脏等于让系统重新采样桌面并重合成整个窗口，拖动时会闪。
+        // 有自定义图片时强度恒为 0，这一路根本不该跑。
+        guard abs(effectView.alphaValue - alpha) > 0.0005 else { return }
+        effectView.alphaValue = alpha
         // `alphaValue` 只改合成参数，层内容本身不一定会重新解析。显式标脏，
         // 保证拖动滑杆时毛玻璃跟着走，而不是等下一次别的重绘顺手带出来。
         effectView.needsDisplay = true

@@ -135,6 +135,24 @@ final class EngineCoreTests: XCTestCase {
         XCTAssertEqual(EngineTemplate.unresolvedPlaceholders(expanded), ["{model}"])
     }
 
+    /// mlx-serve 的包模板把同时常驻数钉在 1；画图要对话 + 图像两份权重同时
+    /// 在，装配参数时得就地把这个值抬上去，而不是再补一个重复的开关。
+    func testResidentModelLimitIsRaisedInPlace() {
+        let pinned = ["--serve", "--max-resident-models", "1", "--metrics"]
+        XCTAssertEqual(
+            EngineTemplate.raisingIntegerFlag("--max-resident-models", toAtLeast: 2, in: pinned),
+            ["--serve", "--max-resident-models", "2", "--metrics"])
+
+        let roomy = ["--max-resident-models", "3"]
+        XCTAssertEqual(
+            EngineTemplate.raisingIntegerFlag("--max-resident-models", toAtLeast: 2, in: roomy),
+            roomy)
+
+        XCTAssertEqual(
+            EngineTemplate.raisingIntegerFlag("--max-resident-models", toAtLeast: 2, in: ["--serve"]),
+            ["--serve", "--max-resident-models", "2"])
+    }
+
     // MARK: ports
 
     func testPortAllocatorSkipsBusyPortsInsideTheRange() {

@@ -64,6 +64,18 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINARY" "$APP/Contents/MacOS/flashCat"
 chmod +x "$APP/Contents/MacOS/flashCat"
 
+# The chat page's VideoPlayer lives in _AVKit_SwiftUI, and the VideoPlayerView
+# inside it subclasses AVKit's AVPlayerView. Swift autolink only pulls in the
+# overlay, so a binary without an explicit AVKit link aborts the first time a
+# video bubble renders ("failed to demangle superclass of VideoPlayerView from
+# mangled name 'So12AVPlayerViewC'"). The linker setting in Package.swift is
+# easy to lose in a manifest edit and the failure only shows up on a real
+# video, so fail the build here instead of on the user's machine.
+if ! otool -L "$APP/Contents/MacOS/flashCat" | grep -q "Frameworks/AVKit.framework"; then
+    echo "error: flashCat does not link AVKit.framework; VideoPlayer will crash on first render" >&2
+    exit 1
+fi
+
 # The command-line client ships inside the bundle. It talks to the app through
 # the loopback control server, but works offline for status, engine installs
 # and pure settings. Keeping it in Contents/Helpers keeps Contents/MacOS to the

@@ -78,25 +78,37 @@ dmg_cause() {
     grep -iE "operation not permitted|not permitted|no space left|denied|OSStatus error|create failed" "$DMG_LOG_FILE" | tail -1
 }
 create_dmg() {
+    # 卷根必须是「flashCat.app + Applications 链接」，拖进去就能装。
+    # 直接把 .app 路径交给 `diskutil image create from` 会把 bundle 的
+    # Contents 摊到卷根（1.5.5 发的 dmg 就这样，打开只看到一个 Contents
+    # 文件夹），所以先搭一个只含 app 和链接的暂存目录，两种命令都指向它。
+    local root="$OUT_DIR/.dmg-root"
+    rm -rf "$root"
+    mkdir -p "$root"
+    cp -R "$APP" "$root/flashCat.app"
+    ln -sfn /Applications "$root/Applications"
+    local ok=1
     # macOS 27 起 `hdiutil create` 已标记弃用，官方替代是 diskutil；旧系统没有
     # 这个子命令，所以先试 diskutil，再退回 hdiutil。
     if command -v diskutil >/dev/null 2>&1 \
-        && diskutil image create from "$APP" --volumeName "flashCat" --format UDZO "$DMG" >>"$DMG_LOG_FILE" 2>&1; then
-        return 0
-    fi
-    if ! command -v hdiutil >/dev/null 2>&1; then
+        && diskutil image create from "$root" --volumeName "flashCat" --format UDZO "$DMG" >>"$DMG_LOG_FILE" 2>&1; then
+        ok=0
+    elif command -v hdiutil >/dev/null 2>&1; then
+        # 上一次没卸载干净的卷会让 hdiutil 直接失败，先摘掉。
+        hdiutil detach "/Volumes/flashCat" -force >/dev/null 2>&1 || true
+        if hdiutil create -volname "flashCat" -srcfolder "$root" -ov \
+                -format UDZO "$DMG" >>"$DMG_LOG_FILE" 2>&1; then
+            ok=0
+        # 卷名被别的镜像占着时，换一次性卷名再试一次。
+        elif hdiutil create -volname "flashCat-$$" -srcfolder "$root" -ov \
+                -format UDZO "$DMG" >>"$DMG_LOG_FILE" 2>&1; then
+            ok=0
+        fi
+    else
         echo "hdiutil not available" >>"$DMG_LOG_FILE"
-        return 1
     fi
-    # 上一次没卸载干净的卷会让 hdiutil 直接失败，先摘掉。
-    hdiutil detach "/Volumes/flashCat" -force >/dev/null 2>&1 || true
-    if hdiutil create -volname "flashCat" -srcfolder "$APP" -ov \
-            -format UDZO "$DMG" >>"$DMG_LOG_FILE" 2>&1; then
-        return 0
-    fi
-    # 卷名被别的镜像占着时，换一次性卷名再试一次。
-    hdiutil create -volname "flashCat-$$" -srcfolder "$APP" -ov \
-        -format UDZO "$DMG" >>"$DMG_LOG_FILE" 2>&1
+    rm -rf "$root"
+    return $ok
 }
 if create_dmg; then
     echo "     $DMG ($(du -sh "$DMG" | cut -f1))"

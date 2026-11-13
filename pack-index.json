@@ -39,6 +39,14 @@
     ],
     "omlx": [
       {
+        "version": "0.8.0rc1",
+        "url": "omlx-0.8.0rc1-arm64-macos15.0.tar.gz",
+        "sha256": "e713603612af35dadb5a0399a0fb488c1e040ff75ebeedfded6c06a767876b5a",
+        "bytes": 401205722,
+        "minMacOS": "15.0",
+        "notes": ""
+      },
+      {
         "version": "0.7.3rc1",
         "url": "omlx-0.7.3rc1-arm64-macos26.0.tar.gz",
         "sha256": "7d4cf70440b91a31a21337f0d8247380fac0c400305e8256d540f0cb93e4930e",
@@ -56,6 +64,14 @@
       }
     ],
     "splash": [
+      {
+        "version": "1.6.1",
+        "url": "splash-1.6.1-arm64-macos26.0.tar.gz",
+        "sha256": "7d8dbc208cf3480488bc2f7e3a23a263d4f347963f8874755f0428f24b8e8587",
+        "bytes": 79843745,
+        "minMacOS": "26.0",
+        "notes": ""
+      },
       {
         "version": "1.6.0",
         "url": "splash-1.6.0-arm64-macos26.0.tar.gz",

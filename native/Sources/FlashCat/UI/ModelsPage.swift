@@ -2,7 +2,8 @@ import SwiftUI
 import AppKit
 import FlashCatKit
 
-/// 模型页：按 WebUI 版式——顶部引擎分段 + 搜索，下面是两列大模型卡。
+/// 模型页：顶部引擎分段 + 搜索，下面是一张按行分隔的模型清单。
+/// 每个模型只占一行，不再有卡片边框；下载中只在行底多一条进度线。
 struct ModelsPage: View {
     @ObservedObject var state: AppState
     let engine: EngineID
@@ -43,11 +44,6 @@ struct ModelsPage: View {
         return 2
     }
 
-    private var columns: [GridItem] {
-        // 单列也能在窄内容区完整显示，宽窗口再自动并排。
-        [GridItem(.adaptive(minimum: 300, maximum: 720), spacing: 18, alignment: .top)]
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             topBar
@@ -57,12 +53,12 @@ struct ModelsPage: View {
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 0) {
                         Color.clear
                             .frame(height: 0)
                             .id(Self.scrollTopAnchor)
 
-                        LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
+                        LazyVStack(alignment: .leading, spacing: 0) {
                             ForEach(entries, id: \.identity) { entry in
                                 ModelCard(state: state,
                                           entry: entry,
@@ -93,7 +89,7 @@ struct ModelsPage: View {
                 }
             }
         }
-        // 网格的滚动视口止于这条线：和侧栏玻璃的底边同高，
+        // 网格的滚动视口止于这条线：和侧栏的底边同高，
         // 滚到底时最后一行卡片也不会糊在窗口边缘上。
         .padding(.bottom, Console.contentBottomInset)
         .sheet(isPresented: $showingHub) { HubSheet(state: state, engine: scope.engine ?? engine) }
@@ -132,7 +128,7 @@ struct ModelsPage: View {
             }
             .buttonStyle(.consoleSecondary)
 
-            Button {
+            IconAction(systemName: "arrow.clockwise", help: "重新扫描") {
                 let target = scope.engine ?? engine
                 _ = EngineModelStore.adoptExistingWeights(target)
                 state.reloadModels()
@@ -140,17 +136,7 @@ struct ModelsPage: View {
                     await state.engines?.controller(target)?.rescanModels()
                     state.reloadModels()
                 }
-            } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Console.secondary)
-                    .frame(width: 34, height: 34)
-                    .background {
-                        LiquidGlassSurface(shape: Circle(), interactive: true)
-                    }
             }
-            .buttonStyle(.plainHit)
-            .help("重新扫描")
         }
     }
 
@@ -189,56 +175,121 @@ private struct ModelCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            header
-            VStack(alignment: .leading, spacing: 5) {
-                Text(displayTitle)
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(Console.text)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.system(size: 11, design: monoSubtitle ? .monospaced : .default))
-                        .foregroundStyle(Console.secondary)
-                        .lineLimit(monoSubtitle ? 1 : 2)
-                        .truncationMode(monoSubtitle ? .middle : .tail)
-                        .fixedSize(horizontal: false, vertical: !monoSubtitle)
-                        .help(model.id)
-                }
-            }
-            SpecTable(items: [
-                ("ENGINE", entry.engine.displayName),
-                ("FORMAT", formatName),
-                ("QUANT", quantizationLabel ?? "—"),
-                ("SIZE", model.bytes > 0 ? model.sizeText : "—"),
-            ])
-            tags
-            HStack(spacing: 8) {
-                Image(systemName: "memorychip")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Console.tertiary)
-                Text(memoryText)
-                    .font(.system(size: 11))
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 18) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(displayTitle)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(selected ? Console.accent : Console.text)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(model.id)
+
+                    }
+
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.system(size: 10.5, design: monoSubtitle ? .monospaced : .default))
+                            .foregroundStyle(Console.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(monoSubtitle ? .middle : .tail)
+                            .help(model.id)
+                    }
+
+                    HStack(spacing: 6) {
+                        ForEach(Array(metaTexts.enumerated()), id: \.offset) { index, value in
+                            Text(L10n.t(value))
+                            if index < metaTexts.count - 1 {
+                                Text("·").foregroundStyle(Console.quaternary)
+                            }
+                        }
+                    }
+                    .font(.system(size: 10.5))
                     .foregroundStyle(Console.secondary)
-                Spacer(minLength: 0)
+                    .lineLimit(1)
+                }
+
+                Spacer(minLength: 16)
+
+                Text(memoryText)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Console.tertiary)
+                    .lineLimit(1)
+                    .frame(width: 108, alignment: .trailing)
+
                 action
+                    .frame(width: 72, alignment: .trailing)
+
+                Menu {
+                    if !model.path.isEmpty {
+                        Button("在 Finder 中显示") {
+                            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: model.path)])
+                        }
+                    }
+                    Button("复制模型 ID") { state.copy(model.id, label: "模型 ID 已复制") }
+                    if entry.installed {
+                        Divider()
+                        Button("删除权重…", role: .destructive, action: remove)
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Console.tertiary)
+                }
+                .tint(Console.tertiary)
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
             }
-        }
-        .padding(18)
-        .consoleCardSurface(tint: cardTint, interactive: true)
-        .contextMenu {
-            if !model.path.isEmpty {
-                Button("在 Finder 中显示") {
-                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: model.path)])
+            .padding(.vertical, 13)
+            .padding(.leading, 10)
+            .background(selected ? Console.rowSelected : Color.clear)
+            .overlay(alignment: .leading) {
+                if selected {
+                    Rectangle()
+                        .fill(Console.accent)
+                        .frame(width: 2)
+                        .padding(.vertical, 10)
                 }
             }
-            Button("复制模型 ID") { state.copy(model.id, label: "模型 ID 已复制") }
-            if entry.installed {
-                Divider()
-                Button("删除权重…", role: .destructive, action: remove)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(Console.hairline).frame(height: 1)
+            }
+            .contentShape(Rectangle())
+            .contextMenu { contextMenu }
+
+            if let fraction = activeFraction {
+                ProgressView(value: fraction)
+                    .progressViewStyle(.linear)
+                    .tint(Console.accent)
+                    .frame(height: 2)
+                    .padding(.bottom, 1)
             }
         }
+    }
+
+    @ViewBuilder private var contextMenu: some View {
+        if !model.path.isEmpty {
+            Button("在 Finder 中显示") {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: model.path)])
+            }
+        }
+        Button("复制模型 ID") { state.copy(model.id, label: "模型 ID 已复制") }
+        if entry.installed {
+            Divider()
+            Button("删除权重…", role: .destructive, action: remove)
+        }
+    }
+
+    private var metaTexts: [String] {
+        var values = [entry.engine.displayName, formatName]
+        if let quant = quantizationLabel { values.append(quant) }
+        if model.bytes > 0 { values.append(model.sizeText) }
+        values.append(contentsOf: tagTexts.prefix(2))
+        return values
     }
 
     private var displayTitle: String {
@@ -285,7 +336,7 @@ private struct ModelCard: View {
     }
 
     /// 卡面只在下载中铺一层暖色底。使用中的卡不再整块染色——「正在用哪个模型」
-    /// 由卡片右下角的「使用中」标识说明，卡面本身和普通卡保持同一种玻璃。
+    /// 由卡片右下角的「使用中」标识说明，行面本身和其他行保持同一种表面。
     private var cardTint: Color? {
         if selected { return nil }
         if activeFraction != nil || task != nil { return Console.warn.opacity(0.10) }
@@ -296,47 +347,6 @@ private struct ModelCard: View {
         ModelFamily.resolve(id: model.id,
                             hint: model.family,
                             tags: entry.recommendation?.tags ?? [])
-    }
-
-    private var header: some View {
-        HStack(spacing: 10) {
-            ModelFamilyIcon(family: family, size: 30)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(entry.engine.displayName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Console.text)
-                Text(familyName)
-                    .font(.system(size: 10))
-                    .foregroundStyle(Console.tertiary)
-            }
-            Spacer(minLength: 0)
-            Menu {
-                if !model.path.isEmpty {
-                    Button("在 Finder 中显示") {
-                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: model.path)])
-                    }
-                }
-                Button("复制模型 ID") { state.copy(model.id, label: "模型 ID 已复制") }
-                if entry.installed {
-                    Divider()
-                    Button("删除权重…", role: .destructive, action: remove)
-                }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Console.secondary)
-            }
-            // 无边框 Menu 把标签当模板压平：标签里的 frame / background 会被丢掉，
-            // 图标颜色也得靠 .tint 而不是 foregroundStyle。所以 28pt 的玻璃圆底
-            // 挂在外层的 frame 上，Menu 本身只负责那三个点。
-            .tint(Console.secondary)
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .frame(width: 28, height: 28)
-            .contentShape(Circle())
-            .background { LiquidGlassSurface(shape: Circle(), interactive: true) }
-        }
     }
 
     private var familyName: String {
@@ -396,24 +406,20 @@ private struct ModelCard: View {
             .buttonStyle(CardActionStyle(tone: .neutral))
         } else if entry.installed {
             if selected {
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     Image(systemName: "waveform")
-                        .font(.system(size: 10.5, weight: .semibold))
+                        .font(.system(size: 9.5, weight: .semibold))
                     Text("使用中")
-                        .font(.system(size: 11.5, weight: .semibold))
+                        .font(.system(size: 10.5, weight: .medium))
                 }
                 .foregroundStyle(Console.accent)
-                .padding(.horizontal, 12)
-                .frame(height: 32)
-                .background(Capsule().fill(Console.accent.opacity(0.12)))
-                .overlay(Capsule().strokeBorder(Console.accent.opacity(0.25), lineWidth: 0.8))
             } else {
                 Button {
                     state.useModel(model.id, engine: entry.engine)
                 } label: {
                     Label("使用", systemImage: "play.fill")
                 }
-                .buttonStyle(CardActionStyle(tone: .accent))
+                .buttonStyle(CardActionStyle(tone: .neutral))
             }
         } else {
             Button {
@@ -428,7 +434,7 @@ private struct ModelCard: View {
 }
 
 
-/// 模型卡上的按钮不铺底色。卡片本身就是一层玻璃，按钮再叠一个玻璃胶囊会在
+/// 模型行里的按钮不铺底色。行本身已经很安静，按钮再叠一个描边胶囊会在
 /// 卡面上多出一块更亮的椭圆；现在按钮只留文字和图标，悬停时提亮、按下时轻微
 /// 收缩，命中区仍覆盖整块内边距。
 private struct CardActionStyle: ButtonStyle {

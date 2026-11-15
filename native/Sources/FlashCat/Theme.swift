@@ -232,8 +232,8 @@ extension NSColor {
 
     /// 控制台正文与强调色。SwiftUI 侧的 `Console.text` / `Console.accent`
     /// 就是这两个颜色的包装，因此 AppKit 文本宿主（对话输入框）和卡片是同一组值。
-    static let consoleText = adaptive(dark: 0xF2F0F6, light: 0x15151D)
-    static let consoleAccent = adaptive(dark: 0xF06B96, light: 0xD1487A)
+    static let consoleText = adaptive(dark: 0xEFEAE0, light: 0x1B1A17)
+    static let consoleAccent = adaptive(dark: 0xE88254, light: 0xB0481E)
 }
 
 extension Color {

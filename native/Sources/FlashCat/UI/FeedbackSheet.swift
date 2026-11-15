@@ -24,11 +24,9 @@ struct FeedbackSheet: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            ArcadeIcon(symbol: "bubble.left.and.bubble.right",
-                       colors: [Color(hex: 0x12B7F5), Native.blue],
-                       size: 28,
-                       glyphScale: 0.46,
-                       glow: false)
+            Image(systemName: "bubble.left.and.bubble.right")
+                .font(.system(size: 16, weight: .regular))
+                .foregroundStyle(Native.tertiary)
             VStack(alignment: .leading, spacing: 2) {
                 Text("反馈与交流")
                     .font(.system(size: 15, weight: .semibold))
@@ -66,24 +64,10 @@ struct FeedbackSheet: View {
     }
 
     private var qqMark: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(
-                    LinearGradient(colors: [Color(hex: 0x12B7F5), Color(hex: 0x0A84C8)],
-                                   startPoint: .topLeading,
-                                   endPoint: .bottomTrailing)
-                )
-            Image(systemName: "person.2.fill")
-                .font(.system(size: 26, weight: .semibold))
-                .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.22), radius: 2, x: 0, y: 1)
-        }
-        .frame(width: 64, height: 64)
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(.white.opacity(0.32), lineWidth: 0.8)
-        )
-        .shadow(color: Color(hex: 0x12B7F5).opacity(0.28), radius: 12, x: 0, y: 6)
+        Image(systemName: "person.2")
+            .font(.system(size: 26, weight: .ultraLight))
+            .foregroundStyle(Native.tertiary)
+            .frame(height: 34)
     }
 
     private var groupNumberCard: some View {
@@ -103,18 +87,15 @@ struct FeedbackSheet: View {
             } label: {
                 Label("复制", systemImage: "doc.on.doc")
             }
-            .buttonStyle(ArcadePillStyle(tone: .glass, compact: true))
+            .buttonStyle(.consoleSecondary)
         }
-        .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity)
-        .background {
-            RoundedRectangle(cornerRadius: Native.radiusTile, style: .continuous)
-                .fill(Native.recess)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Native.hairline).frame(height: 1)
         }
-        .overlay {
-            RoundedRectangle(cornerRadius: Native.radiusTile, style: .continuous)
-                .stroke(Native.hairline, lineWidth: 1)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Native.hairline).frame(height: 1)
         }
     }
 

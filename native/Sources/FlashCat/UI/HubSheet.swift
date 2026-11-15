@@ -48,11 +48,9 @@ struct HubSheet: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            ArcadeIcon(symbol: "sparkle.magnifyingglass",
-                       colors: [Native.violet, Native.blue],
-                       size: 30,
-                       glyphScale: 0.46,
-                       glow: false)
+            Image(systemName: "sparkle.magnifyingglass")
+                .font(.system(size: 17, weight: .regular))
+                .foregroundStyle(Native.tertiary)
             VStack(alignment: .leading, spacing: 2) {
                 Text("模型广场")
                     .font(.system(size: 15, weight: .semibold))
@@ -75,7 +73,7 @@ struct HubSheet: View {
             searchBar
             Hairline()
             ScrollView {
-                LazyVStack(spacing: 10) {
+                LazyVStack(spacing: 0) {
                     if state.hubLoading && models.isEmpty {
                         loadingRows
                     } else if let error = state.hubError, models.isEmpty {
@@ -99,9 +97,7 @@ struct HubSheet: View {
                                     .font(.system(size: 12, weight: .medium))
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 12)
-                                    .background {
-                                        LiquidGlassSurface(shape: Capsule(), interactive: true)
-                                    }
+                                    .quietHover(cornerRadius: 6)
                             }
                             .buttonStyle(.plainHit)
                             .foregroundStyle(Native.accent)
@@ -144,10 +140,12 @@ struct HubSheet: View {
             .padding(.horizontal, 11)
             .frame(height: 34)
             .background {
-                LiquidGlassSurface(
-                    shape: RoundedRectangle(cornerRadius: 9, style: .continuous),
-                    tint: searchFocused ? Native.accent.opacity(0.08) : nil
-                )
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Native.surface)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .strokeBorder(searchFocused ? Native.accent : Native.hairline, lineWidth: 1)
+                    }
             }
 
             HStack(spacing: 8) {
@@ -171,9 +169,7 @@ struct HubSheet: View {
                     .foregroundStyle(Native.secondary)
                     .padding(.horizontal, 11)
                     .frame(height: 28)
-                    .background {
-                        LiquidGlassSurface(shape: Capsule(), interactive: true)
-                    }
+                    .quietHover(cornerRadius: 6)
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
@@ -429,8 +425,10 @@ struct HubSheet: View {
                 .disabled(busy)
             }
         }
-        .padding(12)
-        .background { GlassSurface(radius: Native.radiusTile, tint: Native.accentSoft) }
+        .padding(.vertical, 12)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Native.hairline).frame(height: 1)
+        }
     }
 
     private func targetEngine(for model: HubModel) -> EngineID {
@@ -455,10 +453,12 @@ struct HubSheet: View {
             .padding(.horizontal, 10)
             .frame(height: 32)
             .background {
-                LiquidGlassSurface(
-                    shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
-                    tint: directRepoFocused ? Native.accent.opacity(0.08) : nil
-                )
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Native.surface)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .strokeBorder(directRepoFocused ? Native.accent : Native.hairline, lineWidth: 1)
+                    }
             }
             .frame(maxWidth: 360)
 
@@ -542,8 +542,7 @@ struct HubSheet: View {
 
 /// 模型广场左侧的结果卡。
 ///
-/// 纯白画布上单独一层玻璃会发灰、压低正文对比度，所以卡片把玻璃压在
-/// 一层足够白的面板上，再用细描边勾出边界；选中态才用强调色底 + 色边。
+/// 模型行只用发丝线分隔；选中的仓库用左侧橙线和极浅底色标出。
 private struct HubModelRowCard: View {
     let model: HubModel
     let selected: Bool
@@ -608,11 +607,18 @@ private struct HubModelRowCard: View {
                     metric("arrow.down", downloadsText)
                 }
             }
-            .padding(13)
+            .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .consoleCardSurface(tint: selected ? Console.accent.opacity(0.10) : nil,
-                                interactive: true)
-            .contentShape(shape)
+            .background(selected ? Native.overlay(0.05) : Color.clear)
+            .overlay(alignment: .leading) {
+                if selected {
+                    Rectangle().fill(Native.accent).frame(width: 2)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(Native.hairline).frame(height: 1)
+            }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plainHit)
     }

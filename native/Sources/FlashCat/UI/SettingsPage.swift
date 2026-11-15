@@ -2,7 +2,8 @@ import SwiftUI
 import AppKit
 import FlashCatKit
 
-/// 设置页：按 WebUI 版式——左右两列卡片，行内即改即生效。
+/// 设置页：左右两列设置组，组内按行排布，行与行之间只有一条发丝线。
+/// 每组不再是一张卡片，页面看起来像一张连续的表单。
 struct SettingsPage: View {
     @ObservedObject var state: AppState
     @ObservedObject private var background = BackgroundSettings.shared
@@ -283,7 +284,7 @@ struct SettingsPage: View {
     }
 
     /// 网关 / 控制端口的输入胶囊。应用按钮放在胶囊外面：它是 32 pt 高的
-    /// 玻璃胶囊，塞进 28 pt 的输入框会上下溢出，还会在右端留下一圈
+    /// 描边胶囊，塞进 28 pt 的输入框会上下溢出，还会在右端留下一圈
     /// 「胶囊套胶囊」的毛边。缓存那一行也是「输入框 + 按钮」的排法。
     private func portInput(_ text: Binding<String>, placeholder: String) -> some View {
         HStack(spacing: 4) {
@@ -583,9 +584,7 @@ struct SettingsCard<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        GlassCard(padding: 0) {
-            VStack(spacing: 0) { content() }
-        }
+        VStack(alignment: .leading, spacing: 0) { content() }
     }
 }
 
@@ -611,9 +610,11 @@ struct SettingsRow<Trailing: View>: View {
             Spacer(minLength: 8)
             trailing()
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 13)
-        .frame(minHeight: 58)
+        .padding(.vertical, 11)
+        .frame(minHeight: 54)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Console.hairline).frame(height: 1)
+        }
     }
 }
 

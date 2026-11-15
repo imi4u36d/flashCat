@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 import FlashCatKit
 
-/// 日志页：顶部过滤条 + 一块玻璃控制台，版式对齐 WebUI。
+/// 日志页：顶部过滤条 + 一块控制台，版式对齐 WebUI。
 struct LogsPage: View {
     @ObservedObject var state: AppState
     @State private var level: LogsFilter = .all
@@ -77,10 +77,7 @@ struct LogsPage: View {
             Image(systemName: "doc.on.doc")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Console.secondary)
-                .frame(width: 32, height: 32)
-                .background {
-                    LiquidGlassSurface(shape: Circle(), interactive: true)
-                }
+                .frame(width: 30, height: 30)
         }
         .buttonStyle(.plainHit)
         .disabled(data.lines.isEmpty)
@@ -97,10 +94,7 @@ struct LogsPage: View {
             Image(systemName: "doc.text")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Console.secondary)
-                .frame(width: 32, height: 32)
-                .background {
-                    LiquidGlassSurface(shape: Circle(), interactive: true)
-                }
+                .frame(width: 30, height: 30)
         }
         .buttonStyle(.plainHit)
         .help("打开日志文件")
@@ -114,14 +108,15 @@ struct LogsPage: View {
                 paused = true
             }
         } label: {
-            Label(L10n.t(paused ? "继续" : "暂停"), systemImage: paused ? "play.fill" : "pause.fill")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Console.secondary)
-                .padding(.horizontal, 14)
-                .frame(height: 34)
-                .background {
-                    LiquidGlassSurface(shape: Capsule(), interactive: true)
-                }
+            HStack(spacing: 5) {
+                Image(systemName: paused ? "play.fill" : "pause.fill")
+                    .font(.system(size: 10.5, weight: .medium))
+                Text(L10n.t(paused ? "继续" : "暂停"))
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .foregroundStyle(Console.secondary)
+            .padding(.horizontal, 8)
+            .frame(height: 30)
         }
         .buttonStyle(.plainHit)
 
@@ -132,10 +127,7 @@ struct LogsPage: View {
             Image(systemName: "trash")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Console.secondary)
-                .frame(width: 32, height: 32)
-                .background {
-                    LiquidGlassSurface(shape: Circle(), interactive: true)
-                }
+                .frame(width: 30, height: 30)
         }
         .buttonStyle(.plainHit)
         .help("清空日志")
@@ -143,8 +135,7 @@ struct LogsPage: View {
 
     private func console(_ data: LogsDigest) -> some View {
         ScrollViewReader { proxy in
-            GlassCard(padding: 0, content: {
-                VStack(spacing: 0) {
+            VStack(spacing: 0) {
                     HStack(spacing: 7) {
                         Circle()
                             .fill(Console.ok)
@@ -161,8 +152,8 @@ struct LogsPage: View {
                             .font(.system(size: 10.5, design: .monospaced))
                             .foregroundStyle(Console.tertiary)
                     }
-                    .padding(.horizontal, 16)
-                    .frame(height: 42)
+                    .padding(.horizontal, 4)
+                    .frame(height: 38)
 
                     Rectangle().fill(Console.insetStroke).frame(height: 1)
 
@@ -182,7 +173,7 @@ struct LogsPage: View {
                                 }
                             }
                         }
-                        .padding(12)
+                        .padding(.vertical, 8)
                     }
                     .scrollIndicators(.never)
                     .defaultScrollAnchor(.top)
@@ -190,9 +181,14 @@ struct LogsPage: View {
                         guard !paused else { return }
                         proxy.scrollTo("logTop", anchor: .top)
                     }
-                }
-            })
-            .frame(maxHeight: .infinity)
+            }
+        .overlay(alignment: .top) {
+            Rectangle().fill(Console.hairline).frame(height: 1)
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Console.hairline).frame(height: 1)
+        }
+        .frame(maxHeight: .infinity)
         }
     }
 
@@ -217,18 +213,14 @@ struct LogsPage: View {
 
                     HStack(spacing: 5) {
                         Circle()
-                            .fill(tone)
-                            .frame(width: 5, height: 5)
+                            .fill(line.level == .info ? Console.tertiary : tone)
+                            .frame(width: 4, height: 4)
                         Text(line.level.label)
-                            .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                            .font(.system(size: 8.5, weight: .medium, design: .monospaced))
                             .tracking(0.5)
-                            .foregroundStyle(tone)
+                            .foregroundStyle(line.level == .info ? Console.tertiary : tone)
                     }
-                    .padding(.horizontal, 6)
                     .frame(width: 62, height: 17, alignment: .leading)
-                    .background {
-                        Capsule().fill(tone.opacity(line.level == .info ? 0.07 : 0.13))
-                    }
 
                     Text(line.text)
                         .font(.system(size: 11, design: .monospaced))

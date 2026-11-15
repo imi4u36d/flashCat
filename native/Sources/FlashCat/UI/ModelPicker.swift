@@ -1,7 +1,7 @@
 import SwiftUI
 import FlashCatKit
 
-/// Games 风格的模型选择菜单：玻璃卡片 + 分组行 + 勾选，不用系统 NSMenu。
+/// Games 风格的模型选择菜单：纸色面板 + 分组行 + 勾选，不用系统 NSMenu。
 struct ModelPickerButton<Label: View>: View {
     @ObservedObject var state: AppState
     @ViewBuilder var label: () -> Label
@@ -95,12 +95,8 @@ struct ModelPickerPopover: View {
             .padding(.horizontal, 10)
             .frame(height: 30)
             .background {
-                LiquidGlassSurface(
-                    shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
-                    tint: selected ? Console.accent.opacity(0.12) : nil,
-                    interactive: true
-                )
-                .opacity(selected || hovered ? 1 : 0)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(selected ? Console.accentSoft : (hovered ? Console.rowHover : .clear))
             }
             .animation(Motion.quick, value: selected || hovered)
             .contentShape(Rectangle())

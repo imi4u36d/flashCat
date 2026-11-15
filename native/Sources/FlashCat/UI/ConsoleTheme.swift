@@ -1,12 +1,12 @@
 import SwiftUI
 import AppKit
 
-// MARK: - Console palette (matches the shipped WebUI's visual language)
+// MARK: - Console palette (paper & ink)
 //
-// The WebUI is the visual source of truth: a cool, very light glass canvas,
-// white translucent cards with 20 pt corners, pink accent (#D1487A), soft blue
-// shadows, and 13–15 pt type. These tokens replace the older warm "instrument"
-// palette for the console pages; the menu bar panel keeps `Native`.
+// One quiet, warm-neutral palette for every console page: an opaque paper
+// canvas, hairline rules instead of nested cards, and a single burnt-orange
+// accent reserved for the primary action, the selected row marker and live
+// readings. No gradients, no glass, no per-page colour themes.
 
 extension Color {
     init(console hex: UInt32, opacity: Double = 1) {
@@ -19,83 +19,86 @@ extension Color {
 }
 
 enum Console {
-    // Canvas: #EAEEF7 → #F7F9FE, with a pink wash top-right and blue bottom-left.
-    static let backgroundTop = Color.adaptive(dark: 0x14131A, light: 0xEAEEF7)
-    static let backgroundBottom = Color.adaptive(dark: 0x0F0E14, light: 0xF7F9FE)
-    static let sidebar = Color.adaptive(dark: 0x18171F, light: 0xF2F5FC, darkAlpha: 0.86, lightAlpha: 0.92)
-    static let sidebarEdge = Color.adaptive(dark: 0x2A2833, light: 0xE1E5EF)
+    // One opaque paper canvas. The two stops are kept only because
+    // `BackgroundSettings` still layers a user image over a gradient; both are
+    // the same colour so the page reads flat.
+    static let backgroundTop = Color.adaptive(dark: 0x16130F, light: 0xF7F4EE)
+    static let backgroundBottom = Color.adaptive(dark: 0x16130F, light: 0xF7F4EE)
+    static let sidebar = Color.adaptive(dark: 0x16130F, light: 0xF2EEE6)
+    static let sidebarEdge = Color.adaptive(dark: 0x2E2921, light: 0xE1DACC)
 
-    static let card = Color.adaptive(dark: 0x201E27, light: 0xFFFFFF, darkAlpha: 0.72, lightAlpha: 0.78)
-    static let cardStrong = Color.adaptive(dark: 0x262430, light: 0xFFFFFF, darkAlpha: 0.9, lightAlpha: 0.92)
-    static let cardStroke = Color.adaptive(dark: 0x2E2B38, light: 0xE3E7F1, darkAlpha: 1, lightAlpha: 0.9)
+    /// A raised sheet. Used sparingly: terminals, dialogs and the few places
+    /// where content genuinely needs a boundary. Lists use hairlines instead.
+    static let card = Color.adaptive(dark: 0x1D1A15, light: 0xFCFAF6)
+    static let cardStrong = Color.adaptive(dark: 0x232019, light: 0xFFFFFF)
+    static let cardStroke = Color.adaptive(dark: 0x332D25, light: 0xE1DACC)
+    static let panel = Color.adaptive(dark: 0x1A1712, light: 0xFBF9F4)
+    static let hairline = Color.adaptive(dark: 0x2C2720, light: 0xE4DED2)
     static let inset = Color.adaptive(dark: 0xFFFFFF, light: 0x1B1B22, darkAlpha: 0.05, lightAlpha: 0.035)
     static let insetStroke = Color.adaptive(dark: 0xFFFFFF, light: 0x1B1B22, darkAlpha: 0.06, lightAlpha: 0.05)
+    static let rowHover = Color.adaptive(dark: 0xFFFFFF, light: 0x1B1B22, darkAlpha: 0.045, lightAlpha: 0.035)
+    static let rowSelected = Color.adaptive(dark: 0xFFFFFF, light: 0x1B1B22, darkAlpha: 0.075, lightAlpha: 0.055)
 
     static let text = Color(nsColor: .consoleText)
-    static let secondary = Color.adaptive(dark: 0xA8A5B2, light: 0x5F606B)
-    static let tertiary = Color.adaptive(dark: 0x807D8A, light: 0x9294A0)
+    static let secondary = Color.adaptive(dark: 0xA8A195, light: 0x5F5A50)
+    static let tertiary = Color.adaptive(dark: 0x7D766A, light: 0x8C8578)
+    static let quaternary = Color.adaptive(dark: 0x625C51, light: 0xABA394)
 
     static let accent = Color(nsColor: .consoleAccent)
-    static let accentDeep = Color.adaptive(dark: 0xD94A7C, light: 0xBE3568)
-    static let accentSoft = Color.adaptive(dark: 0x3A2230, light: 0xFBE8F0)
+    static let accentDeep = Color.adaptive(dark: 0xF5A176, light: 0x8C3410)
+    static let accentSoft = Color.adaptive(dark: 0x34231A, light: 0xF2E2D6)
 
-    // Chat bubbles: a neutral pair that deliberately does not derive from
-    // `accent`. The conversation must not repaint when the brand colour does,
-    // and the bubbles should read as message surfaces, not accent callouts.
-    // Opaque on purpose: the canvas washes a little accent pink into the top
-    // right, and a translucent bubble would pick that tint back up.
-    static let userBubble = Color.adaptive(dark: 0x3A3745, light: 0xDCE2EC)
-    static let userBubbleStroke = Color.adaptive(dark: 0x474352, light: 0xCBD2E0)
-    static let assistantBubble = Color.adaptive(dark: 0x24222C, light: 0xFFFFFF)
-    static let assistantBubbleStroke = Color.adaptive(dark: 0x383441, light: 0xE2E6F0)
+    // Chat: the user's message is a plain neutral block, the answer is bare
+    // text on the canvas. Neither derives from the accent.
+    static let userBubble = Color.adaptive(dark: 0x2A2620, light: 0xEDE7DB)
+    static let userBubbleStroke = Color.adaptive(dark: 0x37322B, light: 0xDED6C7)
+    static let assistantBubble = Color.adaptive(dark: 0x16130F, light: 0xF7F4EE)
+    static let assistantBubbleStroke = Color.adaptive(dark: 0x16130F, light: 0xF7F4EE)
 
-    static let ok = Color.adaptive(dark: 0x4CC96B, light: 0x2F9E5B)
-    static let warn = Color.adaptive(dark: 0xE8A33D, light: 0xB97A16)
-    static let danger = Color.adaptive(dark: 0xF26B58, light: 0xC43A2F)
-    static let info = Color.adaptive(dark: 0x6FA8F5, light: 0x2F6FD0)
+    static let ok = Color.adaptive(dark: 0x72B98D, light: 0x3F7D52)
+    static let warn = Color.adaptive(dark: 0xD7A04B, light: 0x94660F)
+    static let danger = Color.adaptive(dark: 0xE07A68, light: 0xA63B2F)
+    static let info = Color.adaptive(dark: 0x82A9C5, light: 0x3B6382)
 
     static let glassFill = Color.adaptive(dark: 0xFFFFFF, light: 0xFFFFFF,
-                                          darkAlpha: 0.14, lightAlpha: 0.72)
+                                          darkAlpha: 0.05, lightAlpha: 0.5)
     static let glassGroup = Color.adaptive(dark: 0xFFFFFF, light: 0x000000,
-                                           darkAlpha: 0.08, lightAlpha: 0.045)
+                                           darkAlpha: 0.05, lightAlpha: 0.04)
     static let glassStroke = Color.adaptive(dark: 0xFFFFFF, light: 0x000000,
-                                            darkAlpha: 0.12, lightAlpha: 0.06)
-    static let glassSelected = Color.adaptive(dark: 0xFFFFFF, light: 0xFFFFFF,
-                                              darkAlpha: 0.22, lightAlpha: 0.96)
-    static let ink = Color.adaptive(dark: 0xF5F3F8, light: 0x1B1B20)
-    static let inkForeground = Color.adaptive(dark: 0x16151B, light: 0xFFFFFF)
+                                            darkAlpha: 0.08, lightAlpha: 0.05)
+    static let glassSelected = Color.adaptive(dark: 0xFFFFFF, light: 0x000000,
+                                              darkAlpha: 0.10, lightAlpha: 0.06)
+    static let ink = Color.adaptive(dark: 0xEFEAE0, light: 0x22201C)
+    static let inkForeground = Color.adaptive(dark: 0x16130F, light: 0xFFFFFF)
 
-    static let shadow = Color.adaptive(dark: 0x000000, light: 0x43506E,
-                                       darkAlpha: 0.45, lightAlpha: 0.10)
+    static let shadow = Color.adaptive(dark: 0x000000, light: 0x2C2822,
+                                       darkAlpha: 0.50, lightAlpha: 0.10)
 
     // Geometry
-    static let cardRadius: CGFloat = 20
-    static let heroRadius: CGFloat = 24
+    static let cardRadius: CGFloat = 10
+    static let heroRadius: CGFloat = 12
     static let pillRadius: CGFloat = 999
     static let sidebarWidth: CGFloat = 200
     static let titlebarHeight: CGFloat = 54
     static let contentPadding: CGFloat = 24
     /// 主视口的上下边界。导航列和六个页面都读这两个值，窗口一缩放，
-    /// 侧栏玻璃边和右侧内容的起止线始终是同一条，不会一高一低。
-    ///
-    /// 顶部 = 标题栏 + 12pt：标题栏自己占 54pt，内容只从它下沿借半档间距，
-    /// 页面标题既不会贴住标题栏的渐变，整块视口又不会显得往下坠；
-    /// 底部离窗口下沿 24pt，和左右留白同宽。
+    /// 侧栏边和右侧内容的起止线始终是同一条，不会一高一低。
     static let titlebarGap: CGFloat = 12
     static let contentTopInset: CGFloat = titlebarHeight + titlebarGap
     static let contentBottomInset: CGFloat = contentPadding
     /// 内容区宽度低于这个值时，多栏页面切换为单栏纵向排布。
-    /// 侧栏展开时对应约 1180pt 的窗口宽度，缩放窗口时页面会先于内容被挤坏前重排。
     static let compactContentWidth: CGFloat = 980
 
     // Type
-    static let heroTitle = Font.system(size: 30, weight: .bold)
+    static let heroTitle = Font.system(size: 28, weight: .semibold)
     static let cardTitle = Font.system(size: 15, weight: .semibold)
     static let body = Font.system(size: 13)
     static let small = Font.system(size: 11.5)
     static let tiny = Font.system(size: 10.5)
     static let mono = Font.system(size: 11.5, design: .monospaced)
-    static let metric = Font.system(size: 24, weight: .bold, design: .monospaced)
+    static let metric = Font.system(size: 24, weight: .semibold, design: .monospaced)
+    /// Small uppercase label used above values and as section eyebrows.
+    static let eyebrow = Font.system(size: 10, weight: .semibold)
 
     /// 日志级别色统一走控制台调色板，避免和页面其余状态色出现两套色阶。
     static func levelColor(_ level: LogLevel) -> Color {
@@ -112,14 +115,13 @@ enum Console {
 // MARK: - Page background
 
 struct ConsoleBackdrop: View {
-    var accent: Color = Console.accent
     @Environment(\.colorScheme) private var scheme
     @ObservedObject private var background = BackgroundSettings.shared
 
     var body: some View {
         ZStack {
             // 画布始终保留原来的渐变与页面强调色，自定义图片只是叠在渐变之上，
-            // 不会改动页面、玻璃卡片和文字的观感。没有图片时，渐变按「APP 透明度」
+            // 不会改动页面、表面和文字的观感。没有图片时，渐变按「APP 透明度」
             // 让出桌面：0 = 完全不透明，1 = 完全透出桌面。
             LinearGradient(colors: [Console.backgroundTop, Console.backgroundBottom],
                            startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -153,13 +155,6 @@ struct ConsoleBackdrop: View {
                     .opacity(BackgroundMath.veilOpacity(background.opacity,
                                                         dark: scheme == .dark))
             }
-
-            RadialGradient(colors: [accent.opacity(scheme == .dark ? 0.12 : 0.10), .clear],
-                           center: UnitPoint(x: 0.82, y: -0.05),
-                           startRadius: 0, endRadius: 700)
-            RadialGradient(colors: [Console.info.opacity(scheme == .dark ? 0.06 : 0.05), .clear],
-                           center: UnitPoint(x: -0.05, y: 1.02),
-                           startRadius: 0, endRadius: 620)
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
@@ -168,10 +163,10 @@ struct ConsoleBackdrop: View {
 
 // MARK: - Card surface
 
-/// 全应用唯一的卡片表面。模型页的模型卡是基准：20pt 连续圆角 + Liquid Glass，
-/// 选中或悬停时只叠一层很淡的强调色，不再另加实心底色、描边或投影。
+/// 安静的面板表面：一层接近画布的实色 + 1px 发丝边，没有玻璃、投影或
+/// 强调色洗底。只在终端、弹层和确实需要边界的块上使用；列表用分隔线分组。
 ///
-/// 这里只管“表面”，不管尺寸：卡片的内边距、整体大小与内容排版仍由调用方决定。
+/// 参数 `tint` 仅为兼容旧调用保留，会被忽略。
 private struct ConsoleCardSurfaceModifier: ViewModifier {
     var radius: CGFloat
     var tint: Color?
@@ -180,20 +175,15 @@ private struct ConsoleCardSurfaceModifier: ViewModifier {
     @State private var hovering = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var glassTint: Color? {
-        if let tint { return tint }
-        guard interactive, hovering else { return nil }
-        return Console.accent.opacity(0.05)
-    }
-
     func body(content: Content) -> some View {
         content
             .background {
-                LiquidGlassSurface(
-                    shape: RoundedRectangle(cornerRadius: radius, style: .continuous),
-                    tint: glassTint,
-                    interactive: interactive
-                )
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .fill(interactive && hovering ? Console.inset : Console.card)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(Console.cardStroke, lineWidth: 1)
             }
             .onHover { value in
                 guard interactive else { return }
@@ -217,7 +207,7 @@ extension View {
 
 struct GlassCard<Content: View>: View {
     var radius: CGFloat = Console.cardRadius
-    var padding: CGFloat = 20
+    var padding: CGFloat = 16
     var tint: Color = .clear
     @ViewBuilder var content: () -> Content
 
@@ -242,88 +232,83 @@ struct ConsolePillStyle: ButtonStyle {
         switch tone {
         case .primary: return Console.inkForeground
         case .danger: return Console.danger
-        case .success: return Console.text
+        case .success: return Console.ok
         case .secondary, .soft: return Console.text
         }
     }
 
-    private var glassTint: Color? {
+    private var fill: Color {
         switch tone {
-        case .primary: return Console.ink
-        // 危险色不走玻璃 tint：tint 是层半透明色雾，红底叠红图标后图标
-        // 会被糊成一片（下载中心删除按钮的现状）。底色改由下面自绘。
-        case .danger: return nil
-        case .success: return Console.ok.opacity(0.32)
-        case .secondary, .soft: return nil
+        case .primary: return Console.accent
+        case .danger: return Console.danger.opacity(0.10)
+        case .success: return Console.ok.opacity(0.10)
+        case .secondary: return .clear
+        case .soft: return Console.inset
         }
     }
 
-    private var isDanger: Bool {
-        if case .danger = tone { return true }
-        return false
+    private var stroke: Color {
+        switch tone {
+        case .primary, .soft: return .clear
+        case .danger: return Console.danger.opacity(0.30)
+        case .success: return Console.ok.opacity(0.28)
+        case .secondary: return Console.cardStroke
+        }
     }
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: compact ? 11.5 : 12.5, weight: .semibold))
+            .font(.system(size: compact ? 11.5 : 12.5, weight: .medium))
             .foregroundStyle(foreground)
             .padding(.horizontal, compact ? 11 : 14)
-            .frame(height: compact ? 28 : 32)
+            .frame(height: compact ? 26 : 30)
             .background {
-                ZStack {
-                    LiquidGlassSurface(shape: Capsule(), tint: glassTint, interactive: true)
-                    if isDanger {
-                        // 自绘的浅红底 + 发丝边：边缘是我们画的实色，不经玻璃
-                        // 模糊，图标保持满饱和度，任何背景下都清晰可读。
-                        Capsule().fill(Console.danger.opacity(0.12))
-                        Capsule().strokeBorder(Console.danger.opacity(0.34), lineWidth: 0.8)
-                    }
-                }
+                RoundedRectangle(cornerRadius: 7, style: .continuous).fill(fill)
             }
-            .opacity(isEnabled ? (configuration.isPressed ? 0.86 : 1) : 0.42)
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-            .animation(Motion.quick, value: configuration.isPressed)
-            .contentShape(Capsule())
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(stroke, lineWidth: 1)
+            }
+            .opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.38)
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 }
 
-/// Games app 风格的玻璃分段组：浅色/白色选中胶囊，未选中是灰字，选中态不用强调色。
+/// 轻量分段组：一条 inset 底 + 选中项实色小方块，不用玻璃和投影。
 struct GamesSegmented<Value: Hashable>: View {
     @Binding var selection: Value
     var options: [(value: Value, label: String)]
     var width: CGFloat? = nil
-
-    @Namespace private var pill
 
     var body: some View {
         HStack(spacing: 2) {
             ForEach(options, id: \.value) { option in
                 let active = selection == option.value
                 Button {
-                    withAnimation(.smooth(duration: 0.22)) { selection = option.value }
+                    withAnimation(.smooth(duration: 0.18)) { selection = option.value }
                 } label: {
                     Text(option.label)
-                        .font(.system(size: 12.5, weight: active ? .semibold : .regular))
+                        .font(.system(size: 12, weight: active ? .semibold : .regular))
                         .foregroundStyle(active ? Console.text : Console.secondary)
-                        .padding(.horizontal, 12)
-                        .frame(height: 28)
+                        .padding(.horizontal, 10)
+                        .frame(height: 26)
                         .background {
                             if active {
-                                Capsule()
-                                    .fill(Console.glassSelected)
-                                    .overlay(Capsule().strokeBorder(Console.glassStroke, lineWidth: 0.6))
-                                    .shadow(color: Console.shadow.opacity(0.7), radius: 6, y: 2)
-                                    .matchedGeometryEffect(id: "games.segment", in: pill)
+                                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                    .fill(Console.cardStrong)
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                            .strokeBorder(Console.cardStroke, lineWidth: 1)
+                                    }
                             }
                         }
-                        .contentShape(Capsule())
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plainHit)
             }
         }
-        .padding(3)
-        .background(Capsule().fill(Console.glassGroup))
-        .overlay(Capsule().strokeBorder(Console.glassStroke, lineWidth: 0.8))
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Console.inset))
         .frame(width: width)
     }
 }
@@ -343,20 +328,20 @@ struct EngineColorButton: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 12.5, weight: .semibold))
-            .foregroundStyle(.white)
+            .font(.system(size: 12.5, weight: .medium))
+            .foregroundStyle(Console.inkForeground)
             .padding(.horizontal, 14)
-            .frame(height: 34)
-            .background(Capsule().fill(color))
-            .overlay(Capsule().strokeBorder(.white.opacity(0.18), lineWidth: 0.8))
-            .shadow(color: color.opacity(0.28), radius: 8, y: 3)
-            .opacity(isEnabled ? (configuration.isPressed ? 0.86 : 1) : 0.42)
-            .contentShape(Capsule())
+            .frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Console.accent))
+            .opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.38)
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 }
 
 /// macOS 26 原生分段按钮组（Liquid Glass）。按钮组类控件统一走系统样式，
 /// 不再自绘胶囊，避免每个页面各有一套「选中态」。
+/// 文字分段：一排标签，选中项只改文字颜色并画一条短下划线。
+/// 不用系统 segmented 的玻璃轨道——一排设置页里叠三块灰底会让页面重新变“重”。
 struct NativeSegmented<Value: Hashable>: View {
     @Binding var selection: Value
     var options: [Value]
@@ -378,33 +363,29 @@ struct NativeSegmented<Value: Hashable>: View {
     }
 
     var body: some View {
-        Group {
-            if #available(macOS 27.0, *) {
-                // `.tabs` 是 macOS 27 的原生“标签式分段控件”，视觉上刻意区别
-                // 于普通 `.segmented` 值选择器：玻璃胶囊选中态、按压拖动选中、
-                // 系统动画都由 AppKit 绘制（Games app 用的就是这一种），
-                // 不能再叠 `.tint` 强调色。
-                //
-                // 不要再套 `.clipShape(Capsule())`：裁剪会连同 AppKit 在按住时
-                // 画在轨道边缘外的玻璃高光/透镜一起裁掉，表现为「按下后玻璃消失」。
-                picker.pickerStyle(.tabs)
-            } else {
-                picker.pickerStyle(.segmented)
-                    // 旧系统的轨道默认是圆角矩形，裁成胶囊才能和 macOS 27 的外观一致。
-                    .clipShape(Capsule())
+        HStack(spacing: 14) {
+            ForEach(Array(zip(options, labels).enumerated()), id: \.offset) { _, pair in
+                let selected = selection == pair.0
+                Button {
+                    selection = pair.0
+                } label: {
+                    VStack(spacing: 4) {
+                        Text(L10n.t(pair.1))
+                            .font(.system(size: 11.5, weight: selected ? .medium : .regular))
+                            .foregroundStyle(selected ? Console.text : Console.tertiary)
+                        Rectangle()
+                            .fill(selected ? Console.accent : .clear)
+                            .frame(height: 1.5)
+                    }
+                    .fixedSize()
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plainHit)
+                .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
-        .labelsHidden()
-        .controlSize(.large)
-        .frame(width: width)
-    }
-
-    private var picker: some View {
-        Picker("", selection: $selection) {
-            ForEach(Array(zip(options, labels)), id: \.0) { value, label in
-                Text(L10n.t(label)).tag(value)
-            }
-        }
+        .animation(Motion.quick, value: selection)
+        .frame(width: width, alignment: .leading)
     }
 }
 
@@ -416,14 +397,10 @@ struct IconTile: View {
     var size: CGFloat = 34
 
     var body: some View {
-        RoundedRectangle(cornerRadius: size * 0.30, style: .continuous)
-            .fill(color.opacity(0.14))
+        Image(systemName: symbol)
+            .font(.system(size: size * 0.46, weight: .medium))
+            .foregroundStyle(Console.secondary)
             .frame(width: size, height: size)
-            .overlay {
-                Image(systemName: symbol)
-                    .font(.system(size: size * 0.42, weight: .semibold))
-                    .foregroundStyle(color)
-            }
     }
 }
 
@@ -433,34 +410,32 @@ struct LetterTile: View {
     var size: CGFloat = 44
 
     var body: some View {
-        RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
-            .fill(color.opacity(0.13))
+        Text(letter)
+            .font(.system(size: size * 0.38, weight: .semibold, design: .rounded))
+            .foregroundStyle(Console.secondary)
             .frame(width: size, height: size)
             .overlay {
-                Text(letter)
-                    .font(.system(size: size * 0.38, weight: .bold, design: .rounded))
-                    .foregroundStyle(color)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
-                    .strokeBorder(color.opacity(0.20), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(Console.cardStroke, lineWidth: 1)
             }
     }
 }
 
+/// 规格标签：不再做成彩色胶囊，只是一段小字；多个标签之间靠间距分隔。
 struct ConsoleTag: View {
     var text: String
     var tone: TagTone = .neutral
     var fontSize: CGFloat = 10.5
 
+    private var isNeutral: Bool {
+        if case .neutral = tone { return true }
+        return false
+    }
+
     var body: some View {
         Text(L10n.t(text))
-            .font(.system(size: fontSize, weight: .medium))
-            .foregroundStyle(tone.foreground)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(tone.background))
-            .overlay(Capsule().strokeBorder(tone.foreground.opacity(0.12), lineWidth: 0.8))
+            .font(.system(size: fontSize, weight: .regular))
+            .foregroundStyle(isNeutral ? Console.tertiary : tone.foreground)
             .fixedSize()
     }
 }
@@ -492,11 +467,12 @@ struct SpecTable: View {
                 }
             }
         }
-        .background {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Console.inset)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Console.hairline).frame(height: 1)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Console.hairline).frame(height: 1)
+        }
     }
 }
 
@@ -515,9 +491,7 @@ struct StatusChip: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(filled ? color : Console.secondary)
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 4)
-        .background(Capsule().fill(filled ? color.opacity(0.10) : Console.inset))
+        .fixedSize()
     }
 }
 
@@ -549,3 +523,27 @@ struct RowDeleteButton: View {
     }
 }
 
+
+
+// MARK: - Quiet chrome
+
+/// 28pt 一类的裸图标按钮：平时没有底，只在悬停时浮出一层极淡的圆角。
+struct QuietHover: ViewModifier {
+    var cornerRadius: CGFloat = 6
+    @State private var hovering = false
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(hovering ? Console.rowHover : .clear)
+            }
+            .onHover { hovering = $0 }
+    }
+}
+
+extension View {
+    func quietHover(cornerRadius: CGFloat = 6) -> some View {
+        modifier(QuietHover(cornerRadius: cornerRadius))
+    }
+}

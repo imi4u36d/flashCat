@@ -2,8 +2,8 @@ import SwiftUI
 import AppKit
 import FlashCatKit
 
-/// 控制台根视图：悬浮玻璃导航列 + 浮层标题栏 + 六个原生页面 + 启动页。
-/// 导航列不再贴边占满，而是以圆角玻璃卡片的形式浮在画布左侧。
+/// 控制台根视图：贴着窗口左缘的纸色导航列 + 无底标题栏 + 七个原生页面。
+/// 导航列只靠一条竖发丝线和画布分开，不再是一块浮起来的面板。
 struct ConsoleView: View {
     @ObservedObject var state: AppState
     @ObservedObject private var theme = AppState.shared.theme
@@ -14,35 +14,28 @@ struct ConsoleView: View {
     @State private var showFeedback = false
     @State private var islandExpanded = false
 
-    /// 悬浮导航列的尺寸。列本身不再占满窗口高度到底：顶部对齐主视口的
-    /// `contentTopInset`、底部对齐 `contentBottomInset`，玻璃边和页面内容的
-    /// 起止线共用同一条，左右留白则让画布从两侧透出来。
+    /// 导航列从窗口左缘铺到 `width`，上下不再留浮动的缝。
     private enum NavPanel {
         static let width: CGFloat = 208
-        static let leadingInset: CGFloat = 12
-        static let trailingGap: CGFloat = 12
-        static var reservedWidth: CGFloat { width + leadingInset + trailingGap }
+        /// 导航列的右缘。标题栏的折叠按钮贴住这条竖线，两边读的是同一个值。
+        static var trailingEdge: CGFloat { width }
     }
 
-    private var navReservedWidth: CGFloat {
-        state.showsSidebar ? NavPanel.reservedWidth : 0
+    private var navPanelTrailingEdge: CGFloat? {
+        state.showsSidebar ? NavPanel.trailingEdge : nil
     }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             // 画布铺满整窗，导航列与主视口共享同一层渐变，
-            // 玻璃下透出的颜色因此始终和右侧保持一致。
-            ConsoleBackdrop(accent: state.section.keyColor)
+            // 导航列和主视口因此始终共享同一张纸色画布。
+            ConsoleBackdrop()
 
             HStack(spacing: 0) {
                 if state.showsSidebar {
                     ConsoleNavigationPanel(state: state,
                                            chat: state.chat)
                         .frame(width: NavPanel.width)
-                        .padding(.leading, NavPanel.leadingInset)
-                        .padding(.trailing, NavPanel.trailingGap)
-                        .padding(.top, Console.contentTopInset)
-                        .padding(.bottom, Console.contentBottomInset)
                         .transition(.move(edge: .leading).combined(with: .opacity))
                 }
 
@@ -55,16 +48,8 @@ struct ConsoleView: View {
                 .animation(Motion.standard, value: state.section)
             }
 
-            // 标题栏自己的安全背景层：先铺一层稳定的底色，再让悬浮的玻璃控件
-            // 和灵动岛坐在上面。没有这层时，页面内容、玻璃高光和灵动岛会直接
-            // 叠在一起互相透视，切页或滚动时会看到明显的层叠脏边。
-            TitlebarBackdrop()
-                .frame(height: Console.titlebarHeight)
-                .frame(maxWidth: .infinity, alignment: .top)
-                .allowsHitTesting(false)
-
             ConsoleTitlebar(state: state,
-                            navReservedWidth: navReservedWidth,
+                            navPanelTrailingEdge: navPanelTrailingEdge,
                             openDownloads: { showDownloads = true },
                             openFeedback: { showFeedback = true })
                 .frame(height: Console.titlebarHeight)
@@ -183,38 +168,45 @@ struct ConsoleView: View {
     }
 }
 
-// MARK: - Floating glass navigation
+// MARK: - Paper navigation
 
-/// 悬浮导航列：取消传统侧栏的整块背景与分隔线，
-/// 把页面导航、最近对话和底部工具合成一块垂直玻璃组件。
+/// 纸色导航列：页面导航、最近对话和底部工具共用一列，右缘一条发丝线。
 struct ConsoleNavigationPanel: View {
     @ObservedObject var state: AppState
     @ObservedObject var chat: ChatStore
 
-    @Namespace private var selection
-
     var body: some View {
-        LiquidGlassPanel(radius: 26) {
-            VStack(alignment: .leading, spacing: 0) {
-                workspace
+        VStack(alignment: .leading, spacing: 0) {
+            workspace
 
-                recents
-                    .padding(.top, 14)
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            recents
+                .padding(.top, 18)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, Console.contentTopInset)
+        .padding(.bottom, 14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Console.sidebar)
+        .overlay(alignment: .trailing) {
+            Rectangle().fill(Console.sidebarEdge).frame(width: 1)
         }
         .animation(Motion.standard, value: state.section)
     }
 
     /// 主工作区：概览到设置，最后一行是实验室。
     private var workspace: some View {
-        VStack(spacing: 4) {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(L10n.t("工作区"))
+                .font(Console.eyebrow)
+                .tracking(0.8)
+                .foregroundStyle(Console.tertiary)
+                .padding(.leading, 9)
+                .padding(.bottom, 7)
+
             ForEach(Page.workspace) { page in
-                GlassNavRow(page: page,
+                PaperNavRow(page: page,
                             active: state.section == page,
-                            badge: page == .models ? modelCount : 0,
-                            namespace: selection) {
+                            badge: page == .models ? modelCount : 0) {
                     state.section = page
                 }
             }
@@ -234,23 +226,21 @@ struct ConsoleNavigationPanel: View {
 
     private var recents: some View {
         ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1) {
                 Rectangle()
-                    .fill(Console.glassStroke)
-                    .frame(height: 0.5)
-                    .padding(.horizontal, 6)
+                    .fill(Console.hairline)
+                    .frame(height: 1)
                     .padding(.bottom, 12)
 
-                Text("最近对话")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Console.secondary)
-                    .padding(.horizontal, 8)
+                Text(L10n.t("最近对话"))
+                    .font(Console.eyebrow)
+                    .tracking(0.8)
+                    .foregroundStyle(Console.tertiary)
+                    .padding(.leading, 9)
                     .padding(.bottom, 6)
 
                 ForEach(chat.threads.prefix(6)) { thread in
-                    GlassRecentRow(title: thread.title,
-                                   // 还在生成的那一段（可能已经切走、在后台跑）
-                                   // 用「生成中」替掉时间，回答落在哪儿一目了然。
+                    PaperRecentRow(title: thread.title,
                                    date: state.generatingThreadID == thread.id
                                        ? L10n.t("生成中")
                                        : recentDate(thread.updatedAt),
@@ -258,7 +248,6 @@ struct ConsoleNavigationPanel: View {
                         state.openThread(thread)
                         state.section = .chat
                     } onDelete: {
-                        // 删之前先挂起：确认弹窗在壳层，别这里直接落盘。
                         state.requestThreadDelete(thread)
                     }
                 }
@@ -266,90 +255,61 @@ struct ConsoleNavigationPanel: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.never)
-        // 剩余高度都给最近对话：窗口压到最矮时只在列表内部滚动。
         .frame(maxHeight: .infinity, alignment: .top)
     }
 }
 
-private struct GlassNavRow: View {
+private struct PaperNavRow: View {
     let page: Page
     let active: Bool
     let badge: Int
-    let namespace: Namespace.ID
     let action: () -> Void
 
     @State private var hovering = false
-    @Environment(\.colorScheme) private var scheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 11) {
+            HStack(spacing: 10) {
                 Image(systemName: page.symbol)
-                    .font(.system(size: 16, weight: .semibold))
-                    .symbolRenderingMode(.hierarchical)
-                    .frame(width: 24)
+                    .font(.system(size: 13.5, weight: .regular))
+                    .frame(width: 20, alignment: .center)
+                    .foregroundStyle(active ? Console.text : Console.tertiary)
                 Text(L10n.t(page.rawValue))
-                    .font(.system(size: 14, weight: active ? .semibold : .regular))
+                    .font(.system(size: 13, weight: active ? .medium : .regular))
+                    .foregroundStyle(active ? Console.text : Console.secondary)
+                    .padding(.leading, 1)
                 Spacer(minLength: 4)
                 if badge > 0 {
                     Text(verbatim: "\(badge)")
-                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
                         .foregroundStyle(Console.tertiary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(Console.inset))
                 }
             }
-            .foregroundStyle(active ? Console.text
-                                    : (hovering ? Console.text : Console.secondary))
-            .padding(.horizontal, 12)
-            .frame(height: 42)
+            .padding(.horizontal, 9)
+            .frame(height: 32)
             .background {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(active ? Console.rowSelected : (hovering ? Console.rowHover : .clear))
+            }
+            .overlay(alignment: .leading) {
                 if active {
-                    activeCapsule
-                } else if hovering {
-                    hoverCapsule
+                    Capsule()
+                        .fill(Console.accent)
+                        .frame(width: 2.5, height: 14)
+                        .padding(.leading, 0)
                 }
             }
-            .contentShape(Capsule())
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(.plainHit)
         .help(L10n.t(page.rawValue))
         .onHover { value in
-            guard !reduceMotion else { hovering = value; return }
             withAnimation(Motion.quick) { hovering = value }
         }
     }
-
-    /// 选中态：中性玻璃胶囊。只靠层次与描边区分，不再使用强调色填充。
-    private var activeCapsule: some View {
-        Capsule()
-            .fill(Console.glassSelected)
-            .overlay {
-                Capsule().fill(.clear)
-                    .glassEffect(.regular.interactive(), in: Capsule())
-            }
-            .overlay {
-                Capsule().strokeBorder(Console.glassStroke, lineWidth: 0.8)
-            }
-            .shadow(color: Console.shadow.opacity(scheme == .dark ? 0.35 : 0.10),
-                    radius: 8, x: 0, y: 3)
-            .matchedGeometryEffect(id: "nav.selection", in: namespace)
-    }
-
-    /// Hover：中性玻璃底，不做位移和缩放。
-    private var hoverCapsule: some View {
-        LiquidGlassSurface(shape: Capsule(),
-                           tint: Console.glassGroup,
-                           interactive: true)
-            .overlay {
-                Capsule().strokeBorder(Console.glassStroke, lineWidth: 0.8)
-            }
-    }
 }
 
-private struct GlassRecentRow: View {
+private struct PaperRecentRow: View {
     let title: String
     let date: String
     let active: Bool
@@ -359,7 +319,7 @@ private struct GlassRecentRow: View {
     @State private var hovering = false
 
     private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: 9, style: .continuous)
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
     }
 
     var body: some View {
@@ -369,37 +329,30 @@ private struct GlassRecentRow: View {
             Button(action: action) {
                 HStack(spacing: 8) {
                     Circle()
-                        .fill(active ? Console.accent : Console.tertiary.opacity(0.7))
-                        .frame(width: 5, height: 5)
+                        .fill(active ? Console.accent : Console.quaternary.opacity(0.6))
+                        .frame(width: 4, height: 4)
                     Text(title)
-                        .font(.system(size: 12.5))
+                        .font(.system(size: 12))
                         .foregroundStyle(active ? Console.text : Console.secondary)
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     Text(date)
-                        .font(.system(size: 10.5))
+                        .font(.system(size: 10.5, design: .monospaced))
                         .foregroundStyle(Console.tertiary)
                         .lineLimit(1)
                         .opacity(hovering ? 0 : 1)
                 }
-                .padding(.horizontal, 8)
-                .frame(height: 30)
+                .padding(.horizontal, 9)
+                .frame(height: 28)
                 .background {
-                    ZStack {
-                        if active {
-                            shape.fill(Console.inset)
-                        }
-                        LiquidGlassSurface(shape: shape, interactive: true)
-                            .opacity(hovering && !active ? 1 : 0)
-                    }
+                    shape.fill(active ? Console.rowSelected : (hovering ? Console.rowHover : .clear))
                 }
                 .contentShape(shape)
             }
             .buttonStyle(.plainHit)
 
-            // 悬停时读数让位给垃圾桶：行宽不变，时间也不会被挤到一行之外。
             RowDeleteButton(action: onDelete)
-                .padding(.trailing, 8)
+                .padding(.trailing, 6)
                 .opacity(hovering ? 1 : 0)
                 .allowsHitTesting(hovering)
         }
@@ -411,11 +364,20 @@ private struct GlassRecentRow: View {
 
 struct ConsoleTitlebar: View {
     @ObservedObject var state: AppState
-    /// 导航列占用的横向总宽（含两侧留白）。折叠按钮跟着它走，
+    /// 悬浮导航列的右缘；导航收起时为 nil。折叠按钮的右沿就落在这条竖线上，
     /// 导航隐藏后回落到红绿灯右侧的最小安全位置。
-    var navReservedWidth: CGFloat = 0
+    var navPanelTrailingEdge: CGFloat?
     var openDownloads: () -> Void
     var openFeedback: () -> Void
+
+    private enum Layout {
+        /// 折叠按钮的直径。它和导航列的右缘对齐，改尺寸时两处一起看。
+        static let toggleSize: CGFloat = 30
+        /// 标题栏右侧留白，反馈入口贴住这条线。
+        static let trailingInset: CGFloat = 16
+        /// 导航列收起后折叠按钮的落点：红绿灯右侧第一个安全位。
+        static let collapsedToggleLeading: CGFloat = 100
+    }
 
     private var downloadCount: Int {
         state.downloadTasks.count + (state.downloadingModel == nil ? 0 : 1)
@@ -423,131 +385,92 @@ struct ConsoleTitlebar: View {
 
     var body: some View {
         ZStack {
-            HStack(spacing: 8) {
-                // 按钮跟着悬浮导航列的右缘走；导航隐藏时退到红绿灯右侧，
-                // 避免和窗口控制按钮重叠。
+            HStack(spacing: 4) {
                 sidebarToggle
-                    .padding(.leading, max(84, navReservedWidth - 8))
+                    .padding(.leading, toggleLeadingInset)
                 Spacer(minLength: 8)
 
-                IconAction(systemName: state.theme.mode.resolvedIsDark ? "sun.max" : "moon",
-                           help: "切换外观") {
+                ChromeIconButton(systemName: state.theme.mode.resolvedIsDark ? "sun.max" : "moon",
+                                 help: L10n.t("切换外观")) {
                     state.theme.set(state.theme.mode.resolvedIsDark ? .light : .dark)
                 }
 
-                Button(action: openDownloads) {
-                    ZStack(alignment: .topTrailing) {
-                        Image(systemName: "arrow.down.circle")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Console.text.opacity(0.8))
-                            .frame(width: 32, height: 32)
-                            .background {
-                                LiquidGlassSurface(shape: Circle(), interactive: true)
-                            }
-                        if downloadCount > 0 {
-                            Text(verbatim: "\(downloadCount)")
-                                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Console.accent))
-                                .offset(x: 3, y: -2)
-                        }
-                    }
+                ChromeIconButton(systemName: "arrow.down.circle",
+                                 help: L10n.t("下载中心"),
+                                 badge: downloadCount) {
+                    openDownloads()
                 }
-                .buttonStyle(.plainHit)
-                .help("下载中心")
 
-                // 下载与反馈之间只留一道细线：两个按钮同一排，
-                // 但反馈是独立入口，不该读成下载旁边的小挂件。
-                Rectangle()
-                    .fill(Console.tertiary.opacity(0.3))
-                    .frame(width: 1, height: 15)
-                    .accessibilityHidden(true)
-
-                feedbackButton
+                ChromeIconButton(systemName: "bubble.left.and.bubble.right",
+                                 help: L10n.t("反馈与交流")) {
+                    openFeedback()
+                }
             }
-            .padding(.horizontal, 16)
+            .padding(.trailing, Layout.trailingInset)
         }
-        // 红绿灯整体下移 6pt 后，标题栏行也下移 6pt，二者仍然同轴，
-        // 同时离窗口上沿留出一点距离。
         .frame(height: 32)
         .padding(.top, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(WindowDragArea())
     }
 
-    /// 反馈入口：和下载中心同排同尺寸，放在标题栏最右，
-    /// 侧栏不再重复挂一个「反馈」按钮。
-    private var feedbackButton: some View {
-        Button(action: openFeedback) {
-            Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Console.text.opacity(0.8))
-                .frame(width: 32, height: 32)
-                .background {
-                    LiquidGlassSurface(shape: Circle(), interactive: true)
-                }
-                .contentShape(Circle())
+    /// 折叠按钮的左沿（从窗口左沿算起）。导航列展开时按钮的右缘和列右缘
+    /// 共用一条竖线，读作列顶部的一颗控件，而不是浮在列与主视口之间的空隙里。
+    private var toggleLeadingInset: CGFloat {
+        guard let trailingEdge = navPanelTrailingEdge else {
+            return Layout.collapsedToggleLeading
         }
-        .buttonStyle(.plainHit)
-        .help(L10n.t("反馈与交流"))
-        .accessibilityLabel(L10n.t("反馈与交流"))
+        return trailingEdge - Layout.toggleSize
     }
 
-    /// macOS 26 原生玻璃按钮：贴在侧栏右缘，和红绿灯同一水平线。
+    /// 折叠按钮：贴在导航列右缘，和红绿灯同一水平线。
     private var sidebarToggle: some View {
-        Button {
-            // 动画统一由 AppState.toggleSidebar() 里的 withAnimation 驱动，
-            // 菜单栏、命令面板和这个按钮走同一条路径。
+        ChromeIconButton(systemName: "sidebar.left",
+                         help: L10n.t(state.showsSidebar ? "隐藏边栏" : "显示边栏")) {
             state.toggleSidebar()
-        } label: {
-            Image(systemName: "sidebar.left")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Console.text.opacity(0.8))
-                .frame(width: 30, height: 30)
-                .background {
-                    LiquidGlassSurface(shape: Circle(), interactive: true)
-                }
-                .contentShape(Circle())
         }
-        .buttonStyle(.plainHit)
-        .help(L10n.t(state.showsSidebar ? "隐藏边栏" : "显示边栏"))
-        .accessibilityLabel(L10n.t(state.showsSidebar ? "隐藏边栏" : "显示边栏"))
     }
 
 }
 
-// MARK: - Titlebar backdrop
+/// 标题栏上的图标按钮：没有玻璃圆底，只有悬停时的一块方形浅底。
+struct ChromeIconButton: View {
+    let systemName: String
+    var help: String = ""
+    var badge: Int = 0
+    let action: () -> Void
 
-/// 标题栏的安全背景层。用一层柔和材质把标题栏和下面的页面内容隔开，
-/// 下缘渐变淡出，避免出现一条硬边；所有悬浮控件都复用它，不再各自叠玻璃。
-private struct TitlebarBackdrop: View {
-    @Environment(\.colorScheme) private var scheme
+    @State private var hovering = false
 
     var body: some View {
-        Rectangle()
-            .fill(.ultraThinMaterial)
-            .overlay {
-                // 材质本身会偏灰，补一层画布色让标题栏和页面保持在同一个色阶。
-                LinearGradient(
-                    colors: [Console.backgroundTop.opacity(scheme == .dark ? 0.55 : 0.45), .clear],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+        Button(action: action) {
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: systemName)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(hovering ? Console.text : Console.secondary)
+                    .frame(width: 28, height: 28)
+                    .background {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(hovering ? Console.rowHover : .clear)
+                    }
+                if badge > 0 {
+                    Text(verbatim: "\(badge)")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Console.inkForeground)
+                        .padding(.horizontal, 3.5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Console.accent))
+                        .offset(x: 2, y: -1)
+                }
             }
-            .mask {
-                // 顶部完全覆盖，靠近下缘再收干净，不切出一条分隔线。
-                LinearGradient(
-                    stops: [
-                        .init(color: .black, location: 0),
-                        .init(color: .black, location: 0.65),
-                        .init(color: .clear, location: 1),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plainHit)
+        .onHover { value in
+            withAnimation(Motion.quick) { hovering = value }
+        }
+        .help(help)
+        .accessibilityLabel(help)
     }
 }
 

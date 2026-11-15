@@ -40,11 +40,9 @@ struct EngineConfigSheet: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            ArcadeIcon(symbol: engineSymbol(engine),
-                       colors: [engineAccent(engine), engineAccent(engine).opacity(0.62)],
-                       size: 30,
-                       glyphScale: 0.44,
-                       glow: false)
+            Image(systemName: engineSymbol(engine))
+                .font(.system(size: 18, weight: .regular))
+                .foregroundStyle(Console.secondary)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
                     Text(engine.displayName)

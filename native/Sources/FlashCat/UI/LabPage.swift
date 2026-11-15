@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// 「实验室」页：侧边栏设置之后的独立入口，顶部用玻璃分段在图片/视频之间切换。
+/// 「实验室」页：侧边栏设置之后的独立入口，顶部用文字标签在图片/视频之间切换。
 /// 两个库都只认 assistant 消息里落盘的结果，用户给的底图/首帧图不会混进来。
 ///
 /// 浏览方式是按页摆的：一屏正好一页，页面本身不滚动，翻页在左上角。
@@ -92,13 +92,8 @@ struct LabPage: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
                 Image(systemName: "flask")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Console.accent)
-                    .frame(width: 34, height: 34)
-                    .background {
-                        LiquidGlassSurface(shape: RoundedRectangle(cornerRadius: 10, style: .continuous),
-                                           tint: Console.accent.opacity(0.12))
-                    }
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(Console.secondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("实验室")
                         .font(.system(size: 20, weight: .semibold))
@@ -118,9 +113,9 @@ struct LabPage: View {
                 .buttonStyle(.consoleSecondary)
             }
 
-            GlassSegmented(selection: $tab,
-                           options: [(.images, "图片 \(images.count)"),
-                                     (.videos, "视频 \(videos.count)")])
+            NativeSegmented(selection: $tab,
+                            options: [(.images, "图片 \(images.count)"),
+                                      (.videos, "视频 \(videos.count)")])
         }
     }
 
@@ -171,10 +166,10 @@ struct LabPage: View {
                 .font(.system(size: 9.5, weight: .semibold))
                 .foregroundStyle(enabled ? Console.secondary : Console.tertiary)
                 .frame(width: 24, height: 24)
-                .background { LiquidGlassSurface(shape: Circle()) }
+                .quietHover(cornerRadius: 12)
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.plainHit)
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.5)
         .help(systemName == "chevron.left" ? "上一页" : "下一页")
@@ -319,9 +314,9 @@ struct LabGridLayout: Equatable {
     let coverHeight: CGFloat
 
     static let spacing: CGFloat = 12
-    /// 封面之外的部分：内边距 7×2、两处 5pt 间距、一行提示词、一行信息。
-    static let chrome: CGFloat = 50
-    static let cardInset: CGFloat = 7
+    /// 封面之外的部分：两处 5pt 间距、一行提示词、一行信息。
+    static let chrome: CGFloat = 36
+    static let cardInset: CGFloat = 0
     static let maxRows = 4
     static let minCoverHeight: CGFloat = 96
 
@@ -378,12 +373,8 @@ private struct LabEmptyState: View {
     var body: some View {
         VStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 24, weight: .light))
+                .font(.system(size: 28, weight: .ultraLight))
                 .foregroundStyle(Console.tertiary)
-                .frame(width: 64, height: 64)
-                .background {
-                    LiquidGlassSurface(shape: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                }
             Text(title)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(Console.secondary)
@@ -411,6 +402,11 @@ private struct GalleryImageTile: View {
                 GalleryImageCover(path: image.path, maxPixel: maxPixel)
                     .frame(maxWidth: .infinity)
                     .frame(height: coverHeight)
+                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .strokeBorder(Console.cardStroke, lineWidth: 1)
+                    }
                     .clipped()
                     .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
                     .overlay {
@@ -439,12 +435,10 @@ private struct GalleryImageTile: View {
                 .foregroundStyle(Console.tertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(LabGridLayout.cardInset)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .consoleCardSurface(radius: 14, interactive: true)
         .help(image.prompt.isEmpty ? "查看详情" : image.prompt)
         .contextMenu {
             Button("查看详情", action: openDetail)
@@ -578,12 +572,10 @@ private struct GalleryVideoTile: View {
                 .foregroundStyle(Console.tertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(LabGridLayout.cardInset)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .consoleCardSurface(radius: 14, interactive: true)
         .help(video.prompt.isEmpty ? "查看详情" : video.prompt)
         .contextMenu {
             Button("查看详情", action: openDetail)

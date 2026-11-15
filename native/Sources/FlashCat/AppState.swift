@@ -266,7 +266,7 @@ final class AppState: ObservableObject {
     @Published private(set) var islandNotices: [IslandNotice] = []
     /// 尚未展开查看的通知数量。
     @Published private(set) var islandUnread = 0
-    /// 悬浮导航列是否显示。隐藏后主视口铺满窗口，重新显示时恢复玻璃列；
+    /// 悬浮导航列是否显示。隐藏后主视口铺满窗口，重新显示时恢复导航列；
     /// 状态落盘到 UserDefaults 的 `sidebarVisible`，重启后沿用上次的样子。
     @Published var showsSidebar: Bool
     /// 概览总解码曲线的样本。速度统一取网关按请求打点的聚合；网关没有

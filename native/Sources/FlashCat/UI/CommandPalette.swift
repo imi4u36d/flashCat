@@ -43,9 +43,12 @@ struct CommandPalette: View {
             }
             .frame(width: 560)
             .background {
-                LiquidGlassSurface(
-                    shape: RoundedRectangle(cornerRadius: 14, style: .continuous)
-                )
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Native.surface)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(Native.hairline, lineWidth: 1)
+                    }
             }
             .padding(.top, 120)
             .frame(maxHeight: .infinity, alignment: .top)
@@ -69,9 +72,7 @@ struct CommandPalette: View {
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(Native.secondary)
                     .frame(width: 22, height: 22)
-                    .background {
-                        LiquidGlassSurface(shape: Circle(), interactive: true)
-                    }
+                    .quietHover(cornerRadius: 11)
                     .contentShape(Circle())
             }
             .buttonStyle(.plainHit)
@@ -132,12 +133,8 @@ struct CommandPalette: View {
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
         .background {
-            LiquidGlassSurface(
-                shape: RoundedRectangle(cornerRadius: 7, style: .continuous),
-                tint: selected ? Native.accent.opacity(0.10) : nil,
-                interactive: true
-            )
-            .opacity(selected ? 1 : 0)
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(selected ? Native.accent.opacity(0.10) : Color.clear)
         }
         .animation(Motion.quick, value: selected)
         .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
@@ -196,7 +193,7 @@ struct CommandPalette: View {
             toggleAppearance()
         })
         list.append(CommandItem(id: "sidebar", title: state.showsSidebar ? "折叠边栏" : "展开边栏",
-                                detail: "显示 / 隐藏玻璃导航列",
+                                detail: "显示 / 隐藏导航列",
                                 icon: "sidebar.left") {
             state.toggleSidebar()
         })

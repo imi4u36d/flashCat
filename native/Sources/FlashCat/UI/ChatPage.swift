@@ -61,7 +61,7 @@ struct ChatPage: View {
         // 整页只剩顶部模型行，看起来就是空白。
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         // 顶部与底部同导航列共用一套边界：模型行落在页面标题的那条线上，
-        // 输入卡的底边和侧栏玻璃的底边齐平。
+        // 输入卡的底边和侧栏的底边齐平。
         .padding(.top, Console.contentTopInset)
         // 页面宽度决定对话列最宽能撑到哪里。量在根视图上而不是对话区里：
         // 输入卡是页面级浮层，两边必须读同一个数才不会一宽一窄。
@@ -135,8 +135,8 @@ struct ChatPage: View {
             } label: {
                 HStack(spacing: 7) {
                     Image(systemName: "sparkles")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Console.accent)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Console.tertiary)
                     Text(L10n.t(state.selectedModel.isEmpty ? "选择模型" : state.shortModelName(state.selectedModel)))
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Console.text)
@@ -179,9 +179,7 @@ struct ChatPage: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Console.secondary)
                     .frame(width: 32, height: 32)
-                    .background {
-                        LiquidGlassSurface(shape: Circle(), interactive: true)
-                    }
+                    .quietHover(cornerRadius: 14)
             }
             .buttonStyle(.plainHit)
             .popover(isPresented: $showsThreads, arrowEdge: .bottom) { threadList }
@@ -189,9 +187,18 @@ struct ChatPage: View {
             Button {
                 state.newConversation()
             } label: {
-                Label("新对话", systemImage: "square.and.pencil")
+                HStack(spacing: 5) {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 11, weight: .medium))
+                    Text("新对话")
+                        .font(.system(size: 11.5, weight: .medium))
+                }
+                .foregroundStyle(Console.secondary)
+                .padding(.horizontal, 9)
+                .frame(height: 28)
+                .quietHover(cornerRadius: 6)
             }
-            .buttonStyle(.consoleSecondary)
+            .buttonStyle(.plainHit)
         }
         .padding(.horizontal, Console.contentPadding + 8)
         .frame(height: 44)
@@ -230,9 +237,7 @@ struct ChatPage: View {
                 .padding(10)
         }
         .frame(width: 260)
-        .background {
-            LiquidGlassSurface(shape: Rectangle())
-        }
+        .background { Rectangle().fill(Console.card) }
     }
 
     // MARK: Transcript
@@ -347,9 +352,7 @@ struct ChatPage: View {
                             .font(.system(size: 10.5, weight: .semibold))
                             .padding(.horizontal, 12)
                             .frame(height: 28)
-                            .background {
-                                LiquidGlassSurface(shape: Capsule(), interactive: true)
-                            }
+                            .quietHover(cornerRadius: 14)
                     }
                     .buttonStyle(.plainHit)
                     .padding(.bottom, 150)
@@ -548,9 +551,7 @@ struct ChatPage: View {
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Console.secondary)
                         .frame(width: 28, height: 28)
-                        .background {
-                            LiquidGlassSurface(shape: Circle(), interactive: true)
-                        }
+                        .quietHover(cornerRadius: 14)
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plainHit)
@@ -582,9 +583,7 @@ struct ChatPage: View {
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(state.imageToolEnabled ? Console.accent : Console.secondary)
                             .frame(width: 28, height: 28)
-                            .background {
-                                LiquidGlassSurface(shape: Circle(), interactive: true)
-                            }
+                            .quietHover(cornerRadius: 14)
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plainHit)
@@ -624,9 +623,7 @@ struct ChatPage: View {
                         }
                         .padding(.horizontal, 9)
                         .frame(height: 26)
-                        .background {
-                            LiquidGlassSurface(shape: Capsule(), interactive: true)
-                        }
+                        .quietHover(cornerRadius: 13)
                         .contentShape(Capsule())
                     }
                     .menuStyle(.borderlessButton)
@@ -648,9 +645,7 @@ struct ChatPage: View {
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(hasAttachedMedia ? Console.accent : Console.secondary)
                             .frame(width: 28, height: 28)
-                            .background {
-                                LiquidGlassSurface(shape: Circle(), interactive: true)
-                            }
+                            .quietHover(cornerRadius: 14)
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plainHit)
@@ -666,9 +661,7 @@ struct ChatPage: View {
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(referenceClips.isEmpty ? Console.secondary : Console.accent)
                             .frame(width: 28, height: 28)
-                            .background {
-                                LiquidGlassSurface(shape: Circle(), interactive: true)
-                            }
+                            .quietHover(cornerRadius: 14)
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plainHit)
@@ -695,11 +688,7 @@ struct ChatPage: View {
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(.white)
                             .frame(width: 30, height: 30)
-                            .background {
-                                LiquidGlassSurface(shape: Circle(),
-                                                   tint: Native.red.opacity(0.75),
-                                                   interactive: true)
-                            }
+                            .background { Circle().fill(Native.red.opacity(0.82)) }
                     }
                     .buttonStyle(.plainHit)
                 } else {
@@ -708,11 +697,7 @@ struct ChatPage: View {
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(.white)
                             .frame(width: 30, height: 30)
-                            .background {
-                                LiquidGlassSurface(shape: Circle(),
-                                                   tint: Console.accent,
-                                                   interactive: true)
-                            }
+                            .background { Circle().fill(Console.accent) }
                     }
                     .buttonStyle(.plainHit)
                     .disabled(!canSend)
@@ -725,17 +710,24 @@ struct ChatPage: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .frame(maxWidth: composerMaxWidth)
-        .consoleCardSurface(tint: composerFocused ? Console.accent.opacity(0.06) : nil)
-        // 卡面是 `.clear` 玻璃，本身不参与命中测试：点在输入框的留白上会穿到下面
-        // 的消息列表（消息里冒出光标/选区）。补一个整卡形状，点哪儿都算点在输入卡上。
-        .contentShape(RoundedRectangle(cornerRadius: Console.cardRadius, style: .continuous))
+        .background {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Console.card)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Console.cardStroke,
+                              lineWidth: 1)
+        }
+        // 输入框是一块平面，整块都算命中区，避免点在留白上穿到消息列表。
+        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .onTapGesture { focusComposer() }
         .overlay {
             if isDropTargeted {
-                RoundedRectangle(cornerRadius: Console.cardRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .strokeBorder(Console.accent.opacity(0.85), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
                     .background(
-                        RoundedRectangle(cornerRadius: Console.cardRadius, style: .continuous)
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .fill(Console.accent.opacity(0.08))
                     )
                     .overlay(alignment: .topTrailing) {
@@ -747,9 +739,7 @@ struct ChatPage: View {
                             .foregroundStyle(Console.accent)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
-                            .background {
-                                LiquidGlassSurface(shape: Capsule())
-                            }
+                            .background { Capsule().fill(Console.card) }
                             .padding(10)
                     }
                     .allowsHitTesting(false)
@@ -1134,9 +1124,7 @@ struct ChatPage: View {
                 .foregroundStyle(Console.secondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background {
-                    LiquidGlassSurface(shape: Capsule(), interactive: true)
-                }
+                .quietHover(cornerRadius: 11)
         }
         .buttonStyle(.plainHit)
     }
@@ -1758,7 +1746,7 @@ struct ChatParametersSheet: View {
         .padding(.vertical, 14)
     }
 
-    /// 采样参数：玻璃卡里放两行滑杆和一个托底凹槽的数字输入。
+    /// 采样参数：分节里放两行滑杆和一个托底凹槽的数字输入。
     private var samplingCard: some View {
         Card("采样", subtitle: "每条消息都会带上这组默认值") {
             VStack(spacing: 14) {
@@ -1796,7 +1784,7 @@ struct ChatParametersSheet: View {
         }
     }
 
-    /// 系统提示：玻璃卡 + 凹槽文本域，让长文本仍保持可读的非玻璃底。
+    /// 系统提示：分节 + 凹槽文本域，让长文本仍保持可读。
     private var systemPromptCard: some View {
         Card("系统提示", subtitle: "作为系统消息置于每段对话之前") {
             TextEditor(text: Binding(
@@ -2482,7 +2470,7 @@ private struct ThreadRow: View {
                 .padding(.trailing, 26)
                 .padding(.vertical, 6)
                 .background {
-                    LiquidGlassSurface(shape: shape, interactive: true)
+                    shape.fill(Console.rowHover)
                         .opacity(hovering ? 1 : 0)
                 }
                 .contentShape(Rectangle())

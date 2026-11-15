@@ -153,14 +153,6 @@ struct PageBackdrop: View {
         ZStack {
             LinearGradient(colors: [Native.surface, Native.surfaceDeep],
                            startPoint: .top, endPoint: .bottom)
-            RadialGradient(colors: [accent.opacity(scheme == .dark ? 0.10 : 0.055), .clear],
-                           center: UnitPoint(x: 0.86, y: -0.12),
-                           startRadius: 0,
-                           endRadius: 640)
-            RadialGradient(colors: [Native.blue.opacity(scheme == .dark ? 0.05 : 0.028), .clear],
-                           center: UnitPoint(x: -0.05, y: 1.05),
-                           startRadius: 0,
-                           endRadius: 560)
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
@@ -186,10 +178,12 @@ struct GlassSurface: View {
     var elevated: Bool = true
 
     var body: some View {
-        LiquidGlassSurface(
-            shape: RoundedRectangle(cornerRadius: radius, style: .continuous),
-            tint: tint == .clear ? nil : tint.opacity(0.14)
-        )
+        RoundedRectangle(cornerRadius: radius, style: .continuous)
+            .fill(tint == .clear ? Native.surface : Native.surface)
+            .overlay {
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(tint == .clear ? Native.hairline : tint.opacity(0.35), lineWidth: 1)
+            }
     }
 }
 
@@ -657,8 +651,12 @@ struct Card<Content: View>: View {
             }
             content
         }
-        .padding(padded ? Native.cardPadding : 0)
-        .consoleCardSurface(tint: tint == .clear ? nil : tint.opacity(0.16))
+        .padding(.vertical, padded ? 14 : 0)
+        .overlay(alignment: .bottom) {
+            if padded {
+                Rectangle().fill(Console.hairline).frame(height: 1)
+            }
+        }
     }
 }
 
@@ -1074,15 +1072,14 @@ struct IconAction: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(active ? Color.white : Native.label.opacity(hovering ? 1 : 0.82))
-                .frame(width: 30, height: 30)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(active ? Native.accent : Native.label.opacity(hovering ? 1 : 0.72))
+                .frame(width: 28, height: 28)
                 .background {
-                    LiquidGlassSurface(shape: Circle(),
-                                       tint: active ? Native.accent : nil,
-                                       interactive: true)
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(hovering || active ? Native.overlay(active ? 0.10 : 0.06) : .clear)
                 }
-                .contentShape(Circle())
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
@@ -1098,14 +1095,10 @@ struct IconMenuLabel: View {
 
     var body: some View {
         Image(systemName: systemName)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(active ? Color.white : Native.label.opacity(0.82))
-            .frame(width: 30, height: 30)
-            .background {
-                LiquidGlassSurface(shape: Circle(),
-                                   tint: active ? Native.accent : nil)
-            }
-            .contentShape(Circle())
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(active ? Native.accent : Native.label.opacity(0.78))
+            .frame(width: 28, height: 28)
+            .contentShape(Rectangle())
     }
 }
 
@@ -1116,10 +1109,9 @@ struct EmptyHint: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            ArcadeIcon(symbol: icon,
-                       colors: [Native.violet, Native.blue],
-                       size: 54,
-                       glyphScale: 0.4)
+            Image(systemName: icon)
+                .font(.system(size: 28, weight: .ultraLight))
+                .foregroundStyle(Native.tertiary)
             Text(L10n.t(title))
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Native.label)
@@ -1231,31 +1223,4 @@ func healthTone(_ stats: ServerStats?) -> (label: String, tone: TagTone) {
     if stats.memoryPressure == "warning" { return ("内存偏高", .warning) }
     if let thermal = stats.thermal, thermal != "nominal" { return (stats.thermalText, .warning) }
     return ("正常", .success)
-}
-
-// MARK: - Page identity
-
-extension Page {
-    /// Two-stop key colour used by the sidebar selection, the page wash and the
-    /// empty-state illustration. The canvas itself stays neutral.
-    var keyColors: [Color] {
-        switch self {
-        case .overview:
-            return [Color(hex: 0xFF9F0A), Color(hex: 0xFF375F), Color(hex: 0x7B2CBF)]
-        case .chat:
-            return [Color(hex: 0x7C5CFF), Color(hex: 0x0A84FF), Color(hex: 0x00C7BE)]
-        case .models:
-            return [Color(hex: 0x30D158), Color(hex: 0x00C7BE), Color(hex: 0x0A84FF)]
-        case .engines:
-            return [Color(hex: 0x0A84FF), Color(hex: 0x30D158), Color(hex: 0x00C7BE)]
-        case .logs:
-            return [Color(hex: 0xFFD60A), Color(hex: 0xFF9F0A), Color(hex: 0xFF453A)]
-        case .settings:
-            return [Color(hex: 0x5E5CE6), Color(hex: 0xBF5AF2), Color(hex: 0xFF375F)]
-        case .lab:
-            return [Color(hex: 0xFF9F0A), Color(hex: 0xBF5AF2), Color(hex: 0x0A84FF)]
-        }
-    }
-
-    var keyColor: Color { keyColors.first ?? Native.accent }
 }

@@ -238,9 +238,28 @@ struct GlassFilterBar<Value: Hashable>: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            // 与设置页、模型广场保持同一套原生分段控件，按住拖动时由系统
-            // 绘制 macOS 27 的大块 Liquid Glass 选中态。
-            NativeSegmented(selection: $selection, options: options)
+            // 过滤不是「值选择」而是一排文字标签：选中项只用文字颜色和
+            // 一条短下划线表达，不再占用一整条玻璃胶囊轨道。
+            HStack(spacing: 16) {
+                ForEach(options, id: \.value) { option in
+                    Button {
+                        selection = option.value
+                    } label: {
+                        VStack(spacing: 5) {
+                            Text(L10n.t(option.label))
+                                .font(.system(size: 12, weight: selection == option.value ? .medium : .regular))
+                                .foregroundStyle(selection == option.value ? Console.text : Console.tertiary)
+                            Rectangle()
+                                .fill(selection == option.value ? Console.accent : .clear)
+                                .frame(height: 1.5)
+                        }
+                        .fixedSize()
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plainHit)
+                }
+            }
+            .animation(Motion.quick, value: selection)
 
             if searching {
                 HStack(spacing: 6) {
@@ -262,13 +281,15 @@ struct GlassFilterBar<Value: Hashable>: View {
                     }
                 }
                 .padding(.horizontal, 10)
-                .frame(width: maxSearchWidth, height: 34)
+                .frame(width: maxSearchWidth, height: 30)
                 .background {
-                    LiquidGlassSurface(
-                        shape: Capsule(),
-                        tint: focused ? Console.accent.opacity(0.08) : nil,
-                        interactive: true
-                    )
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Console.inset)
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(focused ? Console.accent.opacity(0.55) : Console.insetStroke,
+                                      lineWidth: 1)
                 }
                 .animation(Motion.quick, value: focused)
                 .transition(.opacity.combined(with: .move(edge: .trailing)))
@@ -279,9 +300,8 @@ struct GlassFilterBar<Value: Hashable>: View {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(Console.secondary)
-                        .frame(width: 34, height: 34)
-                        .background { LiquidGlassSurface(shape: Circle(), interactive: true) }
-                        .contentShape(Circle())
+                        .frame(width: 30, height: 30)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plainHit)
                 .help(placeholder)

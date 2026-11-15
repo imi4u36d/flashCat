@@ -305,8 +305,10 @@ struct MenuBarPanel: View {
 
             endpointRow
         }
-        .padding(12)
-        .consoleCardSurface()
+        .padding(.vertical, 10)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Console.hairline).frame(height: 1)
+        }
     }
 
     private var modelTitle: String {
@@ -344,17 +346,8 @@ struct MenuBarPanel: View {
             }
             .padding(.horizontal, 9)
             .frame(height: 28)
-            .background {
-                LiquidGlassSurface(
-                    shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
-                    interactive: true
-                )
-            }
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Console.glassStroke, lineWidth: 0.8)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .quietHover(cornerRadius: 6)
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(.plainHit)
         .help("点击复制接口地址")

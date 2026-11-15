@@ -98,11 +98,7 @@ struct GalleryDetailSheet: View {
             Image(systemName: item.isVideo ? "film" : "photo.on.rectangle.angled")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Console.accent)
-                .frame(width: 34, height: 34)
-                .background {
-                    LiquidGlassSurface(shape: RoundedRectangle(cornerRadius: 10, style: .continuous),
-                                       tint: Console.accent.opacity(0.12))
-                }
+                .frame(width: 28, height: 28)
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(item.kindName)详情")
                     .font(.system(size: 16, weight: .semibold))

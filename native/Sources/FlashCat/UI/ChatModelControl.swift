@@ -38,9 +38,7 @@ struct ChatModelThinkingControl: View {
             }
             .padding(.horizontal, 11)
             .frame(height: 30)
-            .background {
-                LiquidGlassSurface(shape: Capsule(), interactive: true)
-            }
+            .quietHover(cornerRadius: 15)
             .contentShape(Capsule())
         }
         .buttonStyle(.plainHit)

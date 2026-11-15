@@ -41,7 +41,7 @@ struct DynamicIsland: View {
     @State private var hoverScale: CGFloat = 1
     @State private var hoverResetTask: Task<Void, Never>?
 
-    /// 灵动岛自己的语义色：深色模式是黑底白字，浅色模式是浅玻璃底深色字。
+    /// 灵动岛自己的语义色：深色模式是黑底白字，浅色模式是纸色底深色字。
     private var ink: Color {
         Color.adaptive(dark: 0xF2F0F6, light: 0x15151D)
     }
@@ -97,22 +97,9 @@ struct DynamicIsland: View {
         // 收起态必须按内容收敛。父级 overlay 会提出整窗宽度，不加这一行
         // 摘要会把「整窗宽度」量成自己的内容宽度，胶囊就永远停在最大宽度。
         .fixedSize(horizontal: !expanded, vertical: false)
-        .background {
-            shape
-                .fill(
-                    LinearGradient(colors: [islandFillTop, islandFillBottom],
-                                   startPoint: .top, endPoint: .bottom)
-                )
-        }
-        .overlay {
-            shape.strokeBorder(
-                LinearGradient(colors: [ink.opacity(0.22), ink.opacity(0.04)],
-                               startPoint: .topLeading, endPoint: .bottomTrailing),
-                lineWidth: 0.8
-            )
-        }
+        .background { shape.fill(Console.card) }
+        .overlay { shape.strokeBorder(Console.cardStroke, lineWidth: 1) }
         .clipShape(shape)
-        .shadow(color: islandShadow, radius: 18, y: 8)
         .scaleEffect(hoverScale)
         .contentShape(shape)
         .onHover(perform: handleHover)

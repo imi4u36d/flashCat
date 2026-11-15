@@ -4,8 +4,7 @@ import FlashCatKit
 
 /// 下载中心：正在跑的任务、暂停/失败的行，以及断点续传入口。
 ///
-/// 视觉沿用控制台的 Liquid Glass 语言：标题栏图标与按钮用玻璃材质，
-/// 任务行是内容卡片，只靠层级底色区分，不再使用旧的暖色 Native 调色板。
+/// 任务行用发丝线分隔；正在下载的一条用左侧橙线和浅底带标出来。
 struct DownloadCenterSheet: View {
     @ObservedObject var state: AppState
     @Environment(\.dismiss) private var dismiss
@@ -51,12 +50,8 @@ struct DownloadCenterSheet: View {
     private var header: some View {
         HStack(spacing: 10) {
             Image(systemName: "arrow.down.circle")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 17, weight: .medium))
                 .foregroundStyle(Console.accent)
-                .frame(width: 34, height: 34)
-                .background {
-                    LiquidGlassSurface(shape: Circle())
-                }
             VStack(alignment: .leading, spacing: 2) {
                 Text("下载中心")
                     .font(.system(size: 15, weight: .semibold))
@@ -95,7 +90,10 @@ struct DownloadCenterSheet: View {
                 .foregroundStyle(Console.tertiary)
         }
         .padding(12)
-        .consoleCardSurface(tint: Console.accent.opacity(0.10))
+        .background(Console.inset)
+        .overlay(alignment: .leading) {
+            Rectangle().fill(Console.accent).frame(width: 2)
+        }
     }
 
     private func taskRow(_ task: ModelDownloadTask) -> some View {
@@ -129,7 +127,9 @@ struct DownloadCenterSheet: View {
             .help("移除任务并清理半成品")
         }
         .padding(12)
-        .consoleCardSurface()
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Console.hairline).frame(height: 1)
+        }
     }
 
     private func statusLabel(_ task: ModelDownloadTask) -> String {

@@ -8,7 +8,7 @@ import FlashCatKit
 /// （没有可用运行时时）。安装完成由 `adoptEngine` 接管，页面自动让位给控制台。
 ///
 /// 视觉上跟随控制台的 Liquid Glass 语言：画布取 `ConsoleBackdrop`，每一行是
-/// 玻璃胶囊卡片，已安装用玻璃徽标表达，主按钮也是玻璃胶囊。进场与安装进度
+/// 纸面行，已安装用文字徽标表达，主按钮是橙色胶囊。进场与安装进度
 /// 都走统一的 `Motion` 节奏，尊重「减少动态效果」。
 struct LaunchPage: View {
     @ObservedObject var state: AppState
@@ -24,7 +24,7 @@ struct LaunchPage: View {
 
     var body: some View {
         ZStack {
-            ConsoleBackdrop(accent: Console.accent)
+            ConsoleBackdrop()
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     brand
@@ -120,11 +120,10 @@ struct LaunchPage: View {
     private func pickRow(_ pick: HardwareRecommendation.Pick) -> some View {
         let id = pick.engineID
         return HStack(spacing: 14) {
-            ArcadeIcon(symbol: id.map(engineSymbol) ?? "cpu",
-                       colors: id.map { [engineAccent($0), engineAccent($0).opacity(0.6)] } ?? [Native.blue],
-                       size: 36,
-                       glyphScale: 0.44,
-                       glow: false)
+            Image(systemName: id.map(engineSymbol) ?? "cpu")
+                .font(.system(size: 19, weight: .medium))
+                .foregroundStyle(Console.secondary)
+                .frame(width: 30)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(id?.displayName ?? pick.engine)
@@ -146,8 +145,10 @@ struct LaunchPage: View {
                 installButton(id, recommended: pick)
             }
         }
-        .padding(Native.cardPadding)
-        .consoleCardSurface()
+        .padding(.vertical, 12)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Console.hairline).frame(height: 1)
+        }
     }
 
     private var engineList: some View {
@@ -165,11 +166,10 @@ struct LaunchPage: View {
         let accent = engineAccent(id)
         let installed = state.engineIsInstalled(id)
         return HStack(spacing: 14) {
-            ArcadeIcon(symbol: engineSymbol(id),
-                       colors: [accent, accent.opacity(0.6)],
-                       size: 36,
-                       glyphScale: 0.44,
-                       glow: false)
+            Image(systemName: engineSymbol(id))
+                .font(.system(size: 19, weight: .medium))
+                .foregroundStyle(Console.secondary)
+                .frame(width: 30)
             VStack(alignment: .leading, spacing: 3) {
                 Text(id.displayName)
                     .font(.system(size: 14, weight: .semibold))
@@ -182,8 +182,10 @@ struct LaunchPage: View {
             Spacer(minLength: 8)
             installButton(id, recommended: nil)
         }
-        .padding(Native.cardPadding)
-        .consoleCardSurface(tint: installed ? Console.ok.opacity(0.06) : nil)
+        .padding(.vertical, 12)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Console.hairline).frame(height: 1)
+        }
     }
 
     @ViewBuilder
@@ -336,7 +338,7 @@ private extension View {
     }
 }
 
-/// 已安装徽标：玻璃胶囊 + 勾选，替掉原来的「完成」按钮。
+/// 已安装徽标：勾选 + 文字，替掉原来的「完成」按钮。
 private struct InstalledBadge: View {
     var body: some View {
         HStack(spacing: 5) {
@@ -346,19 +348,15 @@ private struct InstalledBadge: View {
                 .font(.system(size: 11.5, weight: .semibold))
         }
         .foregroundStyle(Console.ok)
-        .padding(.horizontal, 11)
+        .padding(.horizontal, 4)
         .frame(height: 30)
-        .background {
-            LiquidGlassSurface(shape: Capsule(), tint: Console.ok.opacity(0.34))
-        }
-        .overlay(Capsule().strokeBorder(Console.ok.opacity(0.20), lineWidth: 0.8))
         .fixedSize()
         .accessibilityLabel("已安装")
     }
 }
 
 /// 安装中的连续动画：进度弧平滑补齐，外圈一道细弧缓慢旋转，
-/// 步骤文字交叉淡入淡出，整体坐在一层玻璃胶囊上。
+/// 步骤文字交叉淡入淡出，整体只留进度环和一行字。
 private struct LaunchProgressBadge: View {
     let fraction: Double
     let label: String
@@ -398,18 +396,15 @@ private struct LaunchProgressBadge: View {
                 .contentTransition(.opacity)
                 .animation(Motion.standard, value: label)
         }
-        .padding(.horizontal, 11)
+        .padding(.horizontal, 4)
         .frame(height: 30)
-        .background {
-            LiquidGlassSurface(shape: Capsule(), tint: tint.opacity(0.16))
-        }
         .onAppear { spinning = true }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(label)
     }
 }
 
-/// 引导页主按钮：比普通胶囊更大、居中，玻璃底 + 墨色 tint。
+/// 引导页主按钮：比普通胶囊更大、居中，橙色实底。
 private struct LaunchActionStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
 
@@ -420,7 +415,7 @@ private struct LaunchActionStyle: ButtonStyle {
             .padding(.horizontal, 42)
             .frame(height: 44)
             .background {
-                LiquidGlassSurface(shape: Capsule(), tint: Console.ink, interactive: true)
+                Capsule().fill(Console.accent)
             }
             .opacity(isEnabled ? (configuration.isPressed ? 0.86 : 1) : 0.42)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)

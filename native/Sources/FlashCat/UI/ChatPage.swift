@@ -214,6 +214,13 @@ struct ChatPage: View {
                     ThreadRow(thread: thread) {
                         state.openThread(thread)
                         showsThreads = false
+                    } onDelete: {
+                        // 确认框挂在主窗口上，得先把弹层收掉再挂起，否则弹窗
+                        // 会被 popover 盖住看不见。收弹层是带动画的，稍等一帧。
+                        showsThreads = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                            state.requestThreadDelete(thread)
+                        }
                     }
                 }
             }
@@ -2448,6 +2455,7 @@ private struct StepsControl: View {
 private struct ThreadRow: View {
     let thread: ChatThread
     let action: () -> Void
+    let onDelete: () -> Void
 
     @State private var hovering = false
 
@@ -2456,26 +2464,36 @@ private struct ThreadRow: View {
     }
 
     var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(thread.title)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Console.text)
-                    .lineLimit(1)
-                Text("\(thread.messages.count) 条 · \(Format.relative(thread.updatedAt))")
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(Console.tertiary)
+        // 垃圾桶和行按钮是平级的：塞进行按钮的 label 里，外层按钮会把点击吞掉。
+        ZStack(alignment: .trailing) {
+            Button(action: action) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(thread.title)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Console.text)
+                        .lineLimit(1)
+                    Text("\(thread.messages.count) 条 · \(Format.relative(thread.updatedAt))")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(Console.tertiary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                // 右边多留一格给悬停才出现的垃圾桶，标题就不会压到它身上。
+                .padding(.trailing, 26)
+                .padding(.vertical, 6)
+                .background {
+                    LiquidGlassSurface(shape: shape, interactive: true)
+                        .opacity(hovering ? 1 : 0)
+                }
+                .contentShape(Rectangle())
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background {
-                LiquidGlassSurface(shape: shape, interactive: true)
-                    .opacity(hovering ? 1 : 0)
-            }
-            .contentShape(Rectangle())
+            .buttonStyle(.plainHit)
+
+            RowDeleteButton(action: onDelete)
+                .padding(.trailing, 6)
+                .opacity(hovering ? 1 : 0)
+                .allowsHitTesting(hovering)
         }
-        .buttonStyle(.plainHit)
         .onHover { value in withAnimation(Motion.quick) { hovering = value } }
     }
 }

@@ -118,6 +118,13 @@ struct ConsoleView: View {
         } message: { request in
             Text("\(request.model) 属于 \(request.engine.displayName)，切换会先停掉 \(state.activeEngine.displayName)，再以这个模型启动 \(request.engine.displayName)。")
         }
+        // 侧栏与对话页两处入口都挂到同一个挂起态上，确认只在壳层弹一次。
+        .alert("删除这段对话？", isPresented: threadDeleteShown, presenting: state.pendingThreadDelete) { _ in
+            Button("删除", role: .destructive) { state.confirmThreadDelete() }
+            Button("取消", role: .cancel) { state.cancelThreadDelete() }
+        } message: { thread in
+            Text("「\(thread.title)」里的 \(thread.messages.count) 条消息会一并删除，无法恢复。")
+        }
     }
 
     /// 引导页（首次推荐 / 引擎安装）是否盖住控制台。两个来源合成一个布尔，
@@ -152,6 +159,11 @@ struct ConsoleView: View {
     private var modelSwitchShown: Binding<Bool> {
         Binding(get: { state.confirmingModelSwitch != nil },
                 set: { if !$0 { state.cancelModelSwitchRequest() } })
+    }
+
+    private var threadDeleteShown: Binding<Bool> {
+        Binding(get: { state.pendingThreadDelete != nil },
+                set: { if !$0 { state.cancelThreadDelete() } })
     }
 
     private var modelSwitchMessage: String {
@@ -245,6 +257,9 @@ struct ConsoleNavigationPanel: View {
                                    active: state.currentThreadID == thread.id) {
                         state.openThread(thread)
                         state.section = .chat
+                    } onDelete: {
+                        // 删之前先挂起：确认弹窗在壳层，别这里直接落盘。
+                        state.requestThreadDelete(thread)
                     }
                 }
             }
@@ -339,6 +354,7 @@ private struct GlassRecentRow: View {
     let date: String
     let active: Bool
     let action: () -> Void
+    let onDelete: () -> Void
 
     @State private var hovering = false
 
@@ -347,35 +363,46 @@ private struct GlassRecentRow: View {
     }
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(active ? Console.accent : Console.tertiary.opacity(0.7))
-                    .frame(width: 5, height: 5)
-                Text(title)
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(active ? Console.text : Console.secondary)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                Text(date)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Console.tertiary)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 30)
-            .background {
-                ZStack {
-                    if active {
-                        shape.fill(Console.inset)
-                    }
-                    LiquidGlassSurface(shape: shape, interactive: true)
-                        .opacity(hovering && !active ? 1 : 0)
+        // 删除按钮与整行是兄弟而不是父子：套在行按钮的 label 里，
+        // 外层按钮会把点击整个吃掉，垃圾桶点不动。
+        ZStack(alignment: .trailing) {
+            Button(action: action) {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(active ? Console.accent : Console.tertiary.opacity(0.7))
+                        .frame(width: 5, height: 5)
+                    Text(title)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(active ? Console.text : Console.secondary)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(date)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Console.tertiary)
+                        .lineLimit(1)
+                        .opacity(hovering ? 0 : 1)
                 }
+                .padding(.horizontal, 8)
+                .frame(height: 30)
+                .background {
+                    ZStack {
+                        if active {
+                            shape.fill(Console.inset)
+                        }
+                        LiquidGlassSurface(shape: shape, interactive: true)
+                            .opacity(hovering && !active ? 1 : 0)
+                    }
+                }
+                .contentShape(shape)
             }
-            .contentShape(shape)
+            .buttonStyle(.plainHit)
+
+            // 悬停时读数让位给垃圾桶：行宽不变，时间也不会被挤到一行之外。
+            RowDeleteButton(action: onDelete)
+                .padding(.trailing, 8)
+                .opacity(hovering ? 1 : 0)
+                .allowsHitTesting(hovering)
         }
-        .buttonStyle(.plainHit)
         .onHover { value in withAnimation(Motion.quick) { hovering = value } }
     }
 }

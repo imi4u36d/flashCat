@@ -520,3 +520,32 @@ struct StatusChip: View {
         .background(Capsule().fill(filled ? color.opacity(0.10) : Console.inset))
     }
 }
+
+/// 「最近对话」每一行行尾的删除按钮：平时让位给时间读数，行悬停时才显形。
+///
+/// 常驻垃圾桶会让六行历史各顶一个红色标记，和行尾读数抢注意力；只留右键
+/// 菜单又少了能看见的入口。所以它占的是行尾本来就空着的那一格：读数淡出、
+/// 它淡入，行宽与基线都不动。着色分两级——挂在这一行上是中性的，真指着
+/// 按钮才转红，避免鼠标扫过列表时一片警报色。
+struct RowDeleteButton: View {
+    var action: () -> Void
+
+    @State private var overButton = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "trash")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(overButton ? Console.danger : Console.secondary)
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plainHit)
+        .help("删除这段对话")
+        .accessibilityLabel(Text("删除这段对话"))
+        .onHover { value in
+            withAnimation(Motion.quick) { overButton = value }
+        }
+    }
+}
+

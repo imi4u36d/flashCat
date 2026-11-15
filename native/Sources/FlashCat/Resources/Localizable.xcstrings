@@ -5000,6 +5000,36 @@
           }
         }
       }
+    },
+    "删除这段对话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete Chat"
+          }
+        }
+      }
+    },
+    "删除这段对话？": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete this chat?"
+          }
+        }
+      }
+    },
+    "「%@」里的 %lld 条消息会一并删除，无法恢复。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"%@\" has %lld messages. They are deleted with it and cannot be recovered."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

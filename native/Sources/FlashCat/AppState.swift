@@ -163,6 +163,9 @@ final class AppState: ObservableObject {
     /// unloading the resident model, so the engine is briefly unusable — that is
     /// worth one click, not a silent stall.
     @Published var confirmingModelSwitch: String?
+    /// 侧栏与「最近对话」弹层共用的待删线程：删除会重写整份历史文件，删掉就
+    /// 找不回来，所以两个入口都只挂起这一条，等壳层弹完确认再落盘。
+    @Published var pendingThreadDelete: ChatThread?
     /// 高频对话状态独立成 store；这里保留同名转发，内部逻辑不用改。
     let chat = ChatStore()
     var messages: [ChatMessage] {
@@ -3926,6 +3929,21 @@ final class AppState: ObservableObject {
         // 还会把旧正文写到新 id 名下。
         conversation.save(messages)
         section = .chat
+    }
+
+    /// 删除按钮只负责挂起：确认弹窗在壳层，两个列表用的是同一段文案与同一个落点。
+    func requestThreadDelete(_ thread: ChatThread) {
+        pendingThreadDelete = thread
+    }
+
+    func cancelThreadDelete() {
+        pendingThreadDelete = nil
+    }
+
+    func confirmThreadDelete() {
+        guard let thread = pendingThreadDelete else { return }
+        pendingThreadDelete = nil
+        deleteThread(thread)
     }
 
     func deleteThread(_ thread: ChatThread) {

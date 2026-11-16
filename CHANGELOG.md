@@ -2,6 +2,117 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。版本号的唯一来源是仓库根的 `VERSION` 文件。
 
+## [1.6.0] - 2026-11-16
+
+1.5.6 之后最大的一轮改动。界面收成一套设计系统，七个页面按同一套色阶、圆角与动效
+重画；对话页围绕「接着上次说」重做页头与空会话，日志页默认把全部引擎的输出并成
+一条时间线。底层同期完成两轮后端优化：`AppState` 拆成六个 store，引擎生命周期与
+取消语义各自收成单一来源，网关、CLI 与控制面文档补齐了一批只在真实载荷上才会
+暴露的失败路径。本版 645 条单元测试通过（5 条依赖本机运行时或集成环境的用例
+自动跳过）。
+
+### 界面
+
+- **一套设计系统，七个页面统一重画。** 新增 `UI/DesignSystem.swift` 作为唯一设计源：
+  中性冷灰阶配一个橙色强调，状态色只表示状态；数字一律等宽；圆角收成 8 / 12 / 16 /
+  22 四档；动效只有 snappy / smooth / bouncy / fade 四条曲线。内容卡片去掉玻璃与
+  重投影，改用 1px 描边分层，玻璃只留给导航层与窗口级浮层；旧的 `Native` / `Console`
+  token 降为兼容别名，新代码只认 `DS`。
+- **新图标。** 几何猫头 + 负形闪电，1024 母版由 `scripts/render-icon.swift` 可重复
+  渲染，Dock、关于面板与文档共用同一份。
+- **对话页：页头换成对话切换器。** 标题旁列出最近 20 条对话，切对话不用回侧栏；
+  「新对话」在页头右侧。模型与思考等级移到输入卡的工具行，和画图开关、上下文读数
+  放在一起——选模型这件事在要发消息的地方完成。
+- **空会话有了开场白。** 没有消息时按当前模型给场景卡：文本是「编写代码 / 概念拆解 /
+  内容总结 / 文本润色」，图像是「概念插画 / 建筑光影」，视频是「电影感镜头 / 微距
+  动态」；点一下把提示词填进输入卡并聚焦，可以直接改。下面还留着最近三条对话，
+  接着上次说只要一次点击。
+- **最近对话可以删了。** 侧栏与对话页「…」弹层里，行尾多了一枚悬停才淡入的垃圾桶；
+  删除前弹确认，写明这条对话里有多少条消息会一并消失。删除会重写 `threads.json`，
+  正在看的对话被删掉时自动回到新对话。
+- **日志页默认看全部引擎。** 新 `LogFeed` 把每台已装引擎的日志尾巴按时间并成一份，
+  行首标出来源；只想盯一台时从 LIVE 旁的菜单里挑，引擎被卸载后自动回落到「全部
+  日志」。新行从顶部插入并自动跟随，暂停会冻结当前视图；复制、打开位置与清空都按
+  当前来源生效。
+- **读数标明来源。** 首字延迟在多端点合并时按粒度取最可信的一路（P50 > 上一请求 >
+  累计平均），引擎没有就退到网关实测；缓存命中率按当前模型这一代累计，已经结束的
+  请求也算进去，换引擎、换模型或重启就归零，不会串上一代的数据；当前上下文优先取
+  正在跑的请求，空闲时才回落到最后一次请求。MTPLX 的启动时间不再由 uptime 反推。
+- **「实验室」改称「实验」。** 侧栏、应用菜单与命令面板统一用短名，英文界面仍是 Lab。
+
+### 变更
+
+- **AppState 拆成六个 store。** 5014 行 / 63 个 `@Published` / 163 个方法收到 4255 行 /
+  12 个 `@Published`：计量、下载、Hub、模型库、引擎会话、对话会话各自独立
+  （`MetricsStore`、`DownloadCenter`、`HubStore`、`ModelLibraryStore`、
+  `EngineSessionStore`、`ChatSessionStore`），对外保留同名转发，视图没有改一行。
+- **引擎生命周期收敛为一个 `Phase`。** idle / installing / starting / loading / ready /
+  stopping / stopped / failed / terminating 九态，迁移只在 `transition` 一处写，
+  越界迁移直接拒绝；`markReady` 要求进程仍在且未终止，迟到的 Ready 日志不会再把
+  已经退出的引擎翻回就绪。四份重复的日志 marker 判定合并成 `EngineLogSignal`，
+  按 UTF-8 字节前缀匹配，普通日志行不另建字符串。
+- **取消语义靠类型。** 对话、图像、视频三条链路各自有 `Kind` 与 `isCancellation`，
+  构造错误时就标好语义，删掉按 "cancel" / "取消" 文案猜的 helper；历史写入的三处
+  `try?` 换成 `onWriteFailure`，落盘失败不再静默。
+- **控制面文档只剩一份。** `ControlEngineDocuments` 与 `ControlConfigGrammar` 同时
+  供在线接口与离线文档使用，修掉 11 处引擎字段漂移、12 处在线 / 离线配置差异
+  （thinkingMode 默认 none、根端口 0 → 8000、每引擎端口段、lastModel 回退）；
+  离线配置读失败会带上原因。
+- **CLI 的命令表成为唯一来源。** `CLICommandTable` 统一命令、选项、退出码与补全，
+  `HelpCommand` 从 223 行降到 148 行；401 / 504 不再被折叠成「应用没运行」并 exit 0，
+  7 处 `try?` 改成 `ControlFallback` 显式分派；忽略 SIGPIPE，共享 URLSession，
+  `logs` 从文件尾倒读 64KB，`--json` 只判定一次。
+- **打包脚本共用一套实现。** 五个 `build-*-pack.sh` 收进 `lib-pack.sh`
+  （1203 → 1105 行），先写 staging 再原子替换，失败不会毁掉已经装好的 pack；
+  `--force` 改成「允许覆盖」。`fetch-runtime.sh` 的 mkdir 与 tar 名、
+  `fix-pack-rpaths` 的 Mach-O magic 判定一并修好，29 例 `lib-pack-selftest.sh`
+  进 CI fail-fast。
+
+### 修复
+
+- **网关不再挂住请求。** 续体交给 `ResumeOnce` 门控（ready / failed / cancelled /
+  waiting 各 resume 一次，另有 2 秒兜底）；请求头超过 64KB、畸形请求行、chunked
+  传输体、`Expect: 100-continue` 都给出明确的 400 / 411，而不是等超时；上游错误
+  按 502 / 503 / 504 分开；SSE 收尾不再 sleep 80ms 等末帧，提前退出的路径补上
+  `defer finish`，计量不再漏最后一条。
+- **索引与 JSON 不再崩。** `JSONValue.int` 对 nan / inf / 1e20 用 `isFinite` 与
+  `Int(exactly:)`，越界返回 nil；`FlashCatPaths.isSafeVersion` 拦住索引里的版本
+  路径穿越；`EnginePackBuilder` 先设 `terminationHandler` 再 `run`，进程早退时不再
+  永久等待；单文件归档返回 0，`loadIndex` 失败带原因，`_LineBuffer` 按字节切行，
+  常量 URL 收进 `ConstantURL` 去掉强解包。
+- **迟到的引擎日志不再改状态。** 引擎退出后到达的 Ready / Loading 行不会再移动
+  `phase`，停止中的引擎也不会被旧日志重新标成运行中。
+- **两处读路径的副作用。** `modelContextWindow` 的 getter 不再顺手写 UserDefaults；
+  下载监视从每 500ms 全盘 stat 改成 1 秒一次，只 stat 确实存在的目录。
+- **CI 的假失败。** 严格并发零告警时 `grep` 没有匹配，被 `pipefail` 判成失败；
+  收尾补 `|| true`，零告警现在真的能过。
+
+### 性能
+
+- **状态解析改为方言表。** `StatusParsers` 从 734 行降到 294 行，各引擎差异放进
+  905 行 `EngineStatusDialects` 表；`EngineTuning` 同样改成 profile 表。轮询路径
+  不再为每台引擎走一遍分支树。
+- **网关计量下沉 Kit。** `GatewayMeter` 的 668 行数学收进 `GatewayMetrics` 值类型与
+  `GatewaySessionMeter`，App 侧只剩 15 行 typealias；CLI、测试与界面复用同一份实现。
+- **日志合并只取需要的行。** 合并视图用 k 路归并从各引擎末尾往前翻，取满 4000 行
+  就停，不为整份日志排序；文件监视降到 1 秒一拍，只 stat 存在的目录。
+
+### 工程
+
+- **测试 645 条**（App 235 / Kit 314 / CLI 96，5 条依赖本机运行时或集成环境的用例
+  自动跳过）。新增覆盖：引擎 Phase 迁移 10、日志信号 7、取消语义 6、MetricsStore 18、
+  GatewayMeter 33、控制面文档 16 + 15、离线配置 13、控制发现回退 6 + 7、`lib-pack`
+  自测 29；CLI 从 34 条扩到 96 条。
+- **203 个 Swift 文件带上 SPDX 头**（MIT + Copyright (c) 2026 wangzhuo），全仓按
+  `native/.swift-format` 格式化，lint 从 7348 条收到 0。
+- **格式化升为 CI 硬门禁。** `swift format lint --strict --recursive Sources Tests`
+  不再 `continue-on-error`，并改用工具链自带的 `swift format`，避免本地过、CI 因
+  版本差异报假失败；SwiftLint 仍是 advisory，原因写在 workflow 里。
+- **英文文档补齐。** 新增 `README.en.md`、`CONTRIBUTING.en.md`、`SECURITY.en.md`，
+  三篇中文顶部加语言切换；测试数、页面数与 macOS 26.4 的归属一并校正。
+- **评审记录。** `docs/reviews/2026-11-16-backend-optimization.md` 补上第二轮
+  （T8~T12、门禁表、验收口径与 14 个提交的清单），作为这轮后端优化的完整账本。
+
 ## [1.5.6] - 2026-11-13
 
 1.5.5 打标之后又补的一轮，也是 flashCat 第一次能自己出图、出片：文本模型可以在对话里直接画图，图像 / 视频模型进了同一张输入卡，视频支持首尾帧与 REF2VA 参考素材，成品留在画廊里可回看、可复用。界面把菜单栏读数与概览对齐，并收掉一批只在真实载荷上才暴露的缺陷——632 MB 的 SSE、AVKit 的隐式链接、Python 发行包里的软链。

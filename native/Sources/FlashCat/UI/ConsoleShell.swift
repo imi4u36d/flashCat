@@ -15,6 +15,7 @@ struct ConsoleView: View {
     @State private var showHub = false
     @State private var showFeedback = false
     @State private var islandExpanded = false
+    @State private var sidebarToggleWidth: CGFloat = DS.Layout.controlHeight
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -62,7 +63,12 @@ struct ConsoleView: View {
                 }
                 state.toggleSidebar()
             }
-            .padding(.leading, 90)
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.width
+            } action: { width in
+                if width > 0 { sidebarToggleWidth = width }
+            }
+            .padding(.leading, sidebarToggleLeading)
             .padding(.top, 11)
         }
         .overlay(alignment: .bottomLeading) {
@@ -132,6 +138,13 @@ struct ConsoleView: View {
 
     private var isShowingOnboarding: Bool {
         state.isPresentingLaunchPage || state.showsRecommendationPage
+    }
+
+    /// 展开时右侧紧贴导航列内容右缘（`sidebarWidth - 10`），收起时退回红绿灯右侧安全位（`90pt`）。
+    private var sidebarToggleLeading: CGFloat {
+        state.showsSidebar
+            ? max(90, DS.Layout.sidebarWidth - 10 - sidebarToggleWidth)
+            : 90
     }
 
     @ViewBuilder private var pageContent: some View {

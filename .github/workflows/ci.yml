@@ -107,8 +107,8 @@ jobs:
             fi
           fi
 
-  # Advisory for now. Phase 2 of the roadmap turns these into hard gates once
-  # the lint baseline files exist.
+  # Advisory for now: SwiftLint 的语义规则（命名、复杂度）还没形成基线文件，
+  # 升成硬门禁之前得先有人把现有告警收干净。格式门禁已经是硬的，见下面 format。
   lint:
     runs-on: xcode-27
     continue-on-error: true
@@ -124,12 +124,14 @@ jobs:
             swiftlint
           fi
 
+  # 硬门禁：11-16 那轮把全仓按 native/.swift-format 格式化了一遍，lint 输出
+  # 从 7348 条收到 0，所以这里可以 --strict（有任何一条就失败）。用工具链自带的
+  # `swift format` 而不是 brew 的 swift-format：版本跟构建用的工具链一致，不会
+  # 出现本地过、CI 因为多了几条新规则而红的假失败。
   format:
     runs-on: xcode-27
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - run: brew install swift-format
-      - name: swift-format
+      - name: swift format lint (strict)
         working-directory: native
-        run: swift-format lint --recursive Sources Tests
+        run: swift format lint --strict --recursive Sources Tests

@@ -1,6 +1,6 @@
 [package]
 name = "flashcat"
-version = "0.2.0"
+version = "0.3.0"
 description = "FlashCat — local inference workbench"
 authors = ["FlashCat"]
 edition = "2021"
@@ -20,6 +20,13 @@ tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# 按目标平台选编译选项：apple 走 Metal（GPU），其它先用纯 CPU。
+# 不开 openmp：Android NDK 的 libomp 要额外分发，收益也比不上单机多线程。
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+llama-cpp-2 = { version = "0.1.161", default-features = false, features = ["metal"] }
+
+[target.'cfg(not(any(target_os = "macos", target_os = "ios")))'.dependencies]
+llama-cpp-2 = { version = "0.1.161", default-features = false }
 
 
 [target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]

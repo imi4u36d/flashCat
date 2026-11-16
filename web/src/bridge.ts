@@ -10,6 +10,7 @@ export type AppInfo = {
   platform: Platform;
   arch: string;
   mobile: boolean;
+  modelDir: string | null;
 };
 
 export type SystemInfo = { cpuCount: number; platform: Platform; accelerator: string };
@@ -77,6 +78,16 @@ export const bridge = {
   status: () => ipc<EngineStatus>("engine_status"),
   models: () => ipc<ModelCard[]>("list_models"),
   chatStart: (req: ChatRequest) => ipc<string>("chat_start", { req }),
+  /** 预热权重：调用即返回，后端在后台加载，失败只记日志。 */
+  async warm(): Promise<void> {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("engine_warm");
+    } catch {
+      /* 没有后端（浏览器预览）时忽略 */
+    }
+  },
+
   chatCancel: (runId: string) => ipc<boolean>("chat_cancel", { runId }),
 
   /** 前端日志回传：移动端没有 devtools，出错时只能靠它把话传到 stdout / 系统日志。 */

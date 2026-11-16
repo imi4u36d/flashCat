@@ -211,19 +211,69 @@ pub enum Delta { Text { run_id: String, delta: String }, ... }
 少了 `shell ready` 说明 IPC 没通（命令没注册 / capability 没放行）。
 桌面端只想看一次：`pnpm tauri dev` 的标准输出里也有同样的行。
 
-## 现在是假的
+## 本地推理（llama.cpp）
 
-- **推理**：`MockBackend` 是定时器，不是模型。接真后端时实现 `Backend::generate` 即可，
-  上层（命令、事件、并发槽、取消、`Delta` 协议）都不用动。
-- **概览 / 模型 / 引擎 / 日志**：数字与列表还是 `data/mock.ts` 的常量；模型页的五个条目会逐步
-  换成 `list_models` 的真实输出。
-- **主题**：桌面手动切换并存 localStorage；手机跟随系统（无手动开关），已接。
-- **字体**：`--font-mono` 依赖 `SF Mono`；Windows 上要换成随包内置的 JetBrains Mono。
+`MockBackend` 已经退休：启动时 `Engine::new` 扫一遍权重目录，有 `.gguf` 就挂
+`LlamaChatBackend`（`llama-cpp-2` + `llama-cpp-sys-2` 0.1.161，cmake 从源码编 llama.cpp），
+一个都没有才退回 mock，并打一行 `WARN engine mock（…）`。上层完全不知道换了后端：
+命令、`chat:delta` 事件、并发槽、取消、`Delta` 协议都没动。
+
+**权重放哪**（`app_data_dir()/models`，启动时自动建目录）：
+
+| 平台 | 路径 |
+| --- | --- |
+| macOS | `~/Library/Application Support/dev.flashcat.desktop/models/` |
+| iOS | 沙盒 `Library/Application Support/dev.flashcat.desktop/models/` |
+| Android | `/data/user/0/dev.flashcat.desktop/models/`（**注意没有 `files/` 这一段**）|
+| Linux / Windows | `$XDG_DATA_HOME` / `%APPDATA%` 下的 `dev.flashcat.desktop/models/` |
+
+文件名决定卡片上的量化与参数量（`Qwen3-0.6B-Q4_K_M.gguf` → 家族 Qwen3、0.6B、Q4_K_M），
+所以**别改名成 `model.gguf`**。模型页会把扫到的清单、总占用和目录原样列出来。
+
+推权重的两种土办法（真机请走应用内导入，见「下一步」）：
+
+```bash
+# Android 模拟器
+adb root && adb shell mkdir -p /data/user/0/dev.flashcat.desktop/models
+adb push Qwen3-0.6B-Q4_K_M.gguf /data/user/0/dev.flashcat.desktop/models/
+adb shell chown -R u0_a194:u0_a194 /data/user/0/dev.flashcat.desktop/models
+
+# iOS 模拟器（容器是宿主上的真目录）
+C=$(xcrun simctl get_app_container <udid> dev.flashcat.desktop data)
+mkdir -p "$C/Library/Application Support/dev.flashcat.desktop/models"
+cp *.gguf "$C/Library/Application Support/dev.flashcat.desktop/models/"
+```
+
+**这一层的几个决定**：
+
+- **预热**：`App.tsx` 挂载就 `engine_warm`，把权重读进内存。手机上这是几百毫秒到几秒的 IO，
+  放在首条消息上就是「点了没反应」。
+- **思考段**：`ThinkSplitter` 认 `<｜end▁of▁thinking｜>` 与 `</th…ink>` 两种收尾，
+  逐字符流式切分，标签可能被 token 切开（用 `concat!` 拼，别手打）。
+- **UTF-8 边界**：一个汉字可能是半个 token，只发能完整解码的前缀，否则每个汉字变两个替换符。
+- **上下文按端砍**：桌面 4096 / 移动 2048，batch 512 / 256，线程 10 / 4 —— 手机上 KV 是内存大头。
+- **默认长度**：桌面 512 token、移动 192 token；移动端一条消息等一分钟比答一半更糟。
+- **Metal**：apple 平台全层上 GPU；**模拟器例外**（`SIMULATOR_DEVICE_NAME`）——模拟器的 Metal
+  第一次用到每个 kernel 都要现编管线，实测卡到分钟级、一个字都不出，退回 CPU 反而 715 ms 见字。
+
+实测（同一份 `Qwen3-0.6B-Q4_K_M`，都是预热后）：
+
+| 平台 | 首字 | 吞吐 | 备注 |
+| --- | --- | --- | --- |
+| macOS（M 系列，Metal） | 188 ms | 311–376 tok/s | 打包版 `warm ok in 102ms` |
+| iOS 模拟器（CPU） | 715 ms | 151 tok/s | Metal 在模拟器上会卡死，已按上面关掉 |
+| Android 模拟器（CPU） | 17.1 s | 1.2 tok/s | 首次加载 400MB 占大头；swiftshader，**不代表真机** |
+
+**iOS 链接的两个坑**（都已在仓库里修好）：`build.rs` 要显式带上
+`Accelerate/Metal/MetalKit/Foundation`（ggml 编进静态库，cargo 不会替你加）；
+`gen/apple` 的 xcodeproj 由 `project.yml` 生成，框架要加在 `project.yml` 的
+`dependencies` 里再 `xcodegen generate`，手改 pbxproj 下次生成就被覆盖。
 
 ## 下一步
 
-1. 把 `MockBackend` 换成真的 llama.cpp（见 `docs/mobile.md` 的编译与绑定方案）。
-2. 模型下载器：断点续传 + 校验 + 落 `filesDir/models`（iOS 是 Application Support），首次启动引导。
-3. 概览接真实指标（吞吐、TTFT、内存），日志页接 `tracing` 环形缓冲。
-4. Windows 的首个可用包走 CI，本地不折腾。
-
+1. **模型下载器**：HF 直链 + 断点续传 + sha256 校验 + 首次启动引导。现在要手动 `adb push`，
+   这不是能交给用户的操作。
+2. **模型切换**：现在只用扫描到的第一个；要给「加载 / 换模型 / 卸载」三个动作。
+3. **KV 复用**：多轮对话每轮都在重新 prefill，把 session 留在 `Loaded` 里能再省一半首字。
+4. 概览接真实指标（吞吐、TTFT、常驻内存），日志页接 `tracing` 环形缓冲。
+5. Windows 的首个可用包走 CI，本地不折腾。

@@ -3,10 +3,12 @@ import type { ReactNode } from "react";
 import { Icon } from "./icons";
 import type { IconName } from "./icons";
 import { useChatEngine } from "./chat";
+import type { AppInfo, ModelCard } from "./bridge";
 import { bridge, isTauri, win } from "./bridge";
 import type { EngineStatus } from "./bridge";
 import { Chat } from "./pages/Chat";
 import { Overview } from "./pages/Overview";
+import { Models } from "./pages/Models";
 import { engine, navGroups, recents, seedMessages } from "./data/mock";
 
 export type Page = "overview" | "chat" | "models" | "engines" | "logs" | "settings" | "lab";
@@ -152,6 +154,8 @@ export default function App() {
   const shell = isTauri();
   const [mobile, setMobile] = useState(() => document.documentElement.dataset.mobile === "true");
   const [status, setStatus] = useState<EngineStatus | null>(null);
+  const [info, setInfo] = useState<AppInfo | null>(null);
+  const [models, setModels] = useState<ModelCard[]>([]);
   const [page, setPage] = useState<Page>((q.get("page") as Page) || "chat");
   // 手机上侧栏是抽屉，进页面时不占位置：默认收着，点左上角才出来。
   const [sidebar, setSidebar] = useState<boolean>(() =>
@@ -188,11 +192,16 @@ export default function App() {
   // 在 iOS / Android 上没有 devtools 时，这是唯一能拿到的启动信号。
   useEffect(() => {
     if (!shell) return;
+    // 空闲时先把权重读进内存：手机上这是十几秒的 IO，放进首条消息就是「点了没反应」。
+    void bridge.warm();
     bridge
       .status()
       .then(async (s) => {
         setStatus(s);
         const info = await bridge.info();
+        setInfo(info);
+        // 权重清单也在这里拉：模型页与状态栏用的是同一份快照。
+        setModels(await bridge.models());
         // 用 Rust 侧的真实平台校正首帧的 UA 推断（浏览器预览走不到这里）。
         document.documentElement.dataset.platform = info.platform;
         if (info.platform === "android" || info.platform === "ios") {
@@ -228,8 +237,11 @@ export default function App() {
         onSend={chat.send}
         onStop={chat.stop}
         onNewThread={chat.reset}
+        model={models.find((m) => m.id === status?.modelId) ?? models[0] ?? null}
       />
     );
+  } else if (page === "models") {
+    body = <Models info={info} models={models} status={status} />;
   } else {
     body = <Placeholder page={page} />;
   }

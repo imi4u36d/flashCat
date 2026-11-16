@@ -35,6 +35,8 @@ type Active = {
   runId: string | null;
   text: string;
   thinking: string;
+  /** 思考段已产生的 token 估算，计入 live 读数。 */
+  thinkTokens: number;
   started: number;
 };
 
@@ -94,12 +96,16 @@ export function useChatEngine(seed: Message[], transport: Transport = "auto") {
         switch (d.kind) {
           case "thinking":
             a.thinking += d.delta;
+            // 思考也是 token。之前只统计正文，导致手机上「思考了 40 秒仍显示 0 tok」，
+            // 看上去像卡死——这是同一个数字在骗人，不是另一个 bug。
+            a.thinkTokens = Math.round(a.thinking.length / 1.6);
+            setLive({ tokens: a.thinkTokens, ms: Math.round(performance.now() - a.started) });
             patch(() => ({ thinking: a.thinking }));
             break;
           case "text": {
             a.text += d.delta;
             const ms = Math.round(performance.now() - a.started);
-            setLive({ tokens: Math.round(a.text.length / 1.6), ms });
+            setLive({ tokens: a.thinkTokens + Math.round(a.text.length / 1.6), ms });
             patch(() => ({ text: a.text }));
             break;
           }
@@ -128,6 +134,7 @@ export function useChatEngine(seed: Message[], transport: Transport = "auto") {
 
   useEffect(() => clearTimer, [clearTimer]);
 
+
   // ── 发送 ──────────────────────────────────────────────────────────
   const send = useCallback(
     (raw: string) => {
@@ -141,6 +148,7 @@ export function useChatEngine(seed: Message[], transport: Transport = "auto") {
         runId: null,
         text: "",
         thinking: "",
+        thinkTokens: 0,
         started: performance.now(),
       };
 
@@ -206,6 +214,17 @@ export function useChatEngine(seed: Message[], transport: Transport = "auto") {
     },
     [clearTimer, messages, native, patch]
   );
+
+  // 自检：`VITE_DEMO=1` 时自动发一句，让「有没有真出字」能只看日志判断
+  // （桌面窗口截图受 TCC 限制、移动端没有 devtools）。
+  const demo = import.meta.env.VITE_DEMO;
+  useEffect(() => {
+    if (!native || !demo) return;
+    const t = window.setTimeout(() => send("用一句话说明你是谁"), 900);
+    return () => window.clearTimeout(t);
+    // send 依赖 messages，故意只在挂载时跑一次。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [native, demo]);
 
   const stop = useCallback(() => {
     clearTimer();

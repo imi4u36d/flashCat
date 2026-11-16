@@ -11,7 +11,7 @@ use crate::model::{
 };
 
 #[tauri::command]
-pub fn app_info(app: AppHandle) -> AppInfo {
+pub fn app_info(app: AppHandle, engine: State<'_, Engine>) -> AppInfo {
     let pkg = app.package_info();
     AppInfo {
         name: pkg.name.clone(),
@@ -19,6 +19,7 @@ pub fn app_info(app: AppHandle) -> AppInfo {
         platform: PLATFORM,
         arch: std::env::consts::ARCH,
         mobile: IS_MOBILE,
+        model_dir: engine.model_dir(),
     }
 }
 
@@ -74,14 +75,40 @@ pub fn chat_start(
         .spawn(move || {
             // 通道关闭即生成线程结束；转发线程随之退出并摘掉注册表条目。
             let mut count = 0usize;
+            let mut chars = 0usize;
+            let mut first_at: Option<std::time::Instant> = None;
+            let mut usage = String::new();
             for delta in rx {
+                match &delta {
+                    crate::model::Delta::Text { delta, .. } => chars += delta.chars().count(),
+                    crate::model::Delta::Usage { output_tokens, tokens_per_sec, first_token_ms, .. } => {
+                        usage = format!(" tokens={output_tokens} tps={tokens_per_sec:.1} first={first_token_ms}ms");
+                    }
+                    _ => {}
+                }
+                if first_at.is_none() {
+                    // 第一条增量到前端的时刻，是「引擎在算」还是「在等引擎」的分界线。
+                    first_at = Some(std::time::Instant::now());
+                    let kind = match &delta {
+                        crate::model::Delta::Thinking { .. } => "thinking",
+                        crate::model::Delta::Text { .. } => "text",
+                        crate::model::Delta::Usage { .. } => "usage",
+                        crate::model::Delta::Done { .. } => "done",
+                        crate::model::Delta::Error { .. } => "error",
+                    };
+                    crate::logfile::line("INFO", &format!("chat first delta kind={kind} run={id}"));
+                }
                 if let Err(err) = handle.emit("chat:delta", &delta) {
                     crate::logfile::line("ERROR", &format!("chat emit failed: {err}"));
                     break;
                 }
                 count += 1;
             }
-            crate::logfile::line("INFO", &format!("chat end run={id} deltas={count}"));
+            // 有了这两行，四端「到底有没有出字」不用看屏幕也能判断。
+            crate::logfile::line(
+                "INFO",
+                &format!("chat end run={id} deltas={count} chars={chars}{usage}"),
+            );
             if let Some(engine) = handle.try_state::<Engine>() {
                 engine.release(&id);
             }
@@ -102,6 +129,12 @@ pub fn log_frontend(level: String, message: String) {
         _ => "INFO",
     };
     crate::logfile::line(tag, &message);
+}
+
+/// 预热权重（异步、可重复调用；已经加载过就立刻返回）。
+#[tauri::command]
+pub fn engine_warm(engine: State<'_, Engine>) {
+    engine.warm();
 }
 
 #[tauri::command]

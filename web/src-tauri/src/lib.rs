@@ -11,6 +11,7 @@
 
 mod commands;
 mod engine;
+mod llama;
 mod logfile;
 mod model;
 
@@ -27,6 +28,11 @@ pub fn run() {
             if let Ok(dir) = app.path().app_log_dir() {
                 logfile::init(dir);
             }
+            let model_dir = app.path().app_data_dir().ok().map(|d| d.join("models"));
+            if let Some(dir) = model_dir.as_ref() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            app.manage(Engine::new(model_dir));
             logfile::line(
                 "INFO",
                 &format!(
@@ -43,7 +49,6 @@ pub fn run() {
             logfile::line("INFO", &format!("page {:?} {}", payload.event(), payload.url()));
             let _ = window;
         })
-        .manage(Engine::new())
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
             commands::system_info,
@@ -52,6 +57,7 @@ pub fn run() {
             commands::chat_start,
             commands::chat_cancel,
             commands::log_frontend,
+            commands::engine_warm,
         ])
         .run(tauri::generate_context!())
         .expect("FlashCat 启动失败");

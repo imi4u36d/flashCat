@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { ModelCard } from "../bridge";
 import { Icon } from "../icons";
 import { Markdown } from "../components/md";
 import type { Live } from "../chat";
@@ -78,6 +79,7 @@ export function Chat({
   onSend,
   onStop,
   onNewThread,
+  model,
 }: {
   messages: Message[];
   generating: boolean;
@@ -85,6 +87,8 @@ export function Chat({
   onSend: (text: string) => void;
   onStop: () => void;
   onNewThread: () => void;
+  /** 当前加载的权重；没有后端或没装权重时是 null（输入卡的 chips 显示「—」）。 */
+  model: ModelCard | null;
 }) {
   const [draft, setDraft] = useState("");
   const threadRef = useRef<HTMLDivElement>(null);
@@ -154,19 +158,19 @@ export function Chat({
             }}
           />
           <div className="composer-bar">
-            <button className="mini" type="button">
+            <button className="mini" type="button" title={model?.name ?? "尚未加载权重"}>
               <Icon name="stack" size={11} />
               模型
-              <span className="mono">7B</span>
+              <span className="mono">{model ? `${model.paramsB}B` : "—"}</span>
             </button>
             <button className="mini" type="button">
               <Icon name="plus" size={11} />
               附件
             </button>
-            <button className="mini" type="button">
+            <button className="mini" type="button" title="每次请求的上下文窗口">
               <Icon name="cpu" size={11} />
               上下文
-              <span className="mono">32k</span>
+              <span className="mono">{model ? `${Math.round(model.context / 1024)}k` : "—"}</span>
             </button>
             {generating ? (
               <button className="send" type="button" onClick={onStop} title="停止">

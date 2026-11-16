@@ -40,11 +40,16 @@ pub trait Backend: Send + Sync {
     fn models(&self) -> Vec<ModelCard>;
     /// 起一条线程跑一次生成，把增量推到返回的通道；`run` 用于查询取消。
     fn generate(&self, req: ChatRequest, run: Arc<Run>) -> Receiver<Delta>;
+
+    /// 预热：把权重读进内存。手机上是十几秒的磁盘 IO，放在首条消息里
+    /// 就是「点了发送半天没反应」，所以让前端在空闲时先做掉。默认无操作。
+    fn warm(&self) {}
 }
 
 /// 运行注册表：负责 run_id 分配、取消、超量拒绝。
 pub struct Engine {
     backend: Arc<dyn Backend>,
+    model_dir: Option<std::path::PathBuf>,
     runs: Mutex<HashMap<String, Arc<Run>>>,
     seq: AtomicU32,
 }
@@ -59,9 +64,31 @@ fn max_concurrent() -> usize {
 }
 
 impl Engine {
-    pub fn new() -> Self {
+    /// 有 GGUF 权重就用真 llama.cpp，没有就退回 mock（首启体验不能是白屏 + 报错）。
+    pub fn new(model_dir: Option<std::path::PathBuf>) -> Self {
+        let backend: Arc<dyn Backend> = match model_dir.clone() {
+            Some(dir) => match crate::llama::LlamaChatBackend::new(dir.clone()) {
+                Ok(b) if !b.models().is_empty() => {
+                    crate::logfile::line(
+                        "INFO",
+                        &format!("engine llama.cpp models={} dir={}", b.models().len(), dir.display()),
+                    );
+                    Arc::new(b)
+                }
+                Ok(_) => {
+                    crate::logfile::line("WARN", &format!("engine mock（{} 下没有 gguf）", dir.display()));
+                    Arc::new(MockBackend::default())
+                }
+                Err(e) => {
+                    crate::logfile::line("ERROR", &format!("engine mock（{e}）"));
+                    Arc::new(MockBackend::default())
+                }
+            },
+            None => Arc::new(MockBackend::default()),
+        };
         Self {
-            backend: Arc::new(MockBackend::default()),
+            backend,
+            model_dir,
             runs: Mutex::new(HashMap::new()),
             seq: AtomicU32::new(0),
         }
@@ -73,6 +100,15 @@ impl Engine {
 
     pub fn models(&self) -> Vec<ModelCard> {
         self.backend.models()
+    }
+
+    pub fn warm(&self) {
+        self.backend.warm()
+    }
+
+    /// 权重目录：设置页/模型页要把它显示出来，否则用户不知道该把 gguf 放哪。
+    pub fn model_dir(&self) -> Option<String> {
+        self.model_dir.as_ref().map(|p| p.display().to_string())
     }
 
     /// 返回 `Err` 时前端应当把文案直接展示给用户（已经是人话）。
@@ -106,7 +142,7 @@ impl Engine {
 
 impl Default for Engine {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 

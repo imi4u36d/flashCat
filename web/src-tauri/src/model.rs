@@ -15,6 +15,8 @@ pub struct AppInfo {
     pub platform: &'static str,
     pub arch: &'static str,
     pub mobile: bool,
+    /// 权重目录（绝对路径）。用户需要知道把 .gguf 放哪。
+    pub model_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -56,8 +56,8 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        CFBundleShortVersionString: 0.2.0
-        CFBundleVersion: "0.2.0"
+        CFBundleShortVersionString: 0.3.0
+        CFBundleVersion: "0.3.0"
     entitlements:
       path: flashcat_iOS/flashcat_iOS.entitlements
     scheme:
@@ -77,6 +77,9 @@ targets:
     dependencies:
       - framework: libapp.a
         embed: false
+      # ggml 的 Accelerate 后端：最新版 llama.cpp 在 apple 平台默认用它做向量运算，
+      # 少这一个框架，链接期就是一堆 _vDSP_* 未定义。
+      - sdk: Accelerate.framework
       - sdk: CoreGraphics.framework
       - sdk: Metal.framework
       - sdk: MetalKit.framework

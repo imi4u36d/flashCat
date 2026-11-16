@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// 统一的 token 估算与解码速率估计。

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// 引擎日志里真正需要在应用侧「动作」的只有两种：就绪与报错。

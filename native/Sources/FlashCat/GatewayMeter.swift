@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import FlashCatKit
 
 /// 网关打点类现在住在 `FlashCatKit`（`Meter/GatewaySessionMeter.swift`）。

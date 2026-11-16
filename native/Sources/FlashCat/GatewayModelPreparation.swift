@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// Why an API request could not be pointed at a concrete engine/model.

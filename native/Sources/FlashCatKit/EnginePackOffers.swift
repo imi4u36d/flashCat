@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// What the engine page can do with one release from the pack index.

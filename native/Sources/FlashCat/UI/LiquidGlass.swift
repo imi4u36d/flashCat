@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import SwiftUI
 
 /// macOS 26 Liquid Glass 的统一入口。

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// The endpoints flashCat drives on a pack engine.

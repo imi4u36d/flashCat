@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// 灵动岛承载的一条通知。`toast()` 只是投递入口，展示、历史和详情都由它负责。

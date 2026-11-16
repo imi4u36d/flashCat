@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// 模型发起的一次工具调用。流式协议里 `arguments` 是逐段拼接的 JSON 文本，

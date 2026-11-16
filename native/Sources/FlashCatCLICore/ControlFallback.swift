@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// 控制接口不可用时，CLI 会退回「离线视图」：读 control.json、端口、本地模型目录，

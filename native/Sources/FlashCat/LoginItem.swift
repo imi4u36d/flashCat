@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// Launch-at-login is implemented with a LaunchAgent plist, the same mechanism

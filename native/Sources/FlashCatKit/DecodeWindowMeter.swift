@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// 按墙钟窗口计量的解码速率估计器，单位 tok/s。纯值类型，时间由调用方注入。

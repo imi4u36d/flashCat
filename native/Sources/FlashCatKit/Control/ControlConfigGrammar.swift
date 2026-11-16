@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// 配置写入的错误分类。`Kind` 只在这里定义一次：HTTP 层把它映射成状态码、CLI

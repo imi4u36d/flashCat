@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import SwiftUI
 
 /// 标题栏顶部状态胶囊层。收起时居中展示当前引擎/实时速度或临时通知；

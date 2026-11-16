@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// 引擎自报的原始计数键。解析器把引擎的累计/瞬时计数放进 `EngineStatus.extras`，

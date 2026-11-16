@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// 不可变的遥测文档：`json` 是解析后的字典，创建后只读。并发拉取时需要在

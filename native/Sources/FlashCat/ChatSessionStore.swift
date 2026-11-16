@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// 对话页自己的会话状态：待删线程的确认，以及图像工具的三个开关。

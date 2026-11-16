@@ -615,4 +615,73 @@ final class GatewayMeterTests: XCTestCase {
         XCTAssertEqual(meter.latestContext()?.isLive, false)
         XCTAssertEqual(meter.cacheHit()?.rate ?? 0, 0.2, accuracy: 0.0001)
     }
+
+    // MARK: 会话收尾
+
+    /// finish 会走两遍：流式路径的 defer 收尾，加上游断流时显式按失败收尾。
+    /// 第二次必须不重复入账，否则均值、命中率这些终身统计会把同一请求记两次。
+    func testFinishIsIdempotent() {
+        let meter = GatewayMeter()
+        let start = Date()
+        let id = meter.begin(model: "m", dialect: "openai", promptTokens: 1_000, at: start)
+        meter.addTokens(id, 200, at: start.addingTimeInterval(1.0))
+        meter.noteUsage(id, promptTokens: 1_000, completionTokens: 200, cachedPromptTokens: 400)
+        // 引擎自报 timings：没有解码样本时 `lifetimeAverage()` 本来就是 nil，
+        // 这里要给「有没有被重复入账」留一个可观测的数。
+        meter.noteTimings(id, GatewayMeter.RequestTimings(promptTokens: 1_000,
+                                                          cachedTokens: 400,
+                                                          promptMilliseconds: 50,
+                                                          predictedTokens: 200,
+                                                          predictedMilliseconds: 1_000))
+
+        meter.finish(id, at: start.addingTimeInterval(2.0))
+        let average = meter.lifetimeAverage()
+        XCTAssertNotNil(average, "收尾后应有一笔解码样本入账")
+        let hitRate = meter.cacheHit()?.rate
+        XCTAssertNotNil(hitRate, "noteUsage 之后应能算出缓存命中率")
+        let context = meter.latestContext()
+
+        // 再收尾一次：终身统计仍然只记一遍（靠 `finishedAt == nil` 守卫）。
+        meter.finish(id, at: start.addingTimeInterval(3.0))
+        XCTAssertEqual(meter.lifetimeAverage(), average)
+        XCTAssertEqual(meter.cacheHit()?.rate, hitRate)
+        XCTAssertEqual(meter.latestContext()?.tokens, context?.tokens)
+        XCTAssertEqual(meter.latestContext()?.isLive, false)
+        XCTAssertEqual(meter.snapshot().filter { $0.id == id }.count, 1, "同一个请求不应重复出现在最近请求里")
+        XCTAssertEqual(meter.snapshot().first { $0.id == id }?.state, .done)
+        XCTAssertFalse(meter.overview(now: start.addingTimeInterval(5.0)).isLive)
+
+        // 迟到的失败标记只翻状态位，已经结算的数字不动——这是 finish 的现状语义，
+        // 也正是「defer 里无条件再 finish 一次」不会污染读数的前提。
+        meter.finish(id, failed: true, at: start.addingTimeInterval(4.0))
+        XCTAssertEqual(meter.lifetimeAverage(), average)
+        XCTAssertEqual(meter.cacheHit()?.rate, hitRate)
+        XCTAssertEqual(meter.snapshot().first { $0.id == id }?.state, .failed)
+    }
+
+    /// 客户端中途断开时 `for frame in … where !session.write(frame) { return }` 直接
+    /// 早退；旧实现里没有人 finish，这个会话在概览里永远是「进行中」——曲线不封口，
+    /// sessionLimit 名额被死会话占住之后开始挤掉真的在跑的请求。
+    func testEarlyReturnFinishesSession() async {
+        let meter = GatewayMeter()
+        let id = meter.begin(model: "m", dialect: "claude", promptTokens: 32)
+        XCTAssertTrue(meter.overview().isLive, "会话开始后应是进行中")
+
+        let frames = ["message_start", "content_block_delta", "message_stop"]
+        await GatewayController.withStreamMetering(meter, id: id) {
+            // 第一帧就写失败 = 客户端已经断开，生产者从 where 分支早退。
+            for frame in frames where !Self.clientGoneWriting(frame) {
+                return
+            }
+        }
+
+        XCTAssertFalse(meter.overview().isLive, "早退之后会话仍是进行中：说明没有人收尾")
+        XCTAssertEqual(meter.snapshot().first { $0.id == id }?.state, .done)
+    }
+
+    /// 模拟 `session.write` 恒失败（连接已断）：这一帧没有发出去。
+    private static func clientGoneWriting(_ frame: String) -> Bool {
+        _ = frame
+        return false
+    }
 }

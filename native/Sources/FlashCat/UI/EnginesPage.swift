@@ -12,6 +12,10 @@ struct EnginesPage: View {
     @State private var configuring: EngineID?
     @State private var pendingRemoval: EngineID?
     @State private var checking: Set<EngineID> = []
+    @State private var gridColumns = 0
+
+    private static let cardMinWidth: CGFloat = 400
+    private static let cardSpacing: CGFloat = 14
 
     private var installedCount: Int {
         EngineCatalog.allIDs.filter { state.engineIsInstalled($0) }.count
@@ -21,20 +25,20 @@ struct EnginesPage: View {
         state.isRunning ? 1 : 0
     }
 
-    private var columns: [GridItem] {
-        // 宽窗两列、窄窗自动折成单列，避免卡片被压扁。
-        [GridItem(.adaptive(minimum: 400), spacing: 16, alignment: .top)]
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-                .padding(.horizontal, Console.contentPadding)
-                .padding(.top, Console.contentTopInset)
-                .padding(.bottom, 22)
+                .frame(height: DS.Layout.titlebarHeight)
+                .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
+                .padding(.trailing, Console.contentPadding)
+                .padding(.top, Console.pageTopPadding)
+                .padding(.bottom, 12)
+                .background(WindowDragArea())
 
             ScrollView {
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 16) {
+                DSAnimatedGrid(columns: gridColumns,
+                               minWidth: Self.cardMinWidth,
+                               spacing: Self.cardSpacing) {
                     ForEach(EngineCatalog.allIDs, id: \.self) { id in
                         engineCard(id)
                     }
@@ -42,6 +46,8 @@ struct EnginesPage: View {
                 .padding(.horizontal, Console.contentPadding)
             }
             .scrollIndicators(.never)
+            .scrollEdgeEffectStyle(.soft, for: .top)
+            .dsTrackColumns($gridColumns, minWidth: Self.cardMinWidth, spacing: Self.cardSpacing)
         }
         // 和侧栏玻璃同一条下边界，滚动视口不会一直贴到窗口底沿。
         .padding(.bottom, Console.contentBottomInset)
@@ -96,7 +102,7 @@ struct EnginesPage: View {
                 .foregroundStyle(DS.text2)
                 .monospacedDigit()
             Spacer(minLength: 0)
-            DSIconButton(systemName: "arrow.clockwise", help: "检查更新") {
+            DSIconButton(systemName: "arrow.clockwise", help: "检查更新", style: .outlined) {
                 Task { @MainActor in
                     installs.refreshInstalled()
                     await installs.loadIndexIfNeeded(force: true)
@@ -116,90 +122,87 @@ struct EnginesPage: View {
         let busy = phase.isBusy || installs.building == id
         let accent = engineAccent(id)
         let newer = installs.upstream[id]?.newerRelease
-        let port = EngineStore.shared.configuration(for: id).port ?? id.defaultPort
 
-        // 卡片保持无底色：引擎是否正在运行由状态胶囊表达，不再给整张卡染色。
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                EngineGlyph(id: id, color: accent, size: 36)
+        // 极简引擎卡：仅保留图标、名称/版本、运行状态（运行中/更新/异常时显形）与右侧操作。
+        return HStack(alignment: .center, spacing: 12) {
+            EngineGlyph(id: id, color: accent, size: 36)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text(id.displayName)
-                            .font(DS.Font.lg.weight(.semibold))
-                            .foregroundStyle(DS.text)
-                            .lineLimit(1)
-                        if busy, installed {
-                            updateChip(id: id, tint: accent)
-                        } else {
-                            statusChip(installed: installed, active: isActive, busy: busy)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    Text(id.descriptor.summary)
-                        .font(DS.Font.xs)
-                        .foregroundStyle(DS.text2)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 7) {
+                    Text(id.displayName)
+                        .font(DS.Font.lg.weight(.semibold))
+                        .foregroundStyle(DS.text)
                         .lineLimit(1)
-                        .truncationMode(.tail)
+                    if busy, installed {
+                        updateChip(id: id, tint: accent)
+                    } else {
+                        statusChip(installed: installed, active: isActive, busy: busy)
+                    }
                 }
 
-                HStack(spacing: 6) {
-                    if installed, !busy, let newer {
-                        updateHint(newer)
-                            .padding(.trailing, 4)
+                if busy, !installed {
+                    HStack(spacing: 6) {
+                        ProgressRing(fraction: installs.progress[id] ?? 0,
+                                     tint: accent, size: 14, lineWidth: 2)
+                        Text(L10n.t(installs.progressStep[id] ?? phase.label))
+                            .font(DS.Font.xs)
+                            .foregroundStyle(DS.text2)
+                            .lineLimit(1)
                     }
-                    if installed {
-                        EngineIconButton(systemImage: "arrow.clockwise",
-                                         help: updateHelp(id),
-                                         tint: newer != nil ? accent : DS.text2) {
-                            performUpdateAction(id)
+                } else if installed {
+                    HStack(spacing: 5) {
+                        if let version = versions.first {
+                            Text(version)
+                                .font(DS.Font.mono(11))
+                                .foregroundStyle(DS.text3)
+                                .lineLimit(1)
                         }
-                        .disabled(busy || checking.contains(id))
+                        if !busy, let newer {
+                            Text(L10n.format("可更新至 %@", newer.version))
+                                .font(DS.Font.xs.weight(.medium))
+                                .foregroundStyle(accent)
+                                .lineLimit(1)
+                                .help(L10n.format("更新到 %@", newer.version))
+                        }
                     }
-                    EngineIconButton(systemImage: "slider.horizontal.3", help: "配置") {
+                } else {
+                    Text(L10n.t("未安装"))
+                        .font(DS.Font.xs)
+                        .foregroundStyle(DS.text3)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 6) {
+                if installed {
+                    DSIconButton(systemName: "arrow.clockwise",
+                                 help: updateHelp(id),
+                                 size: 28,
+                                 style: .outlined,
+                                 tint: newer != nil ? accent : DS.text2) {
+                        performUpdateAction(id)
+                    }
+                    .disabled(busy || checking.contains(id))
+
+                    DSIconButton(systemName: "slider.horizontal.3",
+                                 help: "配置",
+                                 size: 28,
+                                 style: .outlined) {
                         configuring = id
                     }
                     .disabled(versions.isEmpty)
-                    EngineIconButton(systemImage: "trash", help: "删除") {
+
+                    DSIconButton(systemName: "trash",
+                                 help: "删除",
+                                 size: 28,
+                                 style: .outlined) {
                         pendingRemoval = id
                     }
                     .disabled(busy || versions.isEmpty || (isActive && state.isRunning))
-                }
-            }
 
-            // 能力标签与版本读数分列左右，对齐视觉节奏。
-            HStack(alignment: .center, spacing: 12) {
-                FlowLayout(spacing: 5, lineSpacing: 5) {
-                    ForEach(id.descriptor.capabilities.prefix(5), id: \.rawValue) { capability in
-                        ConsoleTag(text: capability.displayName)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                metaRow("版本", versions.first ?? "未安装")
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(DS.rect(DS.Radius.sm).fill(DS.bg))
-                    .overlay(
-                        DS.rect(DS.Radius.sm)
-                            .strokeBorder(DS.line, lineWidth: 1)
-                    )
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                DSDivider()
-
-                if installed {
-                    HStack(spacing: 10) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "network")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(DS.text3)
-                            Text(verbatim: "127.0.0.1:\(port)")
-                                .font(DS.Font.mono(11))
-                                .foregroundStyle(DS.text2)
-                        }
-                        Spacer(minLength: 0)
+                    Group {
                         if isActive {
                             Button {
                                 state.toggleService()
@@ -221,92 +224,41 @@ struct EnginesPage: View {
                             .disabled(state.isSwitchingModel || busy)
                         }
                     }
-                } else {
-                    HStack(spacing: 10) {
-                        if busy {
-                            ProgressRing(fraction: installs.progress[id] ?? 0,
-                                         tint: accent, size: 20, lineWidth: 3)
-                            Text(L10n.t(installs.progressStep[id] ?? phase.label))
-                                .font(DS.Font.xs)
-                                .foregroundStyle(DS.text2)
-                                .lineLimit(1)
-                        } else {
-                            Text(L10n.t("首次安装会从 GitHub 构建"))
-                                .font(DS.Font.xs)
-                                .foregroundStyle(DS.text3)
-                                .lineLimit(1)
-                        }
-
-                        Spacer(minLength: 0)
-
-                        if !busy {
-                            Button {
-                                install(id)
-                            } label: {
-                                Label("下载", systemImage: "arrow.down.circle.fill")
-                            }
-                            .buttonStyle(.ds(.primary, size: .small))
-                        }
+                    .padding(.leading, 4)
+                } else if !busy {
+                    Button {
+                        install(id)
+                    } label: {
+                        Label("下载", systemImage: "arrow.down.circle.fill")
                     }
+                    .buttonStyle(.ds(.primary, size: .small))
                 }
             }
         }
-        .padding(16)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
         .dsSurface(
             radius: DS.Radius.lg,
-            fill: DS.surface,
-            stroke: isActive && state.isRunning ? DS.line2 : DS.line
+            tint: isActive && state.isRunning ? accent.opacity(0.08) : nil,
+            stroke: isActive ? accent.opacity(state.isRunning ? 0.42 : 0.24) : nil,
+            hoverable: true,
+            active: isActive
         )
     }
 
-    /// 新版本提示：紧贴在检查更新按钮左侧，刷新图标此时就是更新动作。
-    /// 只留一行字——图标按钮已经是同色的强调动作，再加一枚箭头只会抢视线。
-    private func updateHint(_ release: EngineUpstreamRelease) -> some View {
-        Text(L10n.format("可更新至 %@", release.version))
-            .font(DS.Font.xs.weight(.medium))
-            .foregroundStyle(DS.text2)
-            .lineLimit(1)
-            .minimumScaleFactor(0.85)
-            // 与 28pt 的图标按钮同高、对齐按钮中心，读起来像按钮的注解。
-            .frame(height: 28)
-            .help(L10n.format("更新到 %@", release.version))
-    }
-
-    private func metaRow(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(L10n.t(label))
-                .font(.system(size: 10, weight: .medium))
-                .tracking(0.4)
-                .foregroundStyle(DS.text3)
-                .fixedSize()
-            Text(L10n.t(value))
-                .font(DS.Font.mono(11))
-                .foregroundStyle(DS.text)
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-    }
-
+    @ViewBuilder
     private func statusChip(installed: Bool, active: Bool, busy: Bool) -> some View {
         if busy {
-            return StatusChip(text: "安装中", color: DS.warn, filled: true)
+            StatusChip(text: "安装中", color: DS.warn, filled: true)
+        } else if active, state.serverState == .ready {
+            StatusChip(text: "运行中", color: DS.ok, filled: true)
+        } else if active, state.serverState == .starting {
+            StatusChip(text: "启动中", color: DS.warn, filled: true)
+        } else if active, state.serverState == .stopping {
+            StatusChip(text: "停止中", color: DS.warn, filled: true)
+        } else if active, state.serverState == .failed {
+            StatusChip(text: "异常", color: DS.warn, filled: true)
         }
-        if !installed {
-            return StatusChip(text: "未安装", color: DS.text3)
-        }
-        if active, state.serverState == .ready {
-            return StatusChip(text: "运行中", color: DS.ok, filled: true)
-        }
-        if active, state.serverState == .starting {
-            return StatusChip(text: "启动中", color: DS.warn, filled: true)
-        }
-        if active, state.serverState == .stopping {
-            return StatusChip(text: "停止中", color: DS.warn, filled: true)
-        }
-        if active, state.serverState == .failed {
-            return StatusChip(text: "异常", color: DS.warn, filled: true)
-        }
-        return StatusChip(text: "已停止", color: DS.text3)
     }
 
     /// 更新中的状态胶囊：进度环（百分比在环里）和当前步骤取代「安装中」，
@@ -401,41 +353,6 @@ func engineArtwork(_ id: EngineID) -> String? {
     case .mlxServe: return "engine-mlxserve"
     case .strata: return "engine-strata"
     default: return nil
-    }
-}
-
-/// 引擎卡上的圆形图标按钮：配置、删除、检查/安装更新都只用图标，
-/// 不占按钮文字宽度。禁用时整体降透明度。
-private struct EngineIconButton: View {
-    let systemImage: String
-    let help: String
-    var tint: Color = DS.text2
-    let action: () -> Void
-
-    @Environment(\.isEnabled) private var isEnabled
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(tint)
-                .frame(width: 28, height: 28)
-                .background(
-                    DS.rect(DS.Radius.sm)
-                        .fill(hovering && isEnabled ? DS.hover : DS.raised)
-                )
-                .overlay(
-                    DS.rect(DS.Radius.sm)
-                        .strokeBorder(DS.line, lineWidth: 1)
-                )
-        }
-        .buttonStyle(DSPressStyle())
-        .opacity(isEnabled ? 1 : 0.4)
-        .onHover { over in
-            withAnimation(DS.Motion.snappy) { hovering = over }
-        }
-        .help(help)
     }
 }
 

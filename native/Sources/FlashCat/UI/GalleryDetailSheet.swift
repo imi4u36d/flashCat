@@ -228,25 +228,27 @@ struct GalleryDetailSheet: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 8) {
-            Button("在访达中显示") {
-                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.path)])
-            }
-            .buttonStyle(.ds(.secondary, size: .regular))
-            if item.isVideo {
-                Button("用 QuickTime 打开") {
-                    VideoPlayback.openInQuickTime(item.path)
+        GlassEffectContainer(spacing: 8) {
+            HStack(spacing: 8) {
+                Button("在访达中显示") {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.path)])
                 }
                 .buttonStyle(.ds(.secondary, size: .regular))
-            } else {
-                Button("用预览打开") {
-                    NSWorkspace.shared.open(URL(fileURLWithPath: item.path))
+                if item.isVideo {
+                    Button("用 QuickTime 打开") {
+                        VideoPlayback.openInQuickTime(item.path)
+                    }
+                    .buttonStyle(.ds(.secondary, size: .regular))
+                } else {
+                    Button("用预览打开") {
+                        NSWorkspace.shared.open(URL(fileURLWithPath: item.path))
+                    }
+                    .buttonStyle(.ds(.secondary, size: .regular))
                 }
-                .buttonStyle(.ds(.secondary, size: .regular))
+                Spacer()
+                Button("完成") { dismiss() }
+                    .buttonStyle(.ds(.primary, size: .regular))
             }
-            Spacer()
-            Button("完成") { dismiss() }
-                .buttonStyle(.ds(.primary, size: .regular))
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)

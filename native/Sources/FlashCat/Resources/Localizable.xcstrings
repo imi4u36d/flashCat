@@ -1131,6 +1131,16 @@
         }
       }
     },
+    "全部日志": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All Logs"
+          }
+        }
+      }
+    },
     "公共目录里已有这份权重，可直接在模型页使用": {
       "localizations": {
         "en": {
@@ -2071,6 +2081,16 @@
         }
       }
     },
+    "实验": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lab"
+          }
+        }
+      }
+    },
     "完成": {
       "localizations": {
         "en": {
@@ -2931,6 +2951,16 @@
         }
       }
     },
+    "打开日志目录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Logs Folder"
+          }
+        }
+      }
+    },
     "打开模型总目录": {
       "localizations": {
         "en": {
@@ -3267,6 +3297,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "No log file yet"
+          }
+        }
+      }
+    },
+    "日志目录尚未创建": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Logs folder has not been created yet"
           }
         }
       }
@@ -3957,6 +3997,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Clear Logs"
+          }
+        }
+      }
+    },
+    "切换日志来源": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switch Log Source"
           }
         }
       }

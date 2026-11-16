@@ -236,9 +236,21 @@ macOS 自己提供的文本编辑与剪贴板快捷键、关闭窗口与退出�
   （下载中心的删除按钮踩过）。危险态用中性玻璃 + 自绘的浅红底与 0.8 pt
   发丝边，图标保持满饱和，边缘由视图自己画，不经过玻璃模糊。
 - 两副皮肤共享同一套语义 token（`Native` + `Theme.swift` 的 `NSColor.adaptive`），
-  视图不判断当前是哪套皮肤；换肤由 `ThemeController` 改窗口外观，颜色自动重解。
-  主动切换（标题栏按钮、命令面板、设置页）直接更换窗口外观，不做自定义过渡，
-  沿用系统的即时切换。
+  视图不判断当前是哪套皮肤；换肤由 `ThemeController` 改 **内容视图** 的外观
+  （`window.contentView.appearance`），颜色自动重解，不做自定义过渡。
+- 窗口本身的外观恒定是 Aqua，**不跟着皮肤走**：macOS 按窗口外观画窗口阴影，
+  窗口一旦是 `darkAqua`，系统会在四周压出一圈约两倍重、近黑的投影（跟随系统
+  切到深色时会看到 app 外一圈黑影）。皮肤因此落在内容视图上，窗口只负责
+  红绿灯与阴影，始终是浅色外观。SwiftUI 的 `.preferredColorScheme` 不能再用
+  ——它会把窗口外观改成 `darkAqua`，阴影问题会回来；换肤改由 `ThemeController`
+  驱动。
+- 因为窗口外观是 Aqua，内容视图解析出的深色语义色不能交给窗口用：
+  `BackgroundSurface` 先按内容视图的外观把画布色解成静态 sRGB 再涂给窗口，
+  否则圆角外露出的底色会是浅色（白边闪烁）。
+- 跟随系统时 `ThemeController.systemIsDark` 是 `@Published`，系统换肤通知
+  （`AppleInterfaceThemeChangedNotification`）一到就重解并立即重绘，不需要
+  切到别的 app 再切回来。sheet / alert 是自己的窗口，外观在
+  `NSApplication.didUpdateNotification` 里补上皮肤。
 - 数字用等宽 tabular 字体；正文 13pt，标题 28pt，卡片标题 15pt。
 - 窗口 chrome 归 macOS：红绿灯、阴影、菜单栏都是系统画的；侧栏顶部留 42pt
   给红绿灯，内容区从窗口顶端开始排版。

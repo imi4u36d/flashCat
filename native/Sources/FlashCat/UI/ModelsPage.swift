@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 import FlashCatKit
 
-/// 模型页：顶部平面分段 + 常驻搜索 + 操作带，下方自适应两列模型卡网格。
+/// 模型页：单行筛选操作栏 + 轻量化 Liquid Glass 模型卡片网格。
 struct ModelsPage: View {
     @ObservedObject var state: AppState
     let engine: EngineID
@@ -13,8 +13,11 @@ struct ModelsPage: View {
     @State private var query = ""
     @State private var removeTarget: ModelLibraryEntry?
     @State private var device = DeviceProfile.current()
+    @State private var gridColumns = 0
 
     private static let scrollTopAnchor = "models.scroll.top"
+    private static let cardMinWidth: CGFloat = 320
+    private static let cardSpacing: CGFloat = 12
 
     private var entries: [ModelLibraryEntry] {
         let base: [ModelLibraryEntry]
@@ -37,38 +40,43 @@ struct ModelsPage: View {
             .map(\.element)
     }
 
+    private var installedEntries: [ModelLibraryEntry] {
+        entries.filter(\.installed)
+    }
+
+    private var availableEntries: [ModelLibraryEntry] {
+        entries.filter { !$0.installed }
+    }
+
     private func rank(_ entry: ModelLibraryEntry) -> Int {
         if isSelected(entry) { return 0 }
         if entry.installed { return 1 }
         return 2
     }
 
-    private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: 320, maximum: 720), spacing: 14, alignment: .top)]
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             topBar
-                .padding(.horizontal, Console.contentPadding)
-                .padding(.top, Console.contentTopInset)
-                .padding(.bottom, 16)
+                .padding(.top, Console.pageTopPadding)
+                .padding(.bottom, 12)
+                .background(WindowDragArea())
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 18) {
                         Color.clear
                             .frame(height: 0)
                             .id(Self.scrollTopAnchor)
 
-                        LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
-                            ForEach(entries, id: \.identity) { entry in
-                                ModelCard(state: state,
-                                          entry: entry,
-                                          selected: isSelected(entry),
-                                          device: device,
-                                          remove: { removeTarget = entry })
-                            }
+                        let installed = installedEntries
+                        let available = availableEntries
+                        let splitSections = !installed.isEmpty && !available.isEmpty
+
+                        if !installed.isEmpty {
+                            modelSection(title: splitSections ? "已安装" : nil, items: installed)
+                        }
+                        if !available.isEmpty {
+                            modelSection(title: splitSections ? "未下载" : nil, items: available)
                         }
                         if entries.isEmpty {
                             Text(L10n.t("没有匹配的模型"))
@@ -82,6 +90,8 @@ struct ModelsPage: View {
                     .padding(.top, 2)
                 }
                 .scrollIndicators(.never)
+                .scrollEdgeEffectStyle(.soft, for: .top)
+                .dsTrackColumns($gridColumns, minWidth: Self.cardMinWidth, spacing: Self.cardSpacing)
                 .onChange(of: scope) { _, _ in
                     DispatchQueue.main.async {
                         proxy.scrollTo(Self.scrollTopAnchor, anchor: .top)
@@ -107,6 +117,35 @@ struct ModelsPage: View {
         }
     }
 
+    @ViewBuilder
+    private func modelSection(title: String?, items: [ModelLibraryEntry]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let title {
+                HStack(spacing: 6) {
+                    Text(L10n.t(title))
+                        .font(DS.Font.xs.weight(.medium))
+                        .foregroundStyle(DS.text3)
+                    Text("\(items.count)")
+                        .font(DS.Font.mono(10.5))
+                        .foregroundStyle(DS.text3)
+                }
+                .padding(.horizontal, 2)
+            }
+            DSAnimatedGrid(columns: gridColumns,
+                           minWidth: Self.cardMinWidth,
+                           maxWidth: 540,
+                           spacing: Self.cardSpacing) {
+                ForEach(items, id: \.identity) { entry in
+                    ModelCard(state: state,
+                              entry: entry,
+                              selected: isSelected(entry),
+                              device: device,
+                              remove: { removeTarget = entry })
+                }
+            }
+        }
+    }
+
     private var topBar: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 12) {
@@ -114,12 +153,20 @@ struct ModelsPage: View {
                 Spacer(minLength: 0)
                 actionControls
             }
+            .frame(height: DS.Layout.titlebarHeight)
+            .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
+            .padding(.trailing, Console.contentPadding)
+
             VStack(alignment: .leading, spacing: 10) {
                 filterControl
+                    .frame(height: DS.Layout.titlebarHeight)
+                    .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
+                    .padding(.trailing, Console.contentPadding)
                 HStack(spacing: 8) {
                     Spacer(minLength: 0)
                     actionControls
                 }
+                .padding(.horizontal, Console.contentPadding)
             }
         }
     }
@@ -129,27 +176,13 @@ struct ModelsPage: View {
                     options: [(ModelScope.all, "全部")]
                         + EngineCatalog.allIDs.map { (ModelScope.engine($0), $0.displayName) },
                     query: $query,
-                    placeholder: "搜索模型")
+                    placeholder: "搜索模型",
+                    maxSearchWidth: 160)
     }
 
     @ViewBuilder
     private var actionControls: some View {
         HStack(spacing: 8) {
-            Button {
-                showingDownloads = true
-            } label: {
-                let count = state.downloadTasks.count + (state.downloadingModel == nil ? 0 : 1)
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.down.circle")
-                        .font(.system(size: 11, weight: .medium))
-                    Text(L10n.t("下载中心"))
-                    if count > 0 {
-                        DSBadge(count: count)
-                    }
-                }
-            }
-            .buttonStyle(.dsSecondary)
-
             Button {
                 showingHub = true
                 state.searchHub(state.hubQuery, sort: state.hubSort.rawValue,
@@ -159,7 +192,7 @@ struct ModelsPage: View {
             }
             .buttonStyle(.dsSecondary)
 
-            DSIconButton(systemName: "arrow.clockwise", help: "重新扫描") {
+            DSIconButton(systemName: "arrow.clockwise", help: "重新扫描", style: .outlined) {
                 let target = scope.engine ?? engine
                 _ = EngineModelStore.adoptExistingWeights(target)
                 state.reloadModels()
@@ -191,6 +224,8 @@ private struct ModelCard: View {
     let device: DeviceProfile
     let remove: () -> Void
 
+    @State private var hovering = false
+
     private var model: ModelInfo { entry.model }
     private var task: ModelDownloadTask? {
         let key = ModelSharing.canonical(entry.id)
@@ -204,63 +239,28 @@ private struct ModelCard: View {
               ModelSharing.canonical(running) == ModelSharing.canonical(entry.id) else { return nil }
         return state.downloadFraction ?? 0
     }
+    private var progressValue: Double? {
+        if let activeFraction { return activeFraction }
+        if let task { return task.fraction }
+        return nil
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .firstTextBaseline, spacing: 7) {
-                    Text(titleParts.name)
-                        .font(DS.Font.lg.weight(.semibold))
-                        .tracking(-0.2)
-                        .foregroundStyle(DS.text)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    if let variant = titleParts.variant {
-                        Text(variant)
-                            .font(DS.Font.mono(10, weight: .medium))
-                            .foregroundStyle(DS.text2)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(DS.rect(DS.Radius.sm).fill(DS.raised))
-                            .overlay(DS.rect(DS.Radius.sm).strokeBorder(DS.line2, lineWidth: 1))
-                            .fixedSize()
-                    }
-                }
-                if let subtitle {
-                    Text(subtitle)
-                        .font(monoSubtitle ? DS.Font.mono(11) : DS.Font.xs)
-                        .foregroundStyle(DS.text2)
-                        .lineLimit(monoSubtitle ? 1 : 2)
-                        .truncationMode(monoSubtitle ? .middle : .tail)
-                        .fixedSize(horizontal: false, vertical: !monoSubtitle)
-                        .help(model.id)
-                }
+
+            if let progressValue {
+                DSMeter(value: progressValue, tint: DS.accent)
             }
-            SpecTable(items: [
-                ("ENGINE", entry.engine.displayName),
-                ("FORMAT", formatName),
-                ("QUANT", quantizationLabel ?? "—"),
-                ("SIZE", model.bytes > 0 ? model.sizeText : "—"),
-            ])
-            tags
-            DSDivider()
-            HStack(spacing: 8) {
-                Image(systemName: "memorychip")
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(exceedsMemory ? DS.warn : DS.text3)
-                Text(memoryText)
-                    .font(DS.Font.xs)
-                    .foregroundStyle(exceedsMemory ? DS.warn : DS.text2)
-                Spacer(minLength: 0)
-                action
-            }
+
+            footer
         }
-        .padding(16)
+        .padding(14)
         .dsSurface(radius: DS.Radius.lg,
-                   fill: DS.surface,
-                   stroke: selected ? DS.accent.opacity(0.45) : DS.line,
-                   hoverable: true)
+                   stroke: selected ? DS.accent.opacity(0.45) : nil,
+                   hoverable: true,
+                   active: selected)
+        .onHover { hovering = $0 }
         .contextMenu {
             if !model.path.isEmpty {
                 Button("在 Finder 中显示") {
@@ -275,33 +275,87 @@ private struct ModelCard: View {
         }
     }
 
+    private var header: some View {
+        HStack(alignment: .center, spacing: 10) {
+            ModelFamilyIcon(family: family, size: 32)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(titleName)
+                    .font(DS.Font.md.weight(.semibold))
+                    .tracking(-0.15)
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(titleHelp)
+                Text(metaLine)
+                    .font(DS.Font.mono(11))
+                    .foregroundStyle(DS.text2)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Spacer(minLength: 4)
+            DSMenu(kind: .icon, size: .small) {
+                DSMenuTriggerLabel(systemImage: "ellipsis", kind: .icon, size: .small)
+                    .opacity(hovering || selected ? 1 : 0.45)
+            } content: {
+                if !model.path.isEmpty {
+                    Button("在 Finder 中显示") {
+                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: model.path)])
+                    }
+                }
+                Button("复制模型 ID") { state.copy(model.id, label: "模型 ID 已复制") }
+                if entry.installed {
+                    Divider()
+                    Button("删除权重…", role: .destructive, action: remove)
+                }
+            }
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            if requiredMemoryGB > 0 {
+                HStack(spacing: 4) {
+                    Image(systemName: "memorychip")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(exceedsMemory ? DS.warn : DS.text3)
+                    Text(memoryText)
+                        .font(DS.Font.xs)
+                        .foregroundStyle(exceedsMemory ? DS.warn : DS.text2)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 4)
+            action
+        }
+    }
+
     private var displayTitle: String {
         model.shortName
     }
 
-    private var titleParts: (name: String, variant: String?) {
+    private var titleName: String {
         let title = displayTitle
-        guard let colon = title.lastIndex(of: ":") else { return (title, nil) }
+        guard let colon = title.lastIndex(of: ":") else { return title }
         let name = String(title[title.startIndex..<colon])
         let variant = String(title[title.index(after: colon)...])
-        guard !name.isEmpty, !variant.isEmpty, variant.count <= 16 else { return (title, nil) }
-        return (name, variant)
+        guard !name.isEmpty, !variant.isEmpty, variant.count <= 16 else { return title }
+        return name
     }
 
-    private var subtitlePair: (text: String, mono: Bool) {
+    private var titleHelp: String {
         if let summary = entry.recommendation?.summary, !summary.isEmpty {
-            return (summary, false)
+            return "\(model.id)\n\(summary)"
         }
-        if model.id != displayTitle { return (model.id, true) }
-        return ("", false)
+        return model.id
     }
 
-    private var subtitle: String? {
-        let pair = subtitlePair
-        return pair.text.isEmpty ? nil : pair.text
+    private var metaLine: String {
+        var parts = [entry.engine.displayName, quantizationLabel ?? formatName]
+        if model.bytes > 0 {
+            parts.append(model.sizeText)
+        }
+        return parts.joined(separator: " · ")
     }
-
-    private var monoSubtitle: Bool { subtitlePair.mono }
 
     private var quantizationLabel: String? {
         if let quant = model.quantization, !quant.isEmpty { return quant }
@@ -328,62 +382,6 @@ private struct ModelCard: View {
                             tags: entry.recommendation?.tags ?? [])
     }
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            ModelFamilyIcon(family: family, size: 28)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(entry.engine.displayName)
-                    .font(DS.Font.md.weight(.medium))
-                    .foregroundStyle(DS.text)
-                Text(familyName)
-                    .font(DS.Font.xs)
-                    .foregroundStyle(DS.text3)
-            }
-            Spacer(minLength: 0)
-            DSMenu {
-                DSMenuTriggerLabel(systemImage: "ellipsis", kind: .icon, size: .small)
-            } content: {
-                if !model.path.isEmpty {
-                    Button("在 Finder 中显示") {
-                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: model.path)])
-                    }
-                }
-                Button("复制模型 ID") { state.copy(model.id, label: "模型 ID 已复制") }
-                if entry.installed {
-                    Divider()
-                    Button("删除权重…", role: .destructive, action: remove)
-                }
-            }
-        }
-    }
-
-    private var familyName: String {
-        if family != .other { return family.name }
-        if let family = model.family, !family.isEmpty, family != "GGUF", family != "MLX" { return family }
-        return entry.recommendation?.tags.first ?? "本地权重"
-    }
-
-    private var tags: some View {
-        FlowLayout(spacing: 4, lineSpacing: 4) {
-            ForEach(tagTexts.prefix(5), id: \.self) { tag in
-                ConsoleTag(text: tag, fontSize: 10)
-            }
-        }
-    }
-
-    private var tagTexts: [String] {
-        var values: [String] = []
-        if let tags = entry.recommendation?.tags {
-            values.append(contentsOf: tags.filter {
-                ModelQuantization.detect(in: $0) == nil && !values.contains($0)
-            })
-        }
-        if entry.draftRepository != nil { values.append("DFlash2") }
-        if ModelSharing.isShared(model.id) { values.append("共享") }
-        if entry.uncatalogued { values.append("未收录") }
-        return values.isEmpty ? ["本地"] : values
-    }
-
     private var requiredMemoryGB: Int {
         let catalog = entry.recommendation?.minimumMemory ?? 0
         let weightsGB = model.bytes > 0 ? Int((Double(model.bytes) / 1_000_000_000).rounded(.up)) : 0
@@ -396,13 +394,10 @@ private struct ModelCard: View {
 
     private var memoryText: String {
         let memory = requiredMemoryGB
-        if memory > 0 {
-            if exceedsMemory {
-                return L10n.format("%lld GB 内存起 · 超出本机", memory)
-            }
-            return L10n.format("%lld GB 内存起", memory)
+        if exceedsMemory {
+            return L10n.format("%lld GB 内存起 · 超出本机", memory)
         }
-        return L10n.t("内存需求未标注")
+        return L10n.format("%lld GB 内存起", memory)
     }
 
     @ViewBuilder private var action: some View {
@@ -431,15 +426,15 @@ private struct ModelCard: View {
                 Button {
                     state.useModel(model.id, engine: entry.engine)
                 } label: {
-                    Label(L10n.t("使用"), systemImage: "play.fill")
+                    Text(L10n.t("使用"))
                 }
-                .buttonStyle(.ds(.primary, size: .small))
+                .buttonStyle(.ds(.secondary, size: .small))
             }
         } else {
             Button {
                 state.downloadModel(model.id, engine: entry.engine)
             } label: {
-                Label(L10n.t("下载"), systemImage: "arrow.down.circle.fill")
+                Label(L10n.t("下载"), systemImage: "arrow.down.circle")
             }
             .buttonStyle(.ds(.secondary, size: .small))
             .disabled(state.downloadingModel != nil)

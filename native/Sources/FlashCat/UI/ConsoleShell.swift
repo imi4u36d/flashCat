@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 import FlashCatKit
 
-/// 控制台根视图：固定左侧导航栏 + 44pt 顶栏 + 页面区 + 标题栏中央状态胶囊。
+/// 控制台根视图：左侧悬浮 Liquid Glass 导航面板 + 顶部悬浮玻璃标题栏与灵动岛 + 七个原生页面。
 struct ConsoleView: View {
     @ObservedObject var state: AppState
     @ObservedObject private var theme = AppState.shared.theme
@@ -13,10 +13,6 @@ struct ConsoleView: View {
     @State private var showFeedback = false
     @State private var islandExpanded = false
 
-    private var sidebarReservedWidth: CGFloat {
-        state.showsSidebar ? DS.Layout.sidebarWidth + 1 : 0
-    }
-
     var body: some View {
         ZStack(alignment: .topLeading) {
             ConsoleBackdrop(accent: state.section.keyColor)
@@ -24,44 +20,53 @@ struct ConsoleView: View {
             HStack(spacing: 0) {
                 if state.showsSidebar {
                     HStack(spacing: 0) {
-                        ConsoleNavigationPanel(state: state, chat: state.chat)
+                        ConsoleNavigationPanel(state: state,
+                                               chat: state.chat,
+                                               openDownloads: { showDownloads = true },
+                                               openFeedback: { showFeedback = true })
                             .frame(width: DS.Layout.sidebarWidth)
                         DSDivider(vertical: true)
                     }
                     .transition(.move(edge: .leading).combined(with: .opacity))
                 }
 
-                VStack(spacing: 0) {
-                    ConsoleTitlebar(state: state,
-                                    chat: state.chat,
-                                    openCommand: { showCommand = true },
-                                    openDownloads: { showDownloads = true },
-                                    openFeedback: { showFeedback = true })
-                        .frame(height: DS.Layout.titlebarHeight)
-
-                    DSDivider()
-
-                    ZStack {
-                        pageContent
-                            .id(state.section)
-                            .transition(.dsPage)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .animation(DS.Motion.smooth, value: state.section)
-                    .clipped()
+                ZStack {
+                    pageContent
+                        .id(state.section)
+                        .transition(.dsPage)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .animation(DS.Motion.smooth, value: state.section)
+                .clipped()
             }
             .animation(DS.Motion.smooth, value: state.showsSidebar)
         }
         .background { DesktopBackdrop().ignoresSafeArea() }
-        .tint(DS.accent)
-        .preferredColorScheme(preferredScheme)
-        .overlay(alignment: .top) {
-            DynamicIslandLayer(state: state,
-                               expanded: $islandExpanded,
-                               leadingOffset: sidebarReservedWidth)
+        // 换肤不在这里做。`.preferredColorScheme` 会让 SwiftUI 去改窗口外观，
+        // 而深色窗口那条系统投影明显更重（见 ThemeController.apply(to:)）；
+        // 皮肤改由窗口的 contentView 外观承担，SwiftUI 的 colorScheme 也跟着
+        // 那一层解析，切换时和窗口一起重画，不必等激活事件。
+        .overlay(alignment: .topLeading) {
+            DSIconButton(
+                systemName: "sidebar.left",
+                help: state.showsSidebar ? "隐藏边栏" : "显示边栏",
+                style: .outlined
+            ) {
+                if islandExpanded && state.showsSidebar {
+                    withAnimation(DS.Motion.bouncy) { islandExpanded = false }
+                }
+                state.toggleSidebar()
+            }
+            .padding(.leading, 90)
+            .padding(.top, 11)
         }
+        .overlay(alignment: .bottomLeading) {
+            if state.showsSidebar {
+                DynamicIslandLayer(state: state, expanded: $islandExpanded, bottomOffset: 54)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            }
+        }
+        .animation(DS.Motion.smooth, value: state.showsSidebar)
         .overlay {
             if isShowingOnboarding {
                 LaunchPage(state: state)
@@ -113,14 +118,6 @@ struct ConsoleView: View {
         state.isPresentingLaunchPage || state.showsRecommendationPage
     }
 
-    private var preferredScheme: ColorScheme? {
-        switch theme.mode {
-        case .system: return nil
-        case .light: return .light
-        case .dark: return .dark
-        }
-    }
-
     @ViewBuilder private var pageContent: some View {
         switch state.section {
         case .overview: OverviewPage(state: state, chat: state.chat)
@@ -163,77 +160,90 @@ struct ConsoleView: View {
     }
 }
 
-// MARK: - Docked Sidebar
+// MARK: - Docked Translucent Sidebar
 
-/// 固定在左侧的平面导航栏：`DS.bg` 底 + 1px 右边线，承载工作区、控制台与最近对话。
+/// 贴边通栏的轻量磨砂导航列：无外框卡片，直接承载工作区、控制台、最近对话、灵动岛与底栏。
 struct ConsoleNavigationPanel: View {
     @ObservedObject var state: AppState
     @ObservedObject var chat: ChatStore
-    @ObservedObject private var background = BackgroundSettings.shared
+    var openDownloads: () -> Void = {}
+    var openFeedback: () -> Void = {}
 
     @Namespace private var selection
     @State private var hoveringNewChat = false
+    @State private var hoveringSettings = false
 
     private static let primaryPages: [Page] = [.chat, .lab]
     private static let consolePages: [Page] = [.overview, .models, .engines, .logs]
 
-    private var sidebarFill: Color {
-        let transparent = background.image != nil || background.desktopReveal > 0
-        return DS.bg.opacity(transparent ? 0.88 : 1)
+    private var downloadCount: Int {
+        state.downloadTasks.count + (state.downloadingModel == nil ? 0 : 1)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // 顶部 44pt 留给系统红绿灯，背景支持拖窗。
+            // 顶部 48pt 留给系统红绿灯与侧栏折叠按钮，背景支持拖窗。
             Color.clear
                 .frame(height: DS.Layout.titlebarHeight)
                 .background(WindowDragArea())
 
-            newChatButton
-                .padding(.horizontal, 10)
-                .padding(.bottom, DS.Space.sm)
-
             workspace
                 .padding(.horizontal, 10)
+                .padding(.top, 2)
 
-            DSSectionLabel(text: "最近对话")
-                .padding(.horizontal, 18)
-                .padding(.top, DS.Space.lg)
-                .padding(.bottom, DS.Space.xs)
+            HStack(alignment: .center, spacing: 6) {
+                DSSectionLabel(text: "最近对话")
+                newChatButton
+            }
+            .padding(.leading, 18)
+            .padding(.trailing, 10)
+            .padding(.top, DS.Space.lg)
+            .padding(.bottom, DS.Space.xs)
 
             recents
                 .padding(.horizontal, 10)
 
+            // 为左下角悬浮灵动岛预留收起高度，避免列表滚动到底时被遮挡。
+            Color.clear
+                .frame(height: 46)
+
             sidebarFooter
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(sidebarFill)
+        .background {
+            ZStack {
+                Rectangle().fill(.ultraThinMaterial)
+                DS.bg.opacity(0.45)
+            }
+            .ignoresSafeArea()
+        }
         .animation(DS.Motion.smooth, value: state.section)
     }
 
     private var newChatButton: some View {
-        let shape = DS.rect(DS.Radius.md)
-        return Button {
+        Button {
             state.newConversation()
             state.section = .chat
         } label: {
-            HStack(spacing: DS.Space.sm) {
+            HStack(spacing: 4) {
                 Image(systemName: "square.and.pencil")
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(DS.text2)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(DS.accent)
                 Text(L10n.t("新对话"))
-                    .font(DS.Font.md.weight(.medium))
-                    .foregroundStyle(DS.text)
-                Spacer(minLength: 4)
-                DSKbd(text: "⌘N")
+                    .font(DS.Font.xs.weight(.medium))
+                    .foregroundStyle(hoveringNewChat ? DS.text : DS.text2)
             }
-            .padding(.horizontal, 10)
-            .frame(height: 32)
-            .background(shape.fill(hoveringNewChat ? DS.raised : DS.surface))
-            .overlay(shape.strokeBorder(hoveringNewChat ? DS.line3 : DS.line2, lineWidth: 1))
-            .contentShape(shape)
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(
+                Capsule()
+                    .fill(Color.adaptiveOverlay(hoveringNewChat ? 0.09 : 0.04))
+            )
+            .contentShape(Capsule())
         }
-        .buttonStyle(DSPressStyle(scale: 0.98))
+        .buttonStyle(DSPressStyle(scale: 0.97))
+        .fixedSize()
+        .help(L10n.t("新对话"))
         .onHover { value in
             withAnimation(DS.Motion.snappy) { hoveringNewChat = value }
         }
@@ -316,31 +326,84 @@ struct ConsoleNavigationPanel: View {
     private var sidebarFooter: some View {
         VStack(spacing: 0) {
             DSDivider()
+                .padding(.horizontal, 10)
 
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
+                settingsFooterButton
+
                 Spacer(minLength: 4)
 
-                DSIconButton(
-                    systemName: state.theme.mode.resolvedIsDark ? "sun.max" : "moon",
-                    help: "切换外观"
-                ) {
-                    state.theme.set(state.theme.mode.resolvedIsDark ? .light : .dark)
+                if downloadCount > 0 {
+                    Button(action: openDownloads) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.down.circle")
+                                .font(.system(size: 11, weight: .medium))
+                            DSBadge(count: downloadCount)
+                        }
+                    }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.capsule)
+                    .controlSize(.small)
+                    .help(L10n.t("下载中心"))
+                    .accessibilityLabel(L10n.t("下载中心"))
                 }
 
                 DSIconButton(
-                    systemName: Page.settings.symbol,
-                    help: "设置",
-                    tint: state.section == .settings ? DS.accent : nil
-                ) {
-                    state.section = .settings
-                }
-                .background(
-                    DS.rect(DS.Radius.sm + 1)
-                        .fill(state.section == .settings ? DS.raised : .clear)
+                    systemName: "bubble.left.and.bubble.right",
+                    help: "反馈与交流",
+                    size: 26,
+                    style: .ghost,
+                    action: openFeedback
                 )
+
+                DSIconButton(
+                    systemName: state.theme.isDark ? "sun.max" : "moon",
+                    help: "切换外观",
+                    size: 26,
+                    style: .ghost
+                ) {
+                    state.theme.set(state.theme.isDark ? .light : .dark)
+                }
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .frame(height: 46)
+        }
+    }
+
+    private var settingsFooterButton: some View {
+        let active = state.section == .settings
+        let shape = DS.rect(DS.Radius.md)
+        return Button {
+            state.section = .settings
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: Page.settings.symbol)
+                    .font(.system(size: 12.5, weight: active ? .semibold : .regular))
+                    .foregroundStyle(active ? DS.accent : (hoveringSettings ? DS.text : DS.text2))
+                    .frame(width: 16)
+                Text(L10n.t(Page.settings.rawValue))
+                    .font(.system(size: 12.5, weight: active ? .medium : .regular))
+                    .foregroundStyle(active ? DS.text : (hoveringSettings ? DS.text : DS.text2))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .background {
+                if active {
+                    shape
+                        .fill(Color.adaptiveOverlay(0.08))
+                        .matchedGeometryEffect(id: "nav.selection", in: selection)
+                } else if hoveringSettings {
+                    shape.fill(DS.hover)
+                }
+            }
+            .contentShape(shape)
+        }
+        .buttonStyle(.plainHit)
+        .fixedSize()
+        .help(L10n.t(Page.settings.rawValue))
+        .onHover { value in
+            withAnimation(DS.Motion.snappy) { hoveringSettings = value }
         }
     }
 }
@@ -355,14 +418,14 @@ private struct GlassNavRow: View {
     @State private var hovering = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var rowShape: RoundedRectangle { DS.rect(DS.Radius.sm) }
+    private var rowShape: RoundedRectangle { DS.rect(DS.Radius.md) }
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 9) {
                 Image(systemName: page.symbol)
-                    .font(.system(size: 13, weight: active ? .medium : .regular))
-                    .foregroundStyle(active ? DS.text : (hovering ? DS.text : DS.text2))
+                    .font(.system(size: 13, weight: active ? .semibold : .regular))
+                    .foregroundStyle(active ? DS.accent : (hovering ? DS.text : DS.text2))
                     .frame(width: 18)
                 Text(L10n.t(page.rawValue))
                     .font(.system(size: 13, weight: active ? .medium : .regular))
@@ -370,27 +433,19 @@ private struct GlassNavRow: View {
                 if badge > 0 {
                     Text(verbatim: "\(badge)")
                         .font(DS.Font.mono(10))
-                        .foregroundStyle(active ? DS.text2 : DS.text3)
-                        .padding(.horizontal, 5)
+                        .foregroundStyle(active ? DS.text : DS.text3)
+                        .padding(.horizontal, 6)
                         .frame(height: 16)
-                        .background(DS.rect(4).fill(DS.surface))
-                        .overlay(DS.rect(4).strokeBorder(DS.line, lineWidth: 1))
+                        .background(Capsule().fill(DS.hover))
                 }
             }
             .foregroundStyle(active ? DS.text : (hovering ? DS.text : DS.text2))
-            .padding(.horizontal, 8)
-            .frame(height: DS.Layout.rowHeight)
+            .padding(.horizontal, 10)
+            .frame(height: DS.Layout.rowHeight + 2)
             .background {
                 if active {
                     rowShape
-                        .fill(DS.selected)
-                        .overlay(rowShape.strokeBorder(DS.line, lineWidth: 1))
-                        .overlay(alignment: .leading) {
-                            Capsule()
-                                .fill(DS.accent)
-                                .frame(width: 2, height: 14)
-                                .padding(.leading, 1)
-                        }
+                        .fill(Color.adaptiveOverlay(0.08))
                         .matchedGeometryEffect(id: "nav.selection", in: namespace)
                 } else if hovering {
                     rowShape.fill(DS.hover)
@@ -437,12 +492,11 @@ private struct GlassRecentRow: View {
                         .lineLimit(1)
                         .opacity(hovering ? 0 : 1)
                 }
-                .padding(.horizontal, 8)
+                .padding(.horizontal, 9)
                 .frame(height: 28)
                 .background {
                     if active {
-                        shape.fill(DS.selected)
-                            .overlay(shape.strokeBorder(DS.line, lineWidth: 1))
+                        shape.fill(Color.adaptiveOverlay(0.09))
                     } else if hovering {
                         shape.fill(DS.hover)
                     }
@@ -457,128 +511,6 @@ private struct GlassRecentRow: View {
                 .allowsHitTesting(hovering)
         }
         .onHover { value in withAnimation(DS.Motion.snappy) { hovering = value } }
-    }
-}
-
-// MARK: - Titlebar
-
-struct ConsoleTitlebar: View {
-    @ObservedObject var state: AppState
-    @ObservedObject var chat: ChatStore
-    var openCommand: () -> Void = {}
-    var openDownloads: () -> Void
-    var openFeedback: () -> Void
-
-    @State private var titlebarWidth: CGFloat = 1000
-    @State private var hoveringCommand = false
-
-    private var downloadCount: Int {
-        state.downloadTasks.count + (state.downloadingModel == nil ? 0 : 1)
-    }
-
-    private var currentThreadTitle: String? {
-        guard state.section == .chat else { return nil }
-        return chat.threads.first(where: { $0.id == state.currentThreadID })?.title
-    }
-
-    private var isCompact: Bool { titlebarWidth < 740 }
-
-    var body: some View {
-        HStack(spacing: DS.Space.sm) {
-            DSIconButton(
-                systemName: "sidebar.left",
-                help: state.showsSidebar ? "隐藏边栏" : "显示边栏"
-            ) {
-                state.toggleSidebar()
-            }
-            .padding(.leading, state.showsSidebar ? 12 : 78)
-
-            if !isCompact {
-                breadcrumb
-            }
-
-            Spacer(minLength: DS.Space.sm)
-
-            if isCompact {
-                DSIconButton(systemName: "magnifyingglass", help: "命令面板", action: openCommand)
-            } else {
-                commandButton
-            }
-
-            downloadButton
-
-            DSDivider(vertical: true)
-                .frame(height: 14)
-
-            DSIconButton(
-                systemName: "bubble.left.and.bubble.right",
-                help: "反馈与交流",
-                action: openFeedback
-            )
-            .padding(.trailing, 12)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(WindowDragArea())
-        .onGeometryChange(for: CGFloat.self) { proxy in proxy.size.width } action: { width in
-            titlebarWidth = width
-        }
-    }
-
-    private var breadcrumb: some View {
-        HStack(spacing: 6) {
-            let hasThread = currentThreadTitle != nil
-            Text(L10n.t(state.section.rawValue))
-                .font(DS.Font.md.weight(hasThread ? .regular : .medium))
-                .foregroundStyle(hasThread ? DS.text2 : DS.text)
-                .lineLimit(1)
-            if let title = currentThreadTitle {
-                Text("/")
-                    .font(DS.Font.sm)
-                    .foregroundStyle(DS.text4)
-                Text(title)
-                    .font(DS.Font.md.weight(.medium))
-                    .foregroundStyle(DS.text)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: 160, alignment: .leading)
-            }
-        }
-    }
-
-    private var commandButton: some View {
-        let shape = DS.rect(DS.Radius.md)
-        return Button(action: openCommand) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(DS.text3)
-                Text(L10n.t("命令面板"))
-                    .font(DS.Font.sm)
-                    .foregroundStyle(DS.text3)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                DSKbd(text: "⌘K")
-            }
-            .padding(.horizontal, 8)
-            .frame(width: 156, height: DS.Layout.controlHeight)
-            .background(shape.fill(hoveringCommand ? DS.raised : DS.surface))
-            .overlay(shape.strokeBorder(hoveringCommand ? DS.line3 : DS.line2, lineWidth: 1))
-            .contentShape(shape)
-        }
-        .buttonStyle(DSPressStyle(scale: 0.98))
-        .onHover { value in withAnimation(DS.Motion.snappy) { hoveringCommand = value } }
-        .help(L10n.t("命令面板"))
-    }
-
-    private var downloadButton: some View {
-        ZStack(alignment: .topTrailing) {
-            DSIconButton(systemName: "arrow.down.circle", help: "下载中心", action: openDownloads)
-            if downloadCount > 0 {
-                DSBadge(count: downloadCount)
-                    .offset(x: 3, y: -2)
-                    .allowsHitTesting(false)
-            }
-        }
     }
 }
 

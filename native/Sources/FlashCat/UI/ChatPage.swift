@@ -109,7 +109,7 @@ struct ChatPage: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            DSMenu {
+            DSMenu(size: .small) {
                 DSMenuTriggerLabel(
                     title: state.selectedModel.isEmpty ? "选择模型" : state.shortModelName(state.selectedModel),
                     systemImage: "sparkles",
@@ -163,8 +163,12 @@ struct ChatPage: View {
             }
             .buttonStyle(.ds(.secondary, size: .small))
         }
-        .padding(.horizontal, DS.Space.lg)
-        .frame(height: 36)
+        .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar, base: DS.Space.lg))
+        .padding(.trailing, DS.Space.lg)
+        .frame(height: DS.Layout.titlebarHeight)
+        .padding(.top, Console.pageTopPadding)
+        .background(WindowDragArea())
+        .padding(.bottom, 4)
     }
 
     // MARK: Transcript
@@ -221,6 +225,17 @@ struct ChatPage: View {
                 .animation(Motion.entrance, value: chat.messages.count)
             }
             .scrollIndicators(.never)
+            // 内容长高时把底部锚在视口底部。贴底交给布局本身完成，不再只靠
+            // 布局之后一帧才执行的 scrollTo——那一帧的延迟会让整列内容（含
+            // 底部那行 tok/s、tokens、首字）在每次长高时上下颤一下。
+            //
+            // 只取 .sizeChanges 这一个角色：初始落位仍按默认（顶部），内容不
+            // 满一屏时的对齐也保持默认，否则新会话的第一句话会被按到对话区
+            // 底部、再往上长。锚点不会跟用户抢滚动：往上翻时它只是保持当前
+            // 偏移，人自己滚回底部后又自动接管。
+            .defaultScrollAnchor(.bottom, for: .sizeChanges)
+            .scrollEdgeEffectStyle(.soft, for: .top)
+            .scrollEdgeEffectStyle(.soft, for: .bottom)
             .onScrollPhaseChange { _, newPhase in
                 userScrolling = (newPhase == .interacting || newPhase == .tracking || newPhase == .decelerating)
             }
@@ -307,15 +322,8 @@ struct ChatPage: View {
                         scroll(proxy, animated: true, force: true)
                     } label: {
                         Label("回到最新", systemImage: "arrow.down")
-                            .font(DS.Font.xs.weight(.medium))
-                            .foregroundStyle(DS.text)
-                            .padding(.horizontal, 12)
-                            .frame(height: 28)
-                            .background(DS.rect(DS.Radius.md).fill(DS.raised))
-                            .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line2, lineWidth: 1))
-                            .shadow(color: DS.shadow, radius: 10, y: 4)
                     }
-                    .buttonStyle(DSPressStyle())
+                    .buttonStyle(.ds(.secondary, size: .regular))
                     .padding(.bottom, 150)
                 }
             }
@@ -504,7 +512,8 @@ struct ChatPage: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
 
-            HStack(spacing: 8) {
+            GlassEffectContainer(spacing: 8) {
+                HStack(spacing: 8) {
                 // 图像模型没有采样参数：同一个按钮换成图像设置，别再弹文本模型的
                 // 温度/系统提示面板。
                 DSIconButton(
@@ -520,7 +529,7 @@ struct ChatPage: View {
                         showsParameters = true
                     }
                 }
-                .popover(isPresented: $showsImageOptions, arrowEdge: .bottom) {
+                .popover(isPresented: $showsImageOptions, arrowEdge: .top) {
                     if supportsVideo {
                         VideoOptionsPopover(options: $videoOptions,
                                             hasSource: imageAttachment != nil
@@ -557,7 +566,7 @@ struct ChatPage: View {
                 // 对话本身就变成图像模式了。所以给工具单独留一个选择器，只在
                 // 「画」开着时出现。
                 if state.imageToolActive, !state.imageToolModels.isEmpty {
-                    DSMenu {
+                    DSMenu(size: .small) {
                         DSMenuTriggerLabel(
                             title: state.imageToolModel.map { state.shortModelName($0.id) } ?? "画图模型",
                             systemImage: "photo",
@@ -643,21 +652,29 @@ struct ChatPage: View {
                     )
                     .disabled(!canSend)
                 }
+                }
             }
             .padding(.top, 2)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
         .frame(maxWidth: composerMaxWidth)
-        .dsSurface(radius: DS.Radius.lg, fill: DS.surface, stroke: composerFocused ? DS.line3 : DS.line2)
-        .contentShape(DS.rect(DS.Radius.lg))
+        .glassEffect(.regular, in: DS.rect(DS.Radius.xl))
+        .overlay {
+            if composerFocused {
+                DS.rect(DS.Radius.xl)
+                    .strokeBorder(DS.accent.opacity(0.42), lineWidth: 1)
+            }
+        }
+        .shadow(color: DS.shadow, radius: 20, y: 8)
+        .contentShape(DS.rect(DS.Radius.xl))
         .onTapGesture { focusComposer() }
         .overlay {
             if isDropTargeted {
-                DS.rect(DS.Radius.lg)
+                DS.rect(DS.Radius.xl)
                     .strokeBorder(DS.accent.opacity(0.85), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
                     .background(
-                        DS.rect(DS.Radius.lg)
+                        DS.rect(DS.Radius.xl)
                             .fill(DS.accentSoft)
                     )
                     .overlay(alignment: .topTrailing) {
@@ -1918,13 +1935,9 @@ private struct VideoOptionsPopover: View {
 
             if supportsReferences {
                 section("参考细节") {
-                    Picker("", selection: detailBinding) {
-                        ForEach(VideoReferenceDetail.allCases, id: \.self) { detail in
-                            Text(detail.title).tag(detail)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
+                    NativeSegmented(selection: detailBinding,
+                                    options: VideoReferenceDetail.allCases.map { ($0, $0.title) },
+                                    size: .small)
                     Text(options.referenceDetail == .max
                          ? "参考帧长边按 1280 发送：细节更多，上传与预处理更慢。"
                          : "参考帧按生成画布缩放：上传更快，适合先试效果。")

@@ -89,7 +89,7 @@ struct DownloadCenterSheet: View {
                 .monospacedDigit()
         }
         .padding(12)
-        .dsSurface(radius: DS.Radius.md, fill: DS.surface, stroke: DS.accent.opacity(0.35))
+        .dsSurface(radius: DS.Radius.md, tint: DS.accent.opacity(0.12), stroke: DS.accent.opacity(0.35))
     }
 
     private func taskRow(_ task: ModelDownloadTask) -> some View {
@@ -156,13 +156,17 @@ struct DownloadCenterSheet: View {
                 .font(DS.Font.xs)
                 .foregroundStyle(DS.text3)
             Spacer(minLength: 0)
-            Button("打开模型总目录") {
-                Paths.ensureDirectory(EnginePaths.modelsRoot)
-                NSWorkspace.shared.open(URL(fileURLWithPath: EnginePaths.modelsRoot))
+            GlassEffectContainer(spacing: 8) {
+                HStack(spacing: 8) {
+                    Button("打开模型总目录") {
+                        Paths.ensureDirectory(EnginePaths.modelsRoot)
+                        NSWorkspace.shared.open(URL(fileURLWithPath: EnginePaths.modelsRoot))
+                    }
+                    .buttonStyle(.ds(.secondary, size: .regular))
+                    Button("完成") { dismiss() }
+                        .buttonStyle(.ds(.primary, size: .regular))
+                }
             }
-            .buttonStyle(.ds(.secondary, size: .regular))
-            Button("完成") { dismiss() }
-                .buttonStyle(.ds(.primary, size: .regular))
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)

@@ -65,10 +65,20 @@ enum Console {
     static let sidebarWidth: CGFloat = DS.Layout.sidebarWidth
     static let titlebarHeight: CGFloat = DS.Layout.titlebarHeight
     static let contentPadding: CGFloat = DS.Space.xxl
-    /// 主视口的上下边界（标题栏已上提为顶栏，内容只需保留正常顶边距）。
+    /// 主视口的上下边界（顶栏悬浮在页面之上，内容区从顶栏下方 8pt 起步，滚动时平滑滑入顶栏玻璃之下）。
     static let titlebarGap: CGFloat = DS.Space.xl
-    static let contentTopInset: CGFloat = DS.Space.xl
+    static let contentTopInset: CGFloat = DS.Layout.titlebarHeight + DS.Space.sm
     static let contentBottomInset: CGFloat = DS.Space.xxl
+    /// 页面顶栏（无全局标题栏占位，紧贴顶部窗口区域，与红绿灯保持 `25pt` 同一中线）。
+    static let pageTopPadding: CGFloat = 1
+    /// 侧栏收起时页面顶部行首需避让左上角红绿灯与折叠按钮（右侧止于 `118pt`，留 `16pt` 间距）。
+    static func topBarLeading(sidebarShown: Bool, base: CGFloat = contentPadding) -> CGFloat {
+        sidebarShown ? base : max(base, 134)
+    }
+    /// 无顶部工具栏的纯滚动页面顶部留白：展开侧栏时紧凑贴顶，收起时让出红绿灯与折叠按钮高度。
+    static func scrollTopInset(sidebarShown: Bool) -> CGFloat {
+        sidebarShown ? DS.Space.lg : contentTopInset
+    }
     /// 内容区宽度低于这个值时，多栏页面切换为单栏纵向排布。
     static let compactContentWidth: CGFloat = 900
 
@@ -102,12 +112,24 @@ struct ConsoleBackdrop: View {
 
     var body: some View {
         ZStack {
-            // 画布始终保留原来的渐变与页面强调色，自定义图片只是叠在渐变之上，
-            // 不会改动页面、玻璃卡片和文字的观感。没有图片时，渐变按「APP 透明度」
+            // 画布始终保留底色与柔和的环境光晕，让悬浮的 Liquid Glass 侧栏、
+            // 灵动岛和顶部控件有细腻的色彩折射层次；没有图片时按「APP 透明度」
             // 让出桌面：0 = 完全不透明，1 = 完全透出桌面。
-            LinearGradient(colors: [Console.backgroundTop, Console.backgroundBottom],
-                           startPoint: .topLeading, endPoint: .bottomTrailing)
-                .opacity(background.image == nil ? 1 - background.desktopReveal : 1)
+            ZStack {
+                LinearGradient(colors: [Console.backgroundTop, Console.backgroundBottom],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+
+                RadialGradient(colors: [accent.opacity(scheme == .dark ? 0.09 : 0.055), .clear],
+                               center: .topLeading,
+                               startRadius: 20,
+                               endRadius: 720)
+
+                RadialGradient(colors: [DS.info.opacity(scheme == .dark ? 0.07 : 0.04), .clear],
+                               center: .bottomTrailing,
+                               startRadius: 20,
+                               endRadius: 680)
+            }
+            .opacity(background.image == nil ? 1 - background.desktopReveal : 1)
 
             if let image = background.image {
                 // 用透明视图定尺寸、图片只做 overlay：避免 `scaledToFill` 的图片把
@@ -145,7 +167,7 @@ struct ConsoleBackdrop: View {
 
 // MARK: - Card surface
 
-/// 全应用唯一的卡片表面：转发到 `dsSurface`（纯色 + 1px 描边，无玻璃无阴影）。
+/// 全应用兼容卡片表面：转发到原生 Liquid Glass `dsSurface`。
 private struct ConsoleCardSurfaceModifier: ViewModifier {
     var radius: CGFloat
     var tint: Color?
@@ -153,14 +175,8 @@ private struct ConsoleCardSurfaceModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .background {
-                if let tint {
-                    DS.rect(min(radius, DS.Radius.lg)).fill(tint.opacity(0.35))
-                }
-            }
-            .dsSurface(radius: min(radius, DS.Radius.lg),
-                       fill: DS.surface,
-                       stroke: tint == nil ? DS.line : DS.line2,
+            .dsSurface(radius: radius,
+                       tint: tint,
                        hoverable: interactive)
     }
 }
@@ -191,7 +207,7 @@ struct GlassCard<Content: View>: View {
 // MARK: - Buttons
 
 /// 兼容别名：转发到 `DSButtonStyle`。
-struct ConsolePillStyle: ButtonStyle {
+struct ConsolePillStyle: PrimitiveButtonStyle {
     enum Tone { case primary, secondary, soft, danger, success }
 
     var tone: Tone = .secondary
@@ -207,11 +223,14 @@ struct ConsolePillStyle: ButtonStyle {
     }
 
     func makeBody(configuration: Configuration) -> some View {
-        DSButtonStyle(kind: kind, size: compact ? .small : .regular).makeBody(configuration: configuration)
+        Button(role: configuration.role, action: configuration.trigger) {
+            configuration.label
+        }
+        .buttonStyle(DSButtonStyle(kind: kind, size: compact ? .small : .regular))
     }
 }
 
-extension ButtonStyle where Self == ConsolePillStyle {
+extension PrimitiveButtonStyle where Self == ConsolePillStyle {
     static var consolePrimary: ConsolePillStyle { ConsolePillStyle(tone: .primary) }
     static var consoleSecondary: ConsolePillStyle { ConsolePillStyle(tone: .secondary) }
     static var consoleSoft: ConsolePillStyle { ConsolePillStyle(tone: .soft) }
@@ -219,51 +238,128 @@ extension ButtonStyle where Self == ConsolePillStyle {
     static var consoleSuccess: ConsolePillStyle { ConsolePillStyle(tone: .success) }
 }
 
-/// 引擎主按钮：底色跟引擎强调色走（Splash 橙、oMLX 青、MTPLX 紫、MLX 蓝、Strata 绿）。
-struct EngineColorButton: ButtonStyle {
+/// 引擎主按钮：原生 Liquid Glass 着色胶囊，底色跟引擎强调色走。
+struct EngineColorButton: PrimitiveButtonStyle {
     var color: Color
-    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 12.5, weight: .medium))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 12)
-            .frame(height: DS.Layout.controlHeight)
-            .background(DS.rect(DS.Radius.md).fill(color))
-            .overlay(DS.rect(DS.Radius.md).strokeBorder(.white.opacity(0.18), lineWidth: 1))
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .opacity(isEnabled ? (configuration.isPressed ? 0.88 : 1) : 0.4)
-            .animation(DS.Motion.snappy, value: configuration.isPressed)
-            .contentShape(DS.rect(DS.Radius.md))
+        Button(role: configuration.role, action: configuration.trigger) {
+            configuration.label
+                .font(.system(size: 13, weight: .medium))
+                .lineLimit(1)
+        }
+        .buttonStyle(.glassProminent)
+        .buttonBorderShape(.capsule)
+        .tint(color)
     }
 }
 
-/// 分段控件：转发到 `DSSegmented`。
+/// 原生 Liquid Glass 胶囊分段控件：外层 `.glassEffect` 胶囊轨道 + 内层滑动高亮胶囊，与 `DSSearchField` 同高同圆角语言。
 struct NativeSegmented<Value: Hashable>: View {
     @Binding var selection: Value
     var options: [Value]
     var labels: [String]
     var width: CGFloat? = nil
+    var size: DSButtonStyle.Size = .regular
 
-    init(selection: Binding<Value>, options: [Value], labels: [String], width: CGFloat? = nil) {
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.isEnabled) private var isEnabled
+    @Namespace private var indicator
+    @State private var hoveredIndex: Int?
+
+    init(selection: Binding<Value>, options: [Value], labels: [String], width: CGFloat? = nil, size: DSButtonStyle.Size = .regular) {
         self._selection = selection
         self.options = options
         self.labels = labels
         self.width = width
+        self.size = size
     }
 
-    init(selection: Binding<Value>, options: [(value: Value, label: String)], width: CGFloat? = nil) {
+    init(selection: Binding<Value>, options: [(value: Value, label: String)], width: CGFloat? = nil, size: DSButtonStyle.Size = .regular) {
         self._selection = selection
         self.options = options.map(\.value)
         self.labels = options.map(\.label)
         self.width = width
+        self.size = size
+    }
+
+    private var height: CGFloat {
+        switch size {
+        case .small: return 24
+        case .regular: return DS.Layout.controlHeight
+        case .large: return 34
+        }
+    }
+
+    private var fontSize: CGFloat {
+        switch size {
+        case .small: return 11.5
+        case .regular: return 12.5
+        case .large: return 13
+        }
+    }
+
+    private var horizontalPadding: CGFloat {
+        switch size {
+        case .small: return 9
+        case .regular: return 12
+        case .large: return 14
+        }
     }
 
     var body: some View {
-        DSSegmented(selection: $selection,
-                    options: Array(zip(options, labels)).map { (value: $0.0, label: $0.1) })
-            .frame(width: width, alignment: .leading)
+        HStack(spacing: 2) {
+            ForEach(Array(zip(options, labels).enumerated()), id: \.offset) { index, pair in
+                let isSelected = selection == pair.0
+                let isHovered = hoveredIndex == index && !isSelected
+                Button {
+                    guard isEnabled, !isSelected else { return }
+                    withAnimation(DS.Motion.snappy) {
+                        selection = pair.0
+                    }
+                } label: {
+                    Text(L10n.t(pair.1))
+                        .font(.system(size: fontSize, weight: isSelected ? .semibold : .medium))
+                        .foregroundStyle(isSelected ? DS.text : (isHovered ? DS.text : DS.text2))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .padding(.horizontal, horizontalPadding)
+                        .frame(maxWidth: width != nil ? .infinity : nil, maxHeight: .infinity)
+                        .background {
+                            if isSelected {
+                                Capsule()
+                                    .fill(scheme == .dark
+                                          ? Color.white.opacity(0.18)
+                                          : Color.white.opacity(0.92))
+                                    .overlay(
+                                        Capsule().strokeBorder(
+                                            Color.white.opacity(scheme == .dark ? 0.14 : 0.72),
+                                            lineWidth: 0.75
+                                        )
+                                    )
+                                    .shadow(color: Color.black.opacity(scheme == .dark ? 0.24 : 0.08),
+                                            radius: 2.5, y: 1)
+                                    .matchedGeometryEffect(id: "activeSegment", in: indicator)
+                            } else if isHovered {
+                                Capsule()
+                                    .fill(Color.adaptiveOverlay(0.05))
+                            }
+                        }
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .onHover { inside in
+                    withAnimation(DS.Motion.snappy) {
+                        hoveredIndex = inside ? index : (hoveredIndex == index ? nil : hoveredIndex)
+                    }
+                }
+            }
+        }
+        .padding(2.5)
+        .frame(width: width, height: height)
+        .glassEffect(.regular, in: Capsule())
+        .opacity(isEnabled ? 1 : 0.45)
+        .animation(DS.Motion.snappy, value: selection)
     }
 }
 

@@ -18,7 +18,20 @@ final class BackgroundSurface {
     static let shared = BackgroundSurface()
 
     /// 窗口自己的底色。自定义背景图片时是它，透出桌面时让位给 `.clear`。
-    static let canvasColor = NSColor.adaptive(dark: 0x0B0D13, light: 0xF2F4F9)
+    static let canvasColor = NSColor.adaptive(dark: 0x0E0E12, light: 0xECEEF3)
+
+    /// 按给定外观把画布底色解析成固定颜色。
+    ///
+    /// 不能把动态颜色直接交给窗口：窗口为了投影恒定是浅色外观（见
+    /// `ThemeController.apply(to:)`），`window.backgroundColor` 会按窗口外观
+    /// 现场解析成浅色画布，深色皮肤下铺在内容后面，圆角和换肤过渡时就会闪白。
+    static func canvasColor(for appearance: NSAppearance) -> NSColor {
+        var resolved = canvasColor
+        appearance.performAsCurrentDrawingAppearance {
+            resolved = canvasColor.usingColorSpace(.sRGB) ?? canvasColor
+        }
+        return resolved
+    }
 
     private weak var window: NSWindow?
     private weak var effectView: NSVisualEffectView?
@@ -70,7 +83,9 @@ final class BackgroundSurface {
         if window.isOpaque == revealsDesktop {
             window.isOpaque = !revealsDesktop
         }
-        let targetColor: NSColor = revealsDesktop ? .clear : Self.canvasColor
+        let targetColor: NSColor = revealsDesktop
+            ? .clear
+            : Self.canvasColor(for: window.contentView?.effectiveAppearance ?? window.effectiveAppearance)
         if window.backgroundColor != targetColor {
             window.backgroundColor = targetColor
         }

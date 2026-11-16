@@ -37,17 +37,21 @@ struct SettingsPage: View {
                         rightColumn(wide: false)
                     }
                     .padding(.horizontal, Console.contentPadding)
-                    .padding(.top, Console.contentTopInset)
+                    .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
                 } else {
                     HStack(alignment: .top, spacing: 16) {
                         leftColumn(wide: true)
                         rightColumn(wide: true)
                     }
                     .padding(.horizontal, Console.contentPadding)
-                    .padding(.top, Console.contentTopInset)
+                    .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
                 }
             }
             .scrollIndicators(.never)
+            .scrollEdgeEffectStyle(.soft, for: .top)
+            .overlay(alignment: .top) {
+                WindowDragArea().frame(height: state.showsSidebar ? DS.Space.lg : DS.Layout.titlebarHeight)
+            }
         }
         // 设置页没有独立标题栏，滚动视口的下沿同样收在侧栏底边上。
         .padding(.bottom, Console.contentBottomInset)
@@ -221,10 +225,11 @@ struct SettingsPage: View {
             SettingsRow(title: "引擎端口", detail: "各引擎固定起始端口，互不抢占", trailingTop: true) {
                 EmptyView()
             }
+            DSDivider()
             ForEach(EngineCatalog.allIDs, id: \.self) { id in
                 HStack(spacing: 10) {
                     LetterTile(letter: String(id.displayName.prefix(1)).uppercased(),
-                               color: engineAccent(id), size: 26)
+                               color: engineAccent(id), size: 24)
                     Text(id.displayName)
                         .font(DS.Font.md)
                         .foregroundStyle(DS.text)
@@ -233,16 +238,17 @@ struct SettingsPage: View {
                     portField(id)
                 }
                 .padding(.horizontal, 16)
-                .frame(height: 44)
+                .frame(height: 42)
                 if id != EngineCatalog.allIDs.last {
-                    DSDivider().padding(.leading, 52)
+                    DSDivider().padding(.leading, 50)
                 }
             }
         }
     }
 
     private func portField(_ id: EngineID) -> some View {
-        HStack(spacing: 4) {
+        let focused = focusedPortEngine == id
+        return HStack(spacing: 4) {
             Text(":")
                 .font(DS.Font.mono(11))
                 .foregroundStyle(DS.text3)
@@ -266,10 +272,9 @@ struct SettingsPage: View {
             }
             .foregroundStyle(DS.text3)
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 9)
         .frame(height: 28)
-        .background(DS.rect(DS.Radius.md).fill(DS.bg))
-        .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line2, lineWidth: 1))
+        .dsInputSurface(radius: DS.Radius.sm, focused: focused)
     }
 
     private func stepPort(_ id: EngineID, by delta: Int) {
@@ -296,13 +301,9 @@ struct SettingsPage: View {
                 .frame(width: 54)
                 .onSubmit(onSubmit)
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 9)
         .frame(height: 28)
-        .background(DS.rect(DS.Radius.md).fill(DS.bg))
-        .overlay {
-            DS.rect(DS.Radius.md)
-                .strokeBorder(DS.line2, lineWidth: 1)
-        }
+        .dsInputSurface(radius: DS.Radius.sm)
     }
 
     private func applyCachePath() {
@@ -332,13 +333,9 @@ struct SettingsPage: View {
                         .textFieldStyle(.plain)
                         .font(DS.Font.mono(11))
                         .frame(minWidth: 120, idealWidth: 200, maxWidth: 220)
-                        .padding(.horizontal, 8)
+                        .padding(.horizontal, 9)
                         .frame(height: 28)
-                        .background(DS.rect(DS.Radius.md).fill(DS.bg))
-                        .overlay {
-                            DS.rect(DS.Radius.md)
-                                .strokeBorder(DS.line2, lineWidth: 1)
-                        }
+                        .dsInputSurface(radius: DS.Radius.sm)
                         .onSubmit { applyCachePath() }
                     Button("应用") { applyCachePath() }
                         .buttonStyle(.ds(.secondary, size: .small))
@@ -461,7 +458,7 @@ struct SettingsPage: View {
             }
             DSDivider()
             SettingsRow(title: "默认模型", detail: defaultModelDetail) {
-                DSMenu {
+                DSMenu(size: .small) {
                     DSMenuTriggerLabel(title: "更改",
                                        systemImage: "line.3.horizontal",
                                        trailingChevron: false,

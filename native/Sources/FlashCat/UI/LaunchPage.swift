@@ -20,7 +20,7 @@ struct LaunchPage: View {
 
     var body: some View {
         ZStack {
-            DS.canvas.ignoresSafeArea()
+            ConsoleBackdrop(accent: DS.accent)
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     brand
@@ -144,8 +144,8 @@ struct LaunchPage: View {
         .padding(14)
         .dsSurface(
             radius: DS.Radius.lg,
-            fill: DS.surface,
-            stroke: installed ? DS.ok.opacity(0.35) : DS.line
+            tint: installed ? DS.ok.opacity(0.10) : nil,
+            stroke: installed ? DS.ok.opacity(0.35) : nil
         )
     }
 
@@ -180,8 +180,8 @@ struct LaunchPage: View {
         .padding(14)
         .dsSurface(
             radius: DS.Radius.lg,
-            fill: DS.surface,
-            stroke: installed ? DS.ok.opacity(0.35) : DS.line
+            tint: installed ? DS.ok.opacity(0.10) : nil,
+            stroke: installed ? DS.ok.opacity(0.35) : nil
         )
     }
 

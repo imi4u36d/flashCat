@@ -45,7 +45,7 @@ struct CommandPalette: View {
                 footer
             }
             .frame(width: 560)
-            .dsFloating(radius: DS.Radius.lg)
+            .dsFloating(radius: DS.Radius.xl)
             .scaleEffect(presented ? 1 : 0.97)
             .opacity(presented ? 1 : 0)
             .padding(.top, 108)
@@ -245,7 +245,7 @@ struct CommandPalette: View {
     }
 
     private func toggleAppearance() {
-        let dark = state.theme.mode.resolvedIsDark
+        let dark = state.theme.isDark
         state.theme.set(dark ? .light : .dark)
     }
 

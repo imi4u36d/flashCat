@@ -2,60 +2,98 @@ import SwiftUI
 
 /// macOS 26 Liquid Glass 的统一入口。
 ///
-/// 所有需要原生玻璃材质的自定义控件都通过这里取材质，避免每个视图各写一份
-/// `glassEffect` 参数。玻璃只用于导航层、浮层与控件；正文卡片仍然靠层级排版，
-/// 不把内容本身也做成玻璃。
+/// 所有需要原生玻璃材质的控件与浮层都通过这里取材质，避免每个视图各写一份
+/// `glassEffect` 参数。玻璃只用于导航层、浮层、标题栏与交互控件；正文阅读区
+/// 保持清晰对比，不在内容文字上叠玻璃模糊。
 struct LiquidGlassSurface<S: Shape>: View {
     var shape: S
     var tint: Color? = nil
     var interactive: Bool = false
+    var clear: Bool = false
 
-    // Direction B：分层靠描边而不是玻璃。API 保持不变，
-    // 所有旧调用点自动变成「raised 底 + 1px 描边」的平面控件。
     var body: some View {
-        ZStack {
-            shape.fill(DS.raised)
-            if let tint { shape.fill(tint) }
+        shape
+            .fill(.clear)
+            .glassEffect(glass, in: shape)
+    }
+
+    private var glass: Glass {
+        var glass: Glass = clear ? .clear : .regular
+        if let tint {
+            glass = glass.tint(tint)
         }
-        .overlay(shape.stroke(DS.line2, lineWidth: 1))
+        if interactive {
+            glass = glass.interactive()
+        }
+        return glass
     }
 }
 
 extension View {
-    /// 在视图背后加一层原生 Liquid Glass。
+    /// 在视图上应用一层原生 Liquid Glass。
     func liquidGlassSurface<S: Shape>(_ shape: S,
                                       tint: Color? = nil,
-                                      interactive: Bool = false) -> some View {
-        background {
-            LiquidGlassSurface(shape: shape, tint: tint, interactive: interactive)
+                                      interactive: Bool = false,
+                                      clear: Bool = false) -> some View {
+        var glass: Glass = clear ? .clear : .regular
+        if let tint {
+            glass = glass.tint(tint)
         }
+        if interactive {
+            glass = glass.interactive()
+        }
+        return glassEffect(glass, in: shape)
     }
 }
 
-/// 悬浮玻璃面板：导航列这类「浮在画布上」的整块容器使用。
+/// 悬浮玻璃面板：侧栏这类「浮在画布上」的整块容器使用。
 ///
-/// 使用温润的半透明侧栏底色 + 极细单层描边与柔和阴影，避免强高光反光边。
+/// 底层使用 macOS 26 原生 `.glassEffect(.regular, in: shape)` 折射画布与桌面壁纸，
+/// 外围配 0.8pt 极细高光折射边与柔和环境投影，与右侧主视口拉开层次。
 struct LiquidGlassPanel<Content: View>: View {
-    var radius: CGFloat = 20
+    var radius: CGFloat = 22
     @ViewBuilder var content: () -> Content
+
+    @Environment(\.colorScheme) private var scheme
+
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: radius, style: .continuous)
+    }
+
+    private var rim: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color.white.opacity(scheme == .dark ? 0.24 : 0.72),
+                Color.white.opacity(scheme == .dark ? 0.04 : 0.14),
+                Color.white.opacity(scheme == .dark ? 0.14 : 0.42),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
 
     var body: some View {
         content()
-            .background(DS.bg)
+            .glassEffect(.regular, in: shape)
+            .shadow(color: .black.opacity(scheme == .dark ? 0.24 : 0.04),
+                    radius: 10, x: 0, y: 4)
     }
 }
 
-/// 弹层画布：DS 画布底色。
+/// 弹层画布：macOS 26 原生半透明毛玻璃材质 + 轻微画布底色，保持透气与文本可读性。
 struct SheetCanvas: View {
     var body: some View {
-        DS.canvas
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
+        ZStack {
+            Rectangle().fill(.regularMaterial)
+            DS.canvas.opacity(0.42)
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 }
 
 extension View {
-    /// 给弹层铺纯色画布，替代系统默认窗口底色。
+    /// 给弹层铺原生半透明材质画布。
     func sheetCanvas() -> some View {
         background { SheetCanvas() }
     }

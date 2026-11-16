@@ -23,7 +23,7 @@ enum ThinkingMode: Int, CaseIterable {
 }
 
 enum ReasoningEffort: Int, CaseIterable {
-    // 等级范围固定为 低 / 中 / 高 / 极高；rawValue 保留原值以兼容旧偏好。
+    // 等级范围固定为 Low / Medium / High / XHigh；rawValue 保留原值以兼容旧偏好。
     case low = 1
     case medium = 2
     case high = 3
@@ -31,10 +31,10 @@ enum ReasoningEffort: Int, CaseIterable {
 
     var label: String {
         switch self {
-        case .low: return "低"
-        case .medium: return "中"
-        case .high: return "高"
-        case .xhigh: return "极高"
+        case .low: return "Low"
+        case .medium: return "Medium"
+        case .high: return "High"
+        case .xhigh: return "XHigh"
         }
     }
 

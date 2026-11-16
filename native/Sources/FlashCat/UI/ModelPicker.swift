@@ -4,6 +4,7 @@ import FlashCatKit
 /// Games 风格的模型选择菜单：玻璃卡片 + 分组行 + 勾选，不用系统 NSMenu。
 struct ModelPickerButton<Label: View>: View {
     @ObservedObject var state: AppState
+    var kind: DSButtonStyle.Kind = .primary
     @ViewBuilder var label: () -> Label
 
     @State private var open = false
@@ -14,7 +15,7 @@ struct ModelPickerButton<Label: View>: View {
         } label: {
             label()
         }
-        .buttonStyle(.plainHit)
+        .buttonStyle(.ds(kind))
         .popover(isPresented: $open, arrowEdge: .bottom) {
             ModelPickerPopover(state: state) { open = false }
         }

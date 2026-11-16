@@ -410,7 +410,7 @@ struct HubSheet: View {
             }
         }
         .padding(12)
-        .dsSurface(radius: DS.Radius.md, fill: DS.accentSoft, stroke: DS.accent.opacity(0.25))
+        .dsSurface(radius: DS.Radius.md, tint: DS.accent.opacity(0.14), stroke: DS.accent.opacity(0.30))
     }
 
     private func targetEngine(for model: HubModel) -> EngineID {
@@ -452,15 +452,19 @@ struct HubSheet: View {
                     .font(DS.Font.mono(10.5))
                     .foregroundStyle(DS.text3)
                     .monospacedDigit()
-                DSIconButton(systemName: "chevron.left", help: "上一页") {
-                    runSearch(page: max(0, state.hubPage - 1))
-                }
-                .disabled(state.hubPage == 0 || state.hubLoading)
+                GlassEffectContainer(spacing: 6) {
+                    HStack(spacing: 6) {
+                        DSIconButton(systemName: "chevron.left", help: "上一页", style: .outlined) {
+                            runSearch(page: max(0, state.hubPage - 1))
+                        }
+                        .disabled(state.hubPage == 0 || state.hubLoading)
 
-                DSIconButton(systemName: "chevron.right", help: "下一页") {
-                    runSearch(page: state.hubPage + 1)
+                        DSIconButton(systemName: "chevron.right", help: "下一页", style: .outlined) {
+                            runSearch(page: state.hubPage + 1)
+                        }
+                        .disabled(!state.hubHasMore || state.hubLoading)
+                    }
                 }
-                .disabled(!state.hubHasMore || state.hubLoading)
             }
         }
         .padding(.horizontal, 18)
@@ -589,9 +593,9 @@ private struct HubModelRowCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .dsSurface(
                 radius: DS.Radius.lg,
-                fill: selected ? DS.accentSoft : DS.surface,
-                stroke: selected ? DS.accent.opacity(0.45) : DS.line,
-                hoverable: true
+                stroke: selected ? DS.accent.opacity(0.45) : nil,
+                hoverable: true,
+                active: selected
             )
             .contentShape(DS.rect(DS.Radius.lg))
         }

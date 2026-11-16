@@ -26,9 +26,9 @@ struct ChatModelThinkingControl: View {
         } label: {
             DSMenuTriggerLabel(title: modelName, badge: thinkingGlyph, size: .regular)
         }
-        .buttonStyle(DSPressStyle())
+        .buttonStyle(.ds(.secondary, size: .regular))
         .disabled(chat.generating)
-        .popover(isPresented: $open, arrowEdge: .bottom) {
+        .popover(isPresented: $open, arrowEdge: .top) {
             ChatModelThinkingPopover(state: state, chat: chat)
         }
     }
@@ -197,10 +197,10 @@ private struct ThinkingLevelSlider: View {
             let cell = proxy.size.width / CGFloat(count)
 
             ZStack(alignment: .leading) {
-                DS.rect(DS.Radius.md)
-                    .fill(DS.bg)
+                Capsule()
+                    .fill(Color.adaptiveOverlay(0.05))
 
-                DS.rect(DS.Radius.md)
+                Capsule()
                     .fill(tint)
                     .frame(width: cell * CGFloat(activeIndex + 1))
 
@@ -208,8 +208,8 @@ private struct ThinkingLevelSlider: View {
                     ForEach(Array(items.enumerated()), id: \.element) { index, item in
                         let active = item == effort
                         let filled = index <= activeIndex
-                        Text(L10n.t(item.label))
-                            .font(.system(size: 10.5, weight: active ? .semibold : (filled ? .medium : .regular)))
+                        Text(item.label)
+                            .font(.system(size: 11, weight: active ? .semibold : (filled ? .medium : .regular)))
                             .foregroundStyle(filled ? Color.white : DS.text2)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .contentShape(Rectangle())
@@ -220,10 +220,10 @@ private struct ThinkingLevelSlider: View {
                     }
                 }
             }
-            .clipShape(DS.rect(DS.Radius.md))
-            .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line, lineWidth: 1))
+            .clipShape(Capsule())
+            .overlay(Capsule().strokeBorder(DS.line, lineWidth: 1))
             .frame(height: trackHeight)
-            .contentShape(DS.rect(DS.Radius.md))
+            .contentShape(Capsule())
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in

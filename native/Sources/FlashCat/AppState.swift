@@ -11,8 +11,8 @@ enum Page: String, CaseIterable, Identifiable {
     case engines = "引擎"
     case logs = "日志"
     case settings = "设置"
-    /// 实验室是设置之后的一页，进去再用顶部分段切换图片和视频。
-    case lab = "实验室"
+    /// 实验是设置之后的一页，进去再用顶部分段切换图片和视频。
+    case lab = "实验"
 
     var id: String { rawValue }
 
@@ -139,6 +139,11 @@ final class AppState: ObservableObject {
     @Published var serverState: ServerState = .stopped
     @Published var stats: ServerStats?
     @Published var logs: [LogLine] = []
+    /// 日志页读它：合并视图覆盖所有引擎，别的引擎写新行时 `logs` 不会发布，
+    /// 靠这一拍让页面重新取一份。活动引擎的写入仍走 `logs`。
+    @Published private(set) var logsRevision = 0
+    /// 上一拍参与指纹的非活动引擎存储，见 `syncController`。
+    private var logFeedToken: [Int] = []
     @Published var catalog = ModelCatalog()
     @Published var selectedModel: String = ""
     /// Bumped when the startup engine/model preference changes. The value lives
@@ -1093,6 +1098,18 @@ final class AppState: ObservableObject {
             logs = store.snapshot(limit: 4000)
         } else if controller == nil, !logs.isEmpty {
             logs = []
+        }
+
+        // 「全部日志」还并着非活动引擎的尾巴：那些写入不经过 `logs`（它只盯
+        // 活动引擎），所以用其余存储的 latestId 组成指纹。只有真的长出新行才
+        // 发布，空闲时不白白重绘日志页。
+        let activeStore = controller?.logs
+        let logToken = (engines?.available ?? [])
+            .filter { $0.logs !== activeStore }
+            .map { $0.logs.latestId }
+        if logToken != logFeedToken {
+            logFeedToken = logToken
+            logsRevision &+= 1
         }
 
         let now = Date()
@@ -2449,19 +2466,47 @@ final class AppState: ObservableObject {
 
     func refreshLogs() { logs = controller?.logs.snapshot(limit: 4000) ?? [] }
 
-    func logs(for engine: EngineID) -> [LogLine] {
-        if engine == activeEngine { return logs }
-        return engines?.controller(engine)?.logs.snapshot(limit: 4000) ?? []
+    /// 日志页要的行。`.all` 把每台已装引擎的尾巴并成一份（最新在前），
+    /// 单引擎来源只取它自己的；行里带着来源，页面据此决定要不要显示来源列。
+    func logEntries(for source: LogFeedSource, limit: Int = 4000) -> [LogFeedEntry] {
+        switch source {
+        case .all:
+            let groups = (engines?.available ?? []).map { controller in
+                LogFeed.Group(key: controller.id.rawValue,
+                              tag: controller.id.rawValue,
+                              lines: controller.logs.snapshot(limit: limit))
+            }
+            return LogFeed.entries(from: groups, limit: limit)
+        case .engine(let id):
+            let lines = engines?.controller(id)?.logs.snapshot(limit: limit) ?? []
+            return LogFeed.entries(from: [LogFeed.Group(key: id.rawValue, tag: nil, lines: lines)],
+                                   limit: limit)
+        }
     }
 
     func clearLogs() {
         controller?.logs.clear()
         refreshLogs()
+        logsRevision &+= 1
     }
 
     func clearLogs(for engine: EngineID) {
         engines?.controller(engine)?.logs.clear()
         if engine == activeEngine { refreshLogs() }
+        // 清空不改变 `latestId`，指纹看不出这一拍，得自己通知日志页。
+        logsRevision &+= 1
+    }
+
+    /// 清空当前正在读的那一份：`全部日志` 要清掉每台引擎的内存尾巴。
+    func clearLogs(for source: LogFeedSource) {
+        switch source {
+        case .all:
+            for controller in engines?.available ?? [] { controller.logs.clear() }
+            refreshLogs()
+            logsRevision &+= 1
+        case .engine(let id):
+            clearLogs(for: id)
+        }
     }
 
     // MARK: chat

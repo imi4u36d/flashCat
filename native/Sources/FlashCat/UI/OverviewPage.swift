@@ -78,10 +78,14 @@ struct OverviewPage: View {
                     .frame(minHeight: 200)
             }
             .padding(.horizontal, Console.contentPadding)
-            .padding(.top, Console.contentTopInset)
+            .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
             .padding(.bottom, Console.contentBottomInset)
         }
         .scrollIndicators(.never)
+        .scrollEdgeEffectStyle(.soft, for: .top)
+        .overlay(alignment: .top) {
+            WindowDragArea().frame(height: state.showsSidebar ? DS.Space.lg : DS.Layout.titlebarHeight)
+        }
     }
 
     private func wideLayout(_ proxy: GeometryProxy) -> some View {
@@ -102,10 +106,14 @@ struct OverviewPage: View {
                     .frame(minHeight: 196)
             }
             .padding(.horizontal, Console.contentPadding)
-            .padding(.top, Console.contentTopInset)
+            .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
             .padding(.bottom, Console.contentBottomInset)
         }
         .scrollIndicators(.never)
+        .scrollEdgeEffectStyle(.soft, for: .top)
+        .overlay(alignment: .top) {
+            WindowDragArea().frame(height: state.showsSidebar ? DS.Space.lg : DS.Layout.titlebarHeight)
+        }
     }
 
     // MARK: Hero
@@ -158,28 +166,30 @@ struct OverviewPage: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            HStack(spacing: 8) {
-                Button {
-                    state.toggleService()
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: state.isRunning ? "stop.fill" : "play.fill")
-                            .font(.system(size: 9.5, weight: .semibold))
-                        Text(L10n.t(state.isRunning ? "停止引擎" : "启动引擎"))
+            GlassEffectContainer(spacing: 8) {
+                HStack(spacing: 8) {
+                    Button {
+                        state.toggleService()
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: state.isRunning ? "stop.fill" : "play.fill")
+                                .font(.system(size: 9.5, weight: .semibold))
+                            Text(L10n.t(state.isRunning ? "停止引擎" : "启动引擎"))
+                        }
                     }
-                }
-                .buttonStyle(.ds(state.isRunning ? .danger : .secondary))
-                .disabled(state.isSwitchingModel)
+                    .buttonStyle(.ds(state.isRunning ? .danger : .secondary))
+                    .disabled(state.isSwitchingModel)
 
-                ModelPickerButton(state: state) {
-                    DSMenuTriggerLabel(
-                        title: "切换模型",
-                        systemImage: "square.stack.3d.up.fill",
-                        kind: .primary,
-                        size: .regular
-                    )
+                    ModelPickerButton(state: state) {
+                        DSMenuTriggerLabel(
+                            title: "切换模型",
+                            systemImage: "square.stack.3d.up.fill",
+                            kind: .primary,
+                            size: .regular
+                        )
+                    }
+                    .disabled(state.isSwitchingModel)
                 }
-                .disabled(state.isSwitchingModel)
             }
             .fixedSize()
         }
@@ -193,19 +203,21 @@ struct OverviewPage: View {
     @ViewBuilder
     private func metricsRow(compact: Bool) -> some View {
         if compact {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 10, alignment: .top)],
-                      alignment: .leading,
-                      spacing: 10) {
-                averageMetricCell
-                    .dsSurface(radius: DS.Radius.md)
-                contextMetricCell
-                    .dsSurface(radius: DS.Radius.md)
-                ttftMetricCell
-                    .dsSurface(radius: DS.Radius.md)
-                prefillMetricCell
-                    .dsSurface(radius: DS.Radius.md)
-                cacheMetricCell
-                    .dsSurface(radius: DS.Radius.md)
+            GlassEffectContainer(spacing: 10) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 10, alignment: .top)],
+                          alignment: .leading,
+                          spacing: 10) {
+                    averageMetricCell
+                        .dsSurface(radius: DS.Radius.md)
+                    contextMetricCell
+                        .dsSurface(radius: DS.Radius.md)
+                    ttftMetricCell
+                        .dsSurface(radius: DS.Radius.md)
+                    prefillMetricCell
+                        .dsSurface(radius: DS.Radius.md)
+                    cacheMetricCell
+                        .dsSurface(radius: DS.Radius.md)
+                }
             }
         } else {
             HStack(alignment: .top, spacing: 0) {
@@ -330,12 +342,12 @@ struct OverviewPage: View {
     private var decodeChart: some View {
         DSPanel(title: "总解码 · 最近 60 秒") {
             HStack(spacing: 8) {
-                HStack(alignment: .firstTextBaseline, spacing: 3) {
-                    Text(rateText(chartRate))
-                        .font(DS.Font.mono(13, weight: .semibold))
-                        .foregroundStyle(DS.text)
-                        .contentTransition(.numericText())
-                    if chartRate > 0 {
+                if chartRate > 0 {
+                    HStack(alignment: .firstTextBaseline, spacing: 3) {
+                        Text(rateText(chartRate))
+                            .font(DS.Font.mono(13, weight: .semibold))
+                            .foregroundStyle(DS.text)
+                            .contentTransition(.numericText())
                         Text("tok/s")
                             .font(DS.Font.mono(10))
                             .foregroundStyle(DS.text3)

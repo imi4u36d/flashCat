@@ -36,7 +36,7 @@ enum Native {
     static let raised = DS.raised
 
     /// The colour AppKit paints behind the hidden title bar.
-    static let windowBackground = NSColor.adaptive(dark: 0x101013, light: 0xFAFAFA)
+    static let windowBackground = NSColor.adaptive(dark: 0x0E0E12, light: 0xECEEF3)
 
     static let label = DS.text
     static let secondary = DS.text2
@@ -146,21 +146,17 @@ struct ArcadeBackdrop: View {
 
 // MARK: - Surface
 
-/// 面板表面：纯色填充 + 1px 毛发描边。以「描边分层」替代旧版的
-/// 玻璃渐变 + 投影分层；卡内不再用投影，投影只保留在窗口级浮层。
+/// 面板表面：兼容转发到原生 Liquid Glass 表面。
 struct GlassSurface: View {
     var radius: CGFloat = DS.Radius.lg
     var tint: Color = .clear
     var elevated: Bool = true
 
     var body: some View {
-        let r = min(radius, DS.Radius.lg)
-        DS.rect(r)
-            .fill(tint == .clear ? (elevated ? DS.surface : DS.bg) : tint.opacity(0.10))
-            .overlay(
-                DS.rect(r)
-                    .strokeBorder(tint == .clear ? DS.line : tint.opacity(0.25), lineWidth: 1)
-            )
+        let shape = DS.rect(radius)
+        LiquidGlassSurface(shape: shape,
+                           tint: tint == .clear ? nil : tint.opacity(0.16),
+                           interactive: false)
     }
 }
 
@@ -204,10 +200,11 @@ struct HoverSurface<Content: View>: View {
         content()
             .padding(padding ?? 0)
             .dsSurface(
-                radius: min(radius, DS.Radius.lg),
-                fill: active ? accent.opacity(0.10) : DS.surface,
-                stroke: active ? accent.opacity(0.45) : DS.line,
-                hoverable: true
+                radius: radius,
+                tint: active ? accent.opacity(0.14) : nil,
+                stroke: active ? accent.opacity(0.45) : nil,
+                hoverable: true,
+                active: active
             )
     }
 }
@@ -243,7 +240,7 @@ extension ButtonStyle where Self == PlainHitButtonStyle {
 /// 胶囊按钮。`light` 是墨色主胶囊（唯一主动作样式）；`glass` 是描边次级；
 /// `accent` 是强调色胶囊；`quietDanger` 是弱化的红字危险操作。
 /// 交互规则：hover 不缩放不上浮，只轻提亮 —— 动效收敛到 120ms ease-out。
-struct ArcadePillStyle: ButtonStyle {
+struct ArcadePillStyle: PrimitiveButtonStyle {
     enum Tone { case light, glass, accent, danger, quietDanger }
 
     var tone: Tone = .glass
@@ -258,12 +255,14 @@ struct ArcadePillStyle: ButtonStyle {
     }
 
     func makeBody(configuration: Configuration) -> some View {
-        DSButtonStyle(kind: mappedKind, size: compact ? .small : .regular)
-            .makeBody(configuration: configuration)
+        Button(role: configuration.role, action: configuration.trigger) {
+            configuration.label
+        }
+        .buttonStyle(DSButtonStyle(kind: mappedKind, size: compact ? .small : .regular))
     }
 }
 
-extension ButtonStyle where Self == ArcadePillStyle {
+extension PrimitiveButtonStyle where Self == ArcadePillStyle {
     static var arcadePill: ArcadePillStyle { ArcadePillStyle(tone: .light) }
     static var arcadeGlass: ArcadePillStyle { ArcadePillStyle(tone: .glass) }
     static var arcadeAccent: ArcadePillStyle { ArcadePillStyle(tone: .accent) }
@@ -573,8 +572,8 @@ struct Card<Content: View>: View {
         .padding(padded ? 16 : 0)
         .dsSurface(
             radius: DS.Radius.lg,
-            fill: tint == .clear ? DS.surface : tint.opacity(0.10),
-            stroke: tint == .clear ? DS.line : tint.opacity(0.25)
+            tint: tint == .clear ? nil : tint.opacity(0.14),
+            stroke: tint == .clear ? nil : tint.opacity(0.30)
         )
     }
 }
@@ -976,31 +975,24 @@ struct IconAction: View {
     var active: Bool = false
     let action: () -> Void
 
-    @Environment(\.isEnabled) private var isEnabled
-    @State private var hovering = false
-
+    @ViewBuilder
     var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(active ? Color.white : (hovering ? DS.text : DS.text2))
-                .frame(width: 28, height: 28)
-                .background(
-                    DS.rect(DS.Radius.sm)
-                        .fill(active ? DS.accent : (hovering && isEnabled ? DS.hover : DS.raised))
-                )
-                .overlay(
-                    DS.rect(DS.Radius.sm)
-                        .strokeBorder(active ? DS.accent : DS.line, lineWidth: 1)
-                )
-                .contentShape(DS.rect(DS.Radius.sm))
+        let glyph = Image(systemName: systemName)
+            .font(.system(size: 12, weight: .medium))
+            .frame(width: 18, height: 18)
+
+        if active {
+            Button(action: action) { glyph }
+                .buttonStyle(.glassProminent)
+                .buttonBorderShape(.circle)
+                .tint(DS.accent)
+                .help(help)
+        } else {
+            Button(action: action) { glyph }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .help(help)
         }
-        .buttonStyle(DSPressStyle())
-        .onHover { over in
-            withAnimation(DS.Motion.snappy) { hovering = over }
-        }
-        .opacity(isEnabled ? 1 : 0.38)
-        .help(help)
     }
 }
 
@@ -1012,17 +1004,8 @@ struct IconMenuLabel: View {
     var body: some View {
         Image(systemName: systemName)
             .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(active ? Color.white : DS.text2)
-            .frame(width: 28, height: 28)
-            .background(
-                DS.rect(DS.Radius.sm)
-                    .fill(active ? DS.accent : DS.raised)
-            )
-            .overlay(
-                DS.rect(DS.Radius.sm)
-                    .strokeBorder(active ? DS.accent : DS.line, lineWidth: 1)
-            )
-            .contentShape(DS.rect(DS.Radius.sm))
+            .foregroundStyle(active ? .white : DS.text)
+            .frame(width: 18, height: 18)
     }
 }
 
@@ -1037,8 +1020,9 @@ struct EmptyHint: View {
                 .font(.system(size: 20, weight: .regular))
                 .foregroundStyle(DS.text3)
                 .frame(width: 48, height: 48)
-                .background(DS.rect(DS.Radius.lg).fill(DS.raised))
-                .overlay(DS.rect(DS.Radius.lg).strokeBorder(DS.line, lineWidth: 1))
+                .background {
+                    LiquidGlassSurface(shape: DS.rect(DS.Radius.lg))
+                }
             Text(L10n.t(title))
                 .font(DS.Font.md.weight(.medium))
                 .foregroundStyle(DS.text2)
@@ -1068,9 +1052,10 @@ struct ToastView: View {
                 .font(DS.Font.sm.weight(.medium))
                 .foregroundStyle(DS.text)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .dsFloating(radius: DS.Radius.md)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
+        .glassEffect(.regular, in: Capsule())
+        .shadow(color: DS.shadow, radius: 16, y: 6)
         .padding(.bottom, 20)
     }
 }

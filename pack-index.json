@@ -107,6 +107,14 @@
     ],
     "strata": [
       {
+        "version": "0.2.14",
+        "url": "strata-0.2.14-arm64-macos15.0.tar.gz",
+        "sha256": "7b869c1695fe830235672d042332099a533eecb7c20e7543fe89ca079640c1c4",
+        "bytes": 55353006,
+        "minMacOS": "15.0",
+        "notes": ""
+      },
+      {
         "version": "0.2.11",
         "url": "strata-0.2.11-arm64-macos15.0.tar.gz",
         "sha256": "a31862af38087f29cafc25d212e400b90168c21ac477dd3eb2252a8210b5eb39",

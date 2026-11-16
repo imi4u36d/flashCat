@@ -184,8 +184,21 @@ struct MenuBarPanelContainer: View {
     var onCardHeightChange: (CGFloat) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var scheme
 
-    private var cardShape: RoundedRectangle { DS.rect(14) }
+    private var cardShape: RoundedRectangle { DS.rect(DS.Radius.xl) }
+
+    private var rim: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color.white.opacity(scheme == .dark ? 0.24 : 0.72),
+                Color.white.opacity(scheme == .dark ? 0.04 : 0.14),
+                Color.white.opacity(scheme == .dark ? 0.14 : 0.42),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
 
     var body: some View {
         MenuBarPanel(
@@ -194,13 +207,8 @@ struct MenuBarPanelContainer: View {
             onDismiss: onDismiss
         )
         .frame(width: cardWidth)
-        .background(cardShape.fill(DS.canvas))
-        .overlay(
-            cardShape
-                .strokeBorder(DS.line2, lineWidth: 1)
-        )
-        .clipShape(cardShape)
-        .shadow(color: DS.shadow, radius: 18, x: 0, y: 10)
+        .glassEffect(.regular, in: cardShape)
+        .shadow(color: DS.shadow, radius: 22, x: 0, y: 12)
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.height
         } action: { _, newHeight in
@@ -384,7 +392,11 @@ struct MenuBarPanel: View {
             endpointRow
         }
         .padding(12)
-        .dsSurface(radius: DS.Radius.lg)
+        .background(DS.rect(DS.Radius.lg).fill(Color.adaptiveOverlay(0.05)))
+        .overlay(
+            DS.rect(DS.Radius.lg)
+                .strokeBorder(DS.line, lineWidth: 1)
+        )
     }
 
     private var modelTitle: String {
@@ -546,40 +558,42 @@ struct MenuBarPanel: View {
     // MARK: 操作
 
     private var actions: some View {
-        HStack(spacing: 8) {
-            if state.isSwitchingModel {
-                // 切换中留一条退路：引擎继续在后台加载，界面不用只能死等。
-                Button {
-                    state.abortModelSwitch()
-                } label: {
-                    Label(L10n.t("取消等待"), systemImage: "xmark.circle")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.ds(.secondary, size: .regular))
-            } else if running {
-                Button {
-                    state.stopService()
-                } label: {
-                    Label(L10n.t("停止服务"), systemImage: "stop.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.ds(.danger, size: .regular))
+        GlassEffectContainer(spacing: 8) {
+            HStack(spacing: 8) {
+                if state.isSwitchingModel {
+                    // 切换中留一条退路：引擎继续在后台加载，界面不用只能死等。
+                    Button {
+                        state.abortModelSwitch()
+                    } label: {
+                        Label(L10n.t("取消等待"), systemImage: "xmark.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.ds(.secondary, size: .regular))
+                } else if running {
+                    Button {
+                        state.stopService()
+                    } label: {
+                        Label(L10n.t("停止服务"), systemImage: "stop.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.ds(.danger, size: .regular))
 
-                Button {
-                    state.restartService()
-                } label: {
-                    Label(L10n.t("重启服务"), systemImage: "arrow.clockwise")
+                    Button {
+                        state.restartService()
+                    } label: {
+                        Label(L10n.t("重启服务"), systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.ds(.secondary, size: .regular))
+                    .fixedSize()
+                } else {
+                    Button {
+                        state.startService()
+                    } label: {
+                        Label(L10n.t("启动服务"), systemImage: "play.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.ds(.primary, size: .regular))
                 }
-                .buttonStyle(.ds(.secondary, size: .regular))
-                .fixedSize()
-            } else {
-                Button {
-                    state.startService()
-                } label: {
-                    Label(L10n.t("启动服务"), systemImage: "play.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.ds(.primary, size: .regular))
             }
         }
     }
@@ -595,13 +609,17 @@ struct MenuBarPanel: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
-            footerButton("主窗口", symbol: "macwindow") { onOpenMainWindow(nil) }
-                .help("打开主窗口")
-            footerButton("退出", symbol: "power") {
-                onDismiss()
-                NSApp.terminate(nil)
+            GlassEffectContainer(spacing: 8) {
+                HStack(spacing: 8) {
+                    footerButton("主窗口", symbol: "macwindow") { onOpenMainWindow(nil) }
+                        .help("打开主窗口")
+                    footerButton("退出", symbol: "power") {
+                        onDismiss()
+                        NSApp.terminate(nil)
+                    }
+                    .help(L10n.t("退出 flashCat"))
+                }
             }
-            .help(L10n.t("退出 flashCat"))
         }
     }
 

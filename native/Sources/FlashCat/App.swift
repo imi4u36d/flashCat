@@ -60,7 +60,7 @@ struct FlashCatApp: App {
                 }
                 .keyboardShortcut("s", modifiers: [.command, .control])
                 Button("切换浅色 / 深色") {
-                    state.theme.set(state.theme.mode.resolvedIsDark ? .light : .dark)
+                    state.theme.set(state.theme.isDark ? .light : .dark)
                 }
             }
             CommandMenu("页面") {
@@ -71,7 +71,7 @@ struct FlashCatApp: App {
                 Divider()
                 Button("对话") { state.section = .chat }
                     .keyboardShortcut("1", modifiers: .command)
-                Button("实验室") { state.section = .lab }
+                Button("实验") { state.section = .lab }
                     .keyboardShortcut("2", modifiers: .command)
                 Button("概览") { state.section = .overview }
                     .keyboardShortcut("3", modifiers: .command)
@@ -151,7 +151,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func configure(_ target: NSWindow) {
         // 只处理主窗口。状态栏项的按钮也活在一个内部窗口里（层级更高的 panel），
         // 给它套主窗口的外观和标题栏设置，会让系统给菜单栏图标补一块浅色底板。
-        guard target.canBecomeMain, target is NSPanel == false else { return }
+        guard target.canBecomeMain, target is NSPanel == false else {
+            // sheet / 提示框是挂在主窗口上的独立窗口：皮肤铺在主窗口的
+            // contentView 上，它们既继承不到，也扫不到换肤那一路。窗口一露头
+            // （成为 key）就把当前皮肤套上去，免得深色皮肤下弹出浅色表单。
+            if target.sheetParent != nil {
+                AppState.shared.theme.apply(to: target)
+            }
+            return
+        }
         target.title = "flashCat"
         target.titleVisibility = .hidden
         target.titlebarAppearsTransparent = true
@@ -215,10 +223,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.setFrame(NSRect(origin: origin, size: size), display: true)
     }
 
-    /// 红绿灯往右下挪 6pt，让自绘标题栏可以稍微离开窗口上沿，
-    /// 同时保持和红绿灯同一水平线。
+    /// 红绿灯往右下偏移，与自绘标题栏控件及灵动岛的 `25pt` 水平中线精确对齐。
     private func offsetTrafficLights(in window: NSWindow) {
-        guard window.canBecomeMain, window is NSPanel == false else { return }
+        guard window.canBecomeMain,
+              window is NSPanel == false,
+              !window.styleMask.contains(.fullScreen) else { return }
+        let titlebarCenterFromTop: CGFloat = 25
         let types: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
         for (index, type) in types.enumerated() {
             guard let button = window.standardWindowButton(type) else { continue }
@@ -226,8 +236,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 trafficLightOrigins[index] = button.frame.origin
             }
             guard let origin = trafficLightOrigins[index] else { continue }
-            let dy: CGFloat = button.superview?.isFlipped == true ? 6 : -6
-            button.setFrameOrigin(NSPoint(x: origin.x + 6, y: origin.y + dy))
+            let targetY: CGFloat
+            if let superview = button.superview,
+               let content = window.contentView,
+               content.bounds.height > 0 {
+                let yInContent = content.isFlipped
+                    ? titlebarCenterFromTop
+                    : content.bounds.maxY - titlebarCenterFromTop
+                let centerInSuperview = superview.convert(NSPoint(x: 0, y: yInContent), from: content).y
+                targetY = centerInSuperview - button.frame.height / 2
+            } else {
+                let dy: CGFloat = button.superview?.isFlipped == true ? 9 : -9
+                targetY = origin.y + dy
+            }
+            button.setFrameOrigin(NSPoint(x: origin.x + 6, y: targetY))
         }
     }
 

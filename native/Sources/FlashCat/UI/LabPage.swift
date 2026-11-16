@@ -31,13 +31,19 @@ struct LabPage: View {
     @State private var images: [GalleryImage] = []
     @State private var videos: [GalleryVideo] = []
     @State private var detail: GalleryDetailItem?
+    @State private var gridColumns = 0
+
+    private static let gridSpacing: CGFloat = 16
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-                .padding(.horizontal, Console.contentPadding)
-                .padding(.top, Console.contentTopInset)
-                .padding(.bottom, 14)
+                .frame(height: DS.Layout.titlebarHeight)
+                .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
+                .padding(.trailing, Console.contentPadding)
+                .padding(.top, Console.pageTopPadding)
+                .padding(.bottom, 12)
+                .background(WindowDragArea())
 
             if itemCount == 0 {
                 emptyState
@@ -46,19 +52,23 @@ struct LabPage: View {
                     .padding(.bottom, Console.contentBottomInset)
             } else {
                 ScrollView {
-                    LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: tab == .images ? 220 : 300),
-                                           spacing: 16, alignment: .top)],
-                        spacing: 16
-                    ) {
+                    DSAnimatedGrid(columns: gridColumns,
+                                   minWidth: tab.kind.minCellWidth,
+                                   spacing: Self.gridSpacing,
+                                   maxColumns: tab.kind.maxColumns) {
                         gridItems
                     }
                     .padding(.horizontal, Console.contentPadding)
                     .padding(.bottom, Console.contentBottomInset)
                 }
                 .scrollIndicators(.never)
+                .scrollEdgeEffectStyle(.soft, for: .top)
             }
         }
+        .dsTrackColumns($gridColumns,
+                        minWidth: tab.kind.minCellWidth,
+                        spacing: Self.gridSpacing,
+                        maxColumns: tab.kind.maxColumns)
         .onAppear(perform: reload)
         .onChange(of: tab) { _, _ in
             reload()
@@ -69,39 +79,27 @@ struct LabPage: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
-                IconTile(symbol: "flask", color: DS.accent, size: 30)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("实验室")
-                        .font(DS.Font.title)
-                        .foregroundStyle(DS.text)
-                    Text("对话中生成的图片和视频；只收模型产出的结果")
-                        .font(DS.Font.xs)
-                        .foregroundStyle(DS.text3)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                DSIconButton(systemName: "arrow.clockwise", help: "刷新") { reload() }
+        HStack(spacing: 12) {
+            DSSegmented(selection: $tab,
+                        options: [(.images, "图片 \(images.count)"),
+                                  (.videos, "视频 \(videos.count)")])
+            if itemCount > 0 {
+                Text("共 \(itemCount) \(tab.unit)")
+                    .font(DS.Font.xs)
+                    .foregroundStyle(DS.text3)
+                    .monospacedDigit()
+            }
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 8) {
+                DSIconButton(systemName: "arrow.clockwise", help: "刷新", style: .outlined) { reload() }
                 Button("打开文件夹") {
                     let folder = tab == .images ? ImageStore.directory : VideoStore.directory
                     Paths.ensureDirectory(folder)
                     NSWorkspace.shared.open(URL(fileURLWithPath: folder))
                 }
                 .buttonStyle(.ds(.secondary, size: .regular))
-            }
-
-            HStack(spacing: 12) {
-                DSSegmented(selection: $tab,
-                            options: [(.images, "图片 \(images.count)"),
-                                      (.videos, "视频 \(videos.count)")])
-                if itemCount > 0 {
-                    Text("共 \(itemCount) \(tab.unit)")
-                        .font(DS.Font.xs)
-                        .foregroundStyle(DS.text3)
-                        .monospacedDigit()
-                }
-                Spacer(minLength: 0)
             }
         }
     }
@@ -267,7 +265,7 @@ private struct LabEmptyState: View {
                 .font(.system(size: 20, weight: .regular))
                 .foregroundStyle(DS.text3)
                 .frame(width: 48, height: 48)
-                .dsSurface(radius: DS.Radius.lg, fill: DS.raised, stroke: DS.line)
+                .dsSurface(radius: DS.Radius.lg)
             Text(title)
                 .font(DS.Font.md.weight(.medium))
                 .foregroundStyle(DS.text2)
@@ -433,9 +431,8 @@ private struct GalleryVideoTile: View {
                         Image(systemName: "play.fill")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.white)
-                            .frame(width: 34, height: 34)
-                            .background(.black.opacity(0.45), in: Circle())
-                            .overlay(Circle().strokeBorder(.white.opacity(0.25), lineWidth: 1))
+                            .frame(width: 36, height: 36)
+                            .glassEffect(.regular.interactive(), in: Circle())
                     }
                     .task(id: video.path) {
                         cover = await VideoThumbnailStore.thumbnail(atPath: video.path, maxPixel: maxPixel)

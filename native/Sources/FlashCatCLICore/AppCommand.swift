@@ -45,9 +45,7 @@ public enum AppCommand {
 
     private static func open(_ context: CLIContext) async throws -> Int32 {
         if let runtime = ControlRuntime.load(), runtime.processIsAlive,
-           let base = URL(string: "http://127.0.0.1:\(runtime.port)"),
-           let _: ControlAppInfo = try? await ControlClient(baseURL: base, token: runtime.token)
-               .get("/v1/health", timeout: 3) {
+           await probeHealth(runtime, timeout: 3) == nil {
             if !context.output.json, !context.output.quiet {
                 context.output.success("flashCat 已经在运行")
             }
@@ -63,18 +61,23 @@ public enum AppCommand {
         // not.
         if isRunning(app) {
             let deadline = Date().addingTimeInterval(5)
+            // 启动期的健康探测失败是常态（端口还没绑上），所以要继续轮询；但
+            // 「应用在跑、控制接口答错」这类错误（令牌过期、超时）要留住，最后
+            // 报它而不是「没有就绪」——后者会让人去反复检查一个没问题的开关。
+            var lastError: CLIError?
             while Date() < deadline {
                 if let runtime = ControlRuntime.load(), runtime.processIsAlive,
-                   portOpen(Int(runtime.port)),
-                   let base = URL(string: "http://127.0.0.1:\(runtime.port)"),
-                   let _: ControlAppInfo = try? await ControlClient(baseURL: base, token: runtime.token)
-                       .get("/v1/health", timeout: 2) {
-                    if context.output.json {
-                        context.output.json(ControlSimpleResult(message: "已经在运行"))
-                    } else if !context.output.quiet {
-                        context.output.success("flashCat 已经在运行")
+                   portOpen(Int(runtime.port)) {
+                    if let error = await probeHealth(runtime, timeout: 2) {
+                        lastError = error
+                    } else {
+                        if context.output.json {
+                            context.output.json(ControlSimpleResult(message: "已经在运行"))
+                        } else if !context.output.quiet {
+                            context.output.success("flashCat 已经在运行")
+                        }
+                        return CLIExit.success.rawValue
                     }
-                    return CLIExit.success.rawValue
                 }
                 try? await Task.sleep(nanoseconds: 250_000_000)
             }
@@ -85,6 +88,9 @@ public enum AppCommand {
                     context.output.success("flashCat 已经在运行（控制接口未开启）")
                 }
                 return CLIExit.success.rawValue
+            }
+            if let lastError, !ControlFallback.shouldFallBack(lastError) {
+                throw lastError
             }
             throw CLIError("flashCat 进程在运行，但控制接口没有就绪", exit: .timeout,
                            hint: "检查「设置 → 命令行接口」，或退出后重开")
@@ -97,18 +103,20 @@ public enum AppCommand {
         let timeout = Double(context.invocation.option("timeout") ?? "") ?? 30
         let deadline = Date().addingTimeInterval(timeout)
         let started = Date()
+        var lastError: CLIError?
         while Date() < deadline {
             if let runtime = ControlRuntime.load(), runtime.processIsAlive,
-               portOpen(Int(runtime.port)),
-               let base = URL(string: "http://127.0.0.1:\(runtime.port)"),
-               let _: ControlAppInfo = try? await ControlClient(baseURL: base, token: runtime.token)
-                   .get("/v1/health", timeout: 2) {
-                if context.output.json {
-                    context.output.json(ControlSimpleResult(message: "已启动"))
-                } else if !context.output.quiet {
-                    context.output.success("flashCat 已启动 · 控制接口 127.0.0.1:\(runtime.port)")
+               portOpen(Int(runtime.port)) {
+                if let error = await probeHealth(runtime, timeout: 2) {
+                    lastError = error
+                } else {
+                    if context.output.json {
+                        context.output.json(ControlSimpleResult(message: "已启动"))
+                    } else if !context.output.quiet {
+                        context.output.success("flashCat 已启动 · 控制接口 127.0.0.1:\(runtime.port)")
+                    }
+                    return CLIExit.success.rawValue
                 }
-                return CLIExit.success.rawValue
             }
             // The process can be up before the control server has bound its
             // port. Only report "control disabled" after a short grace period,
@@ -125,6 +133,11 @@ public enum AppCommand {
             }
             try? await Task.sleep(nanoseconds: 300_000_000)
         }
+        // 应用已经在跑、只是控制接口答错时，说「没有在 N 秒内启动」是错的：
+        // 用户会去重启一个根本没退出的应用。先报控制通道的真实原因。
+        if let lastError, !ControlFallback.shouldFallBack(lastError) {
+            throw lastError
+        }
         throw CLIError("flashCat 没有在 \(Int(timeout)) 秒内启动", exit: .timeout,
                        hint: "看 ~/Library/Logs/flashCat/ 或系统的控制台日志")
     }
@@ -133,17 +146,31 @@ public enum AppCommand {
         let app = AppLocator.resolve(environment: context.environment)
         let runtime = ControlRuntime.load()
         var requested = false
+        var controlError: CLIError?
         let fallbackPid: Int32? = runningPid(app: app, runtime: runtime)
 
         if let runtime, runtime.processIsAlive, portOpen(Int(runtime.port)),
            let base = URL(string: "http://127.0.0.1:\(runtime.port)") {
             let client = ControlClient(baseURL: base, token: runtime.token)
-            if (try? await client.postData("/v1/app/quit", body: Data("{}".utf8), timeout: 10)) != nil {
+            do {
+                _ = try await client.postData("/v1/app/quit", body: Data("{}".utf8), timeout: 10)
                 requested = true
+            } catch let error as CLIError {
+                // 控制接口没答应（令牌过期、504、超时）不能当成「应用没运行」：
+                // 记住原因，下面还有 NSRunningApplication / AppleScript 这条
+                // 不带令牌的通道；两条都不行时把真实原因报出来。
+                controlError = error
+            } catch {
+                controlError = CLIError(error.localizedDescription)
             }
         }
         if !requested {
             guard app.map(isRunning) ?? false else {
+                // 控制接口刚报过令牌/超时类错误，说明应用大概率在跑；这时报
+                // 「没有在运行」会自相矛盾，把控制通道的原因抛出来。
+                if let controlError, !ControlFallback.shouldFallBack(controlError) {
+                    throw controlError
+                }
                 if !context.output.json, !context.output.quiet {
                     context.output.success("flashCat 没有在运行")
                 }
@@ -160,6 +187,9 @@ public enum AppCommand {
                 requested = status == 0
             }
             guard requested else {
+                if let controlError, !ControlFallback.shouldFallBack(controlError) {
+                    throw controlError
+                }
                 throw CLIError("无法请求 flashCat 退出", exit: .failure,
                                hint: "从菜单栏或应用菜单退出；控制接口关闭时命令行没有别的通道")
             }
@@ -199,6 +229,24 @@ public enum AppCommand {
         }
         throw CLIError("flashCat 没有在超时内退出", exit: .timeout,
                        hint: "引擎可能在等待卸载权重；再试一次或从菜单栏退出")
+    }
+
+    /// 健康探测：nil 表示控制接口已就绪，否则返回失败原因。启动流程里失败是常态
+    /// （进程起来了但端口还没绑），所以调用方继续轮询，只把原因记下来事后判断是
+    /// 「还没好」还是「应用在跑却答错」。
+    private static func probeHealth(_ runtime: ControlRuntime, timeout: TimeInterval) async -> CLIError? {
+        guard let base = URL(string: "http://127.0.0.1:\(runtime.port)") else {
+            return CLIError("控制接口地址无效：\(runtime.port)", exit: .usage)
+        }
+        do {
+            let _: ControlAppInfo = try await ControlClient(baseURL: base, token: runtime.token)
+                .get("/v1/health", timeout: timeout)
+            return nil
+        } catch let error as CLIError {
+            return error
+        } catch {
+            return CLIError("控制接口请求失败：\(error.localizedDescription)")
+        }
     }
 
     static func runningPid(app: URL?, runtime: ControlRuntime?) -> Int32? {

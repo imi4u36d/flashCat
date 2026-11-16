@@ -15,10 +15,14 @@ public enum GatewayCommand {
 
     private static func status(_ context: CLIContext) async throws -> Int32 {
         let gateway: ControlGatewayState
-        if let location = try? context.control,
-           let status: ControlStatus = try? await location.client.get("/v1/status", timeout: context.timeout) {
+        do {
+            let location = try context.control
+            let status: ControlStatus = try await location.client.get("/v1/status",
+                                                                      timeout: context.timeout)
             gateway = status.gateway
-        } else {
+        } catch let error as CLIError where ControlFallback.shouldFallBack(error) {
+            // 只有「应用没在运行」才允许展示离线视图；401/504/超时说明应用在跑，
+            // 折叠成本地状态会返回 0 并把令牌过期之类的问题藏起来。
             let local = context.local
             gateway = ControlGatewayState(enabled: local.gatewayEnabled,
                                           running: local.gatewayEnabled && portOpen(local.gatewayPort),
@@ -44,8 +48,16 @@ public enum GatewayCommand {
             let deadline = Date().addingTimeInterval(15)
             while !gateway.running && Date() < deadline {
                 try? await Task.sleep(nanoseconds: 250_000_000)
-                if let status: ControlStatus = try? await location.client.get("/v1/status", timeout: 5) {
+                do {
+                    let status: ControlStatus = try await location.client.get("/v1/status",
+                                                                              timeout: 5)
                     gateway = status.gateway
+                } catch let error as CLIError where ControlFallback.shouldFallBack(error) {
+                    // 应用可能刚被唤醒、控制接口短暂不可用：继续等到 deadline。
+                } catch {
+                    // 401/504 之类说明应用在跑：再等 15 秒只会把真正原因拖成
+                    // 「网关没有启动起来」，直接抛。
+                    throw error
                 }
             }
         }

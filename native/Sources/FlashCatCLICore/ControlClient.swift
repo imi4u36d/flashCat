@@ -127,7 +127,9 @@ public struct ControlClient: Sendable {
         try await request(method: "GET", path: path, query: query, body: nil, timeout: timeout)
     }
 
-    private func decode<T: Decodable>(_ data: Data) throws -> T {
+    /// 放宽到 internal 是为了让退出码映射可以被单测直接覆盖：它是脚本判断故障类型
+    /// 的唯一依据，但此前只藏在 `request` 的非 2xx 分支里。
+    func decode<T: Decodable>(_ data: Data) throws -> T {
         guard !data.isEmpty else { throw CLIError("控制接口返回了空响应") }
         do {
             return try ControlJSON.decoder().decode(T.self, from: data)
@@ -160,7 +162,7 @@ public struct ControlClient: Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await CLIHTTP.session().data(for: request)
+            (data, response) = try await CLIHTTP.shared.data(for: request)
         } catch let error as URLError {
             switch error.code {
             case .cannotConnectToHost, .networkConnectionLost, .cannotFindHost,
@@ -194,16 +196,17 @@ public struct ControlClient: Sendable {
         return data
     }
 
-    private static func exitCode(status: Int, code: String?) -> CLIExit {
-        if code == ControlErrorCode.unauthorized { return .unauthorized }
-        if code == ControlErrorCode.timeout { return .timeout }
-        switch status {
-        case 400: return .usage
-        case 401, 403: return .unauthorized
-        case 404: return .notFound
-        case 408, 504: return .timeout
-        case 409: return .conflict
-        default: return .failure
+    /// HTTP 状态 → 退出码。internal 便于单测；调用方只在非 2xx 分支用它，
+    /// 200 也给出 `.success` 只是让这张表完整（否则函数对 200 会答「失败」）。
+    ///
+    /// 映射本身不再写在这里：`CLICommandTable.exitCodes` 是唯一来源，`help` 里
+    /// 打印的「哪个码对应哪个 HTTP 状态」和这里执行的是同一行数据。错误体里的
+    /// `error.code` 优先于状态码——令牌过期常常带 500 回来，只看状态会误报成
+    /// 「执行失败」，脚本据此判断「要不要重启应用」就会做错决定。
+    static func exitCode(status: Int, code: String?) -> CLIExit {
+        if let code, let mapped = CLICommandTable.exitCode(forControlErrorCode: code) {
+            return mapped
         }
+        return CLICommandTable.exitCode(forHTTPStatus: status) ?? .failure
     }
 }

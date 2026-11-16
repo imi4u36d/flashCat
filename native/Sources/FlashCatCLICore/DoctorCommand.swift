@@ -5,11 +5,14 @@ import FlashCatKit
 public enum DoctorCommand {
     public static func run(_ context: CLIContext) async throws -> Int32 {
         let report: ControlDoctorReport
-        if let location = try? context.control,
-           let online: ControlDoctorReport = try? await location.client.get("/v1/doctor",
-                                                                              timeout: context.timeout) {
+        do {
+            let location = try context.control
+            let online: ControlDoctorReport = try await location.client.get("/v1/doctor",
+                                                                             timeout: context.timeout)
             report = online
-        } else {
+        } catch let error as CLIError where ControlFallback.shouldFallBack(error) {
+            // 应用没运行才做本地体检；应用在跑却答不上来（401 令牌过期、504）时
+            // 用离线体检冒充「诊断完成」会把真实故障吃掉。
             report = offline(context)
         }
         if context.output.json {
@@ -153,20 +156,15 @@ public enum CompletionCommand {
         return CLIExit.success.rawValue
     }
 
-    private static let commands = [
-        "status", "engines", "models", "chat", "gateway", "logs",
-        "config", "app", "doctor", "completion", "cli", "version", "help",
-    ]
+    /// 补全用的清单全部由 `CLICommandTable` 投影：命令名、子命令、选项。
+    /// 以前这里是第三份手写清单，而且漏了 logs 组（`flashcat logs <TAB>` 没有候选）。
+    private static let commands: [String] = CLICommandTable.commands.map(\.name)
 
-    private static let groups: [(String, [String])] = [
-        ("engines", ["list", "start", "stop", "restart", "use", "install", "uninstall", "port", "logs"]),
-        ("models", ["list", "use", "download", "delete", "path"]),
-        ("gateway", ["status", "start", "stop"]),
-        ("config", ["list", "get", "set", "unset", "path"]),
-        ("app", ["status", "open", "quit", "restart", "path"]),
-        ("cli", ["install", "uninstall", "path"]),
-        ("completion", ["zsh", "bash", "fish"]),
-    ]
+    private static let groups: [(String, [String])] = CLICommandTable.commandSubcommands
+        .map { ($0.name, $0.subcommands) }
+
+    /// 这些组的第二个词可以是引擎 id（`logs --engine omlx` 之类）。
+    private static let engineIDGroups: Set<String> = ["engines", "models", "logs"]
 
     private static let engines = EngineCatalog.allIDs.map(\.rawValue)
 
@@ -183,16 +181,22 @@ public enum CompletionCommand {
             "  fi",
             "  case $words[2] in",
         ]
-        for (group, subcommands) in groups {
-            lines.append("    \(group))")
-            lines.append("      compadd -- " + subcommands.joined(separator: " "))
-            if group == "engines" || group == "models" || group == "logs" {
-                lines.append("      compadd -- " + engines.joined(separator: " "))
+        for command in CLICommandTable.commands {
+            let optionWords = CLICommandTable.options(for: command).map(\.dashedName)
+            guard !command.subcommands.isEmpty || !optionWords.isEmpty else { continue }
+            lines.append("    \(command.name))")
+            if !command.subcommands.isEmpty {
+                lines.append("      compadd -- " + command.subcommands.joined(separator: " "))
+                if engineIDGroups.contains(command.name) {
+                    lines.append("      compadd -- " + engines.joined(separator: " "))
+                }
+            }
+            if !optionWords.isEmpty {
+                lines.append("      compadd -- " + optionWords.joined(separator: " "))
             }
             lines.append("      ;;")
         }
         lines += [
-            "    chat) compadd -- --model --engine --system --temperature --top-p --max-tokens --json --no-stream ;;",
             "  esac",
             "}",
             "_flashcat \"$@\"",
@@ -204,7 +208,7 @@ public enum CompletionCommand {
         var words = commands
         for (_, subcommands) in groups { words.append(contentsOf: subcommands) }
         words.append(contentsOf: engines)
-        words.append(contentsOf: ["--json", "--quiet", "--help", "--version", "--no-color", "--timeout"])
+        words.append(contentsOf: CLICommandTable.listedOptions.map(\.dashedName))
         return """
         # 由 `flashcat completion bash` 生成。
         _flashcat() {
@@ -226,8 +230,16 @@ public enum CompletionCommand {
                 lines.append("complete -c flashcat -f -n '__fish_seen_subcommand_from \(group)' -a \(subcommand)")
             }
         }
+        let engineGroups = groups.map(\.0).filter { engineIDGroups.contains($0) }.joined(separator: " ")
         for engine in engines {
-            lines.append("complete -c flashcat -f -n '__fish_seen_subcommand_from engines models logs' -a \(engine)")
+            lines.append("complete -c flashcat -f -n '__fish_seen_subcommand_from \(engineGroups)' -a \(engine)")
+        }
+        // 选项同样由表投影：以前 fish 分支一个选项都不补，`flashcat status --j<TAB>`
+        // 只能靠用户背下来。全局选项对每个命令都成立，命令专属选项只在自己名下补。
+        for command in CLICommandTable.commands {
+            for option in CLICommandTable.options(for: command) {
+                lines.append("complete -c flashcat -f -n '__fish_seen_subcommand_from \(command.name)' -a '\(option.dashedName)'")
+            }
         }
         return lines.joined(separator: "\n") + "\n"
     }

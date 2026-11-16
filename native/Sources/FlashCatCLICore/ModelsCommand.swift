@@ -21,12 +21,17 @@ public enum ModelsCommand {
         let engine = try engineOption(context)
         let all = context.invocation.flag("all")
         var models: [ControlModelSummary] = []
-        if let location = try? context.control {
+        var isOffline = false
+        do {
+            let location = try context.control
             var query = [URLQueryItem(name: "all", value: all ? "true" : "false")]
             if let engine { query.append(URLQueryItem(name: "engine", value: engine.rawValue)) }
             models = try await location.client.get("/v1/models", query: query, timeout: context.timeout)
             if !all { models = models.filter { !$0.helper && !$0.hidden } }
-        } else {
+        } catch let error as CLIError where ControlFallback.shouldFallBack(error) {
+            // 只有应用没在运行才列磁盘目录；401/504 说明应用在跑，此时退回离线视图
+            // 会把「令牌过期」显示成「模型都没装」。
+            isOffline = true
             models = offlineModels(context, engine: engine, all: all)
         }
         if context.output.json {
@@ -42,7 +47,7 @@ public enum ModelsCommand {
             context.output.table(headers: ["ENGINE", "MODEL", "SIZE", "LOADED", "STATE"],
                                  rows: rows,
                                  empty: "没有模型；先运行 flashcat models list --all 看推荐档位")
-            if !context.local.installedIDs.isEmpty, (try? context.control) == nil {
+            if isOffline, !context.local.installedIDs.isEmpty {
                 context.output.note("离线视图只列出磁盘目录；完整目录与共享授权需要应用在运行。")
             }
         }
@@ -119,8 +124,14 @@ public enum ModelsCommand {
         if accepted.model.isEmpty {
             // A simple `{ok,message}` answer (or a server that did not find the
             // row yet): ask the queue for the task we just started.
-            let downloads: [ControlDownloadSummary] = (try? await location.client.get(
-                "/v1/downloads", timeout: context.timeout)) ?? []
+            let downloads: [ControlDownloadSummary]
+            do {
+                downloads = try await location.client.get("/v1/downloads", timeout: context.timeout)
+            } catch let error as CLIError where ControlFallback.shouldFallBack(error) {
+                // 应用刚好退出：任务摘要读不到就按「没有摘要」处理，后面的等待
+                // 循环会自己给出结论；其他错误（令牌、超时）继续往上抛。
+                downloads = []
+            }
             // Only a row for *this* model counts. Falling back to the last
             // queued task makes `--wait` follow an unrelated download.
             if let match = downloads.first(where: { matches($0.model, model) }) {
@@ -251,11 +262,16 @@ public enum ModelsCommand {
         }
         let engine = try engineOption(context) ?? context.local.activeEngine
         var resolved: String?
-        if let location = try? context.control {
-            let models: [ControlModelSummary] = (try? await location.client.get("/v1/models",
-                                                                                query: [URLQueryItem(name: "all", value: "true")],
-                                                                                timeout: context.timeout)) ?? []
+        do {
+            let location = try context.control
+            let models: [ControlModelSummary] = try await location.client.get("/v1/models",
+                                                                              query: [URLQueryItem(name: "all", value: "true")],
+                                                                              timeout: context.timeout)
             resolved = models.first { matches($0.id, model) && ($0.path?.isEmpty == false) }?.path
+        } catch let error as CLIError where ControlFallback.shouldFallBack(error) {
+            // 应用没运行：按磁盘布局推算路径。其他错误（令牌、超时）继续往上抛，
+            // 免得把「查不到」伪装成「路径就是这样」。
+            resolved = nil
         }
         let path = resolved ?? FlashCatPaths.modelPath(for: engine, model: model)
         if context.output.json {

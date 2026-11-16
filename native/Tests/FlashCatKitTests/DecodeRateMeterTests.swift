@@ -1,4 +1,8 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import XCTest
+
 @testable import FlashCatKit
 
 /// 实时解码速率的回归测试。
@@ -44,7 +48,7 @@ final class DecodeRateMeterTests: XCTestCase {
     func testSteadyStreamConvergesToActualRate() {
         var meter = DecodeRateMeter()
         let step = 0.01
-        for index in 0..<600 {   // 6 秒，每 10ms 一个 token = 100 tok/s
+        for index in 0..<600 {  // 6 秒，每 10ms 一个 token = 100 tok/s
             meter.add(tokens: 1, at: epoch.addingTimeInterval(Double(index) * step))
         }
         let measured = meter.rate(at: epoch.addingTimeInterval(599 * step))

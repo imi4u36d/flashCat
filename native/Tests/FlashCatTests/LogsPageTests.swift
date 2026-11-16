@@ -1,4 +1,8 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import XCTest
+
 @testable import FlashCat
 
 /// 日志页的阅读顺序：存储层按时间追加，页面把最新的排在最上面。
@@ -55,13 +59,17 @@ final class LogsPageTests: XCTestCase {
     /// 合并视图的计数与过滤都在并好的那一份上做：两台引擎的同一秒也各有位置。
     func testDigestCountsAcrossMergedEngines() {
         let merged = LogFeed.entries(from: [
-            LogFeed.Group(key: "splash", tag: "splash", lines: [
-                line(1, "splash 启动", .success),
-                line(2, "splash 慢", .warning),
-            ]),
-            LogFeed.Group(key: "omlx", tag: "omlx", lines: [
-                line(1, "omlx 报错", .error),
-            ]),
+            LogFeed.Group(
+                key: "splash", tag: "splash",
+                lines: [
+                    line(1, "splash 启动", .success),
+                    line(2, "splash 慢", .warning),
+                ]),
+            LogFeed.Group(
+                key: "omlx", tag: "omlx",
+                lines: [
+                    line(1, "omlx 报错", .error)
+                ]),
         ])
 
         let digest = LogsDigest.make(from: merged, level: .all, query: "")

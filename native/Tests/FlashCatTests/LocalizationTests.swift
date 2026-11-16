@@ -1,4 +1,8 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import XCTest
+
 @testable import FlashCat
 
 /// The String Catalog is the only source of UI copy. These checks make sure a
@@ -34,13 +38,14 @@ final class LocalizationTests: XCTestCase {
     /// 见 `testReturnKeyIsOnlyHandledByComposer`。
     func testNoInAppKeyboardShortcutsRemain() throws {
         let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()   // Tests/FlashCatTests/
-            .deletingLastPathComponent()   // Tests/
-            .deletingLastPathComponent()   // native/
+            .deletingLastPathComponent()  // Tests/FlashCatTests/
+            .deletingLastPathComponent()  // Tests/
+            .deletingLastPathComponent()  // native/
             .appendingPathComponent("Sources/FlashCat")
-        let enumerator = FileManager.default.enumerator(at: root,
-                                                        includingPropertiesForKeys: nil,
-                                                        options: [.skipsHiddenFiles])
+        let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles])
         let files: [URL] = try XCTUnwrap(enumerator).compactMap { item in
             guard let url = item as? URL, url.pathExtension == "swift" else { return nil }
             return url
@@ -62,8 +67,9 @@ final class LocalizationTests: XCTestCase {
                 }
             }
         }
-        XCTAssertTrue(offenders.isEmpty,
-                      "应用内不应挂接全局/局部 NSEvent 键盘监听：\(offenders.joined(separator: " | "))")
+        XCTAssertTrue(
+            offenders.isEmpty,
+            "应用内不应挂接全局/局部 NSEvent 键盘监听：\(offenders.joined(separator: " | "))")
     }
 
     /// 回车发送是唯一的按键例外，而且必须留在输入框里：`keyDown` 覆盖只能出现在
@@ -71,12 +77,13 @@ final class LocalizationTests: XCTestCase {
     /// 换行、输入法组字期间不发送。这样「回车发送」不会慢慢长成一套应用内快捷键。
     func testReturnKeyIsOnlyHandledByComposer() throws {
         let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()   // Tests/FlashCatTests/
-            .deletingLastPathComponent()   // Tests/
-            .deletingLastPathComponent()   // native/
+            .deletingLastPathComponent()  // Tests/FlashCatTests/
+            .deletingLastPathComponent()  // Tests/
+            .deletingLastPathComponent()  // native/
             .appendingPathComponent("Sources/FlashCat")
-        let enumerator = try XCTUnwrap(FileManager.default.enumerator(
-            at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]))
+        let enumerator = try XCTUnwrap(
+            FileManager.default.enumerator(
+                at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]))
         let files: [URL] = enumerator.compactMap { item in
             guard let url = item as? URL, url.pathExtension == "swift" else { return nil }
             return url
@@ -90,11 +97,13 @@ final class LocalizationTests: XCTestCase {
                 keyDownFiles.append(file.lastPathComponent)
             }
         }
-        XCTAssertEqual(keyDownFiles, ["ChatComposerField.swift"],
-                       "按键判定只允许存在于对话输入框")
+        XCTAssertEqual(
+            keyDownFiles, ["ChatComposerField.swift"],
+            "按键判定只允许存在于对话输入框")
 
-        let composer = try String(contentsOf: root.appendingPathComponent(
-            "UI/ChatComposerField.swift"), encoding: .utf8)
+        let composer = try String(
+            contentsOf: root.appendingPathComponent(
+                "UI/ChatComposerField.swift"), encoding: .utf8)
         XCTAssertTrue(composer.contains("onSend?()"), "回车必须映射成发送")
         XCTAssertTrue(composer.contains("insertNewline(nil)"), "⌘回车必须映射成换行")
         XCTAssertTrue(composer.contains("hasMarkedText()"), "输入法组字期间不能发送")
@@ -108,10 +117,13 @@ final class LocalizationTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-        let source = try String(contentsOf: root.appendingPathComponent(
-            "Sources/FlashCat/ControlServer+Documents.swift"), encoding: .utf8)
-        let english = try XCTUnwrap(Bundle(path: try XCTUnwrap(
-            L10n.bundle.path(forResource: "en", ofType: "lproj"))))
+        let source = try String(
+            contentsOf: root.appendingPathComponent(
+                "Sources/FlashCat/ControlServer+Documents.swift"), encoding: .utf8)
+        let english = try XCTUnwrap(
+            Bundle(
+                path: try XCTUnwrap(
+                    L10n.bundle.path(forResource: "en", ofType: "lproj"))))
         let patterns = [
             #"\b(?:bool|int|double|text)\(\s*"[^"]+"\s*,\s*"([^"]+)""#,
             #"title:\s*"([^"]+)""#,
@@ -136,14 +148,18 @@ final class LocalizationTests: XCTestCase {
     func testCLISettingsCopyIsLocalized() throws {
         let path = try XCTUnwrap(L10n.bundle.path(forResource: "en", ofType: "lproj"))
         let english = try XCTUnwrap(Bundle(path: path))
-        XCTAssertEqual(english.localizedString(forKey: "命令行接口", value: nil, table: nil),
-                       "Command-line Interface")
-        XCTAssertEqual(english.localizedString(forKey: "控制端口", value: nil, table: nil),
-                       "Control Port")
-        XCTAssertEqual(english.localizedString(forKey: "点击一行运行命令", value: nil, table: nil),
-                       "Click a row to run the command")
-        XCTAssertEqual(english.localizedString(forKey: "显示 / 隐藏玻璃导航列", value: nil, table: nil),
-                       "Show / hide the glass navigation column")
+        XCTAssertEqual(
+            english.localizedString(forKey: "命令行接口", value: nil, table: nil),
+            "Command-line Interface")
+        XCTAssertEqual(
+            english.localizedString(forKey: "控制端口", value: nil, table: nil),
+            "Control Port")
+        XCTAssertEqual(
+            english.localizedString(forKey: "点击一行运行命令", value: nil, table: nil),
+            "Click a row to run the command")
+        XCTAssertEqual(
+            english.localizedString(forKey: "显示 / 隐藏玻璃导航列", value: nil, table: nil),
+            "Show / hide the glass navigation column")
     }
 
     /// 每个中文词条都得有英文译文：漏一条，英文界面就会露出中文源文案。
@@ -154,12 +170,13 @@ final class LocalizationTests: XCTestCase {
     func testEverySourceKeyHasAnEnglishTranslation() throws {
         let repoRoot = try XCTUnwrap(
             URL(fileURLWithPath: #filePath)
-                .deletingLastPathComponent()   // Tests/FlashCatTests/
-                .deletingLastPathComponent()   // Tests/
-                .deletingLastPathComponent()   // native/
-                .deletingLastPathComponent()   // repo root
+                .deletingLastPathComponent()  // Tests/FlashCatTests/
+                .deletingLastPathComponent()  // Tests/
+                .deletingLastPathComponent()  // native/
+                .deletingLastPathComponent()  // repo root
         )
-        let catalog = repoRoot
+        let catalog =
+            repoRoot
             .appendingPathComponent("native/Sources/FlashCat/Resources/Localizable.xcstrings")
         let data = try Data(contentsOf: catalog)
         let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -173,8 +190,9 @@ final class LocalizationTests: XCTestCase {
             guard value == nil || value!.isEmpty else { return nil }
             return key
         }
-        XCTAssertTrue(untranslated.isEmpty,
-                      "词条缺少英文译文：\(untranslated.prefix(10).joined(separator: ", "))")
+        XCTAssertTrue(
+            untranslated.isEmpty,
+            "词条缺少英文译文：\(untranslated.prefix(10).joined(separator: ", "))")
     }
 
     /// 界面文案的两条契约，都由 `L10n.bundle` 的实际查找结果判定，不依赖源码树路径：
@@ -187,10 +205,14 @@ final class LocalizationTests: XCTestCase {
         let sites = try localizedCopyLiterals()
         XCTAssertGreaterThan(sites.count, 100, "扫描到的文案站点过少，可能正则失效")
 
-        let english = try XCTUnwrap(Bundle(path: try XCTUnwrap(
-            L10n.bundle.path(forResource: "en", ofType: "lproj"))))
-        let chinese = try XCTUnwrap(Bundle(path: try XCTUnwrap(
-            L10n.bundle.path(forResource: "zh-Hans", ofType: "lproj"))))
+        let english = try XCTUnwrap(
+            Bundle(
+                path: try XCTUnwrap(
+                    L10n.bundle.path(forResource: "en", ofType: "lproj"))))
+        let chinese = try XCTUnwrap(
+            Bundle(
+                path: try XCTUnwrap(
+                    L10n.bundle.path(forResource: "zh-Hans", ofType: "lproj"))))
 
         var notEnglishTranslated: [String] = []
         var notEchoedInChinese: [String] = []
@@ -211,10 +233,12 @@ final class LocalizationTests: XCTestCase {
             if zh != lookupKey { notEchoedInChinese.append(lookupKey) }
         }
 
-        XCTAssertTrue(notEnglishTranslated.isEmpty,
-                      "英文界面会露出中文（缺译文）：\(notEnglishTranslated.sorted().prefix(15).joined(separator: " | "))")
-        XCTAssertTrue(notEchoedInChinese.isEmpty,
-                      "中文界面被改写（源文案必须是 key）：\(notEchoedInChinese.sorted().prefix(15).joined(separator: " | "))")
+        XCTAssertTrue(
+            notEnglishTranslated.isEmpty,
+            "英文界面会露出中文（缺译文）：\(notEnglishTranslated.sorted().prefix(15).joined(separator: " | "))")
+        XCTAssertTrue(
+            notEchoedInChinese.isEmpty,
+            "中文界面被改写（源文案必须是 key）：\(notEchoedInChinese.sorted().prefix(15).joined(separator: " | "))")
     }
 
     // MARK: Helpers
@@ -225,9 +249,9 @@ final class LocalizationTests: XCTestCase {
     /// （构建步骤在展示处过 `L10n.t`，由上面第二条契约覆盖）。
     private func localizedCopyLiterals() throws -> Set<String> {
         let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()   // Tests/FlashCatTests/
-            .deletingLastPathComponent()   // Tests/
-            .deletingLastPathComponent()   // native/
+            .deletingLastPathComponent()  // Tests/FlashCatTests/
+            .deletingLastPathComponent()  // Tests/
+            .deletingLastPathComponent()  // native/
             .appendingPathComponent("Sources/FlashCat")
 
         let labelled = try NSRegularExpression(
@@ -241,9 +265,10 @@ final class LocalizationTests: XCTestCase {
         let cjk = CharacterSet(charactersIn: "\u{4e00}"..."\u{9fff}")
 
         var out = Set<String>()
-        let enumerator = FileManager.default.enumerator(at: root,
-                                                        includingPropertiesForKeys: nil,
-                                                        options: [.skipsHiddenFiles])
+        let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles])
         let files: [URL] = try XCTUnwrap(enumerator).compactMap { item in
             guard let url = item as? URL, url.pathExtension == "swift" else { return nil }
             return url
@@ -254,10 +279,11 @@ final class LocalizationTests: XCTestCase {
             let source = try String(contentsOf: file, encoding: .utf8)
             let range = NSRange(source.startIndex..., in: source)
             // 裸格式串先剔除：它们不经过 Catalog，源码里出现的中文字面量也不算文案站点。
-            let rawKeys = Set(formatKeys.matches(in: source, range: range).compactMap { match -> String? in
-                guard let r = Range(match.range(at: 1), in: source) else { return nil }
-                return String(source[r])
-            })
+            let rawKeys = Set(
+                formatKeys.matches(in: source, range: range).compactMap { match -> String? in
+                    guard let r = Range(match.range(at: 1), in: source) else { return nil }
+                    return String(source[r])
+                })
             for regex in [labelled, lookup] {
                 for match in regex.matches(in: source, range: range) {
                     guard let group = Range(match.range(at: 1), in: source) else { continue }

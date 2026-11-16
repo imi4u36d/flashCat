@@ -1,4 +1,8 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import XCTest
+
 @testable import FlashCatKit
 
 /// Plans for "build the pack here, then install it". The three engines have
@@ -20,10 +24,12 @@ final class EnginePackBuildPlannerTests: XCTestCase {
         let steps = EnginePackBuildPlanner.steps(for: .omlx, version: "0.7.3rc1", release: nil)
         XCTAssertEqual(steps.map(\.id), ["build", "release"])
         XCTAssertTrue(steps[0].command.contains("build-omlx-pack.sh --version '0.7.3rc1'"))
-        XCTAssertFalse(steps.contains { $0.command.contains("brew") },
-                       "oMLX updates must not depend on Homebrew")
-        XCTAssertFalse(steps.contains { $0.command.contains("curl") },
-                       "the wheel download lives in the build script, not the plan")
+        XCTAssertFalse(
+            steps.contains { $0.command.contains("brew") },
+            "oMLX updates must not depend on Homebrew")
+        XCTAssertFalse(
+            steps.contains { $0.command.contains("curl") },
+            "the wheel download lives in the build script, not the plan")
     }
 
     func testMLXServePlanUsesItsPackScriptAndMinimumMacOS() {
@@ -49,10 +55,12 @@ final class EnginePackBuildPlannerTests: XCTestCase {
             isPrerelease: false,
             pageURL: URL(string: "https://github.com/incoai/splash/releases/tag/v1.4.1")!,
             assets: [
-                .init(name: "splash-1.4.1-arm64-macos26.tar.gz",
-                      url: URL(string: "https://example.com/splash-1.4.1-arm64-macos26.tar.gz")!),
-                .init(name: "splash-1.4.1-arm64-macos26.tar.gz.sha256",
-                      url: URL(string: "https://example.com/splash-1.4.1-arm64-macos26.tar.gz.sha256")!),
+                .init(
+                    name: "splash-1.4.1-arm64-macos26.tar.gz",
+                    url: URL(string: "https://example.com/splash-1.4.1-arm64-macos26.tar.gz")!),
+                .init(
+                    name: "splash-1.4.1-arm64-macos26.tar.gz.sha256",
+                    url: URL(string: "https://example.com/splash-1.4.1-arm64-macos26.tar.gz.sha256")!),
             ])
         let steps = EnginePackBuildPlanner.steps(for: .splash, version: "1.4.1", release: landing)
         XCTAssertEqual(steps.map(\.id), ["download", "build", "release"])
@@ -88,12 +96,114 @@ final class EnginePackBuildPlannerTests: XCTestCase {
 
         let release = try EnginePackBuildRunner.loadRelease(at: path.path)
 
-        XCTAssertEqual(release.url,
-                       dir.appendingPathComponent("omlx-0.7.2-arm64-macos26.0.tar.gz").absoluteString)
+        XCTAssertEqual(
+            release.url,
+            dir.appendingPathComponent("omlx-0.7.2-arm64-macos26.0.tar.gz").absoluteString)
     }
 
     func testReleaseFilePath() {
-        XCTAssertEqual(EnginePackBuildPlanner.releaseFile(for: .omlx, version: "0.7.3.dev2"),
-                       "dist/packs/omlx-0.7.3.dev2.release.json")
+        XCTAssertEqual(
+            EnginePackBuildPlanner.releaseFile(for: .omlx, version: "0.7.3.dev2"),
+            "dist/packs/omlx-0.7.3.dev2.release.json")
+    }
+
+    /// 回归：`terminationHandler` 曾是在 `process.run()` 之后才赋值的。子进程在
+    /// 这两行之间退出时（`exit 0` 就是毫秒级），Process 不会补发通知，
+    /// continuation 永不 resume，整个 pack 构建挂死（无超时、不响应取消）。
+    /// 3 秒的 race 只是断言它「返回了」，不是在测性能。
+    func testStepThatExitsImmediatelyDoesNotHang() async {
+        let step = EnginePackBuildStep(id: "instant", title: "瞬时步骤", command: "exit 0")
+        let done = FlagBox()
+        let failure = ErrorBox()
+        let task = Task {
+            do {
+                try await EnginePackBuildRunner.run(
+                    step,
+                    in: FileManager.default.temporaryDirectory.path
+                ) { _ in }
+            } catch {
+                failure.set(error)
+            }
+            done.set()
+        }
+
+        let deadline = Date().addingTimeInterval(3)
+        while !done.value && Date() < deadline {
+            do { try await Task.sleep(nanoseconds: 20_000_000) } catch { break }
+        }
+        XCTAssertTrue(done.value, "子进程瞬间退出时 continuation 没有被 resume（构建会挂死）")
+        XCTAssertNil(failure.value)
+        task.cancel()
+    }
+
+    /// 回归：一次 read 可能正好把一个中文字符的 UTF-8 字节劈成两半。旧实现拿整块
+    /// 去 `String(data:encoding:)`，解码失败就把整块（可能是好几行）静默丢掉，
+    /// 中文构建输出会凭空少行。这里让 bash 分两次写出同一个字符的字节。
+    func testMultiByteCharacterSplitAcrossReadsIsNotDropped() async throws {
+        let step = EnginePackBuildStep(
+            id: "utf8",
+            title: "中文输出",
+            command: #"printf '\xe4\xb8'; sleep 0.2; printf '\xad\n'"#)
+        let lines = LineBox()
+        try await EnginePackBuildRunner.run(
+            step,
+            in: FileManager.default.temporaryDirectory.path
+        ) {
+            lines.append($0)
+        }
+        XCTAssertEqual(lines.value, ["中"])
+    }
+}
+
+/// 跨队列的状态盒子：`onLine` 在 readabilityHandler 的队列上回调，测试在另一个
+/// 执行上下文里读，直接捕获 var 会被严格并发检查拦下。
+private final class LineBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String] = []
+
+    func append(_ line: String) {
+        lock.lock()
+        storage.append(line)
+        lock.unlock()
+    }
+
+    var value: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+}
+
+private final class FlagBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage = false
+
+    func set() {
+        lock.lock()
+        storage = true
+        lock.unlock()
+    }
+
+    var value: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+}
+
+private final class ErrorBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: Error?
+
+    func set(_ error: Error) {
+        lock.lock()
+        storage = error
+        lock.unlock()
+    }
+
+    var value: Error? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
     }
 }

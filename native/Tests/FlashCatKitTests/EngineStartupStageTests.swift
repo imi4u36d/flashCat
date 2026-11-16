@@ -1,4 +1,8 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import XCTest
+
 @testable import FlashCatKit
 
 /// The stage text is the only progress the console has while an engine loads,
@@ -35,9 +39,11 @@ final class EngineStartupStageTests: XCTestCase {
     }
 
     func testWeightLoadLinesNameTheLoad() {
-        for line in ["Loading · omlx/Qwen3.8-27B-oQ4e-mtp-e5133ef4",
-                     "Chat template · patched to render later system messages in place",
-                     "Loaded settings for 36 models"] {
+        for line in [
+            "Loading · omlx/Qwen3.8-27B-oQ4e-mtp-e5133ef4",
+            "Chat template · patched to render later system messages in place",
+            "Loaded settings for 36 models",
+        ] {
             XCTAssertEqual(EngineStartupStage.derive(from: [line]), .loadingWeights, line)
         }
     }
@@ -45,28 +51,38 @@ final class EngineStartupStageTests: XCTestCase {
     /// The engine blocking on macOS memory is its own stage: that is what the
     /// four-minute start on this machine actually was.
     func testWaitingForMemoryIsItsOwnStage() {
-        for line in ["Waiting for sufficient available memory to start; the macOS reserve remains protected...",
-                     "Memory: growth paused; waiting=0; suspended=0"] {
+        for line in [
+            "Waiting for sufficient available memory to start; the macOS reserve remains protected...",
+            "Memory: growth paused; waiting=0; suspended=0",
+        ] {
             XCTAssertEqual(EngineStartupStage.derive(from: [line]), .waitingForMemory, line)
         }
     }
 
     func testReadyLineWins() {
-        XCTAssertEqual(EngineStartupStage.derive(from: ["Ready · ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF · context 256K · http://127.0.0.1:8000"]),
-                       .ready)
+        XCTAssertEqual(
+            EngineStartupStage.derive(from: [
+                "Ready · ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF · context 256K · http://127.0.0.1:8000"
+            ]),
+            .ready)
         var lines = splashWarmup
-        lines.insert("Ready · ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF · context 256K · http://127.0.0.1:8000", at: 0)
+        lines.insert(
+            "Ready · ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF · context 256K · http://127.0.0.1:8000", at: 0)
         XCTAssertEqual(EngineStartupStage.derive(from: lines), .ready)
     }
 
     /// "already" must not read as "ready": oMLX prints it on every start, and
     /// the engine would show 就绪 while it is still booting.
     func testAlreadyIsNotReady() {
-        XCTAssertEqual(EngineStartupStage.derive(from: ["ChunkedKVCache patch: methods already present upstream, skipped: size"]),
-                       .starting)
-        XCTAssertEqual(EngineStartupStage.derive(from: ["ChunkedKVCache patch: methods already present upstream, skipped: size",
-                                                       "Loaded settings for 36 models"]),
-                       .loadingWeights)
+        XCTAssertEqual(
+            EngineStartupStage.derive(from: ["ChunkedKVCache patch: methods already present upstream, skipped: size"]),
+            .starting)
+        XCTAssertEqual(
+            EngineStartupStage.derive(from: [
+                "ChunkedKVCache patch: methods already present upstream, skipped: size",
+                "Loaded settings for 36 models",
+            ]),
+            .loadingWeights)
     }
 
     func testNothingSaidYet() {
@@ -77,10 +93,14 @@ final class EngineStartupStageTests: XCTestCase {
     /// MTPLX names its warmup in the box it prints before the port opens.
     func testMtplxLines() {
         XCTAssertEqual(EngineStartupStage.derive(from: ["│     Warmup  16 tokens"]), .warmingUp)
-        XCTAssertEqual(EngineStartupStage.derive(from: ["│     Warmup  16 tokens",
-                                                       "│    Loading  /Users/wangzhuo/Library/Application"]),
-                       .warmingUp)
-        XCTAssertEqual(EngineStartupStage.derive(from: ["│    Loading  /Users/wangzhuo/Library/Application"]),
-                       .loadingWeights)
+        XCTAssertEqual(
+            EngineStartupStage.derive(from: [
+                "│     Warmup  16 tokens",
+                "│    Loading  /Users/wangzhuo/Library/Application",
+            ]),
+            .warmingUp)
+        XCTAssertEqual(
+            EngineStartupStage.derive(from: ["│    Loading  /Users/wangzhuo/Library/Application"]),
+            .loadingWeights)
     }
 }

@@ -1,8 +1,11 @@
-import Foundation
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AVFoundation
 import CoreMedia
 import CoreVideo
 import FlashCatKit
+import Foundation
 
 /// 参考素材的清晰度。`match` 让参考帧缩到这次生成的画布大小，上传最省；
 /// `max` 保留更多纹理，但请求体和显存占用都更高。服务端默认就是 `match`。
@@ -61,7 +64,8 @@ enum VideoOptionsStore {
     static func load() -> VideoOptions {
         var value: VideoOptions
         if let data = UserDefaults.standard.data(forKey: key),
-           let decoded = try? JSONDecoder().decode(VideoOptions.self, from: data) {
+            let decoded = try? JSONDecoder().decode(VideoOptions.self, from: data)
+        {
             value = decoded
         } else {
             value = VideoOptions()
@@ -122,8 +126,48 @@ struct VideoGenerationResult {
     var duration: Double { Double(frames) / Double(max(1, fps)) }
 }
 
-struct VideoClientError: Error {
+/// 视频生成的失败原因。三个客户端（对话 / 图像 / 视频）同构：`kind` 给控制流看，
+/// `message` 给人看。取消以前只能从文案里找「取消」：引擎自己在错误事件里写一句
+/// 「已取消」，任务面板就分不清该标成「已停止」还是「失败」。
+struct VideoClientError: Error, Equatable, Sendable {
+    /// 失败的情形。带参的两种把端口与状态码留下，调用方不必再解析文案。
+    enum Kind: Equatable, Sendable {
+        /// 唯一的「取消」：任务被取消，或封装阶段被叫停。
+        case cancelled
+        /// 本地视频端点地址拼不出来。
+        case invalidEndpoint(port: Int)
+        /// 帧数 / 尺寸不合法：用户填的参数，提示得说清楚是哪一项。
+        case invalidParameter
+        /// 载荷超过上限：估算体积、扫描结果或上传体，都是「调小一点」能解决的那类。
+        case payloadTooLarge
+        /// 请求体编不成 JSON。
+        case encoding
+        /// 传输层失败：连接被拒、超时之类的 URLError。
+        case transport
+        /// 引擎回了非 2xx。
+        case badStatus(Int)
+        /// 流走完了却没有视频数据。
+        case emptyBody
+        /// 引擎在流里自报的错误（SSE 的 `{"type":"error"}` 或响应体里的 message）。
+        case engine
+    }
+
+    let kind: Kind
+    /// 给人看的文案：任务面板与气泡直接显示这一句。
     let message: String
+
+    init(kind: Kind, message: String) {
+        self.kind = kind
+        self.message = message
+    }
+
+    /// 兼容只知道文案的调用点：一律按 `.transport` 收，绝不按文案猜成取消。
+    init(message: String) {
+        self.init(kind: .transport, message: message)
+    }
+
+    /// 调用方唯一该问的取消判据。
+    var isCancellation: Bool { kind == .cancelled }
 }
 
 /// 解码后的视频载荷。`rgb` 是紧密排列的 RGB888 帧，长度严格等于
@@ -195,27 +239,45 @@ final class VideoClient: Sendable {
         return body
     }
 
-    func generate(port: Int,
-                  request: VideoGenerationRequest,
-                  onProgress: @escaping @Sendable (String) -> Void)
-        async -> Result<VideoGenerationResult, VideoClientError> {
+    func generate(
+        port: Int,
+        request: VideoGenerationRequest,
+        onProgress: @escaping @Sendable (String) -> Void
+    )
+        async -> Result<VideoGenerationResult, VideoClientError>
+    {
         // 发出去之前先按 RGB 原始体积算一遍：一个 1280×704、249 帧的请求要跑
         // 几十分钟，不能等生成完了才发现载荷超过客户端上限。
         let dimensions = request.dimensions
         guard request.frames > 0, dimensions.width > 0, dimensions.height > 0 else {
-            return .failure(VideoClientError(message: "视频参数无效：尺寸和帧数必须大于 0"))
+            return .failure(
+                VideoClientError(
+                    kind: .invalidParameter,
+                    message: "视频参数无效：尺寸和帧数必须大于 0"))
         }
-        guard let estimated = Self.estimatedFrameBytes(width: dimensions.width,
-                                                       height: dimensions.height,
-                                                       frames: request.frames) else {
-            return .failure(VideoClientError(message: "视频参数过大，请调小尺寸或帧数"))
+        guard
+            let estimated = Self.estimatedFrameBytes(
+                width: dimensions.width,
+                height: dimensions.height,
+                frames: request.frames)
+        else {
+            return .failure(
+                VideoClientError(
+                    kind: .payloadTooLarge,
+                    message: "视频参数过大，请调小尺寸或帧数"))
         }
         guard estimated <= VideoPayloadScanner.maxFrameBytes else {
-            return .failure(VideoClientError(message: Self.tooLargeMessage(requiredBytes: estimated)))
+            return .failure(
+                VideoClientError(
+                    kind: .payloadTooLarge,
+                    message: Self.tooLargeMessage(requiredBytes: estimated)))
         }
 
         guard let url = URL(string: "http://127.0.0.1:\(port)/v1/video/generations") else {
-            return .failure(VideoClientError(message: "视频端点地址无效"))
+            return .failure(
+                VideoClientError(
+                    kind: .invalidEndpoint(port: port),
+                    message: "视频端点地址无效"))
         }
         let body = Self.requestBody(for: request)
 
@@ -229,14 +291,20 @@ final class VideoClient: Sendable {
             // 服务端按 JSON 字符串长度卡 60 MiB，超了会在解析前直接拒绝。
             // 客户端先算一遍，省得把几十 MB 传上去再等一个必然的失败。
             guard encoded.count <= Self.maximumUploadBytes else {
-                let size = ByteCountFormatter.string(fromByteCount: Int64(encoded.count),
-                                                     countStyle: .memory)
-                return .failure(VideoClientError(
-                    message: "参考素材太大：请求约 \(size)，超过 60 MB 上限。请减少参考图/参考视频，或把参考细节改为「匹配画布」。"))
+                let size = ByteCountFormatter.string(
+                    fromByteCount: Int64(encoded.count),
+                    countStyle: .memory)
+                return .failure(
+                    VideoClientError(
+                        kind: .payloadTooLarge,
+                        message: "参考素材太大：请求约 \(size)，超过 60 MB 上限。请减少参考图/参考视频，或把参考细节改为「匹配画布」。"))
             }
             urlRequest.httpBody = encoded
         } catch {
-            return .failure(VideoClientError(message: "请求体编码失败：\(error.localizedDescription)"))
+            return .failure(
+                VideoClientError(
+                    kind: .encoding,
+                    message: "请求体编码失败：\(error.localizedDescription)"))
         }
 
         let started = Date()
@@ -249,7 +317,7 @@ final class VideoClient: Sendable {
                     if raw.count > 64 * 1024 { break }
                 }
                 let message = Self.errorMessage(in: raw) ?? "服务返回 HTTP \(http.statusCode)"
-                return .failure(VideoClientError(message: message))
+                return .failure(VideoClientError(kind: .badStatus(http.statusCode), message: message))
             }
 
             // 旧版本或中间代理可能忽略 stream，直接回整段 JSON；把没有
@@ -266,8 +334,10 @@ final class VideoClient: Sendable {
                     case .frames(let frames):
                         return await mux(frames, started: started, onProgress: onProgress)
                     case .tooLarge(let requiredBytes):
-                        return .failure(VideoClientError(
-                            message: Self.tooLargeMessage(requiredBytes: requiredBytes)))
+                        return .failure(
+                            VideoClientError(
+                                kind: .payloadTooLarge,
+                                message: Self.tooLargeMessage(requiredBytes: requiredBytes)))
                     case .invalid:
                         break
                     }
@@ -281,8 +351,8 @@ final class VideoClient: Sendable {
                 sawEvent = true
                 let payload = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
                 guard payload != "[DONE]", !payload.isEmpty,
-                      let data = payload.data(using: .utf8),
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    let data = payload.data(using: .utf8),
+                    let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                 else { continue }
 
                 switch (json["type"] as? String)?.lowercased() {
@@ -290,14 +360,16 @@ final class VideoClient: Sendable {
                     onProgress(VideoPayload.progressText(json))
                 case "error":
                     let message = (json["message"] as? String) ?? "视频生成失败"
-                    return .failure(VideoClientError(message: message))
+                    return .failure(VideoClientError(kind: .engine, message: message))
                 default:
                     switch VideoPayload.parse(json) {
                     case .frames(let frames):
                         return await mux(frames, started: started, onProgress: onProgress)
                     case .tooLarge(let requiredBytes):
-                        return .failure(VideoClientError(
-                            message: Self.tooLargeMessage(requiredBytes: requiredBytes)))
+                        return .failure(
+                            VideoClientError(
+                                kind: .payloadTooLarge,
+                                message: Self.tooLargeMessage(requiredBytes: requiredBytes)))
                     case .invalid:
                         continue
                     }
@@ -305,37 +377,43 @@ final class VideoClient: Sendable {
             }
 
             if !sawEvent, !rawLines.isEmpty,
-               let data = rawLines.joined(separator: "\n").data(using: .utf8),
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                let data = rawLines.joined(separator: "\n").data(using: .utf8),
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            {
                 if let message = Self.errorMessage(in: data) {
-                    return .failure(VideoClientError(message: message))
+                    return .failure(VideoClientError(kind: .engine, message: message))
                 }
                 switch VideoPayload.parse(json) {
                 case .frames(let frames):
                     return await mux(frames, started: started, onProgress: onProgress)
                 case .tooLarge(let requiredBytes):
-                    return .failure(VideoClientError(
-                        message: Self.tooLargeMessage(requiredBytes: requiredBytes)))
+                    return .failure(
+                        VideoClientError(
+                            kind: .payloadTooLarge,
+                            message: Self.tooLargeMessage(requiredBytes: requiredBytes)))
                 case .invalid:
                     break
                 }
             }
-            return .failure(VideoClientError(message: "引擎没有返回视频数据"))
+            return .failure(VideoClientError(kind: .emptyBody, message: "引擎没有返回视频数据"))
         } catch is CancellationError {
-            return .failure(VideoClientError(message: "已取消"))
+            return .failure(VideoClientError(kind: .cancelled, message: "已取消"))
         } catch {
             let ns = error as NSError
             if ns.code == NSURLErrorCancelled {
-                return .failure(VideoClientError(message: "已取消"))
+                return .failure(VideoClientError(kind: .cancelled, message: "已取消"))
             }
-            return .failure(VideoClientError(message: error.localizedDescription))
+            return .failure(VideoClientError(kind: .transport, message: error.localizedDescription))
         }
     }
 
-    private func mux(_ frames: VideoFrames,
-                     started: Date,
-                     onProgress: @escaping @Sendable (String) -> Void)
-        async -> Result<VideoGenerationResult, VideoClientError> {
+    private func mux(
+        _ frames: VideoFrames,
+        started: Date,
+        onProgress: @escaping @Sendable (String) -> Void
+    )
+        async -> Result<VideoGenerationResult, VideoClientError>
+    {
         onProgress("正在封装 MP4")
         // 编码是同步的 CPU 活，跑在 detached task 里；取消动不了它，
         // 只能靠一个开关让它在帧之间自己停下，否则用户点了停止，
@@ -351,16 +429,18 @@ final class VideoClient: Sendable {
                 cancellation.cancel()
                 task.cancel()
             }
-            return .success(VideoGenerationResult(mp4: mp4,
-                                                  seconds: Date().timeIntervalSince(started),
-                                                  width: frames.width,
-                                                  height: frames.height,
-                                                  frames: frames.frames,
-                                                  fps: frames.fps))
+            return .success(
+                VideoGenerationResult(
+                    mp4: mp4,
+                    seconds: Date().timeIntervalSince(started),
+                    width: frames.width,
+                    height: frames.height,
+                    frames: frames.frames,
+                    fps: frames.fps))
         } catch is CancellationError {
-            return .failure(VideoClientError(message: "已取消"))
+            return .failure(VideoClientError(kind: .cancelled, message: "已取消"))
         } catch {
-            return .failure(VideoClientError(message: error.localizedDescription))
+            return .failure(VideoClientError(kind: .transport, message: error.localizedDescription))
         }
     }
 
@@ -379,12 +459,16 @@ final class VideoClient: Sendable {
         return total
     }
 
-    static func tooLargeMessage(requiredBytes: Int,
-                                limit: Int = VideoPayloadScanner.maxFrameBytes) -> String {
-        let required = ByteCountFormatter.string(fromByteCount: Int64(requiredBytes),
-                                                 countStyle: .memory)
-        let cap = ByteCountFormatter.string(fromByteCount: Int64(limit),
-                                            countStyle: .memory)
+    static func tooLargeMessage(
+        requiredBytes: Int,
+        limit: Int = VideoPayloadScanner.maxFrameBytes
+    ) -> String {
+        let required = ByteCountFormatter.string(
+            fromByteCount: Int64(requiredBytes),
+            countStyle: .memory)
+        let cap = ByteCountFormatter.string(
+            fromByteCount: Int64(limit),
+            countStyle: .memory)
         return "视频数据太大：解码后约 \(required)，超过 \(cap) 上限。请调小尺寸或帧数后重试。"
     }
 
@@ -406,13 +490,15 @@ enum VideoPayload {
         return nil
     }
 
-    static func parse(_ json: [String: Any],
-                      limit: Int = VideoPayloadScanner.maxFrameBytes) -> VideoPayloadParseResult {
+    static func parse(
+        _ json: [String: Any],
+        limit: Int = VideoPayloadScanner.maxFrameBytes
+    ) -> VideoPayloadParseResult {
         guard (json["format"] as? String)?.lowercased() == "rgb8",
-              let frames = int(json["frames"]), frames > 0, frames <= 10_000,
-              let width = int(json["width"]), width > 0, width <= 4_096,
-              let height = int(json["height"]), height > 0, height <= 4_096,
-              let base64 = json["data"] as? String
+            let frames = int(json["frames"]), frames > 0, frames <= 10_000,
+            let width = int(json["width"]), width > 0, width <= 4_096,
+            let height = int(json["height"]), height > 0, height <= 4_096,
+            let base64 = json["data"] as? String
         else { return .invalid }
 
         let expected = frames * height * width * 3
@@ -425,29 +511,35 @@ enum VideoPayload {
 
         var audio: VideoFrames.Audio?
         if let raw = json["audio_data"] as? String,
-           let pcm = Data(base64Encoded: raw) {
-            audio = makeAudio(pcm: pcm,
-                              format: json["audio_format"] as? String,
-                          sampleRate: int(json["audio_sample_rate"]),
-                          channels: int(json["audio_channels"]))
+            let pcm = Data(base64Encoded: raw)
+        {
+            audio = makeAudio(
+                pcm: pcm,
+                format: json["audio_format"] as? String,
+                sampleRate: int(json["audio_sample_rate"]),
+                channels: int(json["audio_channels"]))
         }
 
-        return .frames(VideoFrames(rgb: rgb, frames: frames, width: width, height: height,
-                                   fps: fps, audio: audio))
+        return .frames(
+            VideoFrames(
+                rgb: rgb, frames: frames, width: width, height: height,
+                fps: fps, audio: audio))
     }
 
     /// 音轨的取舍门槛。坏音轨不该拖垮整段视频：H3 的音频是附赠的，静音也能播。
     /// 两条解析路径（JSON 与字节级）共用这一份契约。
-    static func makeAudio(pcm: Data,
-                          format: String?,
-                          sampleRate: Int?,
-                          channels: Int?) -> VideoFrames.Audio? {
+    static func makeAudio(
+        pcm: Data,
+        format: String?,
+        sampleRate: Int?,
+        channels: Int?
+    ) -> VideoFrames.Audio? {
         guard !pcm.isEmpty,
-              pcm.count <= 64 * 1024 * 1024,
-              (format ?? "pcm_s16le").lowercased() == "pcm_s16le",
-              let rate = sampleRate, rate > 0, rate <= 192_000,
-              let channelCount = channels, channelCount > 0, channelCount <= 2,
-              pcm.count % (channelCount * 2) == 0
+            pcm.count <= 64 * 1024 * 1024,
+            (format ?? "pcm_s16le").lowercased() == "pcm_s16le",
+            let rate = sampleRate, rate > 0, rate <= 192_000,
+            let channelCount = channels, channelCount > 0, channelCount <= 2,
+            pcm.count % (channelCount * 2) == 0
         else { return nil }
         return VideoFrames.Audio(pcm: pcm, sampleRate: rate, channels: channelCount)
     }
@@ -530,8 +622,10 @@ private final class MuxCancellation: @unchecked Sendable {
 enum VideoMuxer {
     /// `isCancelled` 在每帧之间查询；编码一帧最多几十毫秒，停止按钮的
     /// 反馈延迟可以接受。取消时抛 `CancellationError`，上层显示「已取消」。
-    static func makeMP4(_ frames: VideoFrames,
-                        isCancelled: @Sendable () -> Bool = { false }) throws -> Data {
+    static func makeMP4(
+        _ frames: VideoFrames,
+        isCancelled: @Sendable () -> Bool = { false }
+    ) throws -> Data {
         guard frames.width % 2 == 0, frames.height % 2 == 0 else {
             throw VideoMuxError("视频尺寸需要是偶数：\(frames.width)×\(frames.height)")
         }
@@ -543,9 +637,11 @@ enum VideoMuxer {
         return try Data(contentsOf: url)
     }
 
-    private static func write(_ frames: VideoFrames,
-                              to url: URL,
-                              isCancelled: @Sendable () -> Bool) throws {
+    private static func write(
+        _ frames: VideoFrames,
+        to url: URL,
+        isCancelled: @Sendable () -> Bool
+    ) throws {
         let writer: AVAssetWriter
         do {
             writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
@@ -571,8 +667,9 @@ enum VideoMuxer {
             kCVPixelBufferHeightKey as String: height,
             kCVPixelBufferIOSurfacePropertiesKey as String: [:],
         ]
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: videoInput,
-                                                           sourcePixelBufferAttributes: sourceAttributes)
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: videoInput,
+            sourcePixelBufferAttributes: sourceAttributes)
         guard writer.canAdd(videoInput) else {
             throw VideoMuxError("当前编码器不接受这个视频尺寸")
         }
@@ -612,12 +709,14 @@ enum VideoMuxer {
                 try autoreleasepool {
                     try checkCancellation(isCancelled)
                     try waitUntilReady(videoInput, writer: writer, isCancelled: isCancelled)
-                    let pixelBuffer = try makePixelBuffer(index: index,
-                                                          source: source,
-                                                          frames: frames,
-                                                          adaptor: adaptor)
-                    let time = CMTime(value: CMTimeValue(index) * 600 / CMTimeValue(frames.fps),
-                                      timescale: 600)
+                    let pixelBuffer = try makePixelBuffer(
+                        index: index,
+                        source: source,
+                        frames: frames,
+                        adaptor: adaptor)
+                    let time = CMTime(
+                        value: CMTimeValue(index) * 600 / CMTimeValue(frames.fps),
+                        timescale: 600)
                     guard adaptor.append(pixelBuffer, withPresentationTime: time) else {
                         throw VideoMuxError(writer.error?.localizedDescription ?? "写入视频帧失败")
                     }
@@ -652,10 +751,12 @@ enum VideoMuxer {
         if isCancelled() { throw CancellationError() }
     }
 
-    private static func makePixelBuffer(index: Int,
-                                        source: UnsafePointer<UInt8>,
-                                        frames: VideoFrames,
-                                        adaptor: AVAssetWriterInputPixelBufferAdaptor) throws -> CVPixelBuffer {
+    private static func makePixelBuffer(
+        index: Int,
+        source: UnsafePointer<UInt8>,
+        frames: VideoFrames,
+        adaptor: AVAssetWriterInputPixelBufferAdaptor
+    ) throws -> CVPixelBuffer {
         guard let pool = adaptor.pixelBufferPool else {
             throw VideoMuxError("视频编码器没有可用的像素缓冲池")
         }
@@ -690,63 +791,71 @@ enum VideoMuxer {
         return pixelBuffer
     }
 
-    private static func appendAudio(_ audio: VideoFrames.Audio,
-                                    to input: AVAssetWriterInput,
-                                    writer: AVAssetWriter,
-                                    isCancelled: @Sendable () -> Bool) throws {
+    private static func appendAudio(
+        _ audio: VideoFrames.Audio,
+        to input: AVAssetWriterInput,
+        writer: AVAssetWriter,
+        isCancelled: @Sendable () -> Bool
+    ) throws {
         defer { input.markAsFinished() }
         let channels = audio.channels
         let bytesPerFrame = channels * 2
         let frames = audio.pcm.count / bytesPerFrame
         guard frames > 0 else { return }
 
-        var asbd = AudioStreamBasicDescription(mSampleRate: Float64(audio.sampleRate),
-                                               mFormatID: kAudioFormatLinearPCM,
-                                               mFormatFlags: kLinearPCMFormatFlagIsSignedInteger
-                                                   | kLinearPCMFormatFlagIsPacked,
-                                               mBytesPerPacket: UInt32(bytesPerFrame),
-                                               mFramesPerPacket: 1,
-                                               mBytesPerFrame: UInt32(bytesPerFrame),
-                                               mChannelsPerFrame: UInt32(channels),
-                                               mBitsPerChannel: 16,
-                                               mReserved: 0)
+        var asbd = AudioStreamBasicDescription(
+            mSampleRate: Float64(audio.sampleRate),
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kLinearPCMFormatFlagIsSignedInteger
+                | kLinearPCMFormatFlagIsPacked,
+            mBytesPerPacket: UInt32(bytesPerFrame),
+            mFramesPerPacket: 1,
+            mBytesPerFrame: UInt32(bytesPerFrame),
+            mChannelsPerFrame: UInt32(channels),
+            mBitsPerChannel: 16,
+            mReserved: 0)
         var layout = AudioChannelLayout()
-        layout.mChannelLayoutTag = channels == 1 ? kAudioChannelLayoutTag_Mono
-                                                 : kAudioChannelLayoutTag_Stereo
+        layout.mChannelLayoutTag =
+            channels == 1
+            ? kAudioChannelLayoutTag_Mono
+            : kAudioChannelLayoutTag_Stereo
         var formatDescription: CMAudioFormatDescription?
         let formatStatus = withUnsafePointer(to: &layout) { pointer in
-            CMAudioFormatDescriptionCreate(allocator: kCFAllocatorDefault,
-                                           asbd: &asbd,
-                                           layoutSize: MemoryLayout<AudioChannelLayout>.size,
-                                           layout: pointer,
-                                           magicCookieSize: 0,
-                                           magicCookie: nil,
-                                           extensions: nil,
-                                           formatDescriptionOut: &formatDescription)
+            CMAudioFormatDescriptionCreate(
+                allocator: kCFAllocatorDefault,
+                asbd: &asbd,
+                layoutSize: MemoryLayout<AudioChannelLayout>.size,
+                layout: pointer,
+                magicCookieSize: 0,
+                magicCookie: nil,
+                extensions: nil,
+                formatDescriptionOut: &formatDescription)
         }
         guard formatStatus == noErr, let formatDescription else {
             throw VideoMuxError("音轨格式无效（\(formatStatus)）")
         }
 
         var blockBuffer: CMBlockBuffer?
-        let blockStatus = CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault,
-                                                             memoryBlock: nil,
-                                                             blockLength: audio.pcm.count,
-                                                             blockAllocator: kCFAllocatorDefault,
-                                                             customBlockSource: nil,
-                                                             offsetToData: 0,
-                                                             dataLength: audio.pcm.count,
-                                                             flags: 0,
-                                                             blockBufferOut: &blockBuffer)
+        let blockStatus = CMBlockBufferCreateWithMemoryBlock(
+            allocator: kCFAllocatorDefault,
+            memoryBlock: nil,
+            blockLength: audio.pcm.count,
+            blockAllocator: kCFAllocatorDefault,
+            customBlockSource: nil,
+            offsetToData: 0,
+            dataLength: audio.pcm.count,
+            flags: 0,
+            blockBufferOut: &blockBuffer)
         guard blockStatus == kCMBlockBufferNoErr, let blockBuffer else {
             throw VideoMuxError("音轨缓冲创建失败（\(blockStatus)）")
         }
         let copyStatus = audio.pcm.withUnsafeBytes { raw -> OSStatus in
             guard let base = raw.baseAddress else { return -1 }
-            return CMBlockBufferReplaceDataBytes(with: base,
-                                                 blockBuffer: blockBuffer,
-                                                 offsetIntoDestination: 0,
-                                                 dataLength: audio.pcm.count)
+            return CMBlockBufferReplaceDataBytes(
+                with: base,
+                blockBuffer: blockBuffer,
+                offsetIntoDestination: 0,
+                dataLength: audio.pcm.count)
         }
         guard copyStatus == noErr else {
             throw VideoMuxError("写入音轨数据失败（\(copyStatus)）")
@@ -770,9 +879,11 @@ enum VideoMuxer {
         }
     }
 
-    private static func waitUntilReady(_ input: AVAssetWriterInput,
-                                       writer: AVAssetWriter,
-                                       isCancelled: @Sendable () -> Bool) throws {
+    private static func waitUntilReady(
+        _ input: AVAssetWriterInput,
+        writer: AVAssetWriter,
+        isCancelled: @Sendable () -> Bool
+    ) throws {
         var spins = 0
         while !input.isReadyForMoreMediaData {
             if isCancelled() { throw CancellationError() }

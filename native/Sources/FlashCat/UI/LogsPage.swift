@@ -1,6 +1,9 @@
-import SwiftUI
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AppKit
 import FlashCatKit
+import SwiftUI
 
 /// 日志页：顶部过滤条 + 一块玻璃控制台，版式对齐 WebUI。
 ///
@@ -33,9 +36,10 @@ struct LogsPage: View {
     }()
 
     private func display() -> LogsDigest {
-        LogsDigest.make(from: paused ? frozen : state.logEntries(for: effectiveSource),
-                        level: level,
-                        query: appliedQuery)
+        LogsDigest.make(
+            from: paused ? frozen : state.logEntries(for: effectiveSource),
+            level: level,
+            query: appliedQuery)
     }
 
     var body: some View {
@@ -83,12 +87,13 @@ struct LogsPage: View {
     }
 
     private func filterBar(_ data: LogsDigest) -> some View {
-        DSFilterBar(selection: $level,
-                    options: LogsFilter.allCases.map { item in
-                        (item, "\(item.label) (\(data.counts[item] ?? 0))")
-                    },
-                    query: $query,
-                    placeholder: "搜索")
+        DSFilterBar(
+            selection: $level,
+            options: LogsFilter.allCases.map { item in
+                (item, "\(item.label) (\(data.counts[item] ?? 0))")
+            },
+            query: $query,
+            placeholder: "搜索")
     }
 
     @ViewBuilder
@@ -100,9 +105,11 @@ struct LogsPage: View {
             }
             .disabled(data.lines.isEmpty)
 
-            DSIconButton(systemName: effectiveSource == .all ? "folder" : "doc.text",
-                         help: effectiveSource == .all ? "打开日志目录" : "打开日志文件",
-                         size: 28, style: .outlined) {
+            DSIconButton(
+                systemName: effectiveSource == .all ? "folder" : "doc.text",
+                help: effectiveSource == .all ? "打开日志目录" : "打开日志文件",
+                size: 28, style: .outlined
+            ) {
                 openLogsLocation()
             }
 

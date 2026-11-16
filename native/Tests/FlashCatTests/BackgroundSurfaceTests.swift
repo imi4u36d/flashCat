@@ -1,5 +1,9 @@
-import XCTest
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AppKit
+import XCTest
+
 @testable import FlashCat
 
 /// 背景参数要真的落到窗口和毛玻璃层上。
@@ -11,8 +15,9 @@ import AppKit
 @MainActor
 final class BackgroundSurfaceTests: XCTestCase {
     private func makeWindow() -> NSWindow {
-        NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 160),
-                 styleMask: [.titled], backing: .buffered, defer: false)
+        NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 240, height: 160),
+            styleMask: [.titled], backing: .buffered, defer: false)
     }
 
     func testOpacityAloneFlipsTheWindowSurface() {

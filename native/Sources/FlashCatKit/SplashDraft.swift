@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// Which DFlash2 draft belongs to a Splash model.
@@ -22,10 +25,12 @@ public enum SplashDraft {
     ///   - familyDrafts: family name → draft repository, read from the engine pack.
     ///   - fallback: what the catalog already knows for this model, used only
     ///     when no family name matches.
-    public static func repository(for modelId: String,
-                                  family: String?,
-                                  familyDrafts: [String: String],
-                                  fallback: String? = nil) -> String? {
+    public static func repository(
+        for modelId: String,
+        family: String?,
+        familyDrafts: [String: String],
+        fallback: String? = nil
+    ) -> String? {
         if let family, !family.isEmpty, let name = key(of: family, in: familyDrafts) {
             return released(familyDrafts[name] ?? "")
         }
@@ -60,7 +65,8 @@ public enum SplashDraft {
             let name = String(text[nameRange])
             guard !name.isEmpty else { continue }
             let draftRange = match.range(at: 2)
-            let draft = draftRange.location == NSNotFound
+            let draft =
+                draftRange.location == NSNotFound
                 ? ""
                 : Range(draftRange, in: text).map { String(text[$0]) } ?? ""
             result[name] = draft

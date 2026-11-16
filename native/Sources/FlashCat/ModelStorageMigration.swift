@@ -1,5 +1,8 @@
-import Foundation
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import FlashCatKit
+import Foundation
 
 /// Consolidates model data that older flashCat builds or standalone engines
 /// kept outside `Application Support/flashCat`.
@@ -16,7 +19,6 @@ enum ModelStorageMigration {
         var isEmpty: Bool { moved == 0 && archived == 0 && failures.isEmpty }
     }
 
-
     @discardableResult
     static func migrate() -> Report {
         var report = Report()
@@ -26,19 +28,23 @@ enum ModelStorageMigration {
         repairMisroutedRootEntries(&report, movedPaths: &movedPaths)
         migrateLegacyFlashCatRoot(&report, movedPaths: &movedPaths)
         archiveLegacyUpstreamSplash(&report)
-        migrateEngineRoot(.omlx, source: Paths.home + "/.omlx/models",
-                          movedPaths: &movedPaths, report: &report)
-        migrateEngineRoot(.mtplx, source: Paths.home + "/.mtplx/models",
-                          movedPaths: &movedPaths, report: &report)
-        migrateEngineRoot(.mlxServe, source: Paths.home + "/.mlx-serve/models",
-                          movedPaths: &movedPaths, report: &report)
+        migrateEngineRoot(
+            .omlx, source: Paths.home + "/.omlx/models",
+            movedPaths: &movedPaths, report: &report)
+        migrateEngineRoot(
+            .mtplx, source: Paths.home + "/.mtplx/models",
+            movedPaths: &movedPaths, report: &report)
+        migrateEngineRoot(
+            .mlxServe, source: Paths.home + "/.mlx-serve/models",
+            movedPaths: &movedPaths, report: &report)
         archive(Paths.home + "/.omlx/splash", label: "omlx-splash-hub", report: &report)
         rewriteLinks(under: EnginePaths.modelsRoot, movedPaths: movedPaths, report: &report)
         migrateLegacyPrefixCache(&report)
         retargetPrefixCache(movedPaths: movedPaths, report: &report)
 
         if Paths.fileExists(Paths.legacySplashModelsDirectory),
-           isEmptyDirectory(Paths.legacySplashModelsDirectory) {
+            isEmptyDirectory(Paths.legacySplashModelsDirectory)
+        {
             try? FileManager.default.removeItem(atPath: Paths.legacySplashModelsDirectory)
         }
         return report
@@ -47,8 +53,10 @@ enum ModelStorageMigration {
     /// A short-lived migration build treated every non-empty top-level name as
     /// a dynamic engine id. Move those entries back under Splash; real engine
     /// folders are the only names allowed beside `splash`.
-    private static func repairMisroutedRootEntries(_ report: inout Report,
-                                                   movedPaths: inout [String: String]) {
+    private static func repairMisroutedRootEntries(
+        _ report: inout Report,
+        movedPaths: inout [String: String]
+    ) {
         let splash = EnginePaths.modelsDirectory(.splash)
         let engines = Set(EngineCatalog.allIDs.map(\.rawValue))
         for name in entries(EnginePaths.modelsRoot) where !engines.contains(name) && name != "splash" {
@@ -61,8 +69,10 @@ enum ModelStorageMigration {
 
     /// `~/.flashcat/models` used to hold Splash repos and metadata alongside
     /// empty legacy `omlx/` and `mtplx/` folders. Route each entry by name.
-    private static func migrateLegacyFlashCatRoot(_ report: inout Report,
-                                                  movedPaths: inout [String: String]) {
+    private static func migrateLegacyFlashCatRoot(
+        _ report: inout Report,
+        movedPaths: inout [String: String]
+    ) {
         let source = Paths.legacySplashModelsDirectory
         guard Paths.fileExists(source) else { return }
         let splash = EnginePaths.modelsDirectory(.splash)
@@ -75,8 +85,9 @@ enum ModelStorageMigration {
                 continue
             }
             if let engine = EngineID(rawValue: name), EngineCatalog.allIDs.contains(engine) {
-                migrateEngineRoot(engine, source: from,
-                                  movedPaths: &movedPaths, report: &report)
+                migrateEngineRoot(
+                    engine, source: from,
+                    movedPaths: &movedPaths, report: &report)
                 continue
             }
             let to = splash + "/" + name
@@ -91,17 +102,20 @@ enum ModelStorageMigration {
     /// The upstream Splash app kept only assembly/symlink indexes here. The
     /// weights they referenced lived in `.omlx`, which is migrated separately.
     private static func archiveLegacyUpstreamSplash(_ report: inout Report) {
-        archive(Paths.legacyUpstreamSplashModelsDirectory,
-                label: "upstream-splash-models", report: &report)
+        archive(
+            Paths.legacyUpstreamSplashModelsDirectory,
+            label: "upstream-splash-models", report: &report)
     }
 
     /// Standalone oMLX/MTPLX used `models/<owner>/<repo>` while flashCat's
     /// pack engines use flat `models/<engine>/<owner>--<repo>` directories.
     /// MLX-Serve is Hugging Face-native and stays nested.
-    private static func migrateEngineRoot(_ engine: EngineID,
-                                          source: String,
-                                          movedPaths: inout [String: String],
-                                          report: inout Report) {
+    private static func migrateEngineRoot(
+        _ engine: EngineID,
+        source: String,
+        movedPaths: inout [String: String],
+        report: inout Report
+    ) {
         guard Paths.fileExists(source) else { return }
         let target = EnginePaths.modelsDirectory(engine)
         Paths.ensureDirectory(target)
@@ -163,8 +177,9 @@ enum ModelStorageMigration {
             }
             // Conflicting weights are never deleted. Keep the old copy in the
             // app-owned backup tree so the canonical path stays unambiguous.
-            archive(from, label: "collision-" + (from as NSString).lastPathComponent,
-                    report: &report)
+            archive(
+                from, label: "collision-" + (from as NSString).lastPathComponent,
+                report: &report)
         } catch {
             report.failures.append("\((from as NSString).lastPathComponent): \(error.localizedDescription)")
         }
@@ -190,21 +205,27 @@ enum ModelStorageMigration {
         }
     }
 
-    private static func rewriteLinks(under root: String,
-                                     movedPaths: [String: String],
-                                     report: inout Report) {
+    private static func rewriteLinks(
+        under root: String,
+        movedPaths: [String: String],
+        report: inout Report
+    ) {
         guard !movedPaths.isEmpty, let enumerator = FileManager.default.enumerator(atPath: root) else { return }
         let mappings = movedPaths.keys.sorted { $0.count > $1.count }
         for case let relative as String in enumerator {
             let path = root + "/" + relative
             guard isLink(path),
-                  let raw = try? FileManager.default.destinationOfSymbolicLink(atPath: path) else { continue }
-            let absolute = raw.hasPrefix("/")
+                let raw = try? FileManager.default.destinationOfSymbolicLink(atPath: path)
+            else { continue }
+            let absolute =
+                raw.hasPrefix("/")
                 ? raw
                 : (path as NSString).deletingLastPathComponent + "/" + raw
-            guard let old = mappings.first(where: {
-                absolute == $0 || absolute.hasPrefix($0 + "/")
-            }), let replacement = movedPaths[old] else { continue }
+            guard
+                let old = mappings.first(where: {
+                    absolute == $0 || absolute.hasPrefix($0 + "/")
+                }), let replacement = movedPaths[old]
+            else { continue }
             let next = replacement + String(absolute.dropFirst(old.count))
             do {
                 try FileManager.default.removeItem(atPath: path)
@@ -243,8 +264,10 @@ enum ModelStorageMigration {
     /// of that model: the rows still pointed at the old path, nothing could
     /// ever match them, and they kept their bytes forever. Rewriting the key
     /// costs one UPDATE and keeps every snapshot warm across the move.
-    private static func retargetPrefixCache(movedPaths: [String: String],
-                                            report: inout Report) {
+    private static func retargetPrefixCache(
+        movedPaths: [String: String],
+        report: inout Report
+    ) {
         guard !movedPaths.isEmpty else { return }
         let manifest = FlashCatPaths.prefixCacheDirectory(.mtplx) + "/manifest.sqlite"
         guard Paths.fileExists(manifest) else { return }

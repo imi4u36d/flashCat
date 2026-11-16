@@ -1,5 +1,8 @@
-import SwiftUI
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AppKit
+import SwiftUI
 
 // MARK: - Console palette (matches the shipped WebUI's visual language)
 //
@@ -10,11 +13,12 @@ import AppKit
 
 extension Color {
     init(console hex: UInt32, opacity: Double = 1) {
-        self.init(.sRGB,
-                  red: Double((hex >> 16) & 0xFF) / 255,
-                  green: Double((hex >> 8) & 0xFF) / 255,
-                  blue: Double(hex & 0xFF) / 255,
-                  opacity: opacity)
+        self.init(
+            .sRGB,
+            red: Double((hex >> 16) & 0xFF) / 255,
+            green: Double((hex >> 8) & 0xFF) / 255,
+            blue: Double(hex & 0xFF) / 255,
+            opacity: opacity)
     }
 }
 
@@ -116,18 +120,21 @@ struct ConsoleBackdrop: View {
             // 灵动岛和顶部控件有细腻的色彩折射层次；没有图片时按「APP 透明度」
             // 让出桌面：0 = 完全不透明，1 = 完全透出桌面。
             ZStack {
-                LinearGradient(colors: [Console.backgroundTop, Console.backgroundBottom],
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
+                LinearGradient(
+                    colors: [Console.backgroundTop, Console.backgroundBottom],
+                    startPoint: .topLeading, endPoint: .bottomTrailing)
 
-                RadialGradient(colors: [accent.opacity(scheme == .dark ? 0.09 : 0.055), .clear],
-                               center: .topLeading,
-                               startRadius: 20,
-                               endRadius: 720)
+                RadialGradient(
+                    colors: [accent.opacity(scheme == .dark ? 0.09 : 0.055), .clear],
+                    center: .topLeading,
+                    startRadius: 20,
+                    endRadius: 720)
 
-                RadialGradient(colors: [DS.info.opacity(scheme == .dark ? 0.07 : 0.04), .clear],
-                               center: .bottomTrailing,
-                               startRadius: 20,
-                               endRadius: 680)
+                RadialGradient(
+                    colors: [DS.info.opacity(scheme == .dark ? 0.07 : 0.04), .clear],
+                    center: .bottomTrailing,
+                    startRadius: 20,
+                    endRadius: 680)
             }
             .opacity(background.image == nil ? 1 - background.desktopReveal : 1)
 
@@ -144,20 +151,24 @@ struct ConsoleBackdrop: View {
                             // 直接和侧栏、页面文字抢视觉。半径可在设置里调整。
                             .blur(radius: background.blur)
                             .scaleEffect(1.1)
-                            // 不要给这一层加 `.id`：半径一变就换身份，SwiftUI 会
-                            // 把整块图片图层销毁重建，拖动时窗口出帧掉到一半、
-                            // 画面整块跳变（用户看到的就是「拖模糊条闪屏」）。
-                            // 现在的 `.blur` 会跟着半径重绘，不需要抖身份。
+                        // 不要给这一层加 `.id`：半径一变就换身份，SwiftUI 会
+                        // 把整块图片图层销毁重建，拖动时窗口出帧掉到一半、
+                        // 画面整块跳变（用户看到的就是「拖模糊条闪屏」）。
+                        // 现在的 `.blur` 会跟着半径重绘，不需要抖身份。
                     }
                     .clipped()
 
                 // 无论图片多清晰，都盖一层画布渐变保底，保证文字始终有足够对比度。
                 // 「APP 透明度」越高，这层越淡，但不低于保底值；剩下的行程
                 // 线性铺开，滑杆不会有一半是空的。见 `BackgroundMath.veilOpacity`。
-                LinearGradient(colors: [Console.backgroundTop, Console.backgroundBottom],
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
-                    .opacity(BackgroundMath.veilOpacity(background.opacity,
-                                                        dark: scheme == .dark))
+                LinearGradient(
+                    colors: [Console.backgroundTop, Console.backgroundBottom],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+                .opacity(
+                    BackgroundMath.veilOpacity(
+                        background.opacity,
+                        dark: scheme == .dark))
             }
         }
         .ignoresSafeArea()
@@ -175,17 +186,20 @@ private struct ConsoleCardSurfaceModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .dsSurface(radius: radius,
-                       tint: tint,
-                       hoverable: interactive)
+            .dsSurface(
+                radius: radius,
+                tint: tint,
+                hoverable: interactive)
     }
 }
 
 extension View {
     /// 套上模型页卡片那层表面。默认圆角与模型卡一致，内边距由调用方自己加。
-    func consoleCardSurface(radius: CGFloat = Console.cardRadius,
-                            tint: Color? = nil,
-                            interactive: Bool = false) -> some View {
+    func consoleCardSurface(
+        radius: CGFloat = Console.cardRadius,
+        tint: Color? = nil,
+        interactive: Bool = false
+    ) -> some View {
         modifier(ConsoleCardSurfaceModifier(radius: radius, tint: tint, interactive: interactive))
     }
 }
@@ -199,8 +213,9 @@ struct GlassCard<Content: View>: View {
     var body: some View {
         content()
             .padding(padding)
-            .consoleCardSurface(radius: radius,
-                                tint: tint == .clear ? nil : tint.opacity(0.16))
+            .consoleCardSurface(
+                radius: radius,
+                tint: tint == .clear ? nil : tint.opacity(0.16))
     }
 }
 
@@ -267,7 +282,10 @@ struct NativeSegmented<Value: Hashable>: View {
     @Namespace private var indicator
     @State private var hoveredIndex: Int?
 
-    init(selection: Binding<Value>, options: [Value], labels: [String], width: CGFloat? = nil, size: DSButtonStyle.Size = .regular) {
+    init(
+        selection: Binding<Value>, options: [Value], labels: [String], width: CGFloat? = nil,
+        size: DSButtonStyle.Size = .regular
+    ) {
         self._selection = selection
         self.options = options
         self.labels = labels
@@ -275,7 +293,10 @@ struct NativeSegmented<Value: Hashable>: View {
         self.size = size
     }
 
-    init(selection: Binding<Value>, options: [(value: Value, label: String)], width: CGFloat? = nil, size: DSButtonStyle.Size = .regular) {
+    init(
+        selection: Binding<Value>, options: [(value: Value, label: String)], width: CGFloat? = nil,
+        size: DSButtonStyle.Size = .regular
+    ) {
         self._selection = selection
         self.options = options.map(\.value)
         self.labels = options.map(\.label)
@@ -328,17 +349,21 @@ struct NativeSegmented<Value: Hashable>: View {
                         .background {
                             if isSelected {
                                 Capsule()
-                                    .fill(scheme == .dark
-                                          ? Color.white.opacity(0.18)
-                                          : Color.white.opacity(0.92))
+                                    .fill(
+                                        scheme == .dark
+                                            ? Color.white.opacity(0.18)
+                                            : Color.white.opacity(0.92)
+                                    )
                                     .overlay(
                                         Capsule().strokeBorder(
                                             Color.white.opacity(scheme == .dark ? 0.14 : 0.72),
                                             lineWidth: 0.75
                                         )
                                     )
-                                    .shadow(color: Color.black.opacity(scheme == .dark ? 0.24 : 0.08),
-                                            radius: 2.5, y: 1)
+                                    .shadow(
+                                        color: Color.black.opacity(scheme == .dark ? 0.24 : 0.08),
+                                        radius: 2.5, y: 1
+                                    )
                                     .matchedGeometryEffect(id: "activeSegment", in: indicator)
                             } else if isHovered {
                                 Capsule()
@@ -458,10 +483,11 @@ struct StatusChip: View {
     var filled: Bool = false
 
     var body: some View {
-        DSChip(text: text,
-               dot: color,
-               live: filled && color == DS.ok,
-               tint: filled ? color : nil)
+        DSChip(
+            text: text,
+            dot: color,
+            live: filled && color == DS.ok,
+            tint: filled ? color : nil)
     }
 }
 
@@ -487,4 +513,3 @@ struct RowDeleteButton: View {
         }
     }
 }
-

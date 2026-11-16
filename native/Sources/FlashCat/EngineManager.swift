@@ -1,5 +1,8 @@
-import Foundation
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import FlashCatKit
+import Foundation
 
 extension ServerStats {
     /// Host facts are process-wide constants; reading them once keeps the 1 s
@@ -59,7 +62,8 @@ extension ServerStats {
     /// 分母为 0（进程刚起、还没有请求）时返回 nil，界面画「—」而不是 0%。
     private static func cacheHitRate(from extras: [String: Double]) -> Double? {
         guard let prompt = extras["prompt_tokens_total"], prompt > 0,
-              let cached = extras["total_cached_tokens"] else { return nil }
+            let cached = extras["total_cached_tokens"]
+        else { return nil }
         return min(1, max(0, cached / prompt))
     }
 }
@@ -114,13 +118,15 @@ final class EngineManager {
         var next: [EngineController] = []
         for id in EngineCatalog.allIDs {
             guard let installation = EngineInstallations.newest(id, version: nil) else { continue }
-            let port = EngineStore.shared.configuration(for: id).port
+            let port =
+                EngineStore.shared.configuration(for: id).port
                 ?? installation.descriptor.defaultPort
-            let controller = EngineController(id: id,
-                                              installation: installation,
-                                              settings: settings,
-                                              catalog: catalog,
-                                              port: port)
+            let controller = EngineController(
+                id: id,
+                installation: installation,
+                settings: settings,
+                catalog: catalog,
+                port: port)
             controller.onChange = { [weak self] in self?.onChange() }
             controller.prepareForStart = prepareForStart
             next.append(controller)
@@ -170,12 +176,14 @@ final class EngineManager {
         defer { handoffInFlight = false }
 
         for controller in controllers where controller.id != id && controller.isRunning {
-            controller.logs.append("==> 切换引擎：等待 \(controller.id.displayName) 卸载模型并退出…",
-                                   level: .system)
+            controller.logs.append(
+                "==> 切换引擎：等待 \(controller.id.displayName) 卸载模型并退出…",
+                level: .system)
             let stopped = await controller.stopAndWait()
             if !stopped {
-                controller.logs.append("==> \(controller.id.displayName) 未能在切换前退出，仍将继续切换",
-                                       level: .error)
+                controller.logs.append(
+                    "==> \(controller.id.displayName) 未能在切换前退出，仍将继续切换",
+                    level: .error)
             }
         }
 

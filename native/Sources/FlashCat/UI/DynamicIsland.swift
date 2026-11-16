@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import SwiftUI
 
 /// 侧栏左下角状态胶囊层。收起时停在侧栏底部「设置」栏上方；
@@ -19,11 +22,13 @@ struct DynamicIslandLayer: View {
                         .onTapGesture { collapse() }
                 }
 
-                DynamicIsland(state: state,
-                              expanded: $expanded,
-                              maxListHeight: maxListHeight)
-                    .padding(.leading, 10)
-                    .padding(.bottom, bottomOffset)
+                DynamicIsland(
+                    state: state,
+                    expanded: $expanded,
+                    maxListHeight: maxListHeight
+                )
+                .padding(.leading, 10)
+                .padding(.bottom, bottomOffset)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
         }
@@ -50,7 +55,8 @@ struct DynamicIsland: View {
     private var rate: Double {
         let reading = state.decodeReading
         guard reading.origin == .gatewayLive || reading.origin == .engineLive,
-              let value = reading.value, value > 0 else { return 0 }
+            let value = reading.value, value > 0
+        else { return 0 }
         return value
     }
 
@@ -76,10 +82,14 @@ struct DynamicIsland: View {
         }
         .frame(width: sidebarIslandWidth)
         .glassEffect(expanded ? .regular : .regular.interactive(), in: shape)
-        .shadow(color: Color.black.opacity(scheme == .dark ? (expanded ? 0.42 : 0.16)
-                                                           : (expanded ? 0.12 : 0.04)),
-                radius: expanded ? 20 : 8,
-                y: expanded ? -4 : 2)
+        .shadow(
+            color: Color.black.opacity(
+                scheme == .dark
+                    ? (expanded ? 0.42 : 0.16)
+                    : (expanded ? 0.12 : 0.04)),
+            radius: expanded ? 20 : 8,
+            y: expanded ? -4 : 2
+        )
         .contentShape(shape)
         .onHover { inside in
             withAnimation(DS.Motion.snappy) { hovering = inside }

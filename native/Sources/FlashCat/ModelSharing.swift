@@ -1,5 +1,8 @@
-import Foundation
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import FlashCatKit
+import Foundation
 
 /// 公共模型目录：权重只下载一份，哪些引擎能看见它由一张授权表决定。
 ///
@@ -49,7 +52,8 @@ enum ModelSharing {
 
     private static func loadTable() -> [String: Set<EngineID>] {
         guard let data = FileManager.default.contents(atPath: tableFile),
-              let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: [String]] else {
+            let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: [String]]
+        else {
             return [:]
         }
         var result: [String: Set<EngineID>] = [:]
@@ -66,8 +70,10 @@ enum ModelSharing {
             raw[repo] = EngineCatalog.allIDs.filter { engines.contains($0) }.map(\.rawValue)
         }
         Paths.ensureDirectory(Paths.supportDirectory)
-        if let data = try? JSONSerialization.data(withJSONObject: raw,
-                                                  options: [.prettyPrinted, .sortedKeys]) {
+        if let data = try? JSONSerialization.data(
+            withJSONObject: raw,
+            options: [.prettyPrinted, .sortedKeys])
+        {
             try? data.write(to: URL(fileURLWithPath: tableFile), options: .atomic)
         }
         cacheLock.lock()
@@ -190,16 +196,17 @@ enum ModelSharing {
         // 单独的草稿头没有 tokenizer，扫不出来，只能顺着主模型找。
         let draft = ["draft", "dflash2"].first { manager.fileExists(atPath: path + "/" + $0 + "/config.json") }
         let meta = EngineModelStore.meta(of: path)
-        return ModelInfo(id: repo,
-                         path: path,
-                         bytes: meta.bytes,
-                         origin: .local,
-                         targetName: gguf.map { path + "/" + $0 } ?? path,
-                         family: nil,
-                         draftPath: draft.map { path + "/" + $0 },
-                         mmprojPath: mmproj.map { path + "/" + $0 },
-                         quantization: ModelQuantization.detect(in: gguf ?? repo)
-                             ?? meta.quantization)
+        return ModelInfo(
+            id: repo,
+            path: path,
+            bytes: meta.bytes,
+            origin: .local,
+            targetName: gguf.map { path + "/" + $0 } ?? path,
+            family: nil,
+            draftPath: draft.map { path + "/" + $0 },
+            mmprojPath: mmproj.map { path + "/" + $0 },
+            quantization: ModelQuantization.detect(in: gguf ?? repo)
+                ?? meta.quantization)
     }
 
     // MARK: 链接
@@ -220,7 +227,8 @@ enum ModelSharing {
             )
             for full in modelLinks(under: root, nested: id.descriptor.modelLayout == .nested) {
                 guard let target = try? manager.destinationOfSymbolicLink(atPath: full) else { continue }
-                let absolute = target.hasPrefix("/")
+                let absolute =
+                    target.hasPrefix("/")
                     ? target
                     : (full as NSString).deletingLastPathComponent + "/" + target
                 let normalized = URL(fileURLWithPath: absolute).standardizedFileURL.path

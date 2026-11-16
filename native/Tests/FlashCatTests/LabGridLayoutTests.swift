@@ -1,4 +1,8 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import XCTest
+
 @testable import FlashCat
 
 /// 「一屏一页」的排版只取决于可用区域，所以可以脱离 UI 直接断言：
@@ -28,8 +32,9 @@ final class LabGridLayoutTests: XCTestCase {
 
     func testCoversKeepTheirAspect() {
         let images = LabGridLayout.make(size: defaultGrid, kind: .images)
-        XCTAssertEqual(images.coverWidth, images.coverHeight, accuracy: 0.5,
-                       "图片是方图，封面不该被拉成别的比例")
+        XCTAssertEqual(
+            images.coverWidth, images.coverHeight, accuracy: 0.5,
+            "图片是方图，封面不该被拉成别的比例")
 
         let videos = LabGridLayout.make(size: defaultGrid, kind: .videos)
         XCTAssertEqual(videos.coverWidth / videos.coverHeight, 16.0 / 9.0, accuracy: 0.01)
@@ -40,16 +45,18 @@ final class LabGridLayoutTests: XCTestCase {
         let layout = LabGridLayout.make(size: size, kind: .images)
 
         XCTAssertEqual(layout.rows, 1)
-        XCTAssertLessThanOrEqual(layout.requiredHeight, size.height,
-                                 "放不下两行时宁可只排一行，也不能让卡片被切掉")
+        XCTAssertLessThanOrEqual(
+            layout.requiredHeight, size.height,
+            "放不下两行时宁可只排一行，也不能让卡片被切掉")
     }
 
     func testTinyWindowClampsCoverInsteadOfClippingHalfACard() {
         let layout = LabGridLayout.make(size: CGSize(width: 1032, height: 120), kind: .images)
 
         XCTAssertEqual(layout.rows, 1)
-        XCTAssertEqual(layout.coverHeight, LabGridLayout.minCoverHeight,
-                       "矮到连最小封面都放不下时，封面停在最小高度")
+        XCTAssertEqual(
+            layout.coverHeight, LabGridLayout.minCoverHeight,
+            "矮到连最小封面都放不下时，封面停在最小高度")
     }
 
     func testNarrowWindowDropsToSingleColumn() {
@@ -92,10 +99,12 @@ final class LabGridLayoutTests: XCTestCase {
         for size in sizes {
             for kind in [LabGridKind.images, .videos] {
                 let layout = LabGridLayout.make(size: size, kind: kind)
-                XCTAssertLessThanOrEqual(layout.requiredHeight, size.height,
-                                         "\(kind) @ \(size) 排出来的页面高过可视区")
-                XCTAssertLessThanOrEqual(layout.gridWidth, size.width,
-                                         "\(kind) @ \(size) 排出来的页面宽过可视区")
+                XCTAssertLessThanOrEqual(
+                    layout.requiredHeight, size.height,
+                    "\(kind) @ \(size) 排出来的页面高过可视区")
+                XCTAssertLessThanOrEqual(
+                    layout.gridWidth, size.width,
+                    "\(kind) @ \(size) 排出来的页面宽过可视区")
             }
         }
     }

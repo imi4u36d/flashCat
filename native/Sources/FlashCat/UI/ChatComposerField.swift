@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AppKit
 import SwiftUI
 
@@ -42,13 +45,15 @@ struct ChatComposerField: NSViewRepresentable {
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
         textView.minSize = NSSize(width: 0, height: 0)
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
-                                  height: CGFloat.greatestFiniteMagnitude)
+        textView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude)
         textView.textContainerInset = .zero
         textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.containerSize = NSSize(width: 0,
-                                                       height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.containerSize = NSSize(
+            width: 0,
+            height: CGFloat.greatestFiniteMagnitude)
         // 提示词里经常是代码或反引号，不要被智能标点改写。
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
@@ -95,8 +100,9 @@ struct ChatComposerField: NSViewRepresentable {
         // Binding，比一下就会把没确认的拼音清掉——旧实现正是这么丢掉输入的。
         // 视图手里的内容比回报过的新、草稿跟回报过的一致、正在组字，都不碰。
         if textView.string == coordinator.lastReportedText,
-           text != coordinator.lastReportedText,
-           !textView.hasMarkedText() {
+            text != coordinator.lastReportedText,
+            !textView.hasMarkedText()
+        {
             let caret = min(textView.selectedRange().location, text.count)
             textView.string = text
             textView.setSelectedRange(NSRange(location: caret, length: 0))
@@ -199,7 +205,8 @@ final class ComposerContainer: NSView {
 
     func syncHeight() {
         guard let layoutManager = textView.layoutManager,
-              let container = textView.textContainer else { return }
+            let container = textView.textContainer
+        else { return }
         layoutManager.ensureLayout(for: container)
 
         let font = textView.font ?? NSFont.systemFont(ofSize: ChatComposerField.fontSize)
@@ -241,8 +248,10 @@ final class ComposerTextView: NSTextView {
     private func imageURL(from info: NSDraggingInfo) -> URL? {
         guard acceptsImageDrop else { return nil }
         let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
-        let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self],
-                                                       options: options) as? [URL]
+        let urls =
+            info.draggingPasteboard.readObjects(
+                forClasses: [NSURL.self],
+                options: options) as? [URL]
         return urls?.first {
             Self.imageExtensions.contains($0.pathExtension.lowercased())
         }

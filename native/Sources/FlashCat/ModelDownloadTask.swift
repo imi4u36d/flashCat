@@ -1,5 +1,8 @@
-import Foundation
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import FlashCatKit
+import Foundation
 
 /// One row of the model download center.
 ///

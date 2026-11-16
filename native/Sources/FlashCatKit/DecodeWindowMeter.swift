@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// 按墙钟窗口计量的解码速率估计器，单位 tok/s。纯值类型，时间由调用方注入。
@@ -106,10 +109,12 @@ public struct DecodeWindowMeter {
         // 旧实现按 `now` 裁剪，测试里先喂 t=10 的一片再把读数时刻回拨，
         // 窗口被掏空，读数一路是 0。
         if let first = arrivals.first, let anchor = lastArrival,
-           anchor.timeIntervalSince(first.at) > arrivalCapacitySeconds {
+            anchor.timeIntervalSince(first.at) > arrivalCapacitySeconds
+        {
             var drain = 0
             while drain < arrivals.count,
-                  anchor.timeIntervalSince(arrivals[drain].at) > arrivalCapacitySeconds {
+                anchor.timeIntervalSince(arrivals[drain].at) > arrivalCapacitySeconds
+            {
                 drain += 1
             }
             if drain > 0 { arrivals.removeFirst(drain) }

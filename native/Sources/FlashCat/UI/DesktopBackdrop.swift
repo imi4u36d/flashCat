@@ -1,5 +1,8 @@
-import SwiftUI
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AppKit
+import SwiftUI
 
 /// 无自定义壁纸时，让窗口透出桌面。
 ///

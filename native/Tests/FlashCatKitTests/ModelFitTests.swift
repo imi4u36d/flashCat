@@ -1,4 +1,8 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import XCTest
+
 @testable import FlashCatKit
 
 final class ModelFitTests: XCTestCase {
@@ -76,8 +80,9 @@ final class ModelFitTests: XCTestCase {
             FitCandidate(id: "documented", bytes: 20_400_000_000, minimumMemory: 32, rank: 1),
             FitCandidate(id: "undocumented", bytes: 0, minimumMemory: 0, rank: 0),
         ]
-        XCTAssertEqual(ModelFit.pick(candidates, machine: machine(128)),
-                       FitPick(index: 0, verdict: .good))
+        XCTAssertEqual(
+            ModelFit.pick(candidates, machine: machine(128)),
+            FitPick(index: 0, verdict: .good))
         XCTAssertNil(ModelFit.pick([candidates[1]], machine: machine(128)))
 
         // The rank-less row sits in the middle: the pick still points at the
@@ -87,11 +92,13 @@ final class ModelFitTests: XCTestCase {
             FitCandidate(id: "light", bytes: 15_600_000_000, minimumMemory: 24, rank: 1),
             FitCandidate(id: "heavy", bytes: 20_400_000_000, minimumMemory: 32, rank: 2),
         ]
-        XCTAssertEqual(ModelFit.pick(holey, machine: machine(128)),
-                       FitPick(index: 2, verdict: .good))
+        XCTAssertEqual(
+            ModelFit.pick(holey, machine: machine(128)),
+            FitPick(index: 2, verdict: .good))
         // Nothing fits: the lightest *ranked* tier, again at its own offset.
-        XCTAssertEqual(ModelFit.pick(holey, machine: machine(16)),
-                       FitPick(index: 1, verdict: .tight))
+        XCTAssertEqual(
+            ModelFit.pick(holey, machine: machine(16)),
+            FitPick(index: 1, verdict: .tight))
     }
 
     func testVerdictThresholds() {
@@ -99,7 +106,9 @@ final class ModelFitTests: XCTestCase {
         XCTAssertEqual(ModelFit.verdict(bytes: 0, minimumMemory: 64, machine: machine(64)), .good)
         XCTAssertEqual(ModelFit.verdict(bytes: 0, minimumMemory: 128, machine: machine(64)), .tight)
         // An unknown free disk (0) cannot make a pack "too big".
-        XCTAssertEqual(ModelFit.verdict(bytes: 108_000_000_000, minimumMemory: 0,
-                                        machine: machine(64, freeDisk: 0)), .good)
+        XCTAssertEqual(
+            ModelFit.verdict(
+                bytes: 108_000_000_000, minimumMemory: 0,
+                machine: machine(64, freeDisk: 0)), .good)
     }
 }

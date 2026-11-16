@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import SwiftUI
 
 /// 模型家族：从仓库 id / 标签里认出来的权重来源。
@@ -141,12 +144,14 @@ struct ModelFamilyIcon: View {
     var size: CGFloat = 30
 
     var body: some View {
-        ArcadeIcon(symbol: family.symbol,
-                   colors: family.colors,
-                   brandAsset: family.brandAsset,
-                   size: size,
-                   glyphScale: 0.46,
-                   glow: false)
-            .accessibilityLabel(family.name)
+        ArcadeIcon(
+            symbol: family.symbol,
+            colors: family.colors,
+            brandAsset: family.brandAsset,
+            size: size,
+            glyphScale: 0.46,
+            glow: false
+        )
+        .accessibilityLabel(family.name)
     }
 }

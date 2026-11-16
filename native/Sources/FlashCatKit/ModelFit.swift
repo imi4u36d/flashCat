@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// How well one model pack fits the machine flashCat runs on.
@@ -90,9 +93,10 @@ public enum ModelFit {
         guard !ladder.isEmpty else { return nil }
 
         func verdict(_ candidate: FitCandidate) -> DeviceFit {
-            ModelFit.verdict(bytes: candidate.bytes,
-                             minimumMemory: candidate.minimumMemory,
-                             machine: machine)
+            ModelFit.verdict(
+                bytes: candidate.bytes,
+                minimumMemory: candidate.minimumMemory,
+                machine: machine)
         }
 
         let running = ladder.filter { verdict($0.element).runs }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// 引擎自报的原始计数键。解析器把引擎的累计/瞬时计数放进 `EngineStatus.extras`，
@@ -131,8 +134,9 @@ public struct EngineLiveRates {
             // 算出来的只是平均值而不是当前速度。
             if elapsed >= 0.2, elapsed <= 30 {
                 if sample.running > 0,
-                   let current = sample.decodeTokens, let lastDecode = last.decodeTokens,
-                   current >= lastDecode {
+                    let current = sample.decodeTokens, let lastDecode = last.decodeTokens,
+                    current >= lastDecode
+                {
                     let delta = current - lastDecode
                     if delta > 0 {
                         reading.decode = EngineRateSample(value: delta / elapsed, kind: .live)
@@ -179,8 +183,9 @@ public struct EngineLiveRates {
             // 真的卡住超过 `prefillStaleAfter` 才退回本轮累计均值，让读数
             // 至少还在动，也不会把几分钟前的高速度一直挂在角标上。
             if let startedAt = prefillRoundStartedAt,
-               let progressedAt = prefillLastProgressAt,
-               now.timeIntervalSince(progressedAt) >= Self.prefillStaleAfter {
+                let progressedAt = prefillLastProgressAt,
+                now.timeIntervalSince(progressedAt) >= Self.prefillStaleAfter
+            {
                 let span = now.timeIntervalSince(startedAt)
                 if span > 0 {
                     prefillWindowRate = (tokens - prefillRoundStartTokens) / span
@@ -195,7 +200,8 @@ public struct EngineLiveRates {
         // 保留（那正是「最近一个 chunk」）。窗口外的更早的点一律丢掉，读数
         // 才会从「本轮平均」变成「当前这一小段」。
         if let firstInside = prefillPoints.firstIndex(where: { $0.at >= cutoff }),
-           firstInside > 0 {
+            firstInside > 0
+        {
             let keepFrom = firstInside < prefillPoints.count - 1 ? firstInside : firstInside - 1
             prefillPoints.removeFirst(keepFrom)
         }
@@ -215,12 +221,13 @@ public struct EngineLiveRates {
         // 这台引擎不报任何一项：交给别的口径，不要把「没有数据」说成 0。
         guard decode != nil || prefillTokens != nil || prefillSeconds != nil || prefillLive != nil
         else { return nil }
-        return Sample(at: now,
-                      decodeTokens: decode,
-                      prefillLiveTokens: prefillLive,
-                      prefillTokens: prefillTokens,
-                      prefillSeconds: prefillSeconds,
-                      running: status.activeRequests,
-                      prefilling: Int(status.extras[EngineRateCounters.prefilling] ?? 0))
+        return Sample(
+            at: now,
+            decodeTokens: decode,
+            prefillLiveTokens: prefillLive,
+            prefillTokens: prefillTokens,
+            prefillSeconds: prefillSeconds,
+            running: status.activeRequests,
+            prefilling: Int(status.extras[EngineRateCounters.prefilling] ?? 0))
     }
 }

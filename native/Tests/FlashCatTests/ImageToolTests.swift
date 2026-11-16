@@ -1,6 +1,10 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
+import FlashCatKit
 import Foundation
 import XCTest
-import FlashCatKit
+
 @testable import FlashCat
 
 /// 画图工具的协议层：请求体里怎么挂 `tools`、流式 `tool_calls` 怎么拼回完整
@@ -37,8 +41,11 @@ final class ImageToolTests: XCTestCase {
         return "data: " + String(decoding: data, as: UTF8.self) + "\n\n"
     }
 
-    private func makeServer(_ respond: @escaping @Sendable ([[String: Any]]) -> [[String: Any]])
-        async -> (GatewayHTTPServer, UInt16, Recorder)? {
+    private func makeServer(
+        _ respond: @escaping @Sendable ([[String: Any]]) -> [[String: Any]]
+    )
+        async -> (GatewayHTTPServer, UInt16, Recorder)?
+    {
         let recorder = Recorder()
         let server = GatewayHTTPServer { request in
             recorder.add(request.body)
@@ -69,16 +76,36 @@ final class ImageToolTests: XCTestCase {
     /// 两片参数、中间夹一片不带参数的装饰分片：拼回来必须还是完整 JSON。
     private func toolCallChunks() -> [[String: Any]] {
         [
-            ["choices": [["delta": ["tool_calls": [[
-                "index": 0,
-                "id": callID,
-                "type": "function",
-                "function": ["name": ImageTool.name, "arguments": "{\"prompts\":[\"第一幕：橘猫穿"],
-            ]]]]]],
-            ["choices": [["delta": ["tool_calls": [[
-                "index": 0,
-                "function": ["arguments": "上宇航服，站在舷窗前\"]}"],
-            ]]]]]],
+            [
+                "choices": [
+                    [
+                        "delta": [
+                            "tool_calls": [
+                                [
+                                    "index": 0,
+                                    "id": callID,
+                                    "type": "function",
+                                    "function": ["name": ImageTool.name, "arguments": "{\"prompts\":[\"第一幕：橘猫穿"],
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+            ],
+            [
+                "choices": [
+                    [
+                        "delta": [
+                            "tool_calls": [
+                                [
+                                    "index": 0,
+                                    "function": ["arguments": "上宇航服，站在舷窗前\"]}"],
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+            ],
             ["choices": [["delta": [:], "finish_reason": "tool_calls"]]],
         ]
     }
@@ -118,9 +145,10 @@ final class ImageToolTests: XCTestCase {
     }
 
     func testResultPayloadRoundTrips() throws {
-        let payload = ImageTool.result(images: [("/tmp/a.png", "1024×1024 · 20 步")],
-                                       seed: 42,
-                                       size: "1024x1024")
+        let payload = ImageTool.result(
+            images: [("/tmp/a.png", "1024×1024 · 20 步")],
+            seed: 42,
+            size: "1024x1024")
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any])
         XCTAssertEqual(object["ok"] as? Bool, true)
         XCTAssertEqual(object["seed"] as? Int, 42)
@@ -140,15 +168,16 @@ final class ImageToolTests: XCTestCase {
         defer { Task { await server.stop() } }
 
         let client = ChatClient()
-        let result = await client.send(port: Int(port), model: "m",
-                                       turns: [ChatTurn(role: "user", content: "画三张")],
-                                       options: options,
-                                       tools: ChatToolSchema(tools),
-                                       onDelta: { _, _ in },
-                                       onReasoning: { _, _ in },
-                                       onUsage: { _ in },
-                                       onStatus: { _ in },
-                                       onToolCall: { _, _ in })
+        let result = await client.send(
+            port: Int(port), model: "m",
+            turns: [ChatTurn(role: "user", content: "画三张")],
+            options: options,
+            tools: ChatToolSchema(tools),
+            onDelta: { _, _ in },
+            onReasoning: { _, _ in },
+            onUsage: { _ in },
+            onStatus: { _ in },
+            onToolCall: { _, _ in })
 
         // 只有工具调用、没有正文：不能当成「服务没有返回内容」。
         if case .failure(let error) = result {
@@ -167,29 +196,33 @@ final class ImageToolTests: XCTestCase {
     }
 
     func testToolHistoryIsReplayedWithCallIDs() async throws {
-        guard let (server, port, recorder) = await makeServer({ _ in
-            [["choices": [["delta": ["content": "画好了"], "finish_reason": "stop"]]]]
-        }) else {
+        guard
+            let (server, port, recorder) = await makeServer({ _ in
+                [["choices": [["delta": ["content": "画好了"], "finish_reason": "stop"]]]]
+            })
+        else {
             return XCTFail("测试服务没起来")
         }
         defer { Task { await server.stop() } }
 
-        let call = ChatToolCall(id: callID, name: ImageTool.name,
-                                arguments: "{\"prompts\":[\"一只猫\"]}")
+        let call = ChatToolCall(
+            id: callID, name: ImageTool.name,
+            arguments: "{\"prompts\":[\"一只猫\"]}")
         let turns = [
             ChatTurn(role: "user", content: "画一只猫"),
             ChatTurn(role: "assistant", content: "", toolCalls: [call]),
             ChatTurn(role: "tool", content: "{\"ok\":true}", toolCallID: callID),
         ]
         let client = ChatClient()
-        let result = await client.send(port: Int(port), model: "m",
-                                       turns: turns,
-                                       options: options,
-                                       onDelta: { _, _ in },
-                                       onReasoning: { _, _ in },
-                                       onUsage: { _ in },
-                                       onStatus: { _ in },
-                                       onToolCall: { _, _ in })
+        let result = await client.send(
+            port: Int(port), model: "m",
+            turns: turns,
+            options: options,
+            onDelta: { _, _ in },
+            onReasoning: { _, _ in },
+            onUsage: { _ in },
+            onStatus: { _ in },
+            onToolCall: { _, _ in })
         if case .failure(let error) = result { XCTFail("回放失败：\(error.message)") }
 
         let messages = try XCTUnwrap(recorder.last?["messages"] as? [[String: Any]])
@@ -203,8 +236,9 @@ final class ImageToolTests: XCTestCase {
         XCTAssertEqual(calls.first?["id"] as? String, callID)
         XCTAssertEqual((calls.first?["function"] as? [String: Any])?["name"] as? String, ImageTool.name)
         // 参数必须原样透传：重新编码会打乱前缀缓存，还可能改写模型的 JSON。
-        XCTAssertEqual((calls.first?["function"] as? [String: Any])?["arguments"] as? String,
-                       "{\"prompts\":[\"一只猫\"]}")
+        XCTAssertEqual(
+            (calls.first?["function"] as? [String: Any])?["arguments"] as? String,
+            "{\"prompts\":[\"一只猫\"]}")
 
         let tool = messages[2]
         XCTAssertEqual(tool["role"] as? String, "tool")
@@ -214,23 +248,29 @@ final class ImageToolTests: XCTestCase {
     /// 视觉模型的一轮：正文和图片必须按 OpenAI 的 content parts 发出去，
     /// 图片用 data URL（引擎不需要再读本机路径）。
     func testVisionTurnSendsTextAndImageParts() async throws {
-        guard let (server, port, recorder) = await makeServer({ _ in
-            [["choices": [["delta": ["content": "我看到了"], "finish_reason": "stop"]]]]
-        }) else {
+        guard
+            let (server, port, recorder) = await makeServer({ _ in
+                [["choices": [["delta": ["content": "我看到了"], "finish_reason": "stop"]]]]
+            })
+        else {
             return XCTFail("测试服务没起来")
         }
         defer { Task { await server.stop() } }
 
         let image = "data:image/jpeg;base64,QUJD"
         let client = ChatClient()
-        let result = await client.send(port: Int(port), model: "m",
-                                       turns: [ChatTurn(role: "user", content: "看看这张",
-                                                        imageURLs: [image])],
-                                       options: options,
-                                       onDelta: { _, _ in },
-                                       onReasoning: { _, _ in },
-                                       onUsage: { _ in },
-                                       onStatus: { _ in })
+        let result = await client.send(
+            port: Int(port), model: "m",
+            turns: [
+                ChatTurn(
+                    role: "user", content: "看看这张",
+                    imageURLs: [image])
+            ],
+            options: options,
+            onDelta: { _, _ in },
+            onReasoning: { _, _ in },
+            onUsage: { _ in },
+            onStatus: { _ in })
         if case .failure(let error) = result { XCTFail("视觉请求失败：\(error.message)") }
 
         let messages = try XCTUnwrap(recorder.last?["messages"] as? [[String: Any]])

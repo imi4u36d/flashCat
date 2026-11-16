@@ -1,5 +1,8 @@
-import SwiftUI
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AppKit
+import SwiftUI
 
 /// 「实验室」页：侧边栏设置之后的独立入口，顶部用分段控件在图片/视频之间切换。
 /// 两个库都只认 assistant 消息里落盘的结果，用户给的底图/首帧图不会混进来。
@@ -52,10 +55,12 @@ struct LabPage: View {
                     .padding(.bottom, Console.contentBottomInset)
             } else {
                 ScrollView {
-                    DSAnimatedGrid(columns: gridColumns,
-                                   minWidth: tab.kind.minCellWidth,
-                                   spacing: Self.gridSpacing,
-                                   maxColumns: tab.kind.maxColumns) {
+                    DSAnimatedGrid(
+                        columns: gridColumns,
+                        minWidth: tab.kind.minCellWidth,
+                        spacing: Self.gridSpacing,
+                        maxColumns: tab.kind.maxColumns
+                    ) {
                         gridItems
                     }
                     .padding(.horizontal, Console.contentPadding)
@@ -65,10 +70,12 @@ struct LabPage: View {
                 .scrollEdgeEffectStyle(.soft, for: .top)
             }
         }
-        .dsTrackColumns($gridColumns,
-                        minWidth: tab.kind.minCellWidth,
-                        spacing: Self.gridSpacing,
-                        maxColumns: tab.kind.maxColumns)
+        .dsTrackColumns(
+            $gridColumns,
+            minWidth: tab.kind.minCellWidth,
+            spacing: Self.gridSpacing,
+            maxColumns: tab.kind.maxColumns
+        )
         .onAppear(perform: reload)
         .onChange(of: tab) { _, _ in
             reload()
@@ -80,9 +87,12 @@ struct LabPage: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            DSSegmented(selection: $tab,
-                        options: [(.images, "图片 \(images.count)"),
-                                  (.videos, "视频 \(videos.count)")])
+            DSSegmented(
+                selection: $tab,
+                options: [
+                    (.images, "图片 \(images.count)"),
+                    (.videos, "视频 \(videos.count)"),
+                ])
             if itemCount > 0 {
                 Text("共 \(itemCount) \(tab.unit)")
                     .font(DS.Font.xs)
@@ -115,13 +125,15 @@ struct LabPage: View {
     private var emptyState: some View {
         switch tab {
         case .images:
-            LabEmptyState(icon: "photo.on.rectangle.angled",
-                          title: "还没有生成的图片",
-                          detail: "在对话里让模型生成图片后，作品会自动出现在这里。\n你发给模型的底图不会收录。")
+            LabEmptyState(
+                icon: "photo.on.rectangle.angled",
+                title: "还没有生成的图片",
+                detail: "在对话里让模型生成图片后，作品会自动出现在这里。\n你发给模型的底图不会收录。")
         case .videos:
-            LabEmptyState(icon: "film",
-                          title: "还没有生成的视频",
-                          detail: "在对话里让模型生成视频后，作品会自动出现在这里。\n你发给模型的首帧图不会收录。")
+            LabEmptyState(
+                icon: "film",
+                title: "还没有生成的视频",
+                detail: "在对话里让模型生成视频后，作品会自动出现在这里。\n你发给模型的首帧图不会收录。")
         }
     }
 
@@ -132,19 +144,21 @@ struct LabPage: View {
         switch tab {
         case .images:
             ForEach(images) { image in
-                GalleryImageTile(image: image,
-                                 modelName: modelLabel(image.model),
-                                 coverHeight: 210,
-                                 maxPixel: 640,
-                                 openDetail: { detail = .image(image) })
+                GalleryImageTile(
+                    image: image,
+                    modelName: modelLabel(image.model),
+                    coverHeight: 210,
+                    maxPixel: 640,
+                    openDetail: { detail = .image(image) })
             }
         case .videos:
             ForEach(videos) { video in
-                GalleryVideoTile(video: video,
-                                 modelName: modelLabel(video.model),
-                                 coverHeight: 175,
-                                 maxPixel: 800,
-                                 openDetail: { detail = .video(video) })
+                GalleryVideoTile(
+                    video: video,
+                    modelName: modelLabel(video.model),
+                    coverHeight: 175,
+                    maxPixel: 800,
+                    openDetail: { detail = .video(video) })
             }
         }
     }
@@ -229,8 +243,11 @@ struct LabGridLayout: Equatable {
         let width = max(size.width, 1)
         let height = max(size.height, 1)
 
-        let columns = max(1, min(kind.maxColumns,
-                                 Int((width + spacing) / (kind.minCellWidth + spacing))))
+        let columns = max(
+            1,
+            min(
+                kind.maxColumns,
+                Int((width + spacing) / (kind.minCellWidth + spacing))))
         let cellWidth = max(1, (width - spacing * CGFloat(columns - 1)) / CGFloat(columns))
         let coverWidth = max(1, cellWidth - cardInset * 2)
         var coverHeight = max(minCoverHeight, coverWidth / kind.coverAspect)
@@ -247,10 +264,11 @@ struct LabGridLayout: Equatable {
             coverHeight = max(minCoverHeight, height - chrome)
         }
 
-        return LabGridLayout(columns: columns,
-                             rows: rows,
-                             cellWidth: cellWidth,
-                             coverHeight: coverHeight)
+        return LabGridLayout(
+            columns: columns,
+            rows: rows,
+            cellWidth: cellWidth,
+            coverHeight: coverHeight)
     }
 }
 

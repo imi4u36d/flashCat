@@ -1,4 +1,8 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import XCTest
+
 @testable import FlashCatKit
 
 /// 引擎累计计数器 → 实时速率的换算。
@@ -10,21 +14,24 @@ import XCTest
 final class EngineLiveRatesTests: XCTestCase {
     private let epoch = Date(timeIntervalSinceReferenceDate: 2_000_000)
 
-    private func status(decode: Double = 1_000,
-                        prefillLive: Double = 0,
-                        prefillTokens: Double = 0,
-                        prefillSeconds: Double = 0,
-                        running: Int = 1,
-                        prefilling: Int = 0) -> EngineStatus {
-        EngineStatus(state: .ready,
-                     activeRequests: running,
-                     extras: [
-                        EngineRateCounters.decodeLive: decode,
-                        EngineRateCounters.prefillLive: prefillLive,
-                        EngineRateCounters.prefillTokens: prefillTokens,
-                        EngineRateCounters.prefillSeconds: prefillSeconds,
-                        EngineRateCounters.prefilling: Double(prefilling),
-                     ])
+    private func status(
+        decode: Double = 1_000,
+        prefillLive: Double = 0,
+        prefillTokens: Double = 0,
+        prefillSeconds: Double = 0,
+        running: Int = 1,
+        prefilling: Int = 0
+    ) -> EngineStatus {
+        EngineStatus(
+            state: .ready,
+            activeRequests: running,
+            extras: [
+                EngineRateCounters.decodeLive: decode,
+                EngineRateCounters.prefillLive: prefillLive,
+                EngineRateCounters.prefillTokens: prefillTokens,
+                EngineRateCounters.prefillSeconds: prefillSeconds,
+                EngineRateCounters.prefilling: Double(prefilling),
+            ])
     }
 
     // MARK: 解码
@@ -74,12 +81,14 @@ final class EngineLiveRatesTests: XCTestCase {
     func testIdlePrefillReportsNothing() {
         var meter = EngineLiveRates()
         _ = meter.observe(status(prefillTokens: 100, prefillSeconds: 1.0), at: epoch)
-        let reading = meter.observe(status(prefillTokens: 400, prefillSeconds: 1.2),
-                                    at: epoch.addingTimeInterval(1))
+        let reading = meter.observe(
+            status(prefillTokens: 400, prefillSeconds: 1.2),
+            at: epoch.addingTimeInterval(1))
         XCTAssertNil(reading.prefill.value)
 
-        let idle = meter.observe(status(prefillTokens: 400, prefillSeconds: 1.2, running: 0),
-                                 at: epoch.addingTimeInterval(9))
+        let idle = meter.observe(
+            status(prefillTokens: 400, prefillSeconds: 1.2, running: 0),
+            at: epoch.addingTimeInterval(9))
         XCTAssertNil(idle.prefill.value)
         XCTAssertEqual(idle.prefill.kind, .none)
     }
@@ -89,38 +98,48 @@ final class EngineLiveRatesTests: XCTestCase {
     func testPrefillHoldsTheChunkRateBetweenChunkUpdates() {
         var meter = EngineLiveRates()
         _ = meter.observe(status(prefillTokens: 100, prefillSeconds: 1.0), at: epoch)
-        _ = meter.observe(status(prefillTokens: 400, prefillSeconds: 1.2),
-                          at: epoch.addingTimeInterval(1))
+        _ = meter.observe(
+            status(prefillTokens: 400, prefillSeconds: 1.2),
+            at: epoch.addingTimeInterval(1))
 
         // t+2：预填充开始（gauge 为 0），起点只记下来，不出数。
-        let first = meter.observe(status(prefillLive: 0, prefillTokens: 400,
-                                         prefillSeconds: 1.2, prefilling: 1),
-                                  at: epoch.addingTimeInterval(2))
+        let first = meter.observe(
+            status(
+                prefillLive: 0, prefillTokens: 400,
+                prefillSeconds: 1.2, prefilling: 1),
+            at: epoch.addingTimeInterval(2))
         XCTAssertNotEqual(first.prefill.kind, .live)
 
         // 第一个 chunk 完成：8000 token / 1 秒。
-        let second = meter.observe(status(prefillLive: 8_000, prefillTokens: 400,
-                                          prefillSeconds: 1.2, prefilling: 1),
-                                   at: epoch.addingTimeInterval(3))
+        let second = meter.observe(
+            status(
+                prefillLive: 8_000, prefillTokens: 400,
+                prefillSeconds: 1.2, prefilling: 1),
+            at: epoch.addingTimeInterval(3))
         XCTAssertEqual(second.prefill.kind, .live)
         XCTAssertEqual(second.prefill.value ?? 0, 8_000, accuracy: 0.001)
 
         // 同一 chunk 内再轮询（gauge 没动）：仍是 LIVE，数值不衰减。
-        let sameChunk = meter.observe(status(prefillLive: 8_000, prefillTokens: 400,
-                                             prefillSeconds: 1.2, prefilling: 1),
-                                      at: epoch.addingTimeInterval(3.6))
+        let sameChunk = meter.observe(
+            status(
+                prefillLive: 8_000, prefillTokens: 400,
+                prefillSeconds: 1.2, prefilling: 1),
+            at: epoch.addingTimeInterval(3.6))
         XCTAssertEqual(sameChunk.prefill.kind, .live)
         XCTAssertEqual(sameChunk.prefill.value ?? 0, 8_000, accuracy: 0.001)
 
         // 下一个 chunk 做完：8000 → 16000 用 1 秒，窗口仍是 8000。
-        let next = meter.observe(status(prefillLive: 16_000, prefillTokens: 400,
-                                        prefillSeconds: 1.2, prefilling: 1),
-                                 at: epoch.addingTimeInterval(4))
+        let next = meter.observe(
+            status(
+                prefillLive: 16_000, prefillTokens: 400,
+                prefillSeconds: 1.2, prefilling: 1),
+            at: epoch.addingTimeInterval(4))
         XCTAssertEqual(next.prefill.value ?? 0, 8_000, accuracy: 0.001)
 
         // 预填充结束（prefilling 归 0）：实时值作废，不挂 LAST。
-        let done = meter.observe(status(prefillTokens: 400, prefillSeconds: 1.2),
-                                 at: epoch.addingTimeInterval(5))
+        let done = meter.observe(
+            status(prefillTokens: 400, prefillSeconds: 1.2),
+            at: epoch.addingTimeInterval(5))
         XCTAssertNil(done.prefill.value)
         XCTAssertEqual(done.prefill.kind, .none)
     }
@@ -131,16 +150,19 @@ final class EngineLiveRatesTests: XCTestCase {
         var meter = EngineLiveRates()
         // t+1 开始；t+3 才前向 1000 token（很慢的一段）。
         _ = meter.observe(status(prefillLive: 0, prefilling: 1), at: epoch.addingTimeInterval(1))
-        let slow = meter.observe(status(prefillLive: 1_000, prefilling: 1),
-                                 at: epoch.addingTimeInterval(3))
+        let slow = meter.observe(
+            status(prefillLive: 1_000, prefilling: 1),
+            at: epoch.addingTimeInterval(3))
         XCTAssertEqual(slow.prefill.value ?? 0, 500, accuracy: 0.001)
 
         // 之后连续两个快 chunk：1000 → 5000（1 秒）→ 9000（1 秒）。
-        let warm = meter.observe(status(prefillLive: 5_000, prefilling: 1),
-                                 at: epoch.addingTimeInterval(4))
+        let warm = meter.observe(
+            status(prefillLive: 5_000, prefilling: 1),
+            at: epoch.addingTimeInterval(4))
         XCTAssertEqual(warm.prefill.value ?? 0, 4_000, accuracy: 0.001)
-        let fast = meter.observe(status(prefillLive: 9_000, prefilling: 1),
-                                 at: epoch.addingTimeInterval(5))
+        let fast = meter.observe(
+            status(prefillLive: 9_000, prefilling: 1),
+            at: epoch.addingTimeInterval(5))
         // 旧窗口 [0, 1000] 已经滑出；最近两秒是 1000 → 9000，即 4000 tok/s。
         // 若按整轮累计，这里会是 9000 / 4 = 2250。
         XCTAssertEqual(fast.prefill.value ?? 0, 4_000, accuracy: 0.001)
@@ -152,15 +174,18 @@ final class EngineLiveRatesTests: XCTestCase {
     func testNewRequestResetsThePrefillWindow() {
         var meter = EngineLiveRates()
         _ = meter.observe(status(prefillLive: 1_000, prefilling: 1), at: epoch)
-        _ = meter.observe(status(prefillLive: 9_000, prefilling: 1),
-                          at: epoch.addingTimeInterval(1))
+        _ = meter.observe(
+            status(prefillLive: 9_000, prefilling: 1),
+            at: epoch.addingTimeInterval(1))
         // 新请求从 500 开始：不给数（窗口里只有一个点）。
-        let reset = meter.observe(status(prefillLive: 500, prefilling: 1),
-                                  at: epoch.addingTimeInterval(2))
+        let reset = meter.observe(
+            status(prefillLive: 500, prefilling: 1),
+            at: epoch.addingTimeInterval(2))
         XCTAssertNotEqual(reset.prefill.kind, .live)
         // 新请求第一个 chunk：500 → 1500，正好 1000 tok/s。
-        let reading = meter.observe(status(prefillLive: 1_500, prefilling: 1),
-                                    at: epoch.addingTimeInterval(3))
+        let reading = meter.observe(
+            status(prefillLive: 1_500, prefilling: 1),
+            at: epoch.addingTimeInterval(3))
         XCTAssertEqual(reading.prefill.value ?? 0, 1_000, accuracy: 0.001)
         XCTAssertEqual(reading.prefill.kind, .live)
     }
@@ -169,14 +194,19 @@ final class EngineLiveRatesTests: XCTestCase {
     func testInFlightPrefillUsesTheLiveWindow() {
         var meter = EngineLiveRates()
         _ = meter.observe(status(prefillTokens: 100, prefillSeconds: 1.0), at: epoch)
-        _ = meter.observe(status(prefillTokens: 400, prefillSeconds: 1.2),
-                          at: epoch.addingTimeInterval(1))
-        _ = meter.observe(status(prefillLive: 600, prefillTokens: 400,
-                                 prefillSeconds: 1.2, prefilling: 1),
-                          at: epoch.addingTimeInterval(2))
-        let reading = meter.observe(status(prefillLive: 1_600, prefillTokens: 400,
-                                           prefillSeconds: 1.2, prefilling: 1),
-                                    at: epoch.addingTimeInterval(3))
+        _ = meter.observe(
+            status(prefillTokens: 400, prefillSeconds: 1.2),
+            at: epoch.addingTimeInterval(1))
+        _ = meter.observe(
+            status(
+                prefillLive: 600, prefillTokens: 400,
+                prefillSeconds: 1.2, prefilling: 1),
+            at: epoch.addingTimeInterval(2))
+        let reading = meter.observe(
+            status(
+                prefillLive: 1_600, prefillTokens: 400,
+                prefillSeconds: 1.2, prefilling: 1),
+            at: epoch.addingTimeInterval(3))
         // 600 → 1600，1 秒；描述的是当前这段，不是从请求开始的累计。
         XCTAssertEqual(reading.prefill.value ?? 0, 1_000, accuracy: 0.001)
         XCTAssertEqual(reading.prefill.kind, .live)
@@ -188,8 +218,9 @@ final class EngineLiveRatesTests: XCTestCase {
     func testPrefillLiveGaugeTracksInFlightRequest() {
         var meter = EngineLiveRates()
         _ = meter.observe(status(prefillLive: 1_000, prefilling: 1), at: epoch)
-        let reading = meter.observe(status(prefillLive: 3_000, prefilling: 1),
-                                    at: epoch.addingTimeInterval(1))
+        let reading = meter.observe(
+            status(prefillLive: 3_000, prefilling: 1),
+            at: epoch.addingTimeInterval(1))
         XCTAssertEqual(reading.prefill.value ?? 0, 2_000, accuracy: 0.001)
         XCTAssertEqual(reading.prefill.kind, .live)
     }
@@ -199,10 +230,12 @@ final class EngineLiveRatesTests: XCTestCase {
     func testRestartedCountersClearTheOldBaseline() {
         var meter = EngineLiveRates()
         _ = meter.observe(status(prefillTokens: 5_000, prefillSeconds: 5.0), at: epoch)
-        _ = meter.observe(status(prefillTokens: 5_500, prefillSeconds: 5.5),
-                          at: epoch.addingTimeInterval(1))
-        let restarted = meter.observe(status(decode: 0, prefillTokens: 0, prefillSeconds: 0, running: 0),
-                                      at: epoch.addingTimeInterval(2))
+        _ = meter.observe(
+            status(prefillTokens: 5_500, prefillSeconds: 5.5),
+            at: epoch.addingTimeInterval(1))
+        let restarted = meter.observe(
+            status(decode: 0, prefillTokens: 0, prefillSeconds: 0, running: 0),
+            at: epoch.addingTimeInterval(2))
         XCTAssertNil(restarted.prefill.value)
         XCTAssertNil(restarted.decode.value)
     }
@@ -212,7 +245,8 @@ final class EngineLiveRatesTests: XCTestCase {
         var meter = EngineLiveRates()
         let plain = EngineStatus(state: .ready, activeRequests: 1)
         XCTAssertEqual(meter.observe(plain, at: epoch), EngineLiveRates.Reading())
-        XCTAssertEqual(meter.observe(plain, at: epoch.addingTimeInterval(1)),
-                       EngineLiveRates.Reading())
+        XCTAssertEqual(
+            meter.observe(plain, at: epoch.addingTimeInterval(1)),
+            EngineLiveRates.Reading())
     }
 }

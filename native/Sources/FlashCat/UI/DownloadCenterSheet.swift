@@ -1,6 +1,9 @@
-import SwiftUI
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AppKit
 import FlashCatKit
+import SwiftUI
 
 /// 下载中心：正在跑的任务、暂停/失败的行，以及断点续传入口。
 struct DownloadCenterSheet: View {
@@ -17,10 +20,12 @@ struct DownloadCenterSheet: View {
                         activeRow(model)
                     }
                     if pendingTasks.isEmpty && state.downloadingModel == nil {
-                        EmptyHint(icon: "arrow.down.circle",
-                                  title: "没有下载任务",
-                                  detail: "在模型页或模型广场点「下载」，任务会出现在这里；暂停后可以断点续传。")
-                            .padding(.vertical, 30)
+                        EmptyHint(
+                            icon: "arrow.down.circle",
+                            title: "没有下载任务",
+                            detail: "在模型页或模型广场点「下载」，任务会出现在这里；暂停后可以断点续传。"
+                        )
+                        .padding(.vertical, 30)
                     } else {
                         ForEach(pendingTasks) { task in
                             taskRow(task)

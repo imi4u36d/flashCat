@@ -14,19 +14,18 @@
 #
 # Usage:
 #   scripts/engines/build-omlx-pack.sh [--version 0.7.2] [--out DIR] [--force]
-#                                      [--sha256 HEX]
+#                                      [--sha256 HEX] [--dry-run]
 #
 # No model weights are downloaded by this script.
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib-pack.sh"
 
 ENGINE_ID="omlx"
 ENGINE_NAME="oMLX"
 DEFAULT_VERSION="0.7.2"
-DEFAULT_OUT="$REPO_ROOT/vendor/engines"
+DEFAULT_OUT="$ROOT/vendor/engines"
 DEFAULT_PORT=8100
 UPSTREAM_REPO="jundot/omlx"
 # ABI-critical: the upstream wheel is built for cp311 only.
@@ -50,49 +49,26 @@ Usage: build-omlx-pack.sh [options]
   --force         replace an existing pack directory
   --sha256 HEX    expected sha256 of the upstream wheel; resolved from the
                   GitHub release API automatically when omitted
+  --dry-run       print the resolved target and exit without writing anything
   -h, --help      show this help
 EOF
 }
 
-die() { printf 'error: %s\n' "$*" >&2; exit 1; }
-step() { printf '\n==> %s\n' "$*"; }
-elapsed() { printf '    (%.1fs)\n' "$(( $(date +%s) - $1 ))"; }
-
-while [[ $# -gt 0 ]]; do
+pack_parse_engine_arg() {
   case "$1" in
-    --version) VERSION="${2:?--version needs a value}"; shift 2 ;;
-    --out)     OUT="${2:?--out needs a value}"; shift 2 ;;
-    --force)   FORCE=1; shift ;;
-    --sha256)  WHEEL_SHA="${2:?--sha256 needs a value}"; shift 2 ;;
-    -h|--help) usage; exit 0 ;;
-    *) die "unknown argument: $1 (try --help)" ;;
+    --sha256)
+      [[ $# -ge 2 && -n "$2" ]] || die "--sha256 needs a value"
+      WHEEL_SHA="$2"; PACK_ARG_SHIFT=2
+      ;;
+    *) return 1 ;;
   esac
-done
-
-# ------------------------------------------------------------- bootstrap uv
-# The pack build needs uv (python-build-standalone management + installs), but
-# requiring it to be preinstalled would tie the build to the local machine's
-# tooling. Instead, cache a standalone uv binary inside the repo and download
-# it on first use.
-ensure_uv() {
-  local uv_bin="$REPO_ROOT/.tools/uv"
-  if [[ -x "$uv_bin" ]]; then
-    printf '%s\n' "$uv_bin"
-    return 0
-  fi
-  step "Downloading standalone uv (one-time bootstrap into .tools/)"
-  local url="https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-apple-darwin.tar.gz"
-  local tmp
-  tmp="$(mktemp -d "${TMPDIR:-/tmp}/uv-bootstrap.XXXXXX")"
-  curl -fL --retry 2 -o "$tmp/uv.tar.gz" "$url"
-  mkdir -p "$REPO_ROOT/.tools"
-  tar -xzf "$tmp/uv.tar.gz" -C "$tmp"
-  mv "$tmp/uv-aarch64-apple-darwin/uv" "$uv_bin"
-  rm -rf "$tmp"
-  chmod +x "$uv_bin"
-  printf '    uv -> %s\n' "$uv_bin"
-  printf '%s\n' "$uv_bin"
+  return 0
 }
+
+pack_parse_common_args "$@"
+
+pack_require_tools curl tar shasum /usr/bin/python3
+pack_begin "use --force to replace"
 
 # ------------------------------------------------- resolve the wheel + checksum
 WHEEL_NAME="omlx-${VERSION}-cp311-cp311-macosx_15_0_universal2.whl"
@@ -103,6 +79,7 @@ WHEEL_URL="https://github.com/${UPSTREAM_REPO}/releases/download/v${VERSION}/${W
 expected_sha_from_notes() {
   local api_json
   api_json="$(mktemp "${TMPDIR:-/tmp}/omlx-release.XXXXXX.json")"
+  pack_cleanup_add "$api_json"
   if ! curl -fsSL --retry 2 -o "$api_json" \
       "https://api.github.com/repos/${UPSTREAM_REPO}/releases/tags/v${VERSION}"; then
     rm -f "$api_json"
@@ -136,24 +113,19 @@ if [[ -z "$WHEEL_SHA" ]]; then
   printf '    expected: %s\n' "$WHEEL_SHA"
 fi
 
-UV="$(ensure_uv)"
-mkdir -p "$OUT"
-OUT="$(cd -- "$OUT" && pwd -P)"
-PACK_DIR="$OUT/$ENGINE_ID/$VERSION"
-
-if [[ -e "$PACK_DIR" ]]; then
-  [[ $FORCE -eq 1 ]] || die "$PACK_DIR already exists (use --force to replace)"
-  step "Removing existing pack $PACK_DIR"
-  rm -rf "$PACK_DIR"
-fi
-
 TMP_BASE="${TMPDIR:-/tmp}"
 TMP_BASE="${TMP_BASE%/}"   # a trailing slash would double up once Python normalises paths
 WORK="$(mktemp -d "${TMP_BASE}/omlx-pack.XXXXXX")"
-trap 'rm -rf "$WORK"' EXIT
+pack_cleanup_add "$WORK"
+
+# uv is bootstrapped after the target-path gate: a --dry-run or a refused
+# --force must not write .tools/ or touch the network.
+UV="$(pack_ensure_uv)"
 
 BUILD_START=$(date +%s)
 printf 'Pack target: %s\n' "$PACK_DIR"
+
+pack_stage
 
 # ---------------------------------------------------------------- 1. CPython 3.11
 step "Locating uv-managed CPython $PYTHON_SERIES"
@@ -170,12 +142,11 @@ elapsed "$T"
 
 step "Copying CPython into the pack"
 T=$(date +%s)
-mkdir -p "$PACK_DIR"
-cp -a "$PY_ROOT" "$PACK_DIR/python"
-chmod -R u+w "$PACK_DIR/python"
-PACK_SITE="$PACK_DIR/python/lib/python${PYTHON_SERIES}/site-packages"
-rm -f "$PACK_DIR/python/lib/python${PYTHON_SERIES}/EXTERNALLY-MANAGED"
-PY="$PACK_DIR/python/bin/python3"
+cp -a "$PY_ROOT" "$PACK_STAGING/python"
+chmod -R u+w "$PACK_STAGING/python"
+# The uv marker would block `uv pip install` into the pack interpreter.
+rm -f "$PACK_STAGING/python/lib/python${PYTHON_SERIES}/EXTERNALLY-MANAGED"
+PY="$PACK_STAGING/python/bin/python3"
 [[ -x "$PY" ]] || die "pack interpreter missing: $PY"
 printf '    %s\n' "$("$PY" -VV)"
 elapsed "$T"
@@ -211,10 +182,10 @@ PYEOF
 printf '    import check -> %s\n' "$IMPORTED"
 elapsed "$T"
 
-# ----------------------------------------------------------------- 4. manifest.json
+# --------------------------------------------------------------- 4. manifest.json
 step "Writing manifest.json"
-mkdir -p "$PACK_DIR/bin" "$PACK_DIR/models"   # bin/ = PATH prefix dir the app may prepend
-cat > "$PACK_DIR/manifest.json" <<EOF
+mkdir -p "$PACK_STAGING/bin" "$PACK_STAGING/models"   # bin/ = PATH prefix dir the app may prepend
+cat > "$PACK_STAGING/manifest.json" <<EOF
 {
   "schemaVersion": 1,
   "id": "$ENGINE_ID",
@@ -251,7 +222,7 @@ cat > "$PACK_DIR/manifest.json" <<EOF
   "license": "Apache-2.0"
 }
 EOF
-"$PY" - "$PACK_DIR/manifest.json" <<'PYEOF'
+"$PY" - "$PACK_STAGING/manifest.json" <<'PYEOF'
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as fh:
     data = json.load(fh)
@@ -259,17 +230,17 @@ assert data["id"] == "omlx" and data["schemaVersion"] == 1
 print("    manifest.json parsed OK")
 PYEOF
 
-step "Make the pack relocatable"
 # Any wheel that bakes the build machine's absolute LC_RPATH in would break an
 # installed copy; rewrite in-pack rpaths to @loader_path.
-"$REPO_ROOT/scripts/engines/fix-pack-rpaths.sh" "$PACK_DIR"
+pack_fix_rpaths
+
+pack_swap
+# The staging path is gone after the swap, so re-point the interpreter at the
+# published pack before reporting on it.
+PY="$PACK_DIR/python/bin/python3"
 
 # --------------------------------------------------------------------- 5. summary
-step "Pack summary"
-PACK_SIZE="$(du -sh "$PACK_DIR" | awk '{print $1}')"
-FILE_COUNT="$(find "$PACK_DIR" -type f | wc -l | tr -d ' ')"
-printf '    path      : %s\n' "$PACK_DIR"
-printf '    size      : %s (%s files)\n' "$PACK_SIZE" "$FILE_COUNT"
+pack_print_summary
 printf '    python    : %s\n' "$("$PY" -VV)"
 printf '    omlx      : %s\n' "$VERSION_LINE"
 printf '    elapsed   : %ss total\n' "$(( $(date +%s) - BUILD_START ))"

@@ -1,8 +1,11 @@
-import SwiftUI
-import AppKit
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AVKit
-import UniformTypeIdentifiers
+import AppKit
 import FlashCatKit
+import SwiftUI
+import UniformTypeIdentifiers
 
 /// 对话页：按 WebUI 版式——顶部模型行、居中空态、悬浮输入卡。
 struct ChatPage: View {
@@ -62,7 +65,9 @@ struct ChatPage: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         // 页面宽度决定对话列最宽能撑到哪里。量在根视图上而不是对话区里：
         // 输入卡是页面级浮层，两边必须读同一个数才不会一宽一窄。
-        .onGeometryChange(for: CGFloat.self) { proxy in proxy.size.width } action: { width in
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
             pageWidth = width
         }
         .overlay(alignment: .bottom) {
@@ -84,8 +89,9 @@ struct ChatPage: View {
     /// 当前生效的对话列宽：拖动中用实时值，其余时候读落盘值再按窗口夹一次。
     /// 夹紧不等于回写——窗口缩小时列跟着收窄，窗口再放大又能回到用户拖出来的宽度。
     private var columnWidth: CGFloat {
-        ChatColumn.width(stored: liveColumnWidth ?? CGFloat(storedColumnWidth),
-                         pageWidth: pageWidth)
+        ChatColumn.width(
+            stored: liveColumnWidth ?? CGFloat(storedColumnWidth),
+            pageWidth: pageWidth)
     }
 
     /// 气泡最宽。默认列宽下是 660pt，列被拖宽后气泡按同样的增量一起放开，
@@ -149,9 +155,11 @@ struct ChatPage: View {
                     .font(DS.Font.mono(11))
                     .foregroundStyle(DS.text3)
             } else {
-                Text("\(Format.tokens(state.contextUsedTokens)) / \(state.contextWindowCeiling.map { Format.tokensShort($0) } ?? "—")")
-                    .font(DS.Font.mono(11))
-                    .foregroundStyle(DS.text3)
+                Text(
+                    "\(Format.tokens(state.contextUsedTokens)) / \(state.contextWindowCeiling.map { Format.tokensShort($0) } ?? "—")"
+                )
+                .font(DS.Font.mono(11))
+                .foregroundStyle(DS.text3)
             }
 
             Spacer(minLength: 0)
@@ -180,7 +188,8 @@ struct ChatPage: View {
 
     private var streamingScrollKey: String {
         guard let last = chat.messages.last else { return "" }
-        return "\(last.id.uuidString)-\(last.content.count)-\(last.reasoning?.count ?? 0)-\(last.imagePaths.count)-\(last.videoPath ?? "")-\(last.toolStage ?? "")-\(last.streaming)"
+        return
+            "\(last.id.uuidString)-\(last.content.count)-\(last.reasoning?.count ?? 0)-\(last.imagePaths.count)-\(last.videoPath ?? "")-\(last.toolStage ?? "")-\(last.streaming)"
     }
 
     private var transcript: some View {
@@ -198,21 +207,24 @@ struct ChatPage: View {
                                     }
                                 }
                             } label: {
-                                Label("加载更早的 \(min(80, chat.messages.count - visibleMessages.count)) 条",
-                                      systemImage: "arrow.up")
+                                Label(
+                                    "加载更早的 \(min(80, chat.messages.count - visibleMessages.count)) 条",
+                                    systemImage: "arrow.up")
                             }
                             .buttonStyle(.ds(.ghost, size: .small))
                             .frame(maxWidth: .infinity)
                         }
                         ForEach(visibleMessages) { message in
-                            MessageRow(message: message,
-                                       modelName: message.model.map(state.shortModelName)
-                                           ?? state.activeEngine.displayName,
-                                       startupStage: chat.chatStartupStage,
-                                       maxBubbleWidth: bubbleMaxWidth)
-                                .equatable()
-                                .id(message.id)
-                                .transition(.opacity.combined(with: .offset(y: 10)))
+                            MessageRow(
+                                message: message,
+                                modelName: message.model.map(state.shortModelName)
+                                    ?? state.activeEngine.displayName,
+                                startupStage: chat.chatStartupStage,
+                                maxBubbleWidth: bubbleMaxWidth
+                            )
+                            .equatable()
+                            .id(message.id)
+                            .transition(.opacity.combined(with: .offset(y: 10)))
                         }
                     }
                     Color.clear.frame(height: 140).id("bottom")
@@ -266,7 +278,8 @@ struct ChatPage: View {
                 geometry.contentSize.height
             } action: { oldHeight, newHeight in
                 guard chat.generating, atBottom, !needsBottomRestore,
-                      oldHeight > 0, newHeight > oldHeight + 1 else { return }
+                    oldHeight > 0, newHeight > oldHeight + 1
+                else { return }
                 DispatchQueue.main.async {
                     scroll(proxy, animated: false)
                 }
@@ -390,9 +403,11 @@ struct ChatPage: View {
                 .tracking(-0.35)
                 .foregroundStyle(DS.text)
                 .multilineTextAlignment(.center)
-            DSChip(text: "\(state.activeEngine.displayName) · \(state.selectedModel.isEmpty ? L10n.t("未选择模型") : state.shortModelName(state.selectedModel))",
-                   dot: state.canChat ? DS.ok : (state.isModelBusy ? DS.warn : DS.text4),
-                   live: state.canChat)
+            DSChip(
+                text:
+                    "\(state.activeEngine.displayName) · \(state.selectedModel.isEmpty ? L10n.t("未选择模型") : state.shortModelName(state.selectedModel))",
+                dot: state.canChat ? DS.ok : (state.isModelBusy ? DS.warn : DS.text4),
+                live: state.canChat)
         }
         .padding(.bottom, 96)
     }
@@ -433,8 +448,9 @@ struct ChatPage: View {
                     pushColumnCursor(true)
                 }
                 guard let origin = columnDragOrigin else { return }
-                liveColumnWidth = ChatColumn.width(stored: origin + value.translation.width * 2,
-                                                   pageWidth: pageWidth)
+                liveColumnWidth = ChatColumn.width(
+                    stored: origin + value.translation.width * 2,
+                    pageWidth: pageWidth)
             }
             .onEnded { _ in commitColumnWidth() }
     }
@@ -487,171 +503,177 @@ struct ChatPage: View {
                 attachmentStrip(imageAttachment)
             }
             // 自绘输入框：回车发送、⌘回车换行（见 `ChatComposerField`）。
-            ChatComposerField(text: $draft,
-                              isFocused: $composerFocused,
-                              isEnabled: !chat.generating,
-                              onSend: send,
-                              onDropImage: { url in
-                                  guard supportsMedia else { return false }
-                                  if supportsVideoReferences,
-                                     Self.videoExtensions.contains(url.pathExtension.lowercased()) {
-                                      let attached = attachReferenceClip(at: url)
-                                      if attached { composerFocused = true }
-                                      return attached
-                                  }
-                                  attachImage(at: url)
-                                  composerFocused = true
-                                  return true
-                              },
-                              onDragTargetChange: { targeted in
-                                  withAnimation(reduceMotion ? nil : Motion.quick) {
-                                      isDropTargeted = targeted && supportsMedia
-                                  }
-                              },
-                              acceptsImageDrop: supportsMedia)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
+            ChatComposerField(
+                text: $draft,
+                isFocused: $composerFocused,
+                isEnabled: !chat.generating,
+                onSend: send,
+                onDropImage: { url in
+                    guard supportsMedia else { return false }
+                    if supportsVideoReferences,
+                        Self.videoExtensions.contains(url.pathExtension.lowercased())
+                    {
+                        let attached = attachReferenceClip(at: url)
+                        if attached { composerFocused = true }
+                        return attached
+                    }
+                    attachImage(at: url)
+                    composerFocused = true
+                    return true
+                },
+                onDragTargetChange: { targeted in
+                    withAnimation(reduceMotion ? nil : Motion.quick) {
+                        isDropTargeted = targeted && supportsMedia
+                    }
+                },
+                acceptsImageDrop: supportsMedia
+            )
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
 
             GlassEffectContainer(spacing: 8) {
                 HStack(spacing: 8) {
-                // 图像模型没有采样参数：同一个按钮换成图像设置，别再弹文本模型的
-                // 温度/系统提示面板。
-                DSIconButton(
-                    systemName: supportsVideo ? "video"
-                        : (supportsImage ? "wand.and.stars" : "slider.horizontal.3"),
-                    help: supportsVideo ? "视频参数" : (supportsImage ? "图像参数" : "生成参数"),
-                    size: 28,
-                    style: .outlined
-                ) {
-                    if supportsMedia {
-                        showsImageOptions = true
-                    } else {
-                        showsParameters = true
-                    }
-                }
-                .popover(isPresented: $showsImageOptions, arrowEdge: .top) {
-                    if supportsVideo {
-                        VideoOptionsPopover(options: $videoOptions,
-                                            hasSource: imageAttachment != nil
-                                                || lastFrameAttachment != nil,
-                                            supportsReferences: supportsVideoReferences,
-                                            referenceCount: referenceImages.count
-                                                + referenceClips.count)
-                    } else {
-                        ImageOptionsPopover(options: $imageOptions,
-                                            model: state.activeModel,
-                                            hasSource: imageAttachment != nil,
-                                            lastSeed: lastImageSeed)
-                    }
-                }
-
-                // 文本模型的「画」开关：开着就把画图工具挂进请求，模型自己决定
-                // 画几张、写什么分镜。默认开，关掉后模型只写字。
-                if state.supportsImageTool {
+                    // 图像模型没有采样参数：同一个按钮换成图像设置，别再弹文本模型的
+                    // 温度/系统提示面板。
                     DSIconButton(
-                        systemName: state.imageToolEnabled
-                            ? "paintbrush.pointed.fill" : "paintbrush.pointed",
-                        help: state.imageToolEnabled
-                            ? "模型可以直接画图（点一下关掉）"
-                            : "打开后模型可以在这轮对话里直接画图",
+                        systemName: supportsVideo
+                            ? "video"
+                            : (supportsImage ? "wand.and.stars" : "slider.horizontal.3"),
+                        help: supportsVideo ? "视频参数" : (supportsImage ? "图像参数" : "生成参数"),
                         size: 28,
-                        style: .outlined,
-                        active: state.imageToolEnabled
+                        style: .outlined
                     ) {
-                        state.imageToolEnabled.toggle()
+                        if supportsMedia {
+                            showsImageOptions = true
+                        } else {
+                            showsParameters = true
+                        }
                     }
-                }
+                    .popover(isPresented: $showsImageOptions, arrowEdge: .top) {
+                        if supportsVideo {
+                            VideoOptionsPopover(
+                                options: $videoOptions,
+                                hasSource: imageAttachment != nil
+                                    || lastFrameAttachment != nil,
+                                supportsReferences: supportsVideoReferences,
+                                referenceCount: referenceImages.count
+                                    + referenceClips.count)
+                        } else {
+                            ImageOptionsPopover(
+                                options: $imageOptions,
+                                model: state.activeModel,
+                                hasSource: imageAttachment != nil,
+                                lastSeed: lastImageSeed)
+                        }
+                    }
 
-                // 画图模型就没法在页头选：页头那一栏一旦选中图像模型，这一轮
-                // 对话本身就变成图像模式了。所以给工具单独留一个选择器，只在
-                // 「画」开着时出现。
-                if state.imageToolActive, !state.imageToolModels.isEmpty {
-                    DSMenu(size: .small) {
-                        DSMenuTriggerLabel(
-                            title: state.imageToolModel.map { state.shortModelName($0.id) } ?? "画图模型",
-                            systemImage: "photo",
-                            imageTint: DS.accent,
-                            size: .small
-                        )
-                    } content: {
-                        ForEach(state.imageToolModels) { model in
-                            Button {
-                                state.imageToolModelID = model.id
-                            } label: {
-                                if model.id == state.imageToolModel?.id {
-                                    Label(state.shortModelName(model.id), systemImage: "checkmark")
-                                } else {
-                                    Text(state.shortModelName(model.id))
+                    // 文本模型的「画」开关：开着就把画图工具挂进请求，模型自己决定
+                    // 画几张、写什么分镜。默认开，关掉后模型只写字。
+                    if state.supportsImageTool {
+                        DSIconButton(
+                            systemName: state.imageToolEnabled
+                                ? "paintbrush.pointed.fill" : "paintbrush.pointed",
+                            help: state.imageToolEnabled
+                                ? "模型可以直接画图（点一下关掉）"
+                                : "打开后模型可以在这轮对话里直接画图",
+                            size: 28,
+                            style: .outlined,
+                            active: state.imageToolEnabled
+                        ) {
+                            state.imageToolEnabled.toggle()
+                        }
+                    }
+
+                    // 画图模型就没法在页头选：页头那一栏一旦选中图像模型，这一轮
+                    // 对话本身就变成图像模式了。所以给工具单独留一个选择器，只在
+                    // 「画」开着时出现。
+                    if state.imageToolActive, !state.imageToolModels.isEmpty {
+                        DSMenu(size: .small) {
+                            DSMenuTriggerLabel(
+                                title: state.imageToolModel.map { state.shortModelName($0.id) } ?? "画图模型",
+                                systemImage: "photo",
+                                imageTint: DS.accent,
+                                size: .small
+                            )
+                        } content: {
+                            ForEach(state.imageToolModels) { model in
+                                Button {
+                                    state.imageToolModelID = model.id
+                                } label: {
+                                    if model.id == state.imageToolModel?.id {
+                                        Label(state.shortModelName(model.id), systemImage: "checkmark")
+                                    } else {
+                                        Text(state.shortModelName(model.id))
+                                    }
                                 }
                             }
                         }
+                        .disabled(chat.generating)
+                        .help("模型画图时用哪个图像模型")
                     }
-                    .disabled(chat.generating)
-                    .help("模型画图时用哪个图像模型")
-                }
 
-                if supportsMedia {
-                    DSIconButton(
-                        systemName: "photo.badge.plus",
-                        help: supportsVideoReferences
-                            ? "添加参考图（最多 9 张）"
-                            : (supportsVideo ? "添加首帧或尾帧" : "附上一张图片作重绘底图"),
-                        size: 28,
-                        style: .outlined,
-                        active: hasAttachedMedia
-                    ) {
-                        if supportsVideoReferences {
-                            pickReferenceImage()
-                        } else {
-                            pickImage(for: nil)
+                    if supportsMedia {
+                        DSIconButton(
+                            systemName: "photo.badge.plus",
+                            help: supportsVideoReferences
+                                ? "添加参考图（最多 9 张）"
+                                : (supportsVideo ? "添加首帧或尾帧" : "附上一张图片作重绘底图"),
+                            size: 28,
+                            style: .outlined,
+                            active: hasAttachedMedia
+                        ) {
+                            if supportsVideoReferences {
+                                pickReferenceImage()
+                            } else {
+                                pickImage(for: nil)
+                            }
                         }
                     }
-                }
 
-                if supportsVideoReferences {
-                    DSIconButton(
-                        systemName: "video.badge.plus",
-                        help: "添加参考视频（最多 3 段，每段至少 5 帧）",
-                        size: 28,
-                        style: .outlined,
-                        active: !referenceClips.isEmpty
-                    ) {
-                        pickReferenceClip()
+                    if supportsVideoReferences {
+                        DSIconButton(
+                            systemName: "video.badge.plus",
+                            help: "添加参考视频（最多 3 段，每段至少 5 帧）",
+                            size: 28,
+                            style: .outlined,
+                            active: !referenceClips.isEmpty
+                        ) {
+                            pickReferenceClip()
+                        }
                     }
-                }
 
-                Spacer(minLength: 0)
+                    Spacer(minLength: 0)
 
-                if !draft.isEmpty {
-                    Text("≈ \(AppState.estimateTokens(draft)) tokens")
-                        .font(DS.Font.mono(10.5))
-                        .foregroundStyle(DS.text3)
-                }
-
-                if !supportsMedia {
-                    ChatModelThinkingControl(state: state, chat: chat)
-                }
-
-                if chat.generating {
-                    DSIconButton(
-                        systemName: "stop.fill",
-                        help: "停止生成",
-                        size: 28,
-                        style: .outlined,
-                        tint: DS.err
-                    ) {
-                        state.cancelGeneration()
+                    if !draft.isEmpty {
+                        Text("≈ \(AppState.estimateTokens(draft)) tokens")
+                            .font(DS.Font.mono(10.5))
+                            .foregroundStyle(DS.text3)
                     }
-                } else {
-                    DSIconButton(
-                        systemName: "arrow.up",
-                        help: "回车发送 · ⌘回车换行",
-                        size: 28,
-                        style: canSend ? .primary : .outlined,
-                        action: send
-                    )
-                    .disabled(!canSend)
-                }
+
+                    if !supportsMedia {
+                        ChatModelThinkingControl(state: state, chat: chat)
+                    }
+
+                    if chat.generating {
+                        DSIconButton(
+                            systemName: "stop.fill",
+                            help: "停止生成",
+                            size: 28,
+                            style: .outlined,
+                            tint: DS.err
+                        ) {
+                            state.cancelGeneration()
+                        }
+                    } else {
+                        DSIconButton(
+                            systemName: "arrow.up",
+                            help: "回车发送 · ⌘回车换行",
+                            size: 28,
+                            style: canSend ? .primary : .outlined,
+                            action: send
+                        )
+                        .disabled(!canSend)
+                    }
                 }
             }
             .padding(.top, 2)
@@ -678,17 +700,19 @@ struct ChatPage: View {
                             .fill(DS.accentSoft)
                     )
                     .overlay(alignment: .topTrailing) {
-                        Label(supportsVideoReferences
-                              ? "松开添加参考图或参考视频"
-                              : (supportsVideo ? "松开添加视频首帧或尾帧" : "松开作为重绘底图"),
-                              systemImage: "photo.badge.arrow.down")
-                            .font(DS.Font.xs.weight(.medium))
-                            .foregroundStyle(DS.accent)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(DS.rect(DS.Radius.md).fill(DS.raised))
-                            .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line2, lineWidth: 1))
-                            .padding(10)
+                        Label(
+                            supportsVideoReferences
+                                ? "松开添加参考图或参考视频"
+                                : (supportsVideo ? "松开添加视频首帧或尾帧" : "松开作为重绘底图"),
+                            systemImage: "photo.badge.arrow.down"
+                        )
+                        .font(DS.Font.xs.weight(.medium))
+                        .foregroundStyle(DS.accent)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(DS.rect(DS.Radius.md).fill(DS.raised))
+                        .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line2, lineWidth: 1))
+                        .padding(10)
                     }
                     .allowsHitTesting(false)
                     .transition(.opacity)
@@ -697,7 +721,8 @@ struct ChatPage: View {
         .dropDestination(for: URL.self) { urls, _ in
             guard supportsMedia else { return false }
             if supportsVideoReferences,
-               let clip = urls.first(where: { Self.videoExtensions.contains($0.pathExtension.lowercased()) }) {
+                let clip = urls.first(where: { Self.videoExtensions.contains($0.pathExtension.lowercased()) })
+            {
                 guard attachReferenceClip(at: clip) else { return false }
                 composerFocused = true
                 return true
@@ -774,8 +799,9 @@ struct ChatPage: View {
                 lastFrameAttachment = nil
                 referenceImages = []
                 referenceClips = []
-                state.send(prompt, referenceImages: images, referenceClips: clips,
-                           video: videoOptions)
+                state.send(
+                    prompt, referenceImages: images, referenceClips: clips,
+                    video: videoOptions)
                 return
             }
             let prompt = text.isEmpty ? "让画面自然地动起来" : text
@@ -843,9 +869,11 @@ struct ChatPage: View {
             return
         }
         guard !referenceImages.contains(where: { $0.path == url.path }) else { return }
-        referenceImages.append(ChatImageAttachment(path: url.path,
-                                                   name: url.lastPathComponent,
-                                                   pixelSize: ImageStore.pixelSize(atPath: url.path)))
+        referenceImages.append(
+            ChatImageAttachment(
+                path: url.path,
+                name: url.lastPathComponent,
+                pixelSize: ImageStore.pixelSize(atPath: url.path)))
     }
 
     /// 选参考视频。面板一次最多挑三段，读头放到后台，缩略图出来后再进列表。
@@ -878,11 +906,13 @@ struct ChatPage: View {
                     state.notice = "参考素材最多 12 个（9 张图 + 3 段视频）。"
                     return
                 }
-                referenceClips.append(VideoReferenceClip(path: url.path,
-                                                         name: url.lastPathComponent,
-                                                         duration: meta.duration,
-                                                         pixelSize: meta.pixelSize,
-                                                         posterJPEG: meta.posterJPEG))
+                referenceClips.append(
+                    VideoReferenceClip(
+                        path: url.path,
+                        name: url.lastPathComponent,
+                        duration: meta.duration,
+                        pixelSize: meta.pixelSize,
+                        posterJPEG: meta.posterJPEG))
                 composerFocused = true
             } catch {
                 state.notice = error.localizedDescription
@@ -894,7 +924,7 @@ struct ChatPage: View {
     @discardableResult
     private func attachReferenceClip(at url: URL) -> Bool {
         guard supportsVideoReferences,
-              Self.videoExtensions.contains(url.pathExtension.lowercased())
+            Self.videoExtensions.contains(url.pathExtension.lowercased())
         else { return false }
         guard referenceClips.count < 3 else {
             state.notice = "参考视频最多 3 段。"
@@ -911,9 +941,10 @@ struct ChatPage: View {
             attachReferenceImage(at: url)
             return
         }
-        let attachment = ChatImageAttachment(path: url.path,
-                                             name: url.lastPathComponent,
-                                             pixelSize: ImageStore.pixelSize(atPath: url.path))
+        let attachment = ChatImageAttachment(
+            path: url.path,
+            name: url.lastPathComponent,
+            pixelSize: ImageStore.pixelSize(atPath: url.path))
         guard supportsVideo else {
             imageAttachment = attachment
             return
@@ -950,15 +981,18 @@ struct ChatPage: View {
         .padding(.horizontal, 10)
     }
 
-    private func videoFrameSlot(_ slot: VideoFrameSlot,
-                                attachment: ChatImageAttachment?) -> some View {
+    private func videoFrameSlot(
+        _ slot: VideoFrameSlot,
+        attachment: ChatImageAttachment?
+    ) -> some View {
         HStack(spacing: 7) {
             Button {
                 pickImage(for: slot)
             } label: {
                 Group {
                     if let attachment,
-                       let image = ImageStore.thumbnail(atPath: attachment.path, maxPixel: 96) {
+                        let image = ImageStore.thumbnail(atPath: attachment.path, maxPixel: 96)
+                    {
                         Image(nsImage: image)
                             .resizable()
                             .aspectRatio(contentMode: .fill)
@@ -1075,9 +1109,11 @@ struct ChatPage: View {
         .padding(.horizontal, 10)
     }
 
-    private func referenceAddButton(_ title: String,
-                                    systemImage: String,
-                                    action: @escaping () -> Void) -> some View {
+    private func referenceAddButton(
+        _ title: String,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
         }
@@ -1353,7 +1389,8 @@ private struct MessageRow: View, Equatable {
                         }
                         // 一轮工具调用可能画出一整组图：series 是这组，单图时
                         // 只有一张，仍按原来那张大图显示。
-                        let series = message.imagePaths.isEmpty
+                        let series =
+                            message.imagePaths.isEmpty
                             ? (message.imagePath.map { [$0] } ?? [])
                             : message.imagePaths
                         if !series.isEmpty {
@@ -1391,9 +1428,10 @@ private struct MessageRow: View, Equatable {
                                     .foregroundStyle(DS.text3)
                             }
                         } else {
-                            StreamingMarkdownView(text: message.content,
-                                                  streaming: message.streaming,
-                                                  fillsWidth: false)
+                            StreamingMarkdownView(
+                                text: message.content,
+                                streaming: message.streaming,
+                                fillsWidth: false)
                         }
                         if hasFooter {
                             footer
@@ -1503,9 +1541,11 @@ private struct MessageRow: View, Equatable {
 
     /// 助手出的图：点开用「预览」，右键可存到访达或复制。
     @ViewBuilder
-    private func imageBubble(path: String,
-                             maxWidth: CGFloat = 420,
-                             maxHeight: CGFloat = 420) -> some View {
+    private func imageBubble(
+        path: String,
+        maxWidth: CGFloat = 420,
+        maxHeight: CGFloat = 420
+    ) -> some View {
         // 420pt 显示，取 840px 够用；原图只在你点开预览时由系统加载。
         if let image = ImageStore.thumbnail(atPath: path, maxPixel: maxWidth * 2) {
             Image(nsImage: image)
@@ -1570,9 +1610,10 @@ private struct MessageRow: View, Equatable {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: 8) {
                 ForEach(Array(referenceImagePaths.enumerated()), id: \.offset) { item in
-                    labeledThumb(path: item.element,
-                                 label: "参考图 \(item.offset + 1)",
-                                 maxWidth: 104)
+                    labeledThumb(
+                        path: item.element,
+                        label: "参考图 \(item.offset + 1)",
+                        maxWidth: 104)
                 }
                 ForEach(Array(referenceClipPaths.enumerated()), id: \.offset) { item in
                     VStack(alignment: .leading, spacing: 3) {
@@ -1730,24 +1771,31 @@ struct ChatParametersSheet: View {
     private var samplingCard: some View {
         Card("采样", subtitle: "每条消息都会带上这组默认值") {
             VStack(spacing: 14) {
-                SamplingSlider(label: "温度", value: state.settings.temperature, range: 0...2,
-                               format: "%.2f") { state.settings.setTemperature($0) }
-                SamplingSlider(label: "top-p", value: state.settings.topP, range: 0...1,
-                               format: "%.2f") { state.settings.setTopP($0) }
+                SamplingSlider(
+                    label: "温度", value: state.settings.temperature, range: 0...2,
+                    format: "%.2f"
+                ) { state.settings.setTemperature($0) }
+                SamplingSlider(
+                    label: "top-p", value: state.settings.topP, range: 0...1,
+                    format: "%.2f"
+                ) { state.settings.setTopP($0) }
                 HStack(spacing: 10) {
                     Text("最大输出")
                         .font(DS.Font.md)
                         .foregroundStyle(DS.text2)
                         .frame(width: 72, alignment: .leading)
-                    TextField("模型上限", text: Binding(
-                        get: { state.settings.maxTokens > 0 ? String(state.settings.maxTokens) : "" },
-                        set: { state.settings.setMaxTokens(Int($0) ?? 0) }))
-                        .textFieldStyle(.plain)
-                        .font(DS.Font.mono(11.5))
-                        .padding(.horizontal, 8)
-                        .frame(height: 28)
-                        .dsInputSurface()
-                        .frame(width: 120)
+                    TextField(
+                        "模型上限",
+                        text: Binding(
+                            get: { state.settings.maxTokens > 0 ? String(state.settings.maxTokens) : "" },
+                            set: { state.settings.setMaxTokens(Int($0) ?? 0) })
+                    )
+                    .textFieldStyle(.plain)
+                    .font(DS.Font.mono(11.5))
+                    .padding(.horizontal, 8)
+                    .frame(height: 28)
+                    .dsInputSurface()
+                    .frame(width: 120)
                     Text("生效 \(state.effectiveMaxTokens)")
                         .font(DS.Font.mono(11))
                         .foregroundStyle(DS.text3)
@@ -1761,15 +1809,17 @@ struct ChatParametersSheet: View {
     /// 系统提示：面板内嵌输入底与细描边，保证长文本可读性。
     private var systemPromptCard: some View {
         Card("系统提示", subtitle: "作为系统消息置于每段对话之前") {
-            TextEditor(text: Binding(
-                get: { state.settings.systemPrompt },
-                set: { state.settings.setSystemPrompt($0) }))
-                .font(DS.Font.md)
-                .foregroundStyle(DS.text)
-                .scrollContentBackground(.hidden)
-                .frame(height: 120)
-                .padding(8)
-                .dsInputSurface()
+            TextEditor(
+                text: Binding(
+                    get: { state.settings.systemPrompt },
+                    set: { state.settings.setSystemPrompt($0) })
+            )
+            .font(DS.Font.md)
+            .foregroundStyle(DS.text)
+            .scrollContentBackground(.hidden)
+            .frame(height: 120)
+            .padding(8)
+            .dsInputSurface()
         }
     }
 
@@ -1799,8 +1849,10 @@ private struct SamplingSlider: View {
     let commit: (Double) -> Void
     @State private var current: Double
 
-    init(label: String, value: Double, range: ClosedRange<Double>,
-         format: String, commit: @escaping (Double) -> Void) {
+    init(
+        label: String, value: Double, range: ClosedRange<Double>,
+        format: String, commit: @escaping (Double) -> Void
+    ) {
         self.label = label
         self.range = range
         self.format = format
@@ -1886,8 +1938,9 @@ private struct VideoBubble: View {
             }
             let asset = AVURLAsset(url: URL(fileURLWithPath: path))
             if let track = try? await asset.loadTracks(withMediaType: .video).first,
-               let size = try? await track.load(.naturalSize),
-               size.width > 0, size.height > 0 {
+                let size = try? await track.load(.naturalSize),
+                size.width > 0, size.height > 0
+            {
                 aspect = size.width / size.height
             }
             player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
@@ -1924,9 +1977,13 @@ private struct VideoOptionsPopover: View {
             }
 
             section("尺寸") {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 8),
-                                    GridItem(.flexible(), spacing: 8)],
-                          spacing: 8) {
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: 8),
+                        GridItem(.flexible(), spacing: 8),
+                    ],
+                    spacing: 8
+                ) {
                     ForEach(sizes, id: \.self) { size in
                         sizeChip(size)
                     }
@@ -1935,15 +1992,18 @@ private struct VideoOptionsPopover: View {
 
             if supportsReferences {
                 section("参考细节") {
-                    NativeSegmented(selection: detailBinding,
-                                    options: VideoReferenceDetail.allCases.map { ($0, $0.title) },
-                                    size: .small)
-                    Text(options.referenceDetail == .max
-                         ? "参考帧长边按 1280 发送：细节更多，上传与预处理更慢。"
-                         : "参考帧按生成画布缩放：上传更快，适合先试效果。")
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(DS.text3)
-                        .fixedSize(horizontal: false, vertical: true)
+                    NativeSegmented(
+                        selection: detailBinding,
+                        options: VideoReferenceDetail.allCases.map { ($0, $0.title) },
+                        size: .small)
+                    Text(
+                        options.referenceDetail == .max
+                            ? "参考帧长边按 1280 发送：细节更多，上传与预处理更慢。"
+                            : "参考帧按生成画布缩放：上传更快，适合先试效果。"
+                    )
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(DS.text3)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
@@ -1990,12 +2050,14 @@ private struct VideoOptionsPopover: View {
                         .font(DS.Font.xs)
                     Spacer(minLength: 0)
                 }
-                Text(options.seed == nil
-                     ? "留空时每段视频随机一个 seed；生成后视频下方会显示实际值。"
-                     : "固定 seed：提示词与参数相同时，结果基本可复现。")
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(DS.text3)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text(
+                    options.seed == nil
+                        ? "留空时每段视频随机一个 seed；生成后视频下方会显示实际值。"
+                        : "固定 seed：提示词与参数相同时，结果基本可复现。"
+                )
+                .font(.system(size: 9.5))
+                .foregroundStyle(DS.text3)
+                .fixedSize(horizontal: false, vertical: true)
             }
 
             Text("分辨率与帧数越大越吃显存；显存不足时先降尺寸，再减帧数。")
@@ -2024,12 +2086,15 @@ private struct VideoOptionsPopover: View {
     }
 
     private var detailBinding: Binding<VideoReferenceDetail> {
-        Binding(get: { options.referenceDetail ?? .match },
-                set: { options.referenceDetail = $0 == .match ? nil : $0 })
+        Binding(
+            get: { options.referenceDetail ?? .match },
+            set: { options.referenceDetail = $0 == .match ? nil : $0 })
     }
 
-    private func section<Content: View>(_ title: String,
-                                        @ViewBuilder content: () -> Content) -> some View {
+    private func section<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(title)
                 .font(DS.Font.xs.weight(.medium))
@@ -2061,8 +2126,9 @@ private struct VideoOptionsPopover: View {
             }
             .overlay {
                 DS.rect(DS.Radius.md)
-                    .strokeBorder(selected ? DS.accent.opacity(0.55) : DS.line,
-                                  lineWidth: 1)
+                    .strokeBorder(
+                        selected ? DS.accent.opacity(0.55) : DS.line,
+                        lineWidth: 1)
             }
             .contentShape(DS.rect(DS.Radius.md))
         }
@@ -2089,8 +2155,9 @@ private struct VideoOptionsPopover: View {
             }
             .overlay {
                 DS.rect(DS.Radius.md)
-                    .strokeBorder(selected ? DS.accent.opacity(0.55) : DS.line,
-                                  lineWidth: 1)
+                    .strokeBorder(
+                        selected ? DS.accent.opacity(0.55) : DS.line,
+                        lineWidth: 1)
             }
             .contentShape(DS.rect(DS.Radius.md))
         }
@@ -2127,9 +2194,13 @@ private struct ImageOptionsPopover: View {
             }
 
             section("尺寸") {
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 8),
-                                    GridItem(.flexible(), spacing: 8)],
-                          spacing: 8) {
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: 8),
+                        GridItem(.flexible(), spacing: 8),
+                    ],
+                    spacing: 8
+                ) {
                     ForEach(presets) { preset in
                         sizeChip(preset)
                     }
@@ -2189,12 +2260,14 @@ private struct ImageOptionsPopover: View {
                     }
                     Spacer(minLength: 0)
                 }
-                Text(options.seed == nil
-                     ? "留空时每张图随机一个 seed；生成后点图下方的 seed 复制，贴回这里即可复现。"
-                     : "固定 seed：提示词与参数相同时，结果基本可复现。")
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(DS.text3)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text(
+                    options.seed == nil
+                        ? "留空时每张图随机一个 seed；生成后点图下方的 seed 复制，贴回这里即可复现。"
+                        : "固定 seed：提示词与参数相同时，结果基本可复现。"
+                )
+                .font(.system(size: 9.5))
+                .foregroundStyle(DS.text3)
+                .fixedSize(horizontal: false, vertical: true)
             }
 
             if hasSource {
@@ -2227,8 +2300,10 @@ private struct ImageOptionsPopover: View {
         }
     }
 
-    private func section<Content: View>(_ title: String,
-                                        @ViewBuilder content: () -> Content) -> some View {
+    private func section<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(title)
                 .font(DS.Font.xs.weight(.medium))
@@ -2291,7 +2366,7 @@ private struct ImageOptionsPopover: View {
 
     private func applyCustomCanvas() {
         guard let width = Int(widthText), let height = Int(heightText),
-              profile.isValidCanvas(width: width, height: height)
+            profile.isValidCanvas(width: width, height: height)
         else { return }
         let size = "\(width)x\(height)"
         if options.size != size { options.size = size }
@@ -2344,8 +2419,9 @@ private struct ImageOptionsPopover: View {
             }
             .overlay {
                 DS.rect(DS.Radius.md)
-                    .strokeBorder(selected ? DS.accent.opacity(0.55) : DS.line,
-                                  lineWidth: 1)
+                    .strokeBorder(
+                        selected ? DS.accent.opacity(0.55) : DS.line,
+                        lineWidth: 1)
             }
             .contentShape(DS.rect(DS.Radius.md))
         }
@@ -2364,11 +2440,14 @@ private struct StepsControl: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Slider(value: Binding(get: { Double(steps) },
-                                  set: { steps = clamp(Int($0.rounded())) }),
-                   in: Double(range.lowerBound)...Double(range.upperBound),
-                   step: 1)
-                .tint(DS.accent)
+            Slider(
+                value: Binding(
+                    get: { Double(steps) },
+                    set: { steps = clamp(Int($0.rounded())) }),
+                in: Double(range.lowerBound)...Double(range.upperBound),
+                step: 1
+            )
+            .tint(DS.accent)
 
             HStack(spacing: 4) {
                 TextField("", text: $text)
@@ -2387,8 +2466,9 @@ private struct StepsControl: View {
             }
             .overlay {
                 DS.rect(DS.Radius.sm)
-                    .strokeBorder(editing ? DS.line3 : DS.line2,
-                                  lineWidth: 1)
+                    .strokeBorder(
+                        editing ? DS.line3 : DS.line2,
+                        lineWidth: 1)
             }
         }
         .onAppear { text = String(steps) }

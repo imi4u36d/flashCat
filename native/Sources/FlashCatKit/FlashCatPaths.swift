@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// One source of truth for every path the app, the CLI and the gateway need.
@@ -85,6 +88,16 @@ public enum FlashCatPaths {
         return base.range(of: pattern, options: .regularExpression) != nil
     }
 
+    /// 版本名会被拼成 `packs/<id>/<version>` 这类路径，而字符串本身来自远端
+    /// 索引 / GitHub tag（外部输入）：`../../../../tmp/x` 一旦进到路径里，就是
+    /// 在归档校验之前完成一次任意写。白名单与 `EngineUpstream.normalizedVersion`
+    /// 保持一致，同一份版本号在两个入口上必须得到同一判定。
+    public static func isSafeVersion(_ version: String) -> Bool {
+        guard (1...64).contains(version.count), !version.contains("..") else { return false }
+        let allowed = CharacterSet(charactersIn: "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._+-")
+        return version.unicodeScalars.allSatisfy(allowed.contains)
+    }
+
     /// `path` 是否落在 `root` 之内。两边都标准化（吃掉 `..`），再按路径分量
     /// 比较，避免 `/models2` 被当成 `/models` 的子路径。
     public static func contains(_ path: String, in root: String) -> Bool {
@@ -151,8 +164,9 @@ public enum FlashCatPaths {
             // A real directory here would be an older layout: leave it alone
             // rather than replacing something the engine may be writing to.
             if !fileExists(link) {
-                try? FileManager.default.createSymbolicLink(atPath: link,
-                                                            withDestinationPath: target)
+                try? FileManager.default.createSymbolicLink(
+                    atPath: link,
+                    withDestinationPath: target)
             }
         default:
             ensureDirectory(link)

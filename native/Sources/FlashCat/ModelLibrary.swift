@@ -1,5 +1,8 @@
-import Foundation
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import FlashCatKit
+import Foundation
 
 /// 这份权重是哪来的：引擎精选目录里的档位，还是用户自己从 Hub 下的。
 /// 只影响卡片上的徽标与文案，不影响能不能下载、能不能用——开放下载之后，
@@ -74,10 +77,12 @@ enum ModelLibrary {
     /// model invisible with no way to reach it. The page's engine filter only
     /// constrains recommendations and search results — never the weights that
     /// are already here.
-    static func entries(installed: [ModelInfo],
-                        engine: EngineID,
-                        recommendations: [ModelRecommendation],
-                        draftRepository: (String) -> String?) -> [ModelLibraryEntry] {
+    static func entries(
+        installed: [ModelInfo],
+        engine: EngineID,
+        recommendations: [ModelRecommendation],
+        draftRepository: (String) -> String?
+    ) -> [ModelLibraryEntry] {
         var onDisk: [String: ModelInfo] = [:]
         for model in installed where onDisk[ModelLibraryEntry.normalized(model.id)] == nil {
             onDisk[ModelLibraryEntry.normalized(model.id)] = model
@@ -89,27 +94,30 @@ enum ModelLibrary {
             let found = onDisk[key]
             claimed.insert(key)
             let scannedBytes = found?.bytes ?? 0
-            let model = ModelInfo(id: found?.id ?? recommendation.id,
-                                  path: found?.path ?? "",
-                                  bytes: scannedBytes > 0 ? scannedBytes : recommendation.bytes,
-                                  origin: found?.origin ?? .recommended,
-                                  targetName: found?.targetName ?? "",
-                                  family: found?.family,
-                                   draftPath: found?.draftPath,
-                                   mmprojPath: found?.mmprojPath,
-                                   approximateSize: found == nil && recommendation.bytes > 0,
-                                   quantization: found?.quantization)
-            return ModelLibraryEntry(model: model,
-                                     engine: engine,
-                                     recommendation: recommendation,
-                                     draftRepository: recommendation.draftRepository
-                                         ?? (found == nil ? nil : draftRepository(model.id)),
-                                     source: .recommended)
+            let model = ModelInfo(
+                id: found?.id ?? recommendation.id,
+                path: found?.path ?? "",
+                bytes: scannedBytes > 0 ? scannedBytes : recommendation.bytes,
+                origin: found?.origin ?? .recommended,
+                targetName: found?.targetName ?? "",
+                family: found?.family,
+                draftPath: found?.draftPath,
+                mmprojPath: found?.mmprojPath,
+                approximateSize: found == nil && recommendation.bytes > 0,
+                quantization: found?.quantization)
+            return ModelLibraryEntry(
+                model: model,
+                engine: engine,
+                recommendation: recommendation,
+                draftRepository: recommendation.draftRepository
+                    ?? (found == nil ? nil : draftRepository(model.id)),
+                source: .recommended)
         }
 
         // Weights on disk that the catalog does not tag for this engine. Sorted
         // so the grid does not reshuffle between scans.
-        let extras = installed
+        let extras =
+            installed
             .filter { !claimed.contains(ModelLibraryEntry.normalized($0.id)) }
             // 草稿头不成行：它没有独立可用的权重，卡片上唯一能做的「删除」
             // 会把另一个已装模型正配对的草稿删掉。
@@ -120,11 +128,12 @@ enum ModelLibrary {
                 // engines/repo/tags 照旧带上，卡片才标得出「oMLX 专用」。用户
                 // 自己从 Hub 下的权重没有目录行，`source` 让卡片说得更准。
                 let row = ModelRecommendations.recommendation(for: model.id)
-                return ModelLibraryEntry(model: model,
-                                         engine: engine,
-                                         recommendation: row,
-                                         draftRepository: draftRepository(model.id),
-                                         source: row == nil ? .personal : .recommended)
+                return ModelLibraryEntry(
+                    model: model,
+                    engine: engine,
+                    recommendation: row,
+                    draftRepository: draftRepository(model.id),
+                    source: row == nil ? .personal : .recommended)
             }
         rows.append(contentsOf: extras)
         return rows

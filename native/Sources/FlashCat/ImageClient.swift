@@ -1,7 +1,10 @@
-import Foundation
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AppKit
-import ImageIO
 import FlashCatKit
+import Foundation
+import ImageIO
 
 /// 输入框里挂着的待发送图片。只存路径：图可能很大，历史里也不重复拷贝。
 struct ChatImageAttachment: Identifiable, Equatable {
@@ -29,7 +32,8 @@ enum ImageOptionsStore {
     static func load() -> ImageOptions {
         var value: ImageOptions
         if let data = UserDefaults.standard.data(forKey: key),
-           let decoded = try? JSONDecoder().decode(ImageOptions.self, from: data) {
+            let decoded = try? JSONDecoder().decode(ImageOptions.self, from: data)
+        {
             value = decoded
         } else {
             value = ImageOptions()
@@ -109,8 +113,10 @@ struct ImageModelProfile: Equatable {
     }
 
     func clampedCanvas(width: Int, height: Int) -> (width: Int, height: Int) {
-        (min(max(width, Self.minimumSide), maximumSide),
-         min(max(height, Self.minimumSide), maximumSide))
+        (
+            min(max(width, Self.minimumSide), maximumSide),
+            min(max(height, Self.minimumSide), maximumSide)
+        )
     }
 
     static func family(for model: EngineModel?) -> ImageModelFamily {
@@ -134,7 +140,8 @@ struct ImageModelProfile: Equatable {
         if id.contains("flux") { return .flux }
         if id.contains("krea") { return .krea }
         if id.contains("mage-flow") || id.contains("mage_flow") || id.contains("mageflow")
-            || id.contains("/mage-") || id.contains("/mage_") {
+            || id.contains("/mage-") || id.contains("/mage_")
+        {
             return .mage
         }
         if id.contains("qwen") { return .qwen }
@@ -256,7 +263,8 @@ struct ImageModelProfile: Equatable {
     private static func sampledSteps(for model: EngineModel) -> Int? {
         let path: String
         if let reported = model.path, !reported.isEmpty,
-           FileManager.default.fileExists(atPath: reported + "/model_index.json") {
+            FileManager.default.fileExists(atPath: reported + "/model_index.json")
+        {
             path = reported
         } else {
             path = FlashCatPaths.modelPath(for: model.engine, model: model.id)
@@ -268,9 +276,9 @@ struct ImageModelProfile: Equatable {
         case .unknown: break
         }
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: key)),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let sigmas = json["sample_sigmas"] as? [Any],
-              sigmas.count > 1
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let sigmas = json["sample_sigmas"] as? [Any],
+            sigmas.count > 1
         else {
             sampledStepMemo.store(nil, for: key)
             return nil
@@ -311,8 +319,45 @@ struct ImageGenerationResult {
     let steps: Int?
 }
 
-struct ImageClientError: Error {
+/// 图像生成的失败原因。与 `ChatError` 同构：`kind` 给控制流看，`message` 给人看。
+///
+/// 取消以前只能靠文案判：引擎把「已取消」写进流里的错误事件时，它跟真正的取消
+/// 长得一模一样，任务面板分不出该把这一格标成「已停止」还是「失败」。
+struct ImageClientError: Error, Equatable, Sendable {
+    /// 失败的情形。带参的一种把端口留下，调用方不必再解析文案。
+    enum Kind: Equatable, Sendable {
+        /// 唯一的「取消」：任务被取消，或连接被主动掐断。
+        case cancelled
+        /// 本地图像端点地址拼不出来。
+        case invalidEndpoint(port: Int)
+        /// 请求体编不成 JSON。
+        case encoding
+        /// 传输层失败：连接被拒、超时之类的 URLError。
+        case transport
+        /// 引擎回了非 2xx。
+        case badStatus(Int)
+        /// 流走完了却没有图像数据。
+        case emptyBody
+        /// 引擎在流里自报的错误（SSE 的 `{"type":"error"}` 或响应体里的 message）。
+        case engine
+    }
+
+    let kind: Kind
+    /// 给人看的文案：任务面板与气泡直接显示这一句。
     let message: String
+
+    init(kind: Kind, message: String) {
+        self.kind = kind
+        self.message = message
+    }
+
+    /// 兼容只知道文案的调用点：一律按 `.transport` 收，绝不按文案猜成取消。
+    init(message: String) {
+        self.init(kind: .transport, message: message)
+    }
+
+    /// 调用方唯一该问的取消判据。
+    var isCancellation: Bool { kind == .cancelled }
 }
 
 /// 图像端点的流式客户端。走 `stream: true` 是为了把去噪步数实时放进气泡，
@@ -333,12 +378,18 @@ final class ImageClient: Sendable {
         session = URLSession(configuration: configuration)
     }
 
-    func generate(port: Int,
-                  request: ImageGenerationRequest,
-                  onProgress: @escaping @Sendable (String) -> Void)
-        async -> Result<ImageGenerationResult, ImageClientError> {
+    func generate(
+        port: Int,
+        request: ImageGenerationRequest,
+        onProgress: @escaping @Sendable (String) -> Void
+    )
+        async -> Result<ImageGenerationResult, ImageClientError>
+    {
         guard let url = URL(string: "http://127.0.0.1:\(port)/v1/images/generations") else {
-            return .failure(ImageClientError(message: "图像端点地址无效"))
+            return .failure(
+                ImageClientError(
+                    kind: .invalidEndpoint(port: port),
+                    message: "图像端点地址无效"))
         }
         var body: [String: Any] = [
             "model": request.model,
@@ -364,7 +415,10 @@ final class ImageClient: Sendable {
         do {
             urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
         } catch {
-            return .failure(ImageClientError(message: "请求体编码失败：\(error.localizedDescription)"))
+            return .failure(
+                ImageClientError(
+                    kind: .encoding,
+                    message: "请求体编码失败：\(error.localizedDescription)"))
         }
 
         let started = Date()
@@ -376,9 +430,10 @@ final class ImageClient: Sendable {
                     raw.append(byte)
                     if raw.count > 64 * 1024 { break }
                 }
-                let message = Self.errorMessage(in: raw)
+                let message =
+                    Self.errorMessage(in: raw)
                     ?? "服务返回 HTTP \(http.statusCode)"
-                return .failure(ImageClientError(message: message))
+                return .failure(ImageClientError(kind: .badStatus(http.statusCode), message: message))
             }
 
             // 引擎在 stream:true 时回 SSE，每行 `data: {...}`；万一回的是整段
@@ -397,8 +452,8 @@ final class ImageClient: Sendable {
                 sawEvent = true
                 let payload = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
                 guard payload != "[DONE]", !payload.isEmpty,
-                      let data = payload.data(using: .utf8),
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    let data = payload.data(using: .utf8),
+                    let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                 else { continue }
 
                 switch (json["type"] as? String)?.lowercased() {
@@ -409,37 +464,42 @@ final class ImageClient: Sendable {
                     onProgress(Self.progressText(json))
                 case "error":
                     let message = (json["message"] as? String) ?? "图像生成失败"
-                    return .failure(ImageClientError(message: message))
+                    return .failure(ImageClientError(kind: .engine, message: message))
                 default:
                     if let png = Self.imageData(in: json) {
-                        return .success(ImageGenerationResult(png: png,
-                                                             seconds: Date().timeIntervalSince(started),
-                                                             steps: observedSteps))
+                        return .success(
+                            ImageGenerationResult(
+                                png: png,
+                                seconds: Date().timeIntervalSince(started),
+                                steps: observedSteps))
                     }
                 }
             }
 
             if !sawEvent, !rawLines.isEmpty,
-               let data = rawLines.joined(separator: "\n").data(using: .utf8),
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                let data = rawLines.joined(separator: "\n").data(using: .utf8),
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            {
                 if let message = Self.errorMessage(in: data) {
-                    return .failure(ImageClientError(message: message))
+                    return .failure(ImageClientError(kind: .engine, message: message))
                 }
                 if let png = Self.imageData(in: json) {
-                    return .success(ImageGenerationResult(png: png,
-                                                         seconds: Date().timeIntervalSince(started),
-                                                         steps: observedSteps))
+                    return .success(
+                        ImageGenerationResult(
+                            png: png,
+                            seconds: Date().timeIntervalSince(started),
+                            steps: observedSteps))
                 }
             }
-            return .failure(ImageClientError(message: "引擎没有返回图像数据"))
+            return .failure(ImageClientError(kind: .emptyBody, message: "引擎没有返回图像数据"))
         } catch is CancellationError {
-            return .failure(ImageClientError(message: "已取消"))
+            return .failure(ImageClientError(kind: .cancelled, message: "已取消"))
         } catch {
             let ns = error as NSError
             if ns.code == NSURLErrorCancelled {
-                return .failure(ImageClientError(message: "已取消"))
+                return .failure(ImageClientError(kind: .cancelled, message: "已取消"))
             }
-            return .failure(ImageClientError(message: error.localizedDescription))
+            return .failure(ImageClientError(kind: .transport, message: error.localizedDescription))
         }
     }
 
@@ -468,7 +528,8 @@ final class ImageClient: Sendable {
     private static func imageData(in json: [String: Any]) -> Data? {
         guard let items = json["data"] as? [[String: Any]], let first = items.first else { return nil }
         if let base64 = first["b64_json"] as? String,
-           let data = Data(base64Encoded: base64.replacingOccurrences(of: "\n", with: "")) {
+            let data = Data(base64Encoded: base64.replacingOccurrences(of: "\n", with: ""))
+        {
             return data
         }
         return nil
@@ -522,9 +583,11 @@ enum ImageStore {
 
     /// 参考图统一转成 JPEG：服务端只收 PNG/JPEG，HEIC 原样发会被拒；顺便按
     /// 最长边缩放，九张相机原图也不会一下把 60 MB 的请求预算吃满。
-    static func jpegBase64(atPath path: String,
-                           maximumPixel: CGFloat,
-                           quality: CGFloat = 0.8) -> String? {
+    static func jpegBase64(
+        atPath path: String,
+        maximumPixel: CGFloat,
+        quality: CGFloat = 0.8
+    ) -> String? {
         let url = URL(fileURLWithPath: path) as CFURL
         guard let source = CGImageSourceCreateWithURL(url, nil) else { return nil }
         let options: [CFString: Any] = [
@@ -533,12 +596,16 @@ enum ImageStore {
             kCGImageSourceThumbnailMaxPixelSize: max(1, maximumPixel),
             kCGImageSourceShouldCacheImmediately: true,
         ]
-        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0,
-                                                              options as CFDictionary)
+        guard
+            let image = CGImageSourceCreateThumbnailAtIndex(
+                source, 0,
+                options as CFDictionary)
         else { return nil }
         let bitmap = NSBitmapImageRep(cgImage: image)
-        guard let data = bitmap.representation(using: .jpeg,
-                                               properties: [.compressionFactor: quality])
+        guard
+            let data = bitmap.representation(
+                using: .jpeg,
+                properties: [.compressionFactor: quality])
         else { return nil }
         return data.base64EncodedString()
     }
@@ -558,10 +625,10 @@ enum ImageStore {
     static func pixelSize(atPath path: String) -> CGSize? {
         let url = URL(fileURLWithPath: path) as CFURL
         guard let source = CGImageSourceCreateWithURL(url, nil),
-              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = props[kCGImagePropertyPixelWidth] as? Int,
-              let height = props[kCGImagePropertyPixelHeight] as? Int,
-              width > 0, height > 0
+            let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+            let width = props[kCGImagePropertyPixelWidth] as? Int,
+            let height = props[kCGImagePropertyPixelHeight] as? Int,
+            width > 0, height > 0
         else { return nil }
         return CGSize(width: width, height: height)
     }
@@ -601,9 +668,10 @@ private final class ImageThumbnailCache: @unchecked Sendable {
 
     private let cache = NSCache<NSString, NSImage>()
     /// 解码走自己的并发队列：不占主线程，也不和磁盘/网络 IO 抢同一条串行队列。
-    private let queue = DispatchQueue(label: "flashcat.image.thumbnail",
-                                      qos: .userInitiated,
-                                      attributes: .concurrent)
+    private let queue = DispatchQueue(
+        label: "flashcat.image.thumbnail",
+        qos: .userInitiated,
+        attributes: .concurrent)
     private let lock = NSLock()
     /// 正在解码的 key：同一张图的后来者挂在同一个 continuation 上，不重复解码。
     private var pending: [ThumbnailKey: [CheckedContinuation<NSImage?, Never>]] = [:]
@@ -685,7 +753,8 @@ private final class ImageThumbnailCache: @unchecked Sendable {
         ]
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
         else { return nil }
-        return NSImage(cgImage: cgImage,
-                       size: NSSize(width: cgImage.width, height: cgImage.height))
+        return NSImage(
+            cgImage: cgImage,
+            size: NSSize(width: cgImage.width, height: cgImage.height))
     }
 }

@@ -1,7 +1,10 @@
-import Foundation
-import Darwin
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import CryptoKit
+import Darwin
 import FlashCatKit
+import Foundation
 
 /// Thin NSRegularExpression wrappers. Swift regex literals are not available in
 /// the Swift 5 language mode this target is built with.
@@ -189,8 +192,10 @@ func portOpen(_ port: Int) -> Bool {
     return connected == 0
 }
 
+// 绑定 libproc 的 C 符号 proc_pidpath；Swift 侧名字取小驼峰，因为
+// swift-format 的 AlwaysUseLowerCamelCase 不认 C 符号的命名习惯。
 @_silgen_name("proc_pidpath")
-private func proc_pidpath(_ pid: Int32, _ buffer: UnsafeMutableRawPointer, _ size: UInt32) -> Int32
+private func processPath(_ pid: Int32, _ buffer: UnsafeMutableRawPointer, _ size: UInt32) -> Int32
 
 /// One snapshot entry of the kernel process table: the two pids the engine's
 /// process-tree bookkeeping walks.
@@ -224,7 +229,7 @@ func allProcesses() -> [ProcessTableEntry] {
 /// marker for engines whose pid file was already removed.
 func processExecutablePath(_ pid: Int32) -> String? {
     var buffer = [CChar](repeating: 0, count: 4096)
-    let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+    let length = processPath(pid, &buffer, UInt32(buffer.count))
     guard length > 0 else { return nil }
     return String(cString: buffer)
 }

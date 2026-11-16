@@ -1,5 +1,8 @@
-import Foundation
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import FlashCatKit
+import Foundation
 
 /// 对话里给文本模型挂的画图工具。
 ///
@@ -30,34 +33,38 @@ enum ImageTool {
                 "items": ["type": "string"],
                 "minItems": 1,
                 "maxItems": maximumImagesPerCall,
-            ] as [String: Any],
+            ] as [String: Any]
         ]
         if !sizeOptions.isEmpty {
-            properties["size"] = [
-                "type": "string",
-                "enum": sizeOptions,
-                "description": "这一组图的画布尺寸，整组共用。不确定就省略，用用户当前设置的尺寸。",
-            ] as [String: Any]
+            properties["size"] =
+                [
+                    "type": "string",
+                    "enum": sizeOptions,
+                    "description": "这一组图的画布尺寸，整组共用。不确定就省略，用用户当前设置的尺寸。",
+                ] as [String: Any]
         }
-        return [[
-            "type": "function",
-            "function": [
-                "name": name,
-                "description": "画图并直接显示在对话里。用户想看画面、要插图、要一组分镜/连环画时调用；一次给多个 prompts 就会画成一组共用同一随机种子的系列图，同一角色与画风在各张之间保持一致。调用后你会拿到每张图的路径与尺寸；能看图的模型还会直接收到成品本身，先看清再点评或补画。",
-                "parameters": [
-                    "type": "object",
-                    "properties": properties,
-                    "required": ["prompts"],
+        return [
+            [
+                "type": "function",
+                "function": [
+                    "name": name,
+                    "description":
+                        "画图并直接显示在对话里。用户想看画面、要插图、要一组分镜/连环画时调用；一次给多个 prompts 就会画成一组共用同一随机种子的系列图，同一角色与画风在各张之间保持一致。调用后你会拿到每张图的路径与尺寸；能看图的模型还会直接收到成品本身，先看清再点评或补画。",
+                    "parameters": [
+                        "type": "object",
+                        "properties": properties,
+                        "required": ["prompts"],
+                    ] as [String: Any],
                 ] as [String: Any],
-            ] as [String: Any],
-        ]]
+            ]
+        ]
     }
 
     /// 系统提示里追加的一段。工具描述已经写清用途，这里只补「别光说不画」——
     /// 聊天模型常见的失败是先描述一遍画面再问「要我画出来吗」。
     static let guidance = """
-    你有一个画图工具 generate_images：需要给用户看图时直接调用它，不要只描述画面、也不要先征求同意。画一组系列图时，把每一幕写成一条 prompt 一次调用完。画完先看画面再收尾：能收到图片就直接看；只拿到路径时不要编造细节。
-    """
+        你有一个画图工具 generate_images：需要给用户看图时直接调用它，不要只描述画面、也不要先征求同意。画一组系列图时，把每一幕写成一条 prompt 一次调用完。画完先看画面再收尾：能收到图片就直接看；只拿到路径时不要编造细节。
+        """
 
     /// 解析失败时带一句能直接展示给用户的说明。实现字面量初始化，
     /// 保持 `return .failure("…")` 的写法；调用方用 `error.message` 取原文。
@@ -83,7 +90,8 @@ enum ImageTool {
         } else {
             prompts = []
         }
-        prompts = prompts
+        prompts =
+            prompts
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         guard !prompts.isEmpty else {
@@ -98,9 +106,11 @@ enum ImageTool {
     }
 
     /// 模型给回来的结果按 JSON 写：模型读得懂，也不占多少 token。
-    static func result(images: [(path: String, note: String)],
-                       seed: Int,
-                       size: String) -> String {
+    static func result(
+        images: [(path: String, note: String)],
+        seed: Int,
+        size: String
+    ) -> String {
         let items = images.map { image in
             "{\"path\":\(quoted(image.path)),\"note\":\(quoted(image.note))}"
         }
@@ -113,7 +123,8 @@ enum ImageTool {
 
     private static func quoted(_ value: String) -> String {
         guard let data = try? JSONSerialization.data(withJSONObject: [value]),
-              let text = String(data: data, encoding: .utf8) else { return "\"\"" }
+            let text = String(data: data, encoding: .utf8)
+        else { return "\"\"" }
         // [value] 序列化成 ["…"]，掐掉方括号就是带转义的字符串字面量。
         return String(text.dropFirst().dropLast())
     }

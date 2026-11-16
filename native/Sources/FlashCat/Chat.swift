@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// 模型发起的一次工具调用。流式协议里 `arguments` 是逐段拼接的 JSON 文本，
@@ -10,7 +13,7 @@ struct ChatToolCall: Equatable, Codable {
     /// 参数对象。模型有一次写坏的 JSON，这一轮就用不了——由调用方报错给模型。
     var object: [String: Any]? {
         guard let data = arguments.data(using: .utf8),
-              let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         return value
     }
@@ -161,14 +164,52 @@ struct ChatToolSchema: Equatable, Sendable {
     /// 解码回请求体要的对象数组。编不回去只可能是空表，按「没有工具」处理。
     var objects: [[String: Any]] {
         guard !json.isEmpty,
-              let value = try? JSONSerialization.jsonObject(with: json) as? [[String: Any]]
+            let value = try? JSONSerialization.jsonObject(with: json) as? [[String: Any]]
         else { return [] }
         return value
     }
 }
 
-struct ChatError: Error {
+/// 对话失败的原因。`kind` 给控制流看（尤其「这一轮是不是用户取消」），
+/// `message` 给人看（气泡、notice、日志都直接显示这一句）。
+///
+/// 以前只有一个 `message`，取消只能去文案里找「取消」/「cancel」：引擎自己的
+/// 报错原文里出现这两个词时，一次真实的失败会被当成用户取消静默吞掉，界面还
+/// 停在「已停止」。取消是行为，不该从文案里猜。
+struct ChatError: Error, Equatable, Sendable {
+    /// 失败的情形。带参的两种把端口与状态码留下，调用方不必再解析文案。
+    enum Kind: Equatable, Sendable {
+        /// 唯一的「取消」：用户点了停止，或被新请求顶掉。只能由显式的取消路径产生。
+        case cancelled
+        /// 本地网关地址拼不出来。只可能是端口离谱，带上端口方便定位。
+        case invalidEndpoint(port: Int)
+        /// 请求体编不成 JSON。
+        case encoding
+        /// 传输层失败：连接被拒、超时之类的 URLError。
+        case transport
+        /// 网关回了非 2xx。
+        case badStatus(Int)
+        /// 流走完了却一个字都没有。
+        case emptyBody
+    }
+
+    let kind: Kind
+    /// 给人看的文案：界面直接显示这一句，不翻译不改写。
     let message: String
+
+    init(kind: Kind, message: String) {
+        self.kind = kind
+        self.message = message
+    }
+
+    /// 兼容只知道文案的调用点：一律按 `.transport` 收，绝不按文案猜成取消。
+    init(message: String) {
+        self.init(kind: .transport, message: message)
+    }
+
+    /// 调用方唯一该问的取消判据。删掉文案匹配之后，「取消」两个字只出现在
+    /// message 里，不再影响控制流。
+    var isCancellation: Bool { kind == .cancelled }
 }
 
 /// Streaming client for /v1/chat/completions. Delegate based so a generation
@@ -221,12 +262,14 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         let onUsage: @Sendable (ChatUsage) -> Void
         let onStatus: @Sendable (String) -> Void
 
-        init(task: URLSessionDataTask,
-             onDelta: @escaping @Sendable (String, Date) -> Void,
-             onReasoning: @escaping @Sendable (String, Date) -> Void,
-             onToolCall: @escaping @Sendable (String, Date) -> Void,
-             onUsage: @escaping @Sendable (ChatUsage) -> Void,
-             onStatus: @escaping @Sendable (String) -> Void) {
+        init(
+            task: URLSessionDataTask,
+            onDelta: @escaping @Sendable (String, Date) -> Void,
+            onReasoning: @escaping @Sendable (String, Date) -> Void,
+            onToolCall: @escaping @Sendable (String, Date) -> Void,
+            onUsage: @escaping @Sendable (ChatUsage) -> Void,
+            onStatus: @escaping @Sendable (String) -> Void
+        ) {
             self.task = task
             self.onDelta = onDelta
             self.onReasoning = onReasoning
@@ -258,7 +301,8 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         func consume(_ line: Data) {
             // 用 `.whitespacesAndNewlines`：CRLF 流的分片行尾带 `\r`，
             // 只裁空格时 `[DONE]` 永远匹配不上。
-            let trimmed = String(data: line, encoding: .utf8)?
+            let trimmed =
+                String(data: line, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if trimmed.isEmpty { return }
             if !trimmed.hasPrefix("data:") {
@@ -271,7 +315,8 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
                 return
             }
             guard let data = payload.data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else {
                 return
             }
 
@@ -297,7 +342,8 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
                 // 不同引擎对思考流的字段名不一致：OpenAI 兼容层常见
                 // `reasoning_content`，部分本地引擎用 `reasoning` 或 `thinking`，
                 // 也有的把片段包在 `reasoning_details` 数组里。
-                let reasoningPiece = (chunk["reasoning_content"] as? String)
+                let reasoningPiece =
+                    (chunk["reasoning_content"] as? String)
                     ?? (chunk["reasoning"] as? String)
                     ?? (chunk["thinking"] as? String)
                     ?? Self.reasoningDetails(chunk["reasoning_details"])
@@ -389,9 +435,10 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 
         func readableError(status: Int) -> String {
             if let data = raw.data(using: .utf8),
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let error = json["error"] as? [String: Any],
-               let message = error["message"] as? String {
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let error = json["error"] as? [String: Any],
+                let message = error["message"] as? String
+            {
                 return message
             }
             return "服务返回 HTTP \(status)"
@@ -482,16 +529,18 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         ]
     }
 
-    func send(port: Int,
-              model: String,
-              turns: [ChatTurn],
-              options: ChatOptions,
-              tools: ChatToolSchema = ChatToolSchema(),
-              onDelta: @escaping @Sendable (String, Date) -> Void,
-              onReasoning: @escaping @Sendable (String, Date) -> Void,
-              onUsage: @escaping @Sendable (ChatUsage) -> Void,
-              onStatus: @escaping @Sendable (String) -> Void,
-              onToolCall: @escaping @Sendable (String, Date) -> Void = { _, _ in }) async -> Result<String, ChatError> {
+    func send(
+        port: Int,
+        model: String,
+        turns: [ChatTurn],
+        options: ChatOptions,
+        tools: ChatToolSchema = ChatToolSchema(),
+        onDelta: @escaping @Sendable (String, Date) -> Void,
+        onReasoning: @escaping @Sendable (String, Date) -> Void,
+        onUsage: @escaping @Sendable (ChatUsage) -> Void,
+        onStatus: @escaping @Sendable (String) -> Void,
+        onToolCall: @escaping @Sendable (String, Date) -> Void = { _, _ in }
+    ) async -> Result<String, ChatError> {
         cancel()
 
         var body: [String: Any] = [
@@ -552,7 +601,10 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 
         guard let url = URL(string: "http://127.0.0.1:\(port)/v1/chat/completions") else {
             onStatus("失败")
-            return .failure(ChatError(message: "本地网关地址无效：端口 \(port)"))
+            return .failure(
+                ChatError(
+                    kind: .invalidEndpoint(port: port),
+                    message: "本地网关地址无效：端口 \(port)"))
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -563,13 +615,17 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         } catch {
             onStatus("失败")
-            return .failure(ChatError(message: "请求体编码失败：\(error.localizedDescription)"))
+            return .failure(
+                ChatError(
+                    kind: .encoding,
+                    message: "请求体编码失败：\(error.localizedDescription)"))
         }
 
         let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
         let dataTask = session.dataTask(with: request)
-        let stream = Request(task: dataTask, onDelta: onDelta, onReasoning: onReasoning,
-                             onToolCall: onToolCall, onUsage: onUsage, onStatus: onStatus)
+        let stream = Request(
+            task: dataTask, onDelta: onDelta, onReasoning: onReasoning,
+            onToolCall: onToolCall, onUsage: onUsage, onStatus: onStatus)
         install(stream)
         onStatus("生成中")
 
@@ -587,22 +643,30 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 
         if stream.cancelled {
             onStatus("已取消")
-            return .failure(ChatError(message: "已取消"))
+            return .failure(ChatError(kind: .cancelled, message: "已取消"))
         }
         if let error = stream.transportError ?? dataTask.error {
             let cancelled = (error as? URLError)?.code == .cancelled
             onStatus(cancelled ? "已取消" : "失败")
-            return .failure(ChatError(message: cancelled ? "已取消" : error.localizedDescription))
+            return .failure(
+                ChatError(
+                    kind: cancelled ? .cancelled : .transport,
+                    message: cancelled ? "已取消" : error.localizedDescription))
         }
         if stream.status < 200 || stream.status >= 300 {
             onStatus("失败")
-            return .failure(ChatError(message: stream.readableError(status: stream.status)))
+            return .failure(
+                ChatError(
+                    kind: .badStatus(stream.status),
+                    message: stream.readableError(status: stream.status)))
         }
         if stream.text.isEmpty && !stream.raw.isEmpty {
             // Some builds answer with a single JSON document instead of SSE.
-            if let json = try? JSONSerialization.jsonObject(with: stream.raw.data(using: .utf8) ?? Data()) as? [String: Any],
-               let choices = json["choices"] as? [[String: Any]],
-               let message = choices.first?["message"] as? [String: Any] {
+            if let json = try? JSONSerialization.jsonObject(with: stream.raw.data(using: .utf8) ?? Data())
+                as? [String: Any],
+                let choices = json["choices"] as? [[String: Any]],
+                let message = choices.first?["message"] as? [String: Any]
+            {
                 if let content = message["content"] as? String, !content.isEmpty {
                     stream.text = content
                     onDelta(content, Date())
@@ -615,7 +679,7 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         // 只发工具调用的一轮正文是空的，这是正常收尾而不是「没返回内容」。
         if stream.text.isEmpty && !stream.reasoned && stream.toolCalls.isEmpty {
             onStatus("失败")
-            return .failure(ChatError(message: "服务没有返回内容"))
+            return .failure(ChatError(kind: .emptyBody, message: "服务没有返回内容"))
         }
         onUsage(stream.usage)
         onStatus("完成")
@@ -624,9 +688,11 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 
     // MARK: URLSession delegate
 
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask,
-                    didReceive response: URLResponse,
-                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+    func urlSession(
+        _ session: URLSession, dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
         request(for: dataTask)?.status = (response as? HTTPURLResponse)?.statusCode ?? 0
         completionHandler(.allow)
     }

@@ -1,14 +1,19 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import XCTest
+
 @testable import FlashCat
 
 /// 「全部日志」的合并：每台引擎的尾巴都按时间升序，页面要的是合成后的
 /// 一份「最新在前」的视图，和跨来源唯一的行身份。
 final class LogFeedTests: XCTestCase {
     private func line(_ id: Int, at second: TimeInterval, _ text: String? = nil) -> LogLine {
-        LogLine(id: id,
-                time: Date(timeIntervalSince1970: second),
-                text: text ?? "line \(id)",
-                level: .info)
+        LogLine(
+            id: id,
+            time: Date(timeIntervalSince1970: second),
+            text: text ?? "line \(id)",
+            level: .info)
     }
 
     private func group(_ key: String, tag: String? = nil, _ lines: [LogLine]) -> LogFeed.Group {
@@ -55,8 +60,9 @@ final class LogFeedTests: XCTestCase {
     }
 
     func testLimitKeepsOnlyTheNewestRows() {
-        let entries = LogFeed.entries(from: [group("splash", (1...6).map { line($0, at: TimeInterval($0)) })],
-                                      limit: 3)
+        let entries = LogFeed.entries(
+            from: [group("splash", (1...6).map { line($0, at: TimeInterval($0)) })],
+            limit: 3)
 
         XCTAssertEqual(entries.map(\.text), ["line 6", "line 5", "line 4"])
     }
@@ -79,9 +85,11 @@ final class LogFeedTests: XCTestCase {
             group("omlx", tag: "omlx", [line(2, at: 20, "模型已就绪")]),
         ])
 
-        XCTAssertEqual(LogFeed.clipboardText(entries, tagged: true),
-                       "[omlx] 模型已就绪\n[splash] 引擎已启动")
-        XCTAssertEqual(LogFeed.clipboardText(entries, tagged: false),
-                       "模型已就绪\n引擎已启动")
+        XCTAssertEqual(
+            LogFeed.clipboardText(entries, tagged: true),
+            "[omlx] 模型已就绪\n[splash] 引擎已启动")
+        XCTAssertEqual(
+            LogFeed.clipboardText(entries, tagged: false),
+            "模型已就绪\n引擎已启动")
     }
 }

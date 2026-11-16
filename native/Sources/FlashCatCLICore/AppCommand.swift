@@ -1,7 +1,10 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AppKit
 import Darwin
-import Foundation
 import FlashCatKit
+import Foundation
 
 public enum AppCommand {
     public static func run(_ context: CLIContext) async throws -> Int32 {
@@ -18,8 +21,9 @@ public enum AppCommand {
             _ = try await quit(context)
             return try await open(context)
         default:
-            throw CLIError("未知 app 子命令：\(context.invocation.subcommand ?? "")", exit: .usage,
-                           hint: "可用：status / open / quit / restart / path")
+            throw CLIError(
+                "未知 app 子命令：\(context.invocation.subcommand ?? "")", exit: .usage,
+                hint: "可用：status / open / quit / restart / path")
         }
     }
 
@@ -31,9 +35,11 @@ public enum AppCommand {
                 let running: Bool
                 let version: String
             }
-            context.output.json(Body(path: app?.path,
-                                     running: app.map(isRunning) ?? false,
-                                     version: CLIInfo.version(environment: context.environment)))
+            context.output.json(
+                Body(
+                    path: app?.path,
+                    running: app.map(isRunning) ?? false,
+                    version: CLIInfo.version(environment: context.environment)))
         } else if let app {
             context.output.line(app.path)
         } else {
@@ -45,17 +51,17 @@ public enum AppCommand {
 
     private static func open(_ context: CLIContext) async throws -> Int32 {
         if let runtime = ControlRuntime.load(), runtime.processIsAlive,
-           let base = URL(string: "http://127.0.0.1:\(runtime.port)"),
-           let _: ControlAppInfo = try? await ControlClient(baseURL: base, token: runtime.token)
-               .get("/v1/health", timeout: 3) {
+            await probeHealth(runtime, timeout: 3) == nil
+        {
             if !context.output.json, !context.output.quiet {
                 context.output.success("flashCat 已经在运行")
             }
             return CLIExit.success.rawValue
         }
         guard let app = AppLocator.resolve(environment: context.environment) else {
-            throw CLIError("找不到 flashCat.app", exit: .notFound,
-                           hint: "先把 flashCat.app 放进 /Applications，或设置 FLASHCAT_APP")
+            throw CLIError(
+                "找不到 flashCat.app", exit: .notFound,
+                hint: "先把 flashCat.app 放进 /Applications，或设置 FLASHCAT_APP")
         }
         // Do not start a second copy when the first one is still bringing its
         // control server up (or has it disabled). LaunchServices would usually
@@ -63,18 +69,24 @@ public enum AppCommand {
         // not.
         if isRunning(app) {
             let deadline = Date().addingTimeInterval(5)
+            // 启动期的健康探测失败是常态（端口还没绑上），所以要继续轮询；但
+            // 「应用在跑、控制接口答错」这类错误（令牌过期、超时）要留住，最后
+            // 报它而不是「没有就绪」——后者会让人去反复检查一个没问题的开关。
+            var lastError: CLIError?
             while Date() < deadline {
                 if let runtime = ControlRuntime.load(), runtime.processIsAlive,
-                   portOpen(Int(runtime.port)),
-                   let base = URL(string: "http://127.0.0.1:\(runtime.port)"),
-                   let _: ControlAppInfo = try? await ControlClient(baseURL: base, token: runtime.token)
-                       .get("/v1/health", timeout: 2) {
-                    if context.output.json {
-                        context.output.json(ControlSimpleResult(message: "已经在运行"))
-                    } else if !context.output.quiet {
-                        context.output.success("flashCat 已经在运行")
+                    portOpen(Int(runtime.port))
+                {
+                    if let error = await probeHealth(runtime, timeout: 2) {
+                        lastError = error
+                    } else {
+                        if context.output.json {
+                            context.output.json(ControlSimpleResult(message: "已经在运行"))
+                        } else if !context.output.quiet {
+                            context.output.success("flashCat 已经在运行")
+                        }
+                        return CLIExit.success.rawValue
                     }
-                    return CLIExit.success.rawValue
                 }
                 try? await Task.sleep(nanoseconds: 250_000_000)
             }
@@ -86,8 +98,12 @@ public enum AppCommand {
                 }
                 return CLIExit.success.rawValue
             }
-            throw CLIError("flashCat 进程在运行，但控制接口没有就绪", exit: .timeout,
-                           hint: "检查「设置 → 命令行接口」，或退出后重开")
+            if let lastError, !ControlFallback.shouldFallBack(lastError) {
+                throw lastError
+            }
+            throw CLIError(
+                "flashCat 进程在运行，但控制接口没有就绪", exit: .timeout,
+                hint: "检查「设置 → 命令行接口」，或退出后重开")
         }
         if let status = launch(app, environment: context.environment) {
             guard status == 0 else {
@@ -97,25 +113,29 @@ public enum AppCommand {
         let timeout = Double(context.invocation.option("timeout") ?? "") ?? 30
         let deadline = Date().addingTimeInterval(timeout)
         let started = Date()
+        var lastError: CLIError?
         while Date() < deadline {
             if let runtime = ControlRuntime.load(), runtime.processIsAlive,
-               portOpen(Int(runtime.port)),
-               let base = URL(string: "http://127.0.0.1:\(runtime.port)"),
-               let _: ControlAppInfo = try? await ControlClient(baseURL: base, token: runtime.token)
-                   .get("/v1/health", timeout: 2) {
-                if context.output.json {
-                    context.output.json(ControlSimpleResult(message: "已启动"))
-                } else if !context.output.quiet {
-                    context.output.success("flashCat 已启动 · 控制接口 127.0.0.1:\(runtime.port)")
+                portOpen(Int(runtime.port))
+            {
+                if let error = await probeHealth(runtime, timeout: 2) {
+                    lastError = error
+                } else {
+                    if context.output.json {
+                        context.output.json(ControlSimpleResult(message: "已启动"))
+                    } else if !context.output.quiet {
+                        context.output.success("flashCat 已启动 · 控制接口 127.0.0.1:\(runtime.port)")
+                    }
+                    return CLIExit.success.rawValue
                 }
-                return CLIExit.success.rawValue
             }
             // The process can be up before the control server has bound its
             // port. Only report "control disabled" after a short grace period,
             // and only when the setting actually says it is off.
             if isRunning(app),
-               Date().timeIntervalSince(started) > 5,
-               !context.local.controlEnabled {
+                Date().timeIntervalSince(started) > 5,
+                !context.local.controlEnabled
+            {
                 if context.output.json {
                     context.output.json(ControlSimpleResult(message: "已启动（控制接口关闭）"))
                 } else if !context.output.quiet {
@@ -125,25 +145,46 @@ public enum AppCommand {
             }
             try? await Task.sleep(nanoseconds: 300_000_000)
         }
-        throw CLIError("flashCat 没有在 \(Int(timeout)) 秒内启动", exit: .timeout,
-                       hint: "看 ~/Library/Logs/flashCat/ 或系统的控制台日志")
+        // 应用已经在跑、只是控制接口答错时，说「没有在 N 秒内启动」是错的：
+        // 用户会去重启一个根本没退出的应用。先报控制通道的真实原因。
+        if let lastError, !ControlFallback.shouldFallBack(lastError) {
+            throw lastError
+        }
+        throw CLIError(
+            "flashCat 没有在 \(Int(timeout)) 秒内启动", exit: .timeout,
+            hint: "看 ~/Library/Logs/flashCat/ 或系统的控制台日志")
     }
 
     private static func quit(_ context: CLIContext) async throws -> Int32 {
         let app = AppLocator.resolve(environment: context.environment)
         let runtime = ControlRuntime.load()
         var requested = false
+        var controlError: CLIError?
         let fallbackPid: Int32? = runningPid(app: app, runtime: runtime)
 
         if let runtime, runtime.processIsAlive, portOpen(Int(runtime.port)),
-           let base = URL(string: "http://127.0.0.1:\(runtime.port)") {
+            let base = URL(string: "http://127.0.0.1:\(runtime.port)")
+        {
             let client = ControlClient(baseURL: base, token: runtime.token)
-            if (try? await client.postData("/v1/app/quit", body: Data("{}".utf8), timeout: 10)) != nil {
+            do {
+                _ = try await client.postData("/v1/app/quit", body: Data("{}".utf8), timeout: 10)
                 requested = true
+            } catch let error as CLIError {
+                // 控制接口没答应（令牌过期、504、超时）不能当成「应用没运行」：
+                // 记住原因，下面还有 NSRunningApplication / AppleScript 这条
+                // 不带令牌的通道；两条都不行时把真实原因报出来。
+                controlError = error
+            } catch {
+                controlError = CLIError(error.localizedDescription)
             }
         }
         if !requested {
             guard app.map(isRunning) ?? false else {
+                // 控制接口刚报过令牌/超时类错误，说明应用大概率在跑；这时报
+                // 「没有在运行」会自相矛盾，把控制通道的原因抛出来。
+                if let controlError, !ControlFallback.shouldFallBack(controlError) {
+                    throw controlError
+                }
                 if !context.output.json, !context.output.quiet {
                     context.output.success("flashCat 没有在运行")
                 }
@@ -155,13 +196,18 @@ public enum AppCommand {
             // non-interactive shell).
             requested = requestTermination(app: app, runtime: runtime)
             if !requested {
-                let status = runProcess("/usr/bin/osascript",
-                                        ["-e", #"tell application id "com.zhuo.flashCat" to quit"#])
+                let status = runProcess(
+                    "/usr/bin/osascript",
+                    ["-e", #"tell application id "com.zhuo.flashCat" to quit"#])
                 requested = status == 0
             }
             guard requested else {
-                throw CLIError("无法请求 flashCat 退出", exit: .failure,
-                               hint: "从菜单栏或应用菜单退出；控制接口关闭时命令行没有别的通道")
+                if let controlError, !ControlFallback.shouldFallBack(controlError) {
+                    throw controlError
+                }
+                throw CLIError(
+                    "无法请求 flashCat 退出", exit: .failure,
+                    hint: "从菜单栏或应用菜单退出；控制接口关闭时命令行没有别的通道")
             }
         }
 
@@ -179,7 +225,8 @@ public enum AppCommand {
                 running = (app.map(isRunning) ?? false) || (runtime?.processIsAlive ?? false)
             }
             if running, !signalled, Date().timeIntervalSince(quitStarted) > 5,
-               let pid = fallbackPid {
+                let pid = fallbackPid
+            {
                 // `NSRunningApplication.terminate()` uses an Apple event that
                 // can be dropped when Automation permission was never granted.
                 // A plain SIGTERM is the last resort; the engine watchdogs are
@@ -197,8 +244,27 @@ public enum AppCommand {
             }
             try? await Task.sleep(nanoseconds: 300_000_000)
         }
-        throw CLIError("flashCat 没有在超时内退出", exit: .timeout,
-                       hint: "引擎可能在等待卸载权重；再试一次或从菜单栏退出")
+        throw CLIError(
+            "flashCat 没有在超时内退出", exit: .timeout,
+            hint: "引擎可能在等待卸载权重；再试一次或从菜单栏退出")
+    }
+
+    /// 健康探测：nil 表示控制接口已就绪，否则返回失败原因。启动流程里失败是常态
+    /// （进程起来了但端口还没绑），所以调用方继续轮询，只把原因记下来事后判断是
+    /// 「还没好」还是「应用在跑却答错」。
+    private static func probeHealth(_ runtime: ControlRuntime, timeout: TimeInterval) async -> CLIError? {
+        guard let base = URL(string: "http://127.0.0.1:\(runtime.port)") else {
+            return CLIError("控制接口地址无效：\(runtime.port)", exit: .usage)
+        }
+        do {
+            let _: ControlAppInfo = try await ControlClient(baseURL: base, token: runtime.token)
+                .get("/v1/health", timeout: timeout)
+            return nil
+        } catch let error as CLIError {
+            return error
+        } catch {
+            return CLIError("控制接口请求失败：\(error.localizedDescription)")
+        }
     }
 
     static func runningPid(app: URL?, runtime: ControlRuntime?) -> Int32? {
@@ -212,12 +278,14 @@ public enum AppCommand {
 
     private static func requestTermination(app: URL?, runtime: ControlRuntime?) -> Bool {
         if let runtime, runtime.processIsAlive,
-           let running = NSRunningApplication(processIdentifier: runtime.pid) {
+            let running = NSRunningApplication(processIdentifier: runtime.pid)
+        {
             return running.terminate()
         }
         let candidates = NSWorkspace.shared.runningApplications.filter { running in
             guard !running.isTerminated,
-                  let bundle = running.bundleURL?.resolvingSymlinksInPath() else { return false }
+                let bundle = running.bundleURL?.resolvingSymlinksInPath()
+            else { return false }
             return app.map { $0.resolvingSymlinksInPath().path == bundle.path } ?? false
         }
         return candidates.first?.terminate() ?? false
@@ -230,8 +298,10 @@ public enum AppCommand {
     /// the real profile, so launch the executable directly with the current
     /// environment instead.
     private static func launch(_ app: URL, environment: [String: String]) -> Int32? {
-        let overrides = ["FLASHCAT_SUPPORT_DIR", "FLASHCAT_LOGS_DIR",
-                         "FLASHCAT_CONTROL_PORT", "FLASHCAT_ENGINE_PACKS_DIR"]
+        let overrides = [
+            "FLASHCAT_SUPPORT_DIR", "FLASHCAT_LOGS_DIR",
+            "FLASHCAT_CONTROL_PORT", "FLASHCAT_ENGINE_PACKS_DIR",
+        ]
         guard overrides.contains(where: { environment[$0] != nil }) else {
             return runProcess("/usr/bin/open", [app.path])
         }
@@ -319,14 +389,16 @@ public enum SelfInstallerCommand {
         case "uninstall":
             return try uninstall(context)
         default:
-            throw CLIError("未知 cli 子命令：\(context.invocation.subcommand ?? "")", exit: .usage,
-                           hint: "可用：install / uninstall / path")
+            throw CLIError(
+                "未知 cli 子命令：\(context.invocation.subcommand ?? "")", exit: .usage,
+                hint: "可用：install / uninstall / path")
         }
     }
 
     private static func install(_ context: CLIContext) throws -> Int32 {
         let home = context.environment["HOME"] ?? NSHomeDirectory()
-        let directory = context.invocation.flag("system-wide")
+        let directory =
+            context.invocation.flag("system-wide")
             ? "/usr/local/bin"
             : home + "/.local/bin"
         let target = directory + "/flashcat"
@@ -335,8 +407,9 @@ public enum SelfInstallerCommand {
         do {
             try manager.createDirectory(atPath: directory, withIntermediateDirectories: true)
         } catch {
-            throw CLIError("无法创建 \(directory)：\(error.localizedDescription)", exit: .failure,
-                           hint: "系统目录需要 sudo；不加 --system-wide 会装到 ~/.local/bin")
+            throw CLIError(
+                "无法创建 \(directory)：\(error.localizedDescription)", exit: .failure,
+                hint: "系统目录需要 sudo；不加 --system-wide 会装到 ~/.local/bin")
         }
         if let existing = try? manager.destinationOfSymbolicLink(atPath: target) {
             if URL(fileURLWithPath: existing).resolvingSymlinksInPath().path == source.path {
@@ -346,14 +419,16 @@ public enum SelfInstallerCommand {
                 return CLIExit.success.rawValue
             }
             guard context.invocation.flag("force") else {
-                throw CLIError("\(target) 已指向 \(existing)", exit: .conflict,
-                               hint: "加 --force 覆盖")
+                throw CLIError(
+                    "\(target) 已指向 \(existing)", exit: .conflict,
+                    hint: "加 --force 覆盖")
             }
             try? manager.removeItem(atPath: target)
         } else if manager.fileExists(atPath: target) {
             guard context.invocation.flag("force") else {
-                throw CLIError("\(target) 已存在且不是符号链接", exit: .conflict,
-                               hint: "加 --force 覆盖")
+                throw CLIError(
+                    "\(target) 已存在且不是符号链接", exit: .conflict,
+                    hint: "加 --force 覆盖")
             }
             try? manager.removeItem(atPath: target)
         }
@@ -391,7 +466,8 @@ public enum SelfInstallerCommand {
             }
         }
         if context.output.json {
-            context.output.json(ControlSimpleResult(message: removed.isEmpty ? "没有链接" : removed.joined(separator: ", ")))
+            context.output.json(
+                ControlSimpleResult(message: removed.isEmpty ? "没有链接" : removed.joined(separator: ", ")))
         } else if removed.isEmpty {
             context.output.note("没有找到指向当前 flashcat 的链接")
         } else {

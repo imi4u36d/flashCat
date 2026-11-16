@@ -1,6 +1,9 @@
-import Foundation
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AVFoundation
 import AppKit
+import Foundation
 
 /// 一段参考视频的读头结果：时长、显示尺寸与第一帧缩略图。
 struct VideoReferenceMetadata {
@@ -77,10 +80,12 @@ enum VideoReferenceExtractor {
 
     /// 均匀抽 `frameCount` 帧。`maximumSize` 决定参考帧的清晰度：match 时传
     /// 生成画布，max 时传 1280×1280。
-    static func frames(url: URL,
-                       maximumSize: CGSize,
-                       quality: CGFloat = 0.8,
-                       onProgress: (@Sendable (String) -> Void)? = nil) async throws -> [String] {
+    static func frames(
+        url: URL,
+        maximumSize: CGSize,
+        quality: CGFloat = 0.8,
+        onProgress: (@Sendable (String) -> Void)? = nil
+    ) async throws -> [String] {
         let asset = AVURLAsset(url: url)
         let duration: CMTime
         do {
@@ -127,7 +132,8 @@ enum VideoReferenceExtractor {
 
     private static func jpegData(_ image: CGImage, quality: CGFloat) -> Data? {
         let bitmap = NSBitmapImageRep(cgImage: image)
-        return bitmap.representation(using: .jpeg,
-                                     properties: [.compressionFactor: quality])
+        return bitmap.representation(
+            using: .jpeg,
+            properties: [.compressionFactor: quality])
     }
 }

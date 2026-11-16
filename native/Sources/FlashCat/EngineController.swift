@@ -1,5 +1,8 @@
-import Foundation
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import FlashCatKit
+import Foundation
 
 enum ServerState: String {
     case stopped = "已停止"
@@ -51,7 +54,12 @@ final class EngineController {
     /// the app has nothing to prepare and the launch goes ahead as asked.
     var prepareForStart: (@MainActor (ModelInfo?) async -> StartPreparation)?
 
-    private(set) var state: ServerState = .stopped
+    /// 唯一的生命周期状态。所有写点都经过 `transition(to:)`：状态机只有一处
+    /// 真相，越界的迁移也只有一处能拦（见 `isTransitionAllowed`）。
+    private(set) var phase: Phase = .idle
+    /// 对外可见的五态，由 `phase` 派生。名字与语义和原来的存储属性一致，调用方
+    /// （`AppState`、`ControlServer`、菜单栏）一行都不用改。
+    var state: ServerState { phase.serverState }
     /// Engine-neutral view of the engine's own status document.
     private(set) var status: EngineStatus?
     /// Splash-shaped view for the existing dashboards.
@@ -59,7 +67,9 @@ final class EngineController {
     private(set) var port: Int
     private(set) var model: String = ""
     private(set) var failureMessage: String?
-    private(set) var busySince: Date?
+    /// 「已等待」的起点。原来是独立存储的 `Date?`，只由生命周期写点维护，谁清过
+    /// 它全靠约定；现在它跟着 `phase` 走，读的人（`busySeconds`）不必再关心。
+    private var busySince: Date? { phase.busySince }
     /// 正在搬权重的起点。`busySince` 是进程的起点：引擎已经跑了几个小时、模型又被
     /// 重新加载时，用它算「加载权重」的秒数会给出几个小时。只在加载期间非 nil。
     private var hotLoadSince: Date?
@@ -75,7 +85,6 @@ final class EngineController {
     /// 一份基线；换进程时清掉，否则会把上一轮的计数当起点。
     private var liveRates = EngineLiveRates()
     private var pollInFlight = false
-    private var isStopping = false
     private var lastError: String?
     /// Moves `.starting` out of limbo when the engine neither binds its port nor
     /// exits. Nothing else does: the poller only ever promotes to `.ready`.
@@ -107,11 +116,13 @@ final class EngineController {
     /// switch already completed (a second, pointless HTTP 200 in the log).
     private var lastHotLoad: (target: String, at: Date)?
 
-    init(id: EngineID,
-         installation: EngineInstallation,
-         settings: AppSettings,
-         catalog: ModelCatalog,
-         port: Int) {
+    init(
+        id: EngineID,
+        installation: EngineInstallation,
+        settings: AppSettings,
+        catalog: ModelCatalog,
+        port: Int
+    ) {
         self.id = id
         self.installation = installation
         self.settings = settings
@@ -120,9 +131,156 @@ final class EngineController {
         self.logs = LogStore(path: EnginePaths.logFile(id))
     }
 
+    /// 「有进程」和「能聊天」是两件事：`.failed` 也可能带着一个还活着的进程
+    /// （启动超时、健康检查一直不过），那时仍然要让读者点得到「停止」。
     var isRunning: Bool { process != nil }
-    var isReady: Bool { state == .ready }
+    var isReady: Bool { phase == .ready }
     var isInstalled: Bool { true }
+
+    // MARK: phase
+
+    /// 一次运行会经过的全部阶段。
+    ///
+    /// 这些信息原来散在 `state`、`isStopping`、`preparing`、`terminating`、
+    /// `busySince` 五个互相牵制的值里、二十多处写点，互斥关系全靠约定：写得出来
+    /// 的组合里有「正在停」和「还在启」同时为真，只有界面看得见。收成一个值之后
+    /// 同一时刻只可能在一处，越界的迁移由 `isTransitionAllowed` 拦下并留日志。
+    enum Phase: Equatable, Sendable {
+        /// 控制器建好、还没被要求启动过。对外和 `.stopped` 同义。
+        case idle
+        /// 运行时包正在安装。保留位：装包发生在控制器创建之前，正常流程不会
+        /// 进来；留着是为了让状态机对「引擎还没装好」这一阶段有话说。
+        case installing
+        /// 从点下启动到引擎自报就绪之间。`since` 是「已等待」的起点：预下载
+        /// draft、等端口都算同一次等待，否则界面上的计时会先归零再从头数。
+        case starting(since: Date)
+        /// 进程在跑、健康检查也通了，但权重还没搬完。保留位：对外的五态里
+        /// 没有 loading（`ServerState` 刻意只给读者五个词），热加载引擎的这段
+        /// 准备目前由 `startupStage`/`weightLoadSeconds` 报，生产路径暂不进入。
+        case loading
+        /// 可以聊天。
+        case ready
+        /// 已经发过 SIGINT（超时再升级成 SIGKILL），等进程树退干净。
+        case stopping(since: Date)
+        /// 没有进程，也没有错误。
+        case stopped
+        /// 进程不会提供服务了：拉不起来、异常退出或启动超时。`reason` 是给读者
+        /// 看的正文（退出码之外的那一句话）。
+        case failed(reason: String?)
+        /// 用户在退出应用，`prepareForTermination` 已经收过信号。
+        case terminating
+
+        /// 对外可见的五态。界面、CLI、菜单栏都只认这个。
+        var serverState: ServerState {
+            switch self {
+            case .idle, .stopped: return .stopped
+            case .installing, .starting, .loading: return .starting
+            case .ready: return .ready
+            case .stopping, .terminating: return .stopping
+            case .failed: return .failed
+            }
+        }
+
+        /// 「已等待」的起点，nil 表示没有正在计时的等待。
+        var busySince: Date? {
+            switch self {
+            case .starting(let since), .stopping(let since): return since
+            case .idle, .installing, .loading, .ready, .stopped, .failed, .terminating:
+                return nil
+            }
+        }
+    }
+
+    /// 状态迁移的唯一入口。
+    ///
+    /// 返回这次迁移是否被接受，调用方靠它决定要不要继续往下走。同一阶段的重复
+    /// 通知直接吞掉：`poll()` 每秒都会喊一次就绪，那不是一次迁移。
+    ///
+    /// 这里**不**调 `onChange`：发布要发生在一次事件的改动都写完之后
+    /// （`process`、`failureMessage`、日志），否则界面会先看到「已就绪」，
+    /// 再看到失败正文。
+    @discardableResult
+    private func transition(
+        to next: Phase,
+        file: StaticString = #fileID,
+        line: UInt = #line
+    ) -> Bool {
+        guard next != phase else { return false }
+        guard isTransitionAllowed(from: phase, to: next) else {
+            // 悄悄接受是这类 bug 最难查的地方：状态自己走到不该到的位置，
+            // 界面上只表现为「点了没反应」。留在日志里，排查至少有线索。
+            logs.append(
+                "==> 忽略非法的状态迁移：\(phase) → \(next)（\(file):\(line)）",
+                level: .warning)
+            return false
+        }
+        phase = next
+        return true
+    }
+
+    /// 迁移表。写成「允许什么」而不是「禁止什么」：阶段只有九个，允许的组合少
+    /// 得多，读一遍就能看出某次写入合不合法。
+    private func isTransitionAllowed(from current: Phase, to next: Phase) -> Bool {
+        switch next {
+        case .ready:
+            // 就绪必须有一个活着的进程撑着。这条是上一轮那个竞态的根：进程已经
+            // 退出、`Ready ·` 才被读进来（读线程与退出回调都排在主队列上，先后
+            // 没有保证），于是 `isRunning` 为假而 `isReady` 为真，聊天请求打到
+            // 一个已经关掉的回环端口。从 `.stopping`/`.terminating` 进来同样要
+            // 拒：那意味着退出过程中界面又亮起「可聊天」。
+            guard process != nil else { return false }
+            switch current {
+            case .starting, .loading: return true
+            default: return false
+            }
+        case .starting:
+            // 一次新的启动只能在没有进程、也没有在退出的时候开始：否则两个启动
+            // 会抢同一个控制器，后一个覆盖前一个的 `process`，前一个的退出被
+            // `finished === process` 静默丢掉。
+            guard process == nil else { return false }
+            switch current {
+            case .stopping, .terminating: return false
+            default: return true
+            }
+        case .stopping:
+            // 没有进程就没有「正在停」：那只是已经停了。退出流程已经接管时也
+            // 不许改写：`.terminating` 是 `markReady` 判断迟到信号的依据。
+            guard process != nil else { return false }
+            switch current {
+            case .terminating: return false
+            default: return true
+            }
+        case .failed:
+            return true
+        case .stopped:
+            // 收敛点：任何阶段都可能退到一个干净的「已停止」。
+            return true
+        case .terminating:
+            return true
+        case .idle, .installing, .loading:
+            // 生产路径不进入这三个值（见 `Phase` 上的注释），所以不该有迁移走到
+            // 这里；真要进来，说明有新代码在乱写，留日志比放行好。
+            return false
+        }
+    }
+
+    /// 正在启动。第二只引擎会覆盖第一个的 `process`，前一个的退出被
+    /// `finished === process` 静默丢掉，所以启动期间控制器是独占的。
+    private var isLaunching: Bool {
+        if case .starting = phase { return true }
+        return false
+    }
+
+    private var isStopping: Bool {
+        if case .stopping = phase { return true }
+        return false
+    }
+
+    /// 退出流程已经接管。`markReady` 的守卫靠它挡住「退出中又亮起可聊天」。
+    private var isTerminating: Bool {
+        if case .terminating = phase { return true }
+        return false
+    }
 
     var manifest: EngineManifest { installation.manifest }
     var descriptor: EngineDescriptor { installation.descriptor }
@@ -151,8 +309,9 @@ final class EngineController {
             // 时候显示运行中，用户再点一个模型就会把加载中的进程 SIGINT 掉。
             // 要的模型还没进 loaded_models，就仍然按「加载权重」报阶段。
             if descriptor.switchMode == .hot, let wanted = desiredModel, !wanted.isEmpty,
-               let live = status, live.model != wanted,
-               live.loadedModels.contains(wanted) == false {
+                let live = status, live.model != wanted,
+                live.loadedModels.contains(wanted) == false
+            {
                 return EngineStartupStage.loadingWeights.rawValue
             }
             return EngineStartupStage.ready.rawValue
@@ -200,7 +359,8 @@ final class EngineController {
         var value: Double?
         for line in logs.tail(40).reversed() {
             if let match = TextPattern.firstMatch("(\\d{1,3}(?:\\.\\d)?)%", line.text),
-               let parsed = Double(match[0]) {
+                let parsed = Double(match[0])
+            {
                 value = min(max(parsed, 0), 100)
                 break
             }
@@ -211,10 +371,6 @@ final class EngineController {
 
     // MARK: start / stop
 
-    /// A start that is still preparing (fetching the model's DFlash2 draft)
-    /// owns the controller: a second click must not launch a second engine
-    /// behind it, and must not be told the launch failed either.
-    private var preparing = false
     /// Bumped by every `stop()`, so a launch that was waiting on a preparation
     /// can tell that the user changed their mind and must not start after all.
     private var stopRequests = 0
@@ -222,33 +378,28 @@ final class EngineController {
     /// `localModel` only matters for splash, whose serve script takes an
     /// assembly/target pair. Other engines take a model identifier.
     func start(localModel: ModelInfo? = nil, requestedModel: String? = nil) async {
-        if process != nil || preparing { return }
+        // A start that is still preparing (fetching the model's DFlash2 draft)
+        // owns the controller: a second click must not launch a second engine
+        // behind it, and must not be told the launch failed either.
+        guard process == nil, !isLaunching, !isTerminating else { return }
+        let attempt = stopRequests
         // 预约要覆盖整个启动过程，不能只盖准备阶段：`claimPort` 为了回收上一次
         // 遗留的引擎可能等上 90 秒，这段时间里第二次点击（或 CLI 的并发启动）
         // 必须看到「正在启动」，否则两个 `start()` 会各起一个进程，后一个覆盖
         // 前一个的 `process`，前一个的退出被 `finished === process` 静默丢掉。
-        preparing = true
-        defer { preparing = false }
-        let attempt = stopRequests
-        // 「已等待」从点下启动这一刻起表。准备阶段（下载 draft 草稿、等端口）
-        // 也算同一次等待：之前要等进程真的拉起来才记起点，几 GB 的预下载全程
-        // 显示「已等待 0:00」，之后又开始从零数，计数器看起来像坏了。
-        busySince = Date()
+        // 起点也记在这里：「已等待」从点下启动这一刻起表，准备阶段（下载 draft
+        // 草稿、等端口）也算同一次等待——之前要等进程真的拉起来才记起点，几 GB
+        // 的预下载全程显示「已等待 0:00」，之后又开始从零数，计数器像坏了。
+        guard transition(to: .starting(since: Date())) else { return }
+        onChange()
         var localModel = localModel
         if let prepareForStart {
-            // The preparation can take minutes (a draft is a few GB), so the
-            // click has to look taken instead of ignored.
-            state = .starting
-            onChange()
             switch await prepareForStart(localModel) {
             case .ready(let refreshed):
                 // Stopped while the preparation ran: the engines page already
-                // said 已停止 and must stay that way. 没有进程在跑，等待计时
-                // 也到此为止，下一次启动重新起表。
-                guard attempt == stopRequests else {
-                    busySince = nil
-                    return
-                }
+                // said 已停止 and must stay that way. `stop()` 已经把阶段收成
+                // 「已停止」，这次启动不能再装作没发生过，把进程拉起来。
+                guard attempt == stopRequests else { return }
                 localModel = refreshed ?? localModel
             case .failed(let message):
                 // Nothing was launched, so the engines page must show why the
@@ -264,16 +415,15 @@ final class EngineController {
         desiredModel = plan.model
         runModel = localModel
         guard let claimed = await claimPort(plan.model) else {
-            state = .failed
-            busySince = nil
-            onChange()
+            // 端口申请不上时 `claimPort` 已经把原因写进 `failureMessage`；
+            // 这里只负责把状态和正文一起收进 failed。
+            fail(failureMessage ?? "无法为 \(id.displayName) 申请端口")
             return
         }
         // 等端口的这段时间里用户点了停止：`stop()` 已经把状态改成「已停止」，
         // 这次启动不能再装作没发生过，把进程拉起来。
         guard attempt == stopRequests else {
-            busySince = nil
-            state = .stopped
+            transition(to: .stopped)
             onChange()
             return
         }
@@ -309,26 +459,23 @@ final class EngineController {
                 writePidFile(pid)
                 spawnWatchdog(enginePid: pid)
             }
-            state = .starting
             failureMessage = nil
             stats = nil
             status = nil
             liveRates.reset()
-            isStopping = false
-            // 起点在 start() 开头已经记过：这里再记一次会把预下载和等端口的
-            // 那几分钟抹掉，「已等待」当着读者的面跳回 0:00。
-            if busySince == nil { busySince = Date() }
+            // 阶段还是 start() 开头那个 `.starting`：从这里到 `task.run()` 之间
+            // 没有 await，中途插不进 `stop()`，所以不必再迁一次（再迁一次会把
+            // 起点刷成现在，「已等待」就把预下载和等端口的那几分钟丢了）。
             startReader(stdout, index: 0)
             startReader(stderr, index: 1)
             startPolling()
             startStartupDeadline(for: task)
             onChange()
         } catch {
+            // `process` 还没赋值（赋值在 `run()` 之后），所以这里失败一定没有
+            // 留下半启动的进程；正文与阶段由 `fail` 一起写。
             logs.close()
-            state = .failed
-            busySince = nil
-            failureMessage = "无法启动服务：\(error)"
-            onChange()
+            fail("无法启动服务：\(error)")
         }
     }
 
@@ -341,7 +488,8 @@ final class EngineController {
     }
 
     private func launchPlan(localModel: ModelInfo?, requestedModel: String?) -> LaunchPlan? {
-        let selected = requestedModel
+        let selected =
+            requestedModel
             ?? EngineStore.shared.configuration(for: id).lastModel
             ?? (settings.model.isEmpty ? nil : settings.model)
         guard let selected, !selected.isEmpty else {
@@ -353,8 +501,10 @@ final class EngineController {
         // launcher resolves and one for a prepared local assembly. Prefer the
         // model-aware profile, then the generic one, then whatever exists.
         let profileNames = [localModel == nil ? "hub" : "local", "default"]
-        guard let profile = profileNames.compactMap({ manifest.launchProfiles[$0] }).first
-                ?? manifest.launchProfiles.values.first else {
+        guard
+            let profile = profileNames.compactMap({ manifest.launchProfiles[$0] }).first
+                ?? manifest.launchProfiles.values.first
+        else {
             fail("\(id.displayName) 的运行时包没有启动模板")
             return nil
         }
@@ -362,7 +512,8 @@ final class EngineController {
         // The manifest decides how the model is handed over. An engine only ever
         // sees a path inside flashCat's own models folder — the weights live
         // there, not in the user's upstream caches.
-        let modelPath = LocalEngineModels.scan(engine: id, directory: modelsDirectory)
+        let modelPath =
+            LocalEngineModels.scan(engine: id, directory: modelsDirectory)
             .first(where: { $0.id == selected })?.path
             ?? EnginePaths.modelPath(for: id, model: selected)
         let modelArgument: String
@@ -417,9 +568,10 @@ final class EngineController {
         // manifest 只能修开发机，所以在装配参数时统一纠正；放在调优参数之后，
         // 自定义参数里写下的旧上限也会被这一行盖掉。
         if descriptor.adapter == .mlxServe {
-            arguments = EngineTemplate.raisingIntegerFlag("--max-resident-models",
-                                                          toAtLeast: 2,
-                                                          in: arguments)
+            arguments = EngineTemplate.raisingIntegerFlag(
+                "--max-resident-models",
+                toAtLeast: 2,
+                in: arguments)
         }
 
         if !arguments.contains(String(port)) {
@@ -465,29 +617,47 @@ final class EngineController {
             environment["FLASHCAT_PID_FILE"] = EnginePaths.pidFile(.splash)
         }
 
-        return LaunchPlan(executable: installation.entrypoint.path,
-                          arguments: arguments,
-                          workingDirectory: installation.root.path,
-                          environment: environment,
-                          model: selected)
+        return LaunchPlan(
+            executable: installation.entrypoint.path,
+            arguments: arguments,
+            workingDirectory: installation.root.path,
+            environment: environment,
+            model: selected)
     }
 
     /// 就绪即撤掉启动看门狗。它只为「这一次启动」计时；跑完之后还挂着的话，
     /// 之后一次热切换（`state` 又回到 `.starting`，`process` 还是同一个）会在
     /// 计时器到期时被误判成启动超时，把一个健康的引擎标成失败。
-    private func markReady() {
+    ///
+    /// 还要确认进程仍在：`Ready ·` 那行日志由读线程经主队列送进来，而
+    /// `processExited` 的 terminationHandler 也排在主队列上，两者的先后没有保证。
+    /// 引擎快速崩退时，退出回调可能先到——进程已经清空，随后到达的 Ready 行再把
+    /// `state` 改成 `.ready`。`isReady` 只看 state、`isRunning` 只看 process，于是
+    /// 两个都为真、`AppState.canChat` 放行，请求会打到一个已经关掉的回环端口，
+    /// 读的人看到的是「连接失败」而不是「引擎退出了」。
+    // internal 而不是 private：这是读线程那行 `Ready ·` 落到状态机上的唯一入口，
+    // 测试要能在进程已经清空之后单独喂它一次，验证迟到信号被丢掉
+    // （`EngineControllerPhaseTests.testLateReadySignalIsDropped`）。
+    func markReady() {
         startupWatchdog?.cancel()
         startupWatchdog = nil
-        guard state != .ready else { return }
-        state = .ready
+        guard process != nil, !isTerminating else {
+            // 迟到的就绪信号直接丢掉，并留一行日志：日志页是这套系统唯一的
+            // 排查入口，这条竞态真发生时得有人能看见它是怎么被处理的。
+            logs.append("==> 忽略迟到的就绪信号（进程已退出）", level: .warning)
+            return
+        }
+        // 「什么算就绪」交给迁移表：重复的就绪不是一次迁移（`poll()` 每秒都会
+        // 喊一次），停止中的就绪会被拦下并留一条告警。
+        guard transition(to: .ready) else { return }
         onChange()
     }
 
     private func fail(_ message: String) {
-        state = .failed
+        // 正文先进 `failureMessage` 再迁阶段：界面上「异常 + 原因」是一个东西，
+        // 分两次写会让读者看到一帧只有「异常」的界面。
         failureMessage = message
-        // 失败后没有东西再「等待」了：留着起点，下一次启动还会继承这段旧时间。
-        if process == nil { busySince = nil }
+        transition(to: .failed(reason: message))
         onChange()
     }
 
@@ -516,18 +686,18 @@ final class EngineController {
         // no longer applies: the next start must load its model again.
         lastHotLoad = nil
         stopRequests += 1
+        // 退出流程已经在收尾：再走一遍只会重复打信号，还会把 `.terminating`
+        // 改写成 `.stopping`，`markReady` 判断迟到信号就失去了依据。
+        if isTerminating { return }
         if process == nil {
-            state = .stopped
-            // 已经不在跑了（典型是点「停止」时还在准备阶段）：等待计时收掉，
-            // 否则下一次启动的「已等待」会从这一次点下启动的时间算起。
-            busySince = nil
+            // 已经不在跑了（典型是点「停止」时还在准备阶段）：阶段收成
+            // 「已停止」，等待计时也跟着结束，下一次启动重新起表。
+            transition(to: .stopped)
             onChange()
             return
         }
         if isStopping { return }
-        isStopping = true
-        state = .stopping
-        busySince = Date()
+        transition(to: .stopping(since: Date()))
         logs.append("==> 正在停止服务…", level: .system)
         onChange()
 
@@ -550,8 +720,9 @@ final class EngineController {
                     $0 > 1 && self.processAlive($0) && self.processBelongsToPack($0)
                 }
                 guard !survivors.isEmpty else { return }
-                self.logs.append("==> 服务未在 \(Int(grace)) 秒内完全退出，强制结束残留进程（\(survivors.count) 个）",
-                                 level: .system)
+                self.logs.append(
+                    "==> 服务未在 \(Int(grace)) 秒内完全退出，强制结束残留进程（\(survivors.count) 个）",
+                    level: .system)
                 for victim in survivors { kill(victim, SIGKILL) }
             }
         }
@@ -565,8 +736,10 @@ final class EngineController {
     func restart(localModel: ModelInfo? = nil) async {
         if isRunning {
             guard await stopAndWait() else {
-                state = .failed
+                // 进程可能还活着，所以先写正文再迁阶段：读者点完「重启」看到
+                // 的第一句话就是这次为什么没重启。
                 failureMessage = "旧服务（端口 \(port)）未能退出，已取消重启"
+                transition(to: .failed(reason: failureMessage))
                 onChange()
                 return
             }
@@ -589,8 +762,9 @@ final class EngineController {
             if process == nil && !portOpen(port) { return true }
             if !escalated, Date().timeIntervalSince(startedAt) > grace, let pid {
                 escalated = true
-                logs.append("==> \(id.displayName) 未在 \(Int(grace)) 秒内退出，强制结束（pid \(pid)）",
-                            level: .system)
+                logs.append(
+                    "==> \(id.displayName) 未在 \(Int(grace)) 秒内退出，强制结束（pid \(pid)）",
+                    level: .system)
                 killTree(pid, SIGKILL)
             }
             if Task.isCancelled { break }
@@ -663,9 +837,6 @@ final class EngineController {
     /// engines resident. Now the quit path is: signal, await a short grace
     /// off the main actor, then kill whatever ignored the signal.
     ///
-    /// Idempotent: both halves may run twice on one quit.
-    private var terminating = false
-
     /// First half: snapshot the tree and ask it to stop.
     ///
     /// Returns whether anything was signalled. The quit path uses it to skip
@@ -673,8 +844,7 @@ final class EngineController {
     /// is exactly the kind of fixed delay that makes quitting feel broken.
     @discardableResult
     func prepareForTermination() -> Bool {
-        guard !terminating else { return false }
-        terminating = true
+        guard !isTerminating else { return false }
         pollTimer?.invalidate()
         pollTimer = nil
         startupWatchdog?.cancel()
@@ -684,6 +854,11 @@ final class EngineController {
             let tree = snapshotProcessTree(pid)
             terminationTree = tree
             tree.signal(SIGINT)
+            // 退出也是状态机的一个阶段：进程还活着，但已经不该被当成「能聊天」，
+            // 也不能被迟到的 `Ready ·` 拉回 ready。只在真有进程时迁——空闲的
+            // 控制器保持 `.stopped`，免得退出瞬间把「这个引擎本来没在跑」这件事
+            // 说成「正在停止」。
+            transition(to: .terminating)
             signalled = true
         }
         removePidFile()
@@ -721,10 +896,12 @@ final class EngineController {
         }
         let task = Process()
         task.launchPath = installation.entrypoint.path
-        task.arguments = ["-u", "-c", Self.watchdogScript,
-                          String(enginePid),
-                          String(ProcessInfo.processInfo.processIdentifier),
-                          packMarkerDirectory]
+        task.arguments = [
+            "-u", "-c", Self.watchdogScript,
+            String(enginePid),
+            String(ProcessInfo.processInfo.processIdentifier),
+            packMarkerDirectory,
+        ]
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
         task.standardInput = FileHandle.nullDevice
@@ -747,11 +924,13 @@ final class EngineController {
         // this placeholder the script's `$1/$2/$3` shift by one: it would treat
         // the app's pid as the engine and the empty marker as the app, then
         // SIGINT flashCat itself the moment the engine starts.
-        task.arguments = ["-c", Self.nativeWatchdogScript,
-                          "flashcat-watchdog",
-                          String(enginePid),
-                          String(ProcessInfo.processInfo.processIdentifier),
-                          packMarkerDirectory]
+        task.arguments = [
+            "-c", Self.nativeWatchdogScript,
+            "flashcat-watchdog",
+            String(enginePid),
+            String(ProcessInfo.processInfo.processIdentifier),
+            packMarkerDirectory,
+        ]
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
         task.standardInput = FileHandle.nullDevice
@@ -763,40 +942,40 @@ final class EngineController {
     }
 
     private static let nativeWatchdogScript = #"""
-    engine="$1"
-    app="$2"
-    marker="$3"
+        engine="$1"
+        app="$2"
+        marker="$3"
 
-    # Snapshot the tree while the root is alive. Once it exits, its children are
-    # re-parented to launchd and `pgrep -P` can no longer tie them back to the
-    # engine — walking the tree at kill time (the old behaviour) therefore found
-    # nothing to signal exactly when it was needed.
-    collect() {
-      for child in $(/usr/bin/pgrep -P "$1" 2>/dev/null); do
-        printf '%s\n' "$child"
-        collect "$child"
-      done
-    }
-    victims="$(collect "$engine")"
+        # Snapshot the tree while the root is alive. Once it exits, its children are
+        # re-parented to launchd and `pgrep -P` can no longer tie them back to the
+        # engine — walking the tree at kill time (the old behaviour) therefore found
+        # nothing to signal exactly when it was needed.
+        collect() {
+          for child in $(/usr/bin/pgrep -P "$1" 2>/dev/null); do
+            printf '%s\n' "$child"
+            collect "$child"
+          done
+        }
+        victims="$(collect "$engine")"
 
-    while kill -0 "$app" 2>/dev/null && kill -0 "$engine" 2>/dev/null; do
-      sleep 1
-    done
+        while kill -0 "$app" 2>/dev/null && kill -0 "$engine" 2>/dev/null; do
+          sleep 1
+        done
 
-    signal_victims() {
-      signal="$1"
-      for pid in $victims "$engine"; do
-        path=$(/bin/ps -p "$pid" -o command= 2>/dev/null) || continue
-        case "$path" in
-          "$marker"/*) /bin/kill "-$signal" "$pid" 2>/dev/null || true ;;
-        esac
-      done
-    }
+        signal_victims() {
+          signal="$1"
+          for pid in $victims "$engine"; do
+            path=$(/bin/ps -p "$pid" -o command= 2>/dev/null) || continue
+            case "$path" in
+              "$marker"/*) /bin/kill "-$signal" "$pid" 2>/dev/null || true ;;
+            esac
+          done
+        }
 
-    signal_victims INT
-    sleep 15
-    signal_victims KILL
-    """#
+        signal_victims INT
+        sleep 15
+        signal_victims KILL
+        """#
 
     /// Runs as `python -u -c <script> <engine-pid> <app-pid> <pack-marker>`.
     /// Every candidate is re-verified against the pack root through
@@ -805,69 +984,69 @@ final class EngineController {
     /// the engine root is still alive — after its death the children are
     /// re-parented to launchd and the chain would be lost.
     private static let watchdogScript = #"""
-    import ctypes, os, signal, subprocess, sys, time
+        import ctypes, os, signal, subprocess, sys, time
 
-    engine = int(sys.argv[1])
-    app = int(sys.argv[2])
-    marker = os.path.realpath(sys.argv[3])
+        engine = int(sys.argv[1])
+        app = int(sys.argv[2])
+        marker = os.path.realpath(sys.argv[3])
 
-    libproc = None
-    try:
-        libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
-    except OSError:
-        pass
-
-    def alive(pid):
+        libproc = None
         try:
-            os.kill(pid, 0)
-            return True
+            libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
         except OSError:
-            return False
+            pass
 
-    def ours(pid):
-        if libproc is None:
-            return False
-        try:
-            buf = ctypes.create_string_buffer(4096)
-            n = libproc.proc_pidpath(pid, buf, 4096)
-            path = buf.value.decode("utf-8", "replace") if n > 0 else ""
-        except Exception:
-            return False
-        return path.startswith(marker + "/")
-
-    def tree(pid):
-        pids, index = [pid], 0
-        while index < len(pids):
+        def alive(pid):
             try:
-                out = subprocess.run(["/usr/bin/pgrep", "-P", str(pids[index])],
-                                     capture_output=True, text=True, timeout=5).stdout
-                pids.extend(int(line) for line in out.split())
+                os.kill(pid, 0)
+                return True
+            except OSError:
+                return False
+
+        def ours(pid):
+            if libproc is None:
+                return False
+            try:
+                buf = ctypes.create_string_buffer(4096)
+                n = libproc.proc_pidpath(pid, buf, 4096)
+                path = buf.value.decode("utf-8", "replace") if n > 0 else ""
             except Exception:
-                pass
-            index += 1
-        return pids
+                return False
+            return path.startswith(marker + "/")
 
-    snapshot = tree(engine)
-    while alive(app) and alive(engine):
+        def tree(pid):
+            pids, index = [pid], 0
+            while index < len(pids):
+                try:
+                    out = subprocess.run(["/usr/bin/pgrep", "-P", str(pids[index])],
+                                         capture_output=True, text=True, timeout=5).stdout
+                    pids.extend(int(line) for line in out.split())
+                except Exception:
+                    pass
+                index += 1
+            return pids
+
         snapshot = tree(engine)
-        time.sleep(2)
+        while alive(app) and alive(engine):
+            snapshot = tree(engine)
+            time.sleep(2)
 
-    victims = [pid for pid in snapshot if alive(pid) and ours(pid)]
-    for pid in victims:
-        try:
-            os.kill(pid, signal.SIGINT)
-        except OSError:
-            pass
-    deadline = time.time() + 15
-    while victims and time.time() < deadline:
-        time.sleep(1)
-        victims = [pid for pid in victims if alive(pid)]
-    for pid in victims:
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except OSError:
-            pass
-    """#
+        victims = [pid for pid in snapshot if alive(pid) and ours(pid)]
+        for pid in victims:
+            try:
+                os.kill(pid, signal.SIGINT)
+            except OSError:
+                pass
+        deadline = time.time() + 15
+        while victims and time.time() < deadline:
+            time.sleep(1)
+            victims = [pid for pid in victims if alive(pid)]
+        for pid in victims:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        """#
 
     func updateCatalog(_ value: ModelCatalog) { catalog = value }
 
@@ -877,12 +1056,14 @@ final class EngineController {
             catalog = ModelCatalogService().load()
             return
         }
-        let response = await modelControl(action,
-                                          target: "",
-                                          fallbackPath: action.path,
-                                          timeout: 20)
-        logs.append("==> 重新扫描模型 → HTTP \(response?.status ?? 0)",
-                    level: (response?.status ?? 0) < 300 ? .system : .warning)
+        let response = await modelControl(
+            action,
+            target: "",
+            fallbackPath: action.path,
+            timeout: 20)
+        logs.append(
+            "==> 重新扫描模型 → HTTP \(response?.status ?? 0)",
+            level: (response?.status ?? 0) < 300 ? .system : .warning)
     }
 
     // MARK: process plumbing
@@ -905,19 +1086,19 @@ final class EngineController {
         stats = nil
         status = nil
         liveRates.reset()
-        busySince = nil
+        // 停止要先读一次：三行之后 `transition` 就把阶段改掉了，那时候再问
+        // 「是不是读者点的停止」已经没人记得。
         let wasStopping = isStopping
-        isStopping = false
         if wasStopping {
             logs.append("==> 服务已停止", level: .system)
-            state = .stopped
+            transition(to: .stopped)
         } else if finished.terminationStatus == 0 {
-            state = .stopped
+            transition(to: .stopped)
         } else {
-            state = .failed
             let message = lastError ?? "服务异常退出（退出码 \(finished.terminationStatus)）"
             failureMessage = message
             logs.append("==> \(message)", level: .system)
+            transition(to: .failed(reason: message))
         }
         onChange()
     }
@@ -955,15 +1136,19 @@ final class EngineController {
     }
 
     private func appendLog(_ line: String) {
-        if line.contains("Ready ·") {
+        switch EngineLogSignal.detect(line) {
+        case .ready:
             lastError = nil
-            if state == .starting {
-                markReady()
-            }
-        } else if line.contains("Error ·") || line.lowercased().hasPrefix("error:") {
-            // flashcat_serve.py reports preparation failures as "error: ..." on
-            // stderr; keep them for the help text instead of a bare exit code.
-            lastError = line
+            // 不再自己判断「是不是在启动中」：判定收进 `markReady` 的守卫与迁移
+            // 表，停止中、已停止的迟到就绪也会走同一条路留一条告警，而重复就绪
+            // 因为阶段没变被静默吞掉。
+            markReady()
+        case .error(let message):
+            // flashcat_serve.py 的准备失败走 stderr 的 "error: ..."，留作失败提示，
+            // 比只给一个退出码有用。存正文而不是整行：提示框里不该带 "error:" 前缀。
+            lastError = message
+        case .none:
+            break
         }
         logs.append(line)
     }
@@ -1053,9 +1238,10 @@ final class EngineController {
         }
 
         if state == .starting,
-           descriptor.switchMode != .hot
-            || desiredModel == nil
-            || status?.loadedModels.contains(desiredModel ?? "") == true {
+            descriptor.switchMode != .hot
+                || desiredModel == nil
+                || status?.loadedModels.contains(desiredModel ?? "") == true
+        {
             markReady()
         }
         await applyTuningIfNeeded()
@@ -1124,8 +1310,9 @@ final class EngineController {
         // 健康探测已经拿到的 2xx 文档直接复用，不再为同一个端点发第二次请求。
         var prefetched: [String: [String: Any]] = [:]
         if let healthResponse, (200..<300).contains(healthResponse.status),
-           let object = try? JSONSerialization.jsonObject(with: healthResponse.body),
-           let json = object as? [String: Any] {
+            let object = try? JSONSerialization.jsonObject(with: healthResponse.body),
+            let json = object as? [String: Any]
+        {
             prefetched[healthPath] = json
         }
         let port = self.port
@@ -1138,9 +1325,10 @@ final class EngineController {
                 }
                 group.addTask {
                     guard let response = await HTTP.get(port: port, path: source.path, timeout: 1.8),
-                          (200..<300).contains(response.status),
-                          let object = try? JSONSerialization.jsonObject(with: response.body),
-                          let json = object as? [String: Any] else {
+                        (200..<300).contains(response.status),
+                        let object = try? JSONSerialization.jsonObject(with: response.body),
+                        let json = object as? [String: Any]
+                    else {
                         return (index, nil)
                     }
                     return (index, EngineTelemetryDocument(source: source, json: json))
@@ -1162,7 +1350,8 @@ final class EngineController {
         guard descriptor.adapter == .omlx else { return }
         guard let wanted = parsed.model ?? desiredModel, !wanted.isEmpty else { return }
         if let cached = reasoningEffortsCache, cached.model == wanted,
-           Date().timeIntervalSince(cached.at) < 30 {
+            Date().timeIntervalSince(cached.at) < 30
+        {
             if let efforts = cached.efforts { parsed.reasoningEfforts = efforts }
             return
         }
@@ -1240,8 +1429,10 @@ final class EngineController {
     ///
     /// 只有热加载引擎能同时挂两份权重；别的引擎没有这个能力，退回原来的独占
     /// 切换，保证行为是「换过去」而不是「加载失败」。
-    func loadModelKeepingResident(_ target: String,
-                                  stage: @escaping (String) -> Void) async -> ModelSwitchOutcome {
+    func loadModelKeepingResident(
+        _ target: String,
+        stage: @escaping (String) -> Void
+    ) async -> ModelSwitchOutcome {
         let wanted = target.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !wanted.isEmpty else { return .failed("模型标识为空") }
         guard descriptor.switchMode == .hot, isRunning else {
@@ -1291,12 +1482,13 @@ final class EngineController {
         let victims = resident.filter { $0 != target }
         if victims.isEmpty { return true }
 
-        var pending = [String]()
+        var pending: [String] = []
         for victim in victims {
-            let response = await modelControl(descriptor.modelControl?.unload,
-                                              target: victim,
-                                              fallbackPath: EngineRoutes.unload(victim),
-                                              timeout: 60)
+            let response = await modelControl(
+                descriptor.modelControl?.unload,
+                target: victim,
+                fallbackPath: EngineRoutes.unload(victim),
+                timeout: 60)
             let status = response?.status ?? 0
             logs.append("==> 卸载 \(victim) → HTTP \(status)", level: status < 300 ? .system : .error)
             // 400 (not loaded) / 404 (unknown id) mean this id holds no weights,
@@ -1320,8 +1512,9 @@ final class EngineController {
                 let clear = clearSince ?? Date()
                 clearSince = clear
                 if Date().timeIntervalSince(clear) >= 1.5 {
-                    logs.append("==> 旧模型已卸载（\(Int(Date().timeIntervalSince(startedAt))) 秒），开始加载 \(target)",
-                                level: .system)
+                    logs.append(
+                        "==> 旧模型已卸载（\(Int(Date().timeIntervalSince(startedAt))) 秒），开始加载 \(target)",
+                        level: .system)
                     return true
                 }
             } else {
@@ -1353,15 +1546,18 @@ final class EngineController {
         // dashboard alive while this awaits.
         // Settings only reach a model at load time, so push them first.
         if descriptor.adapter == .omlx { await pushTuning(for: [target]) }
-        let response = await modelControl(descriptor.modelControl?.load,
-                                          target: target,
-                                          fallbackPath: EngineRoutes.load(target),
-                                          timeout: 600)
+        let response = await modelControl(
+            descriptor.modelControl?.load,
+            target: target,
+            fallbackPath: EngineRoutes.load(target),
+            timeout: 600)
         let status = response?.status ?? 0
-        logs.append("==> \(id.displayName) 切换到 \(target) → HTTP \(status)",
-                    level: status < 300 ? .system : .error)
+        logs.append(
+            "==> \(id.displayName) 切换到 \(target) → HTTP \(status)",
+            level: status < 300 ? .system : .error)
         if status >= 300 {
-            failureMessage = status == 507
+            failureMessage =
+                status == 507
                 ? "内存不足，无法加载 \(target)"
                 : "加载 \(target) 失败（HTTP \(status)）"
         } else {
@@ -1372,10 +1568,12 @@ final class EngineController {
         return status < 300
     }
 
-    private func modelControl(_ action: EngineModelAction?,
-                              target: String,
-                              fallbackPath: String,
-                              timeout: TimeInterval) async -> HTTPResponse? {
+    private func modelControl(
+        _ action: EngineModelAction?,
+        target: String,
+        fallbackPath: String,
+        timeout: TimeInterval
+    ) async -> HTTPResponse? {
         guard let action else {
             return await HTTP.post(port: port, path: fallbackPath, timeout: timeout)
         }
@@ -1391,11 +1589,12 @@ final class EngineController {
         } else {
             json = nil
         }
-        return await HTTP.request(method: action.method,
-                                  port: port,
-                                  path: path,
-                                  json: json,
-                                  timeout: timeout)
+        return await HTTP.request(
+            method: action.method,
+            port: port,
+            path: path,
+            json: json,
+            timeout: timeout)
     }
 
     /// oMLX starts with its own default model, so the requested one may still
@@ -1405,7 +1604,10 @@ final class EngineController {
         guard !switchInFlight else { return }
         guard descriptor.switchMode == .hot, let target = desiredModel, !target.isEmpty else { return }
         if let last = lastHotLoad, last.target == target,
-           Date().timeIntervalSince(last.at) < 20 { return }
+            Date().timeIntervalSince(last.at) < 20
+        {
+            return
+        }
         if let loaded = status?.loadedModels, loaded.contains(target) { return }
         if status?.model == target { return }
         _ = await loadModelHot(target)
@@ -1482,7 +1684,8 @@ final class EngineController {
         let markers = orphanCleanupDirectories.map { $0 + "/" }
         for entry in allProcesses() where entry.pid != ProcessInfo.processInfo.processIdentifier {
             guard let path = processExecutablePath(entry.pid),
-                  markers.contains(where: { path.hasPrefix($0) }) else { continue }
+                markers.contains(where: { path.hasPrefix($0) })
+            else { continue }
             note("==> 清扫上次会话遗留的引擎进程（pid \(entry.pid)）")
             killTree(entry.pid, SIGKILL)
         }
@@ -1567,16 +1770,19 @@ final class EngineController {
             // The payload is push-ready: the resolved thinking budget rides in.
             let override = EngineStore.shared.draftAssignment(for: id, model: target)
             guard let settings = tuning.omlxSettings(id: id, draftOverride: override),
-                  !settings.isEmpty else { continue }
+                !settings.isEmpty
+            else { continue }
             let payload = settings.mapValues { $0.jsonObject }
             guard let data = try? JSONSerialization.data(withJSONObject: payload) else { continue }
-            let response = await HTTP.put(port: port,
-                                          path: EngineRoutes.modelSettings(target),
-                                          json: data,
-                                          timeout: 20)
+            let response = await HTTP.put(
+                port: port,
+                path: EngineRoutes.modelSettings(target),
+                json: data,
+                timeout: 20)
             let status = response?.status ?? 0
-            logs.append("==> \(target) 应用 MTP/DFlash 设置 -> HTTP \(status)",
-                        level: status < 300 ? .system : .warning)
+            logs.append(
+                "==> \(target) 应用 MTP/DFlash 设置 -> HTTP \(status)",
+                level: status < 300 ? .system : .warning)
             if status >= 300 { failures += 1 }
         }
         if failures > 0 {
@@ -1595,9 +1801,11 @@ final class EngineController {
     }
 
     private func readPidFile() -> Int32? {
-        guard let text = try? String(contentsOfFile: EnginePaths.pidFile(id), encoding: .utf8)
-            .trimmingCharacters(in: .whitespaces),
-            let pid = Int32(text), pid > 0 else { return nil }
+        guard
+            let text = try? String(contentsOfFile: EnginePaths.pidFile(id), encoding: .utf8)
+                .trimmingCharacters(in: .whitespaces),
+            let pid = Int32(text), pid > 0
+        else { return nil }
         return pid
     }
 }
@@ -1635,11 +1843,13 @@ enum HTTP {
         await send(method: "POST", port: port, path: path, body: nil, timeout: timeout)
     }
 
-    static func request(method: EngineHTTPMethod,
-                        port: Int,
-                        path: String,
-                        json: Data?,
-                        timeout: TimeInterval) async -> HTTPResponse? {
+    static func request(
+        method: EngineHTTPMethod,
+        port: Int,
+        path: String,
+        json: Data?,
+        timeout: TimeInterval
+    ) async -> HTTPResponse? {
         await send(method: method.rawValue, port: port, path: path, body: json, timeout: timeout)
     }
 
@@ -1648,11 +1858,13 @@ enum HTTP {
         await send(method: "PUT", port: port, path: path, body: json, timeout: timeout)
     }
 
-    private static func send(method: String,
-                             port: Int,
-                             path: String,
-                             body: Data?,
-                             timeout: TimeInterval) async -> HTTPResponse? {
+    private static func send(
+        method: String,
+        port: Int,
+        path: String,
+        body: Data?,
+        timeout: TimeInterval
+    ) async -> HTTPResponse? {
         guard let url = URL(string: "http://127.0.0.1:\(port)\(path)") else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = method

@@ -1,6 +1,9 @@
-import SwiftUI
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AppKit
 import FlashCatKit
+import SwiftUI
 
 /// 模型广场：搜索 Hugging Face，查看模型卡，下载到公共目录。
 ///
@@ -78,19 +81,22 @@ struct HubSheet: View {
                     } else if let error = state.hubError, models.isEmpty {
                         errorState(error)
                     } else if models.isEmpty {
-                        EmptyHint(icon: "magnifyingglass",
-                                  title: "搜一个模型仓库",
-                                  detail: "输入关键词后点「搜索」，或留空看热门；也可以直接填 owner/repo 下载。")
-                            .padding(.vertical, 30)
+                        EmptyHint(
+                            icon: "magnifyingglass",
+                            title: "搜一个模型仓库",
+                            detail: "输入关键词后点「搜索」，或留空看热门；也可以直接填 owner/repo 下载。"
+                        )
+                        .padding(.vertical, 30)
                     } else {
                         ForEach(models) { model in
                             resultRow(model)
                         }
                         if state.hubHasMore {
                             Button {
-                                state.searchHub(query, sort: sort.rawValue,
-                                                filter: filter.rawValue,
-                                                page: state.hubPage + 1)
+                                state.searchHub(
+                                    query, sort: sort.rawValue,
+                                    filter: filter.rawValue,
+                                    page: state.hubPage + 1)
                             } label: {
                                 Text(L10n.t(state.hubLoading ? "加载中…" : "加载更多"))
                                     .frame(maxWidth: .infinity)
@@ -138,9 +144,11 @@ struct HubSheet: View {
             .dsInputSurface(radius: DS.Radius.md, focused: searchFocused)
 
             HStack(spacing: 8) {
-                DSSegmented(selection: $filter,
-                            options: HubFilter.allCases.map { ($0, filterLabel($0)) })
-                    .onChange(of: filter) { _, _ in runSearch(page: 0) }
+                DSSegmented(
+                    selection: $filter,
+                    options: HubFilter.allCases.map { ($0, filterLabel($0)) }
+                )
+                .onChange(of: filter) { _, _ in runSearch(page: 0) }
 
                 Spacer(minLength: 0)
 
@@ -151,8 +159,14 @@ struct HubSheet: View {
                         size: .regular
                     )
                 } content: {
-                    Button("趋势") { sort = .trending; runSearch(page: 0) }
-                    Button("下载量") { sort = .downloads; runSearch(page: 0) }
+                    Button("趋势") {
+                        sort = .trending
+                        runSearch(page: 0)
+                    }
+                    Button("下载量") {
+                        sort = .downloads
+                        runSearch(page: 0)
+                    }
                 }
             }
         }
@@ -261,10 +275,12 @@ struct HubSheet: View {
         } else if let detail = state.hubDetail {
             detailContent(detail)
         } else {
-            EmptyHint(icon: "doc.text.magnifyingglass",
-                      title: "选一个仓库查看详情",
-                      detail: "文件清单、体积、许可与 README 原文都在这里；确认后再下载。")
-                .frame(maxHeight: .infinity)
+            EmptyHint(
+                icon: "doc.text.magnifyingglass",
+                title: "选一个仓库查看详情",
+                detail: "文件清单、体积、许可与 README 原文都在这里；确认后再下载。"
+            )
+            .frame(maxHeight: .infinity)
         }
     }
 
@@ -272,8 +288,9 @@ struct HubSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .top, spacing: 10) {
-                    ModelFamilyIcon(family: ModelFamily.resolve(id: detail.id, tags: detail.tags),
-                                    size: 40)
+                    ModelFamilyIcon(
+                        family: ModelFamily.resolve(id: detail.id, tags: detail.tags),
+                        size: 40)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(shortName(detail.id))
                             .font(DS.Font.title)
@@ -384,11 +401,13 @@ struct HubSheet: View {
                 Text(L10n.t(local ? "已在本机" : "下载到公共目录"))
                     .font(DS.Font.sm.weight(.semibold))
                     .foregroundStyle(DS.text)
-                Text(local
-                     ? "公共目录里已有这份权重，可直接在模型页使用"
-                     : "一份权重供引擎共用，默认授权给 \(target.displayName)")
-                    .font(DS.Font.xs)
-                    .foregroundStyle(DS.text3)
+                Text(
+                    local
+                        ? "公共目录里已有这份权重，可直接在模型页使用"
+                        : "一份权重供引擎共用，默认授权给 \(target.displayName)"
+                )
+                .font(DS.Font.xs)
+                .foregroundStyle(DS.text3)
             }
             Spacer(minLength: 8)
             if local {

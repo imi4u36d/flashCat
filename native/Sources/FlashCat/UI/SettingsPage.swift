@@ -1,6 +1,9 @@
-import SwiftUI
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AppKit
 import FlashCatKit
+import SwiftUI
 
 /// 设置页：按 WebUI 版式——左右两列卡片，行内即改即生效。
 struct SettingsPage: View {
@@ -101,22 +104,26 @@ struct SettingsPage: View {
     private func appearanceCard(wide: Bool) -> some View {
         SettingsCard {
             SettingsRow(title: "外观", detail: "跟随系统或固定外观") {
-                NativeSegmented(selection: Binding(
-                    get: { state.theme.mode },
-                    set: { state.theme.set($0) }),
-                    options: AppAppearance.allCases.map { ($0, $0.label) })
-                    // 宽版式里把宽度交给标签：不参与行内剩余空间的分配，
-                    // 切换选中项时才不会把整行挤得一宽一窄。窄版式留出压缩
-                    // 余地，免得控件把文字列挤出卡片。
-                    .fixedSizeWhen(wide)
+                NativeSegmented(
+                    selection: Binding(
+                        get: { state.theme.mode },
+                        set: { state.theme.set($0) }),
+                    options: AppAppearance.allCases.map { ($0, $0.label) }
+                )
+                // 宽版式里把宽度交给标签：不参与行内剩余空间的分配，
+                // 切换选中项时才不会把整行挤得一宽一窄。窄版式留出压缩
+                // 余地，免得控件把文字列挤出卡片。
+                .fixedSizeWhen(wide)
             }
         }
     }
 
     private var backgroundCard: some View {
         SettingsCard {
-            SettingsRow(title: "自定义背景",
-                        detail: background.isEnabled ? "使用自定义图片作为画布背景" : "选择一张图片作为画布背景") {
+            SettingsRow(
+                title: "自定义背景",
+                detail: background.isEnabled ? "使用自定义图片作为画布背景" : "选择一张图片作为画布背景"
+            ) {
                 HStack(spacing: 8) {
                     if background.isEnabled {
                         if let image = background.image {
@@ -144,10 +151,12 @@ struct SettingsPage: View {
                 }
             }
             DSDivider()
-            SettingsRow(title: "界面透明度",
-                        detail: background.isEnabled
-                            ? "数值越高图片越清晰；会自动柔化以保证可读性"
-                            : "数值越高越透出桌面；会自动柔化以保证可读性") {
+            SettingsRow(
+                title: "界面透明度",
+                detail: background.isEnabled
+                    ? "数值越高图片越清晰；会自动柔化以保证可读性"
+                    : "数值越高越透出桌面；会自动柔化以保证可读性"
+            ) {
                 HStack(spacing: 10) {
                     Slider(value: $background.opacity, in: 0...1)
                         .frame(width: 150)
@@ -160,8 +169,10 @@ struct SettingsPage: View {
                 }
             }
             DSDivider()
-            SettingsRow(title: "背景模糊",
-                        detail: blurDetail) {
+            SettingsRow(
+                title: "背景模糊",
+                detail: blurDetail
+            ) {
                 HStack(spacing: 10) {
                     Slider(value: $background.blur, in: 0...40)
                         .frame(width: 150)
@@ -196,26 +207,32 @@ struct SettingsPage: View {
     private var launchCard: some View {
         SettingsCard {
             SettingsRow(title: "登录时启动", detail: "加入 macOS 登录项") {
-                Toggle("", isOn: Binding(
-                    get: { state.settings.launchAtLogin },
-                    set: { value in
-                        state.settings.setLaunchAtLogin(value)
-                        LoginItem.set(enabled: value)
-                    }))
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .labelsHidden()
-                    .tint(DS.accent)
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { state.settings.launchAtLogin },
+                        set: { value in
+                            state.settings.setLaunchAtLogin(value)
+                            LoginItem.set(enabled: value)
+                        })
+                )
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+                .tint(DS.accent)
             }
             DSDivider()
             SettingsRow(title: "随应用启动引擎", detail: "打开应用时拉起默认引擎") {
-                Toggle("", isOn: Binding(
-                    get: { state.settings.autoStart },
-                    set: { state.settings.setAutoStart($0) }))
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .labelsHidden()
-                    .tint(DS.accent)
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { state.settings.autoStart },
+                        set: { state.settings.setAutoStart($0) })
+                )
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+                .tint(DS.accent)
             }
         }
     }
@@ -228,8 +245,9 @@ struct SettingsPage: View {
             DSDivider()
             ForEach(EngineCatalog.allIDs, id: \.self) { id in
                 HStack(spacing: 10) {
-                    LetterTile(letter: String(id.displayName.prefix(1)).uppercased(),
-                               color: engineAccent(id), size: 24)
+                    LetterTile(
+                        letter: String(id.displayName.prefix(1)).uppercased(),
+                        color: engineAccent(id), size: 24)
                     Text(id.displayName)
                         .font(DS.Font.md)
                         .foregroundStyle(DS.text)
@@ -252,20 +270,27 @@ struct SettingsPage: View {
             Text(":")
                 .font(DS.Font.mono(11))
                 .foregroundStyle(DS.text3)
-            TextField("端口", text: Binding(
-                get: { ports[id.rawValue] ?? "" },
-                set: { ports[id.rawValue] = $0 }))
-                .textFieldStyle(.plain)
-                .font(DS.Font.mono(11.5))
-                .frame(width: 54)
-                .focused($focusedPortEngine, equals: id)
-                .onSubmit { applyPort(id) }
+            TextField(
+                "端口",
+                text: Binding(
+                    get: { ports[id.rawValue] ?? "" },
+                    set: { ports[id.rawValue] = $0 })
+            )
+            .textFieldStyle(.plain)
+            .font(DS.Font.mono(11.5))
+            .frame(width: 54)
+            .focused($focusedPortEngine, equals: id)
+            .onSubmit { applyPort(id) }
             VStack(spacing: 0) {
-                Button { stepPort(id, by: 1) } label: {
+                Button {
+                    stepPort(id, by: 1)
+                } label: {
                     Image(systemName: "chevron.up").font(.system(size: 7, weight: .bold))
                 }
                 .buttonStyle(.plainHit)
-                Button { stepPort(id, by: -1) } label: {
+                Button {
+                    stepPort(id, by: -1)
+                } label: {
                     Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
                 }
                 .buttonStyle(.plainHit)
@@ -289,8 +314,10 @@ struct SettingsPage: View {
     }
 
     /// 网关 / 控制端口的输入框。应用按钮放在输入框外面，和缓存行一样用「输入框 + 按钮」排布。
-    private func portInput(_ text: Binding<String>, placeholder: String,
-                           onSubmit: @escaping () -> Void = {}) -> some View {
+    private func portInput(
+        _ text: Binding<String>, placeholder: String,
+        onSubmit: @escaping () -> Void = {}
+    ) -> some View {
         HStack(spacing: 4) {
             Text(":")
                 .font(DS.Font.mono(11))
@@ -359,16 +386,19 @@ struct SettingsPage: View {
                         .foregroundStyle(DS.text3)
                 }
                 Spacer(minLength: 0)
-                Toggle("", isOn: Binding(
-                    get: { state.settings.gatewayEnabled },
-                    set: { value in
-                        state.settings.setGatewayEnabled(value)
-                        state.applyGatewaySettings()
-                    }))
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .labelsHidden()
-                    .tint(DS.accent)
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { state.settings.gatewayEnabled },
+                        set: { value in
+                            state.settings.setGatewayEnabled(value)
+                            state.applyGatewaySettings()
+                        })
+                )
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+                .tint(DS.accent)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -398,16 +428,19 @@ struct SettingsPage: View {
                         .foregroundStyle(DS.text3)
                 }
                 Spacer(minLength: 0)
-                Toggle("", isOn: Binding(
-                    get: { state.settings.controlAPIEnabled },
-                    set: { value in
-                        state.settings.setControlAPIEnabled(value)
-                        state.applyControlSettings()
-                    }))
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .labelsHidden()
-                    .tint(DS.accent)
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { state.settings.controlAPIEnabled },
+                        set: { value in
+                            state.settings.setControlAPIEnabled(value)
+                            state.applyControlSettings()
+                        })
+                )
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+                .tint(DS.accent)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -447,22 +480,25 @@ struct SettingsPage: View {
     private func thinkingCard(wide: Bool) -> some View {
         SettingsCard {
             SettingsRow(title: "思考模式", detail: "回答前是否输出推理过程") {
-                NativeSegmented(selection: Binding(
-                    get: { thinkingMode },
-                    set: {
-                        storedThinkingMode = $0.rawValue
-                        state.settings.setThinkingMode($0)
-                    }),
-                    options: ThinkingMode.allCases.map { ($0, $0.label) })
-                    .fixedSizeWhen(wide)
+                NativeSegmented(
+                    selection: Binding(
+                        get: { thinkingMode },
+                        set: {
+                            storedThinkingMode = $0.rawValue
+                            state.settings.setThinkingMode($0)
+                        }),
+                    options: ThinkingMode.allCases.map { ($0, $0.label) }
+                )
+                .fixedSizeWhen(wide)
             }
             DSDivider()
             SettingsRow(title: "默认模型", detail: defaultModelDetail) {
                 DSMenu(size: .small) {
-                    DSMenuTriggerLabel(title: "更改",
-                                       systemImage: "line.3.horizontal",
-                                       trailingChevron: false,
-                                       size: .small)
+                    DSMenuTriggerLabel(
+                        title: "更改",
+                        systemImage: "line.3.horizontal",
+                        trailingChevron: false,
+                        size: .small)
                 } content: {
                     ForEach(EngineCatalog.allIDs.filter { state.engineIsInstalled($0) }, id: \.self) { id in
                         let models = state.engineModels(for: id)
@@ -490,30 +526,37 @@ struct SettingsPage: View {
             }
             DSDivider()
             SettingsRow(title: "思考等级", detail: "等级由当前引擎提供") {
-                NativeSegmented(selection: Binding(
-                    get: { reasoningEffort },
-                    set: {
-                        storedReasoningEffort = $0.rawValue
-                        state.settings.setReasoningEffort($0)
-                    }),
-                    options: ReasoningEffort.allCases.map { ($0, $0.label) })
-                    .fixedSizeWhen(wide)
-                    .disabled(thinkingMode != .on)
+                NativeSegmented(
+                    selection: Binding(
+                        get: { reasoningEffort },
+                        set: {
+                            storedReasoningEffort = $0.rawValue
+                            state.settings.setReasoningEffort($0)
+                        }),
+                    options: ReasoningEffort.allCases.map { ($0, $0.label) }
+                )
+                .fixedSizeWhen(wide)
+                .disabled(thinkingMode != .on)
             }
         }
     }
 
     private var imageCard: some View {
         SettingsCard {
-            SettingsRow(title: "图像模型常驻",
-                        detail: "画完图后图像模型留在显存里，下一轮生图不必重新加载；内存不够时引擎仍会自己换出") {
-                Toggle("", isOn: Binding(
-                    get: { state.imageToolResident },
-                    set: { state.imageToolResident = $0 }))
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .labelsHidden()
-                    .tint(DS.accent)
+            SettingsRow(
+                title: "图像模型常驻",
+                detail: "画完图后图像模型留在显存里，下一轮生图不必重新加载；内存不够时引擎仍会自己换出"
+            ) {
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { state.imageToolResident },
+                        set: { state.imageToolResident = $0 })
+                )
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+                .tint(DS.accent)
             }
         }
     }
@@ -522,10 +565,16 @@ struct SettingsPage: View {
         SettingsCard {
             infoRow("flashCat", detail: L10n.format("本地推理控制台 · v%@", appVersion), trailing: device.chipName)
             DSDivider()
-            infoRow("这台 Mac", detail: L10n.format("%@ · %lld GB 统一内存", device.chipName, device.memoryGB),
-                    trailing: L10n.format("可用 %@", Format.size(Int(device.freeDiskBytes))))
+            infoRow(
+                "这台 Mac", detail: L10n.format("%@ · %lld GB 统一内存", device.chipName, device.memoryGB),
+                trailing: L10n.format("可用 %@", Format.size(Int(device.freeDiskBytes))))
             DSDivider()
-            SettingsRow(title: "对话参数", detail: L10n.format("温度 %.1f · Top P %.2f · 最大输出 %lld", state.settings.temperature, state.settings.topP, state.effectiveMaxTokens)) {
+            SettingsRow(
+                title: "对话参数",
+                detail: L10n.format(
+                    "温度 %.1f · Top P %.2f · 最大输出 %lld", state.settings.temperature, state.settings.topP,
+                    state.effectiveMaxTokens)
+            ) {
                 Button("调整") { showsChatParameters = true }
                     .buttonStyle(.ds(.secondary, size: .small))
             }
@@ -627,10 +676,10 @@ struct SettingsRow<Trailing: View>: View {
     }
 }
 
-private extension View {
+extension View {
     /// 只在宽版式里把分段控件按标签宽度钉住；窄版式允许它压缩。
     @ViewBuilder
-    func fixedSizeWhen(_ condition: Bool) -> some View {
+    fileprivate func fixedSizeWhen(_ condition: Bool) -> some View {
         if condition { fixedSize() } else { self }
     }
 }

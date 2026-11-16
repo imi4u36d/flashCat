@@ -1,5 +1,8 @@
-import SwiftUI
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AppKit
+import SwiftUI
 
 // MARK: - flashCat Design System (macOS 26 Native Liquid Glass)
 //
@@ -148,7 +151,8 @@ private struct DSSurfaceModifier: ViewModifier {
         let shape = DS.rect(radius)
         let baseFill = (hoverable && hovering) ? DS.raised : fill
         let resolvedTint: Color? = tint ?? (active ? DS.accent.opacity(0.08) : nil)
-        let resolvedStroke: Color = stroke ?? (active ? DS.accent.opacity(0.40) : ((hoverable && hovering) ? DS.line2 : DS.line))
+        let resolvedStroke: Color =
+            stroke ?? (active ? DS.accent.opacity(0.40) : ((hoverable && hovering) ? DS.line2 : DS.line))
         content
             .background {
                 ZStack {
@@ -168,18 +172,22 @@ private struct DSSurfaceModifier: ViewModifier {
 
 extension View {
     /// 内容卡片表面：轻量通透底色 + 1px 发丝描边（不与浮层/按钮的 Liquid Glass 冲突）。
-    func dsSurface(radius: CGFloat = DS.Radius.lg,
-                   fill: Color = DS.surface,
-                   tint: Color? = nil,
-                   stroke: Color? = nil,
-                   hoverable: Bool = false,
-                   active: Bool = false) -> some View {
-        modifier(DSSurfaceModifier(radius: radius,
-                                   fill: fill,
-                                   tint: tint,
-                                   stroke: stroke,
-                                   hoverable: hoverable,
-                                   active: active))
+    func dsSurface(
+        radius: CGFloat = DS.Radius.lg,
+        fill: Color = DS.surface,
+        tint: Color? = nil,
+        stroke: Color? = nil,
+        hoverable: Bool = false,
+        active: Bool = false
+    ) -> some View {
+        modifier(
+            DSSurfaceModifier(
+                radius: radius,
+                fill: fill,
+                tint: tint,
+                stroke: stroke,
+                hoverable: hoverable,
+                active: active))
     }
 
     /// 窗口级浮层（弹出菜单、命令面板）：原生 Liquid Glass 浮层 + 柔和投影。
@@ -604,8 +612,9 @@ struct DSSparkline: View {
                 guard values.count > 1 else { return }
                 let step = proxy.size.width / CGFloat(values.count - 1)
                 for (index, value) in values.enumerated() {
-                    let point = CGPoint(x: CGFloat(index) * step,
-                                        y: proxy.size.height - 1 - CGFloat(value / peak) * (proxy.size.height - 2))
+                    let point = CGPoint(
+                        x: CGFloat(index) * step,
+                        y: proxy.size.height - 1 - CGFloat(value / peak) * (proxy.size.height - 2))
                     index == 0 ? path.move(to: point) : path.addLine(to: point)
                 }
             }
@@ -794,8 +803,10 @@ struct DSSearchField: View {
         }
         .padding(.horizontal, 11)
         .frame(width: width, height: DS.Layout.controlHeight)
-        .glassEffect(.regular.tint(focused ? DS.accent.opacity(0.08) : nil).interactive(),
-                     in: Capsule())
+        .glassEffect(
+            .regular.tint(focused ? DS.accent.opacity(0.08) : nil).interactive(),
+            in: Capsule()
+        )
         .overlay {
             if focused {
                 Capsule()
@@ -829,14 +840,16 @@ struct DSFilterBar<Value: Hashable>: View {
 extension AnyTransition {
     /// 页面切换：淡入 + 4pt 上移；离开只淡出。
     static var dsPage: AnyTransition {
-        .asymmetric(insertion: .opacity.combined(with: .offset(y: 4)),
-                    removal: .opacity)
+        .asymmetric(
+            insertion: .opacity.combined(with: .offset(y: 4)),
+            removal: .opacity)
     }
 
     /// 新条目：从上方 6pt 滑入并淡入。
     static var dsRowInsert: AnyTransition {
-        .asymmetric(insertion: .opacity.combined(with: .offset(y: -6)),
-                    removal: .opacity)
+        .asymmetric(
+            insertion: .opacity.combined(with: .offset(y: -6)),
+            removal: .opacity)
     }
 
     /// 浮层：轻微缩放 + 淡入。
@@ -857,10 +870,12 @@ struct DSAnimatedGrid: Layout {
     var spacing: CGFloat = 12
     var maxColumns: Int? = nil
 
-    static func columnCount(for width: CGFloat,
-                            minWidth: CGFloat,
-                            spacing: CGFloat,
-                            maxColumns: Int? = nil) -> Int {
+    static func columnCount(
+        for width: CGFloat,
+        minWidth: CGFloat,
+        spacing: CGFloat,
+        maxColumns: Int? = nil
+    ) -> Int {
         let usable = max(1, width)
         let raw = max(1, Int((usable + spacing) / (minWidth + spacing)))
         if let maxColumns { return min(maxColumns, raw) }
@@ -880,7 +895,8 @@ struct DSAnimatedGrid: Layout {
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let fallbackCols = max(1, columns)
-        let totalWidth = proposal.width
+        let totalWidth =
+            proposal.width
             ?? (minWidth * CGFloat(fallbackCols) + spacing * CGFloat(max(0, fallbackCols - 1)))
         let cols = max(1, resolvedColumns(for: totalWidth))
         let itemWidth = cellWidth(totalWidth: totalWidth, cols: cols)
@@ -957,10 +973,11 @@ private struct DSTrackColumnsModifier: ViewModifier {
     }
 
     private func updateColumns(for width: CGFloat, animate: Bool) {
-        let next = DSAnimatedGrid.columnCount(for: width,
-                                              minWidth: minWidth,
-                                              spacing: spacing,
-                                              maxColumns: maxColumns)
+        let next = DSAnimatedGrid.columnCount(
+            for: width,
+            minWidth: minWidth,
+            spacing: spacing,
+            maxColumns: maxColumns)
         guard next != columns else { return }
         if animate {
             withAnimation(DS.Motion.smooth) { columns = next }
@@ -972,15 +989,19 @@ private struct DSTrackColumnsModifier: ViewModifier {
 
 extension View {
     /// 监听容器可用宽度并在跨越列数断点时以平滑动画更新列数。
-    func dsTrackColumns(_ columns: Binding<Int>,
-                        minWidth: CGFloat,
-                        spacing: CGFloat,
-                        maxColumns: Int? = nil,
-                        horizontalPadding: CGFloat = Console.contentPadding) -> some View {
-        modifier(DSTrackColumnsModifier(columns: columns,
-                                        minWidth: minWidth,
-                                        spacing: spacing,
-                                        maxColumns: maxColumns,
-                                        horizontalPadding: horizontalPadding))
+    func dsTrackColumns(
+        _ columns: Binding<Int>,
+        minWidth: CGFloat,
+        spacing: CGFloat,
+        maxColumns: Int? = nil,
+        horizontalPadding: CGFloat = Console.contentPadding
+    ) -> some View {
+        modifier(
+            DSTrackColumnsModifier(
+                columns: columns,
+                minWidth: minWidth,
+                spacing: spacing,
+                maxColumns: maxColumns,
+                horizontalPadding: horizontalPadding))
     }
 }

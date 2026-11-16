@@ -1,5 +1,8 @@
-import Foundation
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Darwin
+import Foundation
 
 // MARK: - Runtime handshake
 
@@ -32,13 +35,15 @@ public struct ControlRuntime: Codable, Sendable, Equatable {
     public var appPath: String?
     public var startedAt: Date
 
-    public init(schemaVersion: Int = 1,
-                pid: Int32,
-                port: UInt16,
-                token: String,
-                appVersion: String,
-                appPath: String?,
-                startedAt: Date) {
+    public init(
+        schemaVersion: Int = 1,
+        pid: Int32,
+        port: UInt16,
+        token: String,
+        appVersion: String,
+        appPath: String?,
+        startedAt: Date
+    ) {
         self.schemaVersion = schemaVersion
         self.pid = pid
         self.port = port
@@ -120,8 +125,10 @@ public struct ControlAppInfo: Codable, Sendable, Equatable {
     public var appPath: String?
     public var controlPort: UInt16
 
-    public init(version: String, build: String? = nil, pid: Int32, startedAt: Date,
-                appPath: String? = nil, controlPort: UInt16) {
+    public init(
+        version: String, build: String? = nil, pid: Int32, startedAt: Date,
+        appPath: String? = nil, controlPort: UInt16
+    ) {
         self.version = version
         self.build = build
         self.pid = pid
@@ -147,10 +154,12 @@ public struct ControlEngineState: Codable, Sendable, Equatable, Identifiable {
     public var pid: Int?
     public var capabilities: [String]
 
-    public init(id: String, name: String, version: String, installedVersions: [String],
-                isActive: Bool, isInstalled: Bool, state: String, port: Int, model: String,
-                stage: String, uptimeSeconds: Int? = nil, pid: Int? = nil,
-                capabilities: [String] = []) {
+    public init(
+        id: String, name: String, version: String, installedVersions: [String],
+        isActive: Bool, isInstalled: Bool, state: String, port: Int, model: String,
+        stage: String, uptimeSeconds: Int? = nil, pid: Int? = nil,
+        capabilities: [String] = []
+    ) {
         self.id = id
         self.name = name
         self.version = version
@@ -203,10 +212,12 @@ public struct ControlModelSummary: Codable, Sendable, Equatable, Identifiable {
     public var source: String
     public var contextTokens: Int?
 
-    public init(id: String, engine: String, path: String? = nil, bytes: Int? = nil,
-                installed: Bool, loaded: Bool = false, loading: Bool = false,
-                hidden: Bool = false, helper: Bool = false, recommended: Bool = false,
-                source: String, contextTokens: Int? = nil) {
+    public init(
+        id: String, engine: String, path: String? = nil, bytes: Int? = nil,
+        installed: Bool, loaded: Bool = false, loading: Bool = false,
+        hidden: Bool = false, helper: Bool = false, recommended: Bool = false,
+        source: String, contextTokens: Int? = nil
+    ) {
         self.id = id
         self.engine = engine
         self.path = path
@@ -232,9 +243,11 @@ public struct ControlDownloadSummary: Codable, Sendable, Equatable, Identifiable
     public var shared: [String]?
     public var speed: Double?
 
-    public init(engine: String, model: String, status: String, downloadedBytes: Int,
-                totalBytes: Int, fraction: Double? = nil, shared: [String]? = nil,
-                speed: Double? = nil) {
+    public init(
+        engine: String, model: String, status: String, downloadedBytes: Int,
+        totalBytes: Int, fraction: Double? = nil, shared: [String]? = nil,
+        speed: Double? = nil
+    ) {
         self.engine = engine
         self.model = model
         self.status = status
@@ -255,8 +268,10 @@ public struct ControlStatus: Codable, Sendable, Equatable {
     public var gateway: ControlGatewayState
     public var downloads: [ControlDownloadSummary]
 
-    public init(app: ControlAppInfo, engine: ControlEngineState?, engines: [ControlEngineState],
-                gateway: ControlGatewayState, downloads: [ControlDownloadSummary]) {
+    public init(
+        app: ControlAppInfo, engine: ControlEngineState?, engines: [ControlEngineState],
+        gateway: ControlGatewayState, downloads: [ControlDownloadSummary]
+    ) {
         self.app = app
         self.engine = engine
         self.engines = engines

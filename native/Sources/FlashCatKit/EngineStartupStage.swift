@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// The phase an engine is in between `start()` and its first ready answer.
@@ -68,25 +71,31 @@ public enum EngineStartupStage: String, Sendable, Equatable, CaseIterable {
     /// loaded in 16.64 s." holds both "loaded" and "weights loaded").
     private static let rules: [Rule] = [
         Rule(needles: ["ready"], stage: .ready),
-        Rule(needles: ["growth paused",
-                       "waiting for sufficient available memory",
-                       "out of memory",
-                       "insufficient memory",
-                       "memory pressure"],
-             stage: .waitingForMemory),
-        Rule(needles: ["weights loaded",
-                       "warmup",
-                       "warm-up",
-                       "warming",
-                       "ssd cache",
-                       "kernel policy",
-                       "keep their kv",
-                       "decode cycles",
-                       "neural engine",
-                       "routed experts",
-                       "ple table",
-                       "calibrat"],
-             stage: .warmingUp),
+        Rule(
+            needles: [
+                "growth paused",
+                "waiting for sufficient available memory",
+                "out of memory",
+                "insufficient memory",
+                "memory pressure",
+            ],
+            stage: .waitingForMemory),
+        Rule(
+            needles: [
+                "weights loaded",
+                "warmup",
+                "warm-up",
+                "warming",
+                "ssd cache",
+                "kernel policy",
+                "keep their kv",
+                "decode cycles",
+                "neural engine",
+                "routed experts",
+                "ple table",
+                "calibrat",
+            ],
+            stage: .warmingUp),
         Rule(needles: ["downloading", "download", "fetching", "下载"], stage: .downloading),
         Rule(needles: ["preparing", "prepare", "准备"], stage: .preparing),
         Rule(needles: ["loading", "loaded", "chat template", "load model"], stage: .loadingWeights),

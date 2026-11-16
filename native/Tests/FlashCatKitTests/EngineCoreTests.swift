@@ -1,4 +1,8 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import XCTest
+
 @testable import FlashCatKit
 
 final class EngineCoreTests: XCTestCase {
@@ -38,42 +42,43 @@ final class EngineCoreTests: XCTestCase {
             let descriptor = EngineCatalog.descriptor(for: id)
             XCTAssertEqual(descriptor.id, id)
             XCTAssertFalse(descriptor.displayName.isEmpty)
-            XCTAssertTrue(seen.insert(descriptor.defaultPort).inserted,
-                          "duplicate default port for \(id.rawValue)")
+            XCTAssertTrue(
+                seen.insert(descriptor.defaultPort).inserted,
+                "duplicate default port for \(id.rawValue)")
         }
     }
 
     func testManifestCanDescribeModelControlWithoutEngineSpecificBranches() throws {
         let json = """
-        {
-          "schemaVersion": 1,
-          "id": "mlx-serve",
-          "name": "MLX-Serve",
-          "version": "26.11.1",
-          "kind": "download",
-          "arch": "arm64",
-          "minMacOS": "26.4",
-          "entrypoint": "mlx-serve",
-          "launchProfiles": {"default": {"args": ["--serve", "--port", "{port}"]}},
-          "health": {"path": "/health", "readyStatus": 200},
-          "defaultPort": 8300,
-          "modelSwitch": "hot",
-          "capabilities": ["chat", "hot-load"],
-          "adapter": "mlx-serve",
-          "modelControl": {
-            "load": {
-              "method": "POST",
-              "path": "/v1/load-model",
-              "body": {"model": "{model}", "default": true}
-            },
-            "unload": {
-              "method": "POST",
-              "path": "/v1/unload-model",
-              "body": {"model": "{model}"}
+            {
+              "schemaVersion": 1,
+              "id": "mlx-serve",
+              "name": "MLX-Serve",
+              "version": "26.11.1",
+              "kind": "download",
+              "arch": "arm64",
+              "minMacOS": "26.4",
+              "entrypoint": "mlx-serve",
+              "launchProfiles": {"default": {"args": ["--serve", "--port", "{port}"]}},
+              "health": {"path": "/health", "readyStatus": 200},
+              "defaultPort": 8300,
+              "modelSwitch": "hot",
+              "capabilities": ["chat", "hot-load"],
+              "adapter": "mlx-serve",
+              "modelControl": {
+                "load": {
+                  "method": "POST",
+                  "path": "/v1/load-model",
+                  "body": {"model": "{model}", "default": true}
+                },
+                "unload": {
+                  "method": "POST",
+                  "path": "/v1/unload-model",
+                  "body": {"model": "{model}"}
+                }
+              }
             }
-          }
-        }
-        """
+            """
         let manifest = try JSONDecoder().decode(EngineManifest.self, from: Data(json.utf8))
         let descriptor = EngineDescriptor.resolve(manifest: manifest)
         XCTAssertEqual(descriptor.adapter, .mlxServe)
@@ -83,8 +88,9 @@ final class EngineCoreTests: XCTestCase {
     }
 
     func testUnknownCapabilityIsPreservedInsteadOfThrowing() throws {
-        let decoded = try JSONDecoder().decode(EngineCapability.self,
-                                               from: Data("\"teleportation\"".utf8))
+        let decoded = try JSONDecoder().decode(
+            EngineCapability.self,
+            from: Data("\"teleportation\"".utf8))
         XCTAssertEqual(decoded.rawValue, "teleportation")
         XCTAssertEqual(decoded.displayName, "teleportation")
     }
@@ -108,9 +114,13 @@ final class EngineCoreTests: XCTestCase {
             version: "2.12.2",
             kind: .bundled,
             entrypoint: "python/bin/python3",
-            launchProfiles: ["default": EngineLaunchProfile(
-                args: ["-m", "mtplx.cli", "serve", "--model", "{model}",
-                       "--port", "{port}", "--model-search-dir", "{models}"])],
+            launchProfiles: [
+                "default": EngineLaunchProfile(
+                    args: [
+                        "-m", "mtplx.cli", "serve", "--model", "{model}",
+                        "--port", "{port}", "--model-search-dir", "{models}",
+                    ])
+            ],
             health: EngineHealthSpec(path: "/health"),
             status: ["/v1/mtplx/snapshot"],
             defaultPort: 8200,
@@ -157,27 +167,30 @@ final class EngineCoreTests: XCTestCase {
 
     func testPortAllocatorSkipsBusyPortsInsideTheRange() {
         let busy: Set<Int> = [8100, 8101, 8102]
-        let chosen = EnginePortAllocator.allocate(for: .omlx,
-                                                  preferred: 8100,
-                                                  taken: busy,
-                                                  isOpen: { busy.contains($0) })
+        let chosen = EnginePortAllocator.allocate(
+            for: .omlx,
+            preferred: 8100,
+            taken: busy,
+            isOpen: { busy.contains($0) })
         XCTAssertEqual(chosen, 8103)
     }
 
     func testPortAllocatorGivesUpAfterTheRange() {
         let busy = Set(EngineID.omlx.portRange)
-        let chosen = EnginePortAllocator.allocate(for: .omlx,
-                                                  preferred: 8100,
-                                                  taken: busy,
-                                                  isOpen: { busy.contains($0) })
+        let chosen = EnginePortAllocator.allocate(
+            for: .omlx,
+            preferred: 8100,
+            taken: busy,
+            isOpen: { busy.contains($0) })
         XCTAssertNil(chosen)
     }
 
     func testPortAllocatorPrefersTheRequestedPortWhenFree() {
-        let chosen = EnginePortAllocator.allocate(for: .splash,
-                                                  preferred: 8123,
-                                                  taken: [],
-                                                  isOpen: { _ in false })
+        let chosen = EnginePortAllocator.allocate(
+            for: .splash,
+            preferred: 8123,
+            taken: [],
+            isOpen: { _ in false })
         XCTAssertEqual(chosen, 8123)
     }
 
@@ -187,10 +200,10 @@ final class EngineCoreTests: XCTestCase {
     /// when the suite runs somewhere without them.
     func testVendoredManifestsDecode() throws {
         let repo = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()   // FlashCatKitTests
-            .deletingLastPathComponent()   // Tests
-            .deletingLastPathComponent()   // native
-            .deletingLastPathComponent()   // repo root
+            .deletingLastPathComponent()  // FlashCatKitTests
+            .deletingLastPathComponent()  // Tests
+            .deletingLastPathComponent()  // native
+            .deletingLastPathComponent()  // repo root
             .appendingPathComponent("vendor/engines")
         guard FileManager.default.fileExists(atPath: repo.path) else {
             throw XCTSkip("vendor/engines is not present")
@@ -206,16 +219,18 @@ final class EngineCoreTests: XCTestCase {
                 guard FileManager.default.fileExists(atPath: root.appendingPathComponent("manifest.json").path) else {
                     continue
                 }
-                let installation = try XCTUnwrap(EngineInstallation.load(root: root),
-                                                "manifest failed to decode: \(root.path)")
+                let installation = try XCTUnwrap(
+                    EngineInstallation.load(root: root),
+                    "manifest failed to decode: \(root.path)")
                 XCTAssertEqual(installation.id.rawValue, engine)
                 XCTAssertEqual(installation.version, version)
                 // Every profile a pack ships must bind the port the app claims;
                 // splash ships "hub" and "local" instead of one "default".
                 XCTAssertFalse(installation.manifest.launchProfiles.isEmpty)
                 for (name, profile) in installation.manifest.launchProfiles {
-                    XCTAssertTrue(profile.args.contains("{port}"),
-                                  "\(engine)/\(version) profile \(name) dropped the port placeholder")
+                    XCTAssertTrue(
+                        profile.args.contains("{port}"),
+                        "\(engine)/\(version) profile \(name) dropped the port placeholder")
                 }
             }
         }

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// 灵动岛承载的一条通知。`toast()` 只是投递入口，展示、历史和详情都由它负责。
@@ -14,20 +17,25 @@ struct IslandNotice: Identifiable, Equatable {
             // already localized (the app formats interpolated toasts before
             // handing them over), so recognize both sets of keywords.
             let lower = text.lowercased()
-            let failed = text.contains("失败") || text.contains("错误") || text.contains("无法")
+            let failed =
+                text.contains("失败") || text.contains("错误") || text.contains("无法")
                 || text.contains("不能") || text.contains("异常")
                 || lower.contains("failed") || lower.contains("failure")
                 || lower.contains("error") || lower.contains("unable")
                 || lower.contains("cannot") || lower.contains("can't")
-            let waiting = text.contains("请先") || text.contains("正在") || text.contains("先等")
+            let waiting =
+                text.contains("请先") || text.contains("正在") || text.contains("先等")
                 || text.contains("暂停") || text.contains("稍候")
                 || lower.contains("please") || lower.contains("wait")
                 || lower.contains("in progress") || lower.contains("paused")
                 || lower.contains("building") || lower.contains("switching")
-            let succeeded = text.hasPrefix("已") || text.contains("成功")
-                || ["done", "moved", "switched", "downloaded", "deleted",
+            let succeeded =
+                text.hasPrefix("已") || text.contains("成功")
+                || [
+                    "done", "moved", "switched", "downloaded", "deleted",
                     "installed", "cleared", "set ", "removed", "model ready",
-                    "stopped waiting"].contains { lower.hasPrefix($0) }
+                    "stopped waiting",
+                ].contains { lower.hasPrefix($0) }
             if failed {
                 self = .error
             } else if waiting {
@@ -69,11 +77,13 @@ struct IslandNotice: Identifiable, Equatable {
     /// 只是把读者刚看过的东西再写一遍。
     let transient: Bool
 
-    init(title: String,
-         message: String,
-         kind: Kind? = nil,
-         date: Date = Date(),
-         transient: Bool = false) {
+    init(
+        title: String,
+        message: String,
+        kind: Kind? = nil,
+        date: Date = Date(),
+        transient: Bool = false
+    ) {
         self.id = UUID()
         self.kind = kind ?? Kind(message: message)
         self.title = title

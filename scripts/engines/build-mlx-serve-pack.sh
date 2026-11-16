@@ -7,11 +7,11 @@
 # Usage:
 #   scripts/engines/build-mlx-serve-pack.sh [--version 26.11.1] [--out DIR]
 #                                           [--tarball FILE] [--sha256 HEX] [--force]
+#                                           [--dry-run]
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib-pack.sh"
 
 ENGINE_ID="mlx-serve"
 ENGINE_NAME="MLX-Serve"
@@ -39,28 +39,35 @@ Usage: build-mlx-serve-pack.sh [options]
   --tarball FILE  use an existing upstream archive
   --sha256 HEX    expected archive sha256 (resolved from GitHub by default)
   --force         replace an existing pack
+  --dry-run       print the resolved target and exit without writing anything
   -h, --help      show this help
 EOF
 }
 
-die() { printf 'error: %s\n' "$*" >&2; exit 1; }
-step() { printf '\n==> %s\n' "$*"; }
-
-while [[ $# -gt 0 ]]; do
+pack_parse_engine_arg() {
   case "$1" in
-    --version) VERSION="${2:?--version needs a value}"; shift 2 ;;
-    --out) OUT="${2:?--out needs a value}"; shift 2 ;;
-    --tarball) TARBALL="${2:?--tarball needs a value}"; shift 2 ;;
-    --sha256) EXPECTED_SHA="${2:?--sha256 needs a value}"; shift 2 ;;
-    --force) FORCE=1; shift ;;
-    -h|--help) usage; exit 0 ;;
-    *) die "unknown argument: $1 (try --help)" ;;
+    --tarball)
+      [[ $# -ge 2 && -n "$2" ]] || die "--tarball needs a value"
+      TARBALL="$2"; PACK_ARG_SHIFT=2
+      ;;
+    --sha256)
+      [[ $# -ge 2 && -n "$2" ]] || die "--sha256 needs a value"
+      EXPECTED_SHA="$2"; PACK_ARG_SHIFT=2
+      ;;
+    *) return 1 ;;
   esac
-done
+  return 0
+}
+
+pack_parse_common_args "$@"
 
 [[ -n "$VERSION" ]] || die "--version must not be empty"
 [[ "$VERSION" != v* ]] || VERSION="${VERSION#v}"
 TARBALL="${TARBALL:-$ROOT/vendor/mlx-serve-$VERSION-$ASSET}"
+
+pack_require_tools curl tar shasum otool /usr/bin/python3
+pack_begin "pass --force"
+
 mkdir -p "$(dirname -- "$TARBALL")"
 
 if [[ ! -f "$TARBALL" ]]; then
@@ -69,10 +76,13 @@ if [[ ! -f "$TARBALL" ]]; then
     "https://github.com/$UPSTREAM_REPO/releases/download/v$VERSION/$ASSET"
 fi
 
+# The archive digest is published as a GitHub release asset digest, so ask the
+# release API once instead of pinning it in the script. --sha256 is the escape
+# hatch for offline builds and for upstreams that stop publishing digests.
 if [[ -z "$EXPECTED_SHA" ]]; then
   step "Resolving upstream sha256"
   API_JSON="$(mktemp "${TMPDIR:-/tmp}/mlx-serve-release.XXXXXX.json")"
-  trap 'rm -f "$API_JSON"' EXIT
+  pack_cleanup_add "$API_JSON"
   curl -fsSL --retry 2 -o "$API_JSON" \
     "https://api.github.com/repos/$UPSTREAM_REPO/releases/tags/v$VERSION"
   EXPECTED_SHA="$(/usr/bin/python3 - "$ASSET" "$API_JSON" <<'PY'
@@ -90,37 +100,28 @@ raise SystemExit(1)
 PY
 )" || die "could not resolve sha256 for $ASSET; pass --sha256 HEX explicitly"
   rm -f "$API_JSON"
-  trap - EXIT
 fi
 
 ACTUAL_SHA="$(shasum -a 256 "$TARBALL" | awk '{print $1}')"
 [[ "$ACTUAL_SHA" == "$EXPECTED_SHA" ]] || die "sha256 mismatch: expected $EXPECTED_SHA, got $ACTUAL_SHA"
 
-mkdir -p "$OUT"
-OUT="$(cd -- "$OUT" && pwd -P)"
-PACK_DIR="$OUT/$ENGINE_ID/$VERSION"
-if [[ -e "$PACK_DIR" ]]; then
-  [[ $FORCE -eq 1 ]] || die "$PACK_DIR already exists (pass --force)"
-  rm -rf "$PACK_DIR"
-fi
-mkdir -p "$PACK_DIR"
+pack_stage
 
 step "Extracting MLX-Serve"
-tar -xzf "$TARBALL" --strip-components=1 -C "$PACK_DIR"
-chmod -R u+w "$PACK_DIR"
+pack_extract "$TARBALL" "$PACK_STAGING" strip
 for required in mlx-serve LICENSE NOTICE LICENSE-APACHE-2.0 lib/libmlx.dylib lib/libmlxc.dylib lib/mlx.metallib; do
-  [[ -e "$PACK_DIR/$required" ]] || die "archive is incomplete: missing $required"
+  [[ -e "$PACK_STAGING/$required" ]] || die "archive is incomplete: missing $required"
 done
 
 step "Verifying binary"
-"$PACK_DIR/mlx-serve" --version >/tmp/flashcat-mlx-serve-version.txt
+"$PACK_STAGING/mlx-serve" --version >/tmp/flashcat-mlx-serve-version.txt
 cat /tmp/flashcat-mlx-serve-version.txt
 rm -f /tmp/flashcat-mlx-serve-version.txt
-otool -L "$PACK_DIR/mlx-serve" | grep -q '@executable_path/lib/libllama.dylib' \
+otool -L "$PACK_STAGING/mlx-serve" | grep -q '@executable_path/lib/libllama.dylib' \
   || die "MLX-Serve binary is not relocatable with its bundled libraries"
 
 step "Writing manifest.json"
-cat > "$PACK_DIR/manifest.json" <<EOF
+cat > "$PACK_STAGING/manifest.json" <<EOF
 {
   "schemaVersion": 1,
   "id": "$ENGINE_ID",
@@ -186,16 +187,12 @@ cat > "$PACK_DIR/manifest.json" <<EOF
 }
 EOF
 
-/usr/bin/python3 -m json.tool "$PACK_DIR/manifest.json" >/dev/null
-mkdir -p "$PACK_DIR/models"
+pack_validate_manifest /usr/bin/python3
+mkdir -p "$PACK_STAGING/models"
 
-step "Pack summary"
-printf '    path: %s\n' "$PACK_DIR"
-printf '    size: %s\n' "$(du -sh "$PACK_DIR" | awk '{print $1}')"
-printf '    sha256: %s\n' "$ACTUAL_SHA"
+pack_swap
 
-cat <<EOF
+pack_print_summary
+printf '    sha256    : %s\n' "$ACTUAL_SHA"
 
-Next:
-  scripts/engines/make-pack-release.sh --engine $ENGINE_ID --version $VERSION
-EOF
+pack_next_release_cmd

@@ -1,8 +1,12 @@
-import Foundation
-import SwiftUI
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AppKit
+import Combine
 import Darwin
 import FlashCatKit
+import Foundation
+import SwiftUI
 
 enum Page: String, CaseIterable, Identifiable {
     case overview = "概览"
@@ -32,92 +36,6 @@ enum Page: String, CaseIterable, Identifiable {
     static let workspace: [Page] = [.overview, .chat, .models, .engines, .logs, .settings, .lab]
 }
 
-struct ThroughputSample: Identifiable {
-    /// 用时间戳做身份：每个采样点的时刻天然唯一，没必要为每个点再分配一个
-    /// UUID。10 分钟窗口里最多一千多个点，省下的是持续的分配与 16 字节/点。
-    var id: Date { at }
-    let at: Date
-    let value: Double
-}
-
-/// 概览速度读数的来源。速度类指标统一走网关按请求打点，避免同一个页面里
-/// 引擎的 LIVE / AVG 和网关估算混着用；引擎实时计数只作为兜底。
-/// 收尾后的上一请求终值（LAST）不再是一个可用来源：概览只认「此刻在跑」。
-enum SpeedOrigin: Equatable {
-    /// 没有在跑会话，也没有可用的引擎实时计数：没有当前速度。
-    case none
-    /// 网关在跑会话的合计速率（重采样后的窗口读数）。窗口读数就是当前速度本身，
-    /// 所以活跃期间不区分估算与精确计数——引擎侧的 tok/s 同样是计数器差分的估计。
-    case gatewayLive
-    /// 网关看不见的直连请求，用引擎的实时计数兜底。
-    case engineLive
-}
-
-/// 一个指标格当前的**取数来源**。owner 表算出来的就是这个值，界面直接按它
-/// 打角标与说明文案，不再各自 switch `EngineRateKind`/`SpeedOrigin`。
-///
-/// 速度格只认 LIVE：它只回答「此刻多快」，上一请求的终值不参与。预填充格
-/// 是唯一的例外——预填充本来就是一次性的，短提示词在 1 秒采样里常常抓不到
-/// 正在处理的那一刻，所以它允许把**明确标成 LAST**的最近一次实测值留在卡片上。
-/// 这个实测值优先由网关自己按请求算（`.gatewayLast`），引擎的 `.engineLast`
-/// 只在网关没有会话记录（客户端绕过网关直连引擎端口）时兜底。平均解码速度
-/// 单独有 `.gatewayMean` / `.engineMean` 这一档，只服务 hero 的「模型启动以来平均」。
-enum MetricOrigin: Equatable {
-    /// 没有任何可用读数（引擎未上报、或值 ≤ 0）。
-    case none
-    /// 网关按请求打点的实时读数（重采样窗口）。
-    case gatewayLive
-    /// 网关按请求打点算出的最近一次预填充实测值。
-    case gatewayLast
-    /// 网关按会话累计的「模型启动以来平均」——hero 的解码均值与缓存命中率共用。
-    case gatewayMean
-    /// 引擎此刻正在量的实时值。
-    case engineLive
-    /// 引擎测过的上一请求值：数字是真的，描述的是刚结束的那一次。
-    case engineLast
-    /// 引擎进程 / 会话累计均值。
-    case engineMean
-}
-
-/// 一格指标的 owner 表输出：数值 + 它回答的是哪个问题。
-/// `value == nil` 时 `origin == .none`，界面画「—」。
-struct MetricReading: Equatable {
-    let value: Double?
-    let origin: MetricOrigin
-
-    static let none = MetricReading(value: nil, origin: .none)
-}
-
-/// 首字延迟格的取数结果：数值 + 它来自哪一侧的观测。
-///
-/// 首字和预填充一样是一次性观测，但它没有 `MetricOrigin` 那套速度语义：
-/// 引擎 status 里有样本时优先（splash 给 p50，mlx-serve 给直方图均值，
-/// MTPLX 给上一请求值），引擎没有这个字段（oMLX / strata）或还没有样本
-/// （splash 首个请求前 p50 = 0）时，退回网关逐请求量到的最近一次首字。
-/// 两侧都没有才是 「—」。
-struct TTFTReading: Equatable {
-    enum Source: Equatable {
-        /// 没有任何首字样本。
-        case none
-        /// 引擎 status 上报的首字统计。
-        case engine
-        /// 网关按请求实测的最近一次首字。
-        case gateway
-    }
-
-    let milliseconds: Double?
-    let source: Source
-    let kind: EngineTTFTKind
-
-    init(milliseconds: Double?, source: Source, kind: EngineTTFTKind = .none) {
-        self.milliseconds = milliseconds
-        self.source = source
-        self.kind = kind
-    }
-
-    static let none = TTFTReading(milliseconds: nil, source: .none, kind: .none)
-}
-
 /// How a download ended, for the callers that wait on one instead of
 /// watching the download center.
 enum DownloadOutcome {
@@ -136,31 +54,91 @@ final class AppState: ObservableObject {
     /// Re-open the launch page from the engines tab; the page is also shown
     /// automatically while no engine is installed.
     @Published var showsLaunchPage = false
-    @Published var serverState: ServerState = .stopped
-    @Published var stats: ServerStats?
+    /// 引擎会话状态（服务状态、指标、当前模型、切换流程）独立成 store。
+    /// 这里保留同名 get/set 转发，编排代码与视图都不用改。
+    let engineSession = EngineSessionStore()
+    var serverState: ServerState {
+        get { engineSession.serverState }
+        set { engineSession.serverState = newValue }
+    }
+    var stats: ServerStats? {
+        get { engineSession.stats }
+        set { engineSession.stats = newValue }
+    }
+    var selectedModel: String {
+        get { engineSession.selectedModel }
+        set { engineSession.selectedModel = newValue }
+    }
+    var defaultRevision: Int {
+        get { engineSession.defaultRevision }
+        set { engineSession.defaultRevision = newValue }
+    }
+    var switchingModel: String? {
+        get { engineSession.switchingModel }
+        set { engineSession.switchingModel = newValue }
+    }
+    var switchStage: String {
+        get { engineSession.switchStage }
+        set { engineSession.switchStage = newValue }
+    }
+    var lifecycleTick: Int {
+        get { engineSession.lifecycleTick }
+        set { engineSession.lifecycleTick = newValue }
+    }
+    var confirmingModelSwitch: String? {
+        get { engineSession.confirmingModelSwitch }
+        set { engineSession.confirmingModelSwitch = newValue }
+    }
+    var pendingEngineInstall: EngineID? {
+        get { engineSession.pendingEngineInstall }
+        set { engineSession.pendingEngineInstall = newValue }
+    }
     @Published var logs: [LogLine] = []
     /// 日志页读它：合并视图覆盖所有引擎，别的引擎写新行时 `logs` 不会发布，
     /// 靠这一拍让页面重新取一份。活动引擎的写入仍走 `logs`。
     @Published private(set) var logsRevision = 0
     /// 上一拍参与指纹的非活动引擎存储，见 `syncController`。
     private var logFeedToken: [Int] = []
-    @Published var catalog = ModelCatalog()
-    @Published var selectedModel: String = ""
-    /// Bumped when the startup engine/model preference changes. The value lives
-    /// in `EngineStore` (and is written with the *current* engine untouched),
-    /// so the settings row needs this tick to re-render.
-    @Published private(set) var defaultRevision = 0
-    /// Non-nil while newly selected weights are loading. The switchers show an
-    /// inline spinner and the overview swaps live metrics for skeletons.
-    @Published private(set) var switchingModel: String?
-    /// Stage the running switch is in ("卸载旧模型" / "加载新模型"). Shown in the
-    /// switcher instead of a generic spinner so the wait is explainable.
-    @Published private(set) var switchStage: String = ""
-    /// 「已等待 m:ss」读的是时钟，不是任何 `@Published` 字段：引擎安静加载的几
-    /// 分钟里 `syncController` 的「只有真的变了才发布」会把每一秒都挡掉，灵动岛的
-    /// 秒数就停住，等下一行日志或一个指标变化才跳一大截。这个计数器只在模型忙的
-    /// 时候每秒推一格，专门让读时钟的文案重算。
-    @Published private(set) var lifecycleTick: Int = 0
+    /// 本机模型库：清单、公共目录里的仓库、当前浏览的引擎，以及硬件推荐。
+    /// 这里只留 get/set 转发——扫盘时机属于编排（下载完成、授权变更、引擎装卸
+    /// 都要顺手通知别人），所以仍由 AppState 决定。
+    let modelLibrary = ModelLibraryStore()
+    var catalog: ModelCatalog {
+        get { modelLibrary.catalog }
+        set { modelLibrary.catalog = newValue }
+    }
+    var sharedRepos: [String] {
+        get { modelLibrary.sharedRepos }
+        set { modelLibrary.sharedRepos = newValue }
+    }
+    var localModelRepos: [String] {
+        get { modelLibrary.localModelRepos }
+        set { modelLibrary.localModelRepos = newValue }
+    }
+    var libraryEngine: EngineID {
+        get { modelLibrary.libraryEngine }
+        set { modelLibrary.libraryEngine = newValue }
+    }
+    var pendingLibraryUse: LibraryUseRequest? {
+        get { modelLibrary.pendingLibraryUse }
+        set { modelLibrary.pendingLibraryUse = newValue }
+    }
+    var hardwareRecommendation: HardwareRecommendation? {
+        get { modelLibrary.hardwareRecommendation }
+        set { modelLibrary.hardwareRecommendation = newValue }
+    }
+    var showsRecommendationPage: Bool {
+        get { modelLibrary.showsRecommendationPage }
+        set { modelLibrary.showsRecommendationPage = newValue }
+    }
+    var pendingRecommendedDownload: (engine: EngineID, model: String)? {
+        get { modelLibrary.pendingRecommendedDownload }
+        set { modelLibrary.pendingRecommendedDownload = newValue }
+    }
+    var tuningRevision: Int {
+        get { modelLibrary.tuningRevision }
+        set { modelLibrary.tuningRevision = newValue }
+    }
     /// 上面那个计数器的心跳；模型不忙时它不发任何东西，界面不白白每秒重绘。
     private var lifecycleClock: Timer?
     /// 每次切换领一个号，只有当代的结尾允许改「切换中」状态。被接管或被取消的
@@ -170,14 +148,25 @@ final class AppState: ObservableObject {
     /// 切换进行中又选了一个本引擎的模型：排到这次切换之后，只保留最后一次。
     /// 以前这里直接丢弃，读者看到的是「点了没反应」。
     private var queuedSwitchModel: String?
-    /// Non-nil while a model switch is waiting for the reader to confirm that
-    /// the model that is loaded now gets stopped first. Switching weights means
-    /// unloading the resident model, so the engine is briefly unusable — that is
-    /// worth one click, not a silent stall.
-    @Published var confirmingModelSwitch: String?
-    /// 侧栏与「最近对话」弹层共用的待删线程：删除会重写整份历史文件，删掉就
-    /// 找不回来，所以两个入口都只挂起这一条，等壳层弹完确认再落盘。
-    @Published var pendingThreadDelete: ChatThread?
+    /// 对话页自己的会话状态（待删线程、图像工具开关）同样独立成 store，
+    /// 这里保留同名转发。
+    let chatSession = ChatSessionStore()
+    var pendingThreadDelete: ChatThread? {
+        get { chatSession.pendingThreadDelete }
+        set { chatSession.pendingThreadDelete = newValue }
+    }
+    var imageToolEnabled: Bool {
+        get { chatSession.imageToolEnabled }
+        set { chatSession.imageToolEnabled = newValue }
+    }
+    var imageToolModelID: String {
+        get { chatSession.imageToolModelID }
+        set { chatSession.imageToolModelID = newValue }
+    }
+    var imageToolResident: Bool {
+        get { chatSession.imageToolResident }
+        set { chatSession.imageToolResident = newValue }
+    }
     /// 高频对话状态独立成 store；这里保留同名转发，内部逻辑不用改。
     let chat = ChatStore()
     var messages: [ChatMessage] {
@@ -245,18 +234,6 @@ final class AppState: ObservableObject {
     private var imageToolTask: Task<Void, Never>?
     /// 输入框旁的「画」开关：文本模型这一轮可以主动调图像模型。
     /// 默认开——这是对话页的主动能力，关掉是少数情况。
-    @Published var imageToolEnabled = ImageToolSettings.enabled {
-        didSet { ImageToolSettings.setEnabled(imageToolEnabled) }
-    }
-    /// 工具借用的图像模型。空串表示用当前引擎里第一个能出图的模型。
-    @Published var imageToolModelID = ImageToolSettings.modelID {
-        didSet { ImageToolSettings.setModelID(imageToolModelID) }
-    }
-    /// 画完图后图像模型是否留在显存里。开着时下一轮生图直接复用权重，
-    /// 代价是对话模型和图像模型同时占内存；设置页可以关掉。
-    @Published var imageToolResident = ImageToolSettings.resident {
-        didSet { ImageToolSettings.setResident(imageToolResident) }
-    }
 
     /// The assistant message this generation owns, located by id.
     private var streamMessageID = ""
@@ -281,211 +258,44 @@ final class AppState: ObservableObject {
     /// 悬浮导航列是否显示。隐藏后主视口铺满窗口，重新显示时恢复玻璃列；
     /// 状态落盘到 UserDefaults 的 `sidebarVisible`，重启后沿用上次的样子。
     @Published var showsSidebar: Bool
-    /// 概览总解码曲线的样本。速度统一取网关按请求打点的聚合；网关没有
-    /// 在跑会话时，只收引擎的实时计数（且引擎必须有在跑请求），引擎的
-    /// LAST/AVG 不再被画成时间序列。
-    /// 曲线样本只服务概览 60 秒与菜单栏近 5 分钟；保留 10 分钟足够，
-    /// 以前留 30 分钟，多出来的两三千个点没有任何界面读。
-    private static let sampleRetention: TimeInterval = 600
-    @Published var throughput: [ThroughputSample] = []
-    /// 草稿接受率（DFlash2 / MTP）的时间序列，采样节奏与吞吐一致，
-    /// 概览页用它画第二条实时曲线。value 是 0…1 的比例。
-    @Published var acceptance: [ThroughputSample] = []
-    /// 应用内对话流式回复的本地测速（tok/s）。只服务对话页直播条；
-    /// 概览与灵动岛的速度读数统一走 owner 表（`decodeReading`），不再用它补位。
-    @Published private(set) var liveDecodeRate: Double?
-    // 预填充不再由应用自己按「整段提示词 / 首字耗时」估算。同一会话的第二轮
-    // 几乎全部命中前缀缓存，分子里的 token 大部分根本没被前向，TTFT 里还混着
-    // 排队和缓存恢复，两者一除能把读数放大两个数量级。现在只显示引擎真的
-    // 量过的数：mlx-serve 用 prefill_tokens_total / prefill_time_seconds
-    //（都不含缓存恢复），其余引擎用它自己的 prefill 字段；引擎没有时回落到
-    // 网关的按请求打点。
-    /// 网关按请求打点的聚合速率。概览曲线与「最近请求」同源，
-    /// 应用内对话也注册在 `GatewayMeter` 里。收尾后归零：只表示「此刻多快」。
-    @Published private(set) var gatewayDecodeRate: Double = 0
-    /// `gatewayDecodeRate` 是否来自在跑会话。false = 没有在跑会话（或引擎
-    /// 已经收尾），此时没有当前速度，读数不挂上一请求的终值。
-    @Published private(set) var gatewayRateIsLive = false
-    /// 网关自己量出来的预填充速度（最近一次完成的预填充）。分子是 usage
-    /// 报告的提示词 token 减去前缀缓存命中量，分母是请求发出到首 token 的
-    /// 墙钟——不读任何引擎自报的预填充字段，所以换引擎不会让这格变空。
-    /// 0 = 还没有可用的实测值。
-    @Published private(set) var gatewayPrefillRate: Double = 0
-    /// 网关自己量出来的最近一次首字耗时（毫秒）。引擎 status 里没有 TTFT
-    /// （oMLX / strata），或还没有样本（splash 首个请求前 p50 = 0）时，
-    /// 首字格退到这条按请求的实测值。0 = 还没有可用的实测值。
-    @Published private(set) var gatewayTTFTMilliseconds: Double = 0
-    /// 网关按代累计的缓存命中率（0…1）。分子是 usage 里的前缀缓存命中量，
-    /// 分母是同一批请求的提示词总量（按 token 加权）；只统计真的收到 usage
-    /// 的请求。0 = 还没有样本，界面不能把它当成「0% 命中」。
-    @Published private(set) var gatewayCacheHitRate: Double = 0
-    /// 上面这个读数覆盖的请求数，卡片的说明文案会原样引用它。
-    @Published private(set) var gatewayCacheHitRequests: Int = 0
-    /// 模型启动以来的平均解码速度（网关按会话累计）。hero 大数字读它：
-    /// 曲线回答「此刻多快」，大数字回答「这台模型平均吐字多快」。0 = 还没有
-    /// 可算的样本，界面画「—」。
-    @Published private(set) var averageDecodeRate: Double = 0
-    /// 网关侧最近/在跑会话的上下文占用 tokens（含外部客户端与网关流量）。
-    @Published private(set) var gatewayContextTokens: Int = 0
-    @Published private(set) var gatewayContextIsLive: Bool = false
-    /// 60 秒曲线冻结的时刻。请求收尾后设为收尾时刻，`overviewThroughput`
-    /// 与横轴都以它为右缘——曲线停住，不再随挂钟把终点挤出窗口。
-    /// 新请求开始时清空，曲线恢复滚动。
-    @Published private(set) var throughputFrozenAt: Date?
-    /// 上一次采样时是否还有请求在跑，用来识别「1 → 0」这次收尾。
-    private var chartWasLive = false
-    /// 累计均值的身份（引擎 + 进程 + 模型）。换代时清空 `GatewayMeter`
-    /// 的累计量，避免把上一台模型的成绩算进这一台。
-    private var lifetimeIdentity: String?
-    /// 上一次观察到的引擎运行秒数，用于在没有 pid/startedAt 时检测重启。
-    private var previousUptimeSeconds: Double?
-    /// 预填充**没有**网关侧聚合：网关的「(整段提示词 − 缓存命中) / 首字耗时」
-    /// 口径已废弃（分母混着排队与缓存恢复，分子要等末帧 usage），概览只显示
-    /// 引擎自报的速率。`GatewayMeter` 仍为「最近请求」逐行保留各自的预填充读数。
     /// 本次请求的提示词 token 估算，生成期间用来实时刷新上下文占用。
     private var livePromptTokens = 0
-    /// 生成期间的连续时间低通速率估计。不再用「攒够 0.9 秒就清零」的窗口：
-    /// 那种非重叠窗口让相邻读数互不相关，SSE 分片一抖数字就跟着跳。
-    /// 只服务对话页直播条——概览概览按每秒一拍读网关，不在分片回调里改。
-    private var decodeMeter = DecodeRateMeter()
-    /// 回答结束后保留一小段平滑读数，避免 LIVE 数字在收尾瞬间台阶式回落。
-    private var generationEndedAt: Date?
-    /// 概览速度读数的上一拍。`syncController` 会被引擎的多次状态变化触发，
-    /// 不加闸就会在一秒内发布好几次——概览的刻钟是 1 秒，不是事件驱动。
-    private var lastSpeedPublishAt: Date?
-    private var lastLiveRatePublishAt: Date?
-    @Published var downloadingModel: String?
+
+    /// 下载中心：进程、进度、任务行都在它手里。AppState 只留策略——什么时候
+    /// 该下载、下完要不要选中这个模型——所以这边看到的是一层只读转发。
+    let downloads = DownloadCenter()
+    var downloadingModel: String? { downloads.downloadingModel }
     /// Which engine the running download is for: two engines can hold models
     /// with the same id, and only the one being written shows the progress bar.
-    @Published private(set) var downloadingEngine: EngineID?
-    @Published var downloadFraction: Double?
+    var downloadingEngine: EngineID? { downloads.downloadingEngine }
+    var downloadFraction: Double? { downloads.downloadFraction }
     /// Live transfer speed of the running download, bytes per second.
-    @Published private(set) var downloadSpeed: Double = 0
+    var downloadSpeed: Double { downloads.downloadSpeed }
     /// Download center rows. Paused and failed transfers survive a relaunch
     /// (the Hub keeps partial files in the destination's `.cache`), so the
     /// list is persisted and "downloading" rows become "paused" on load.
-    @Published private(set) var downloadTasks: [ModelDownloadTask] = [] {
-        didSet {
-            // 进度每 0.5 秒都会改 `downloadedBytes`，但模型集合没变；只有
-            // 引擎/模型/状态真的变化时才让模型目录缓存失效，避免下载期间
-            // 侧栏和模型页反复扫盘。
-            let before = oldValue.map { "\($0.engine.rawValue)|\($0.model)|\($0.status.rawValue)" }
-            let after = downloadTasks.map { "\($0.engine.rawValue)|\($0.model)|\($0.status.rawValue)" }
-            if before != after { invalidateModelCaches() }
-        }
-    }
-    /// Hugging Face 浏览器的状态：列表与单个仓库详情分开存——弹层里翻 tab 不
-    /// 该把列表挤掉，两者也都只是「看一眼」，不持久化、不碰磁盘。
-    @Published private(set) var hubResults: [HubModel] = []
-    /// 公共目录里已落盘的仓库 id（模型广场标「已在本机」用）。
-    @Published private(set) var sharedRepos: [String] = []
-    /// 本机已有的全部仓库：公共目录加各引擎自己的模型目录。比 `sharedRepos`
-    /// 宽——引擎目录里手放的、或从引擎推荐里下的权重同样算「已经有了」，下载
-    /// 弹窗据此把下载按钮换成「已下载」。跟着 `reloadModels` 走，不进两秒一次的
-    /// 每帧都会读的热路径。
-    @Published private(set) var localModelRepos: [String] = []
-    /// 手填仓库 id 的预检结果：输入停下后查一次 Hub，弹窗里显示体积/参数量/
-    /// 文件清单/README 摘要，看清了再按下「开始下载」。和模型广场的 `hubDetail`
-    /// 分开存，两边同时在屏上也不会互相挤掉。
-    @Published private(set) var repoProbe: HubModel?
-    @Published private(set) var repoProbeLoading = false
-    @Published private(set) var repoProbeError: String?
-    /// 当前这份预检结果属于哪个仓库。界面拿它对输入框：用户还在改 id 时，
-    /// 旧结果不能被当成新仓库的结果显示出来。
-    @Published private(set) var repoProbeRepo = ""
-    private var repoProbeTask: Task<Void, Never>?
-    private var repoProbeKey = ""
-    @Published private(set) var hubDetail: HubModel?
-    @Published private(set) var hubQuery = ""
-    @Published private(set) var hubSort: HubSort = .trending
-    @Published private(set) var hubFilter: HubFilter = .all
-    /// 0 起的页码。HF 的 skip 是纯偏移，所以页码就是 skip / pageSize。
-    @Published private(set) var hubPage = 0
-    /// 这一页满了就认为还有下一页（HF 不给总数，模型列表也没有 count 接口）。
-    @Published private(set) var hubHasMore = false
-    @Published private(set) var hubLoading = false
-    @Published private(set) var hubDetailLoading = false
-    @Published private(set) var hubError: String?
-    private var hubSearchTask: Task<Void, Never>?
-    private var hubDetailTask: Task<Void, Never>?
-    /// Which engine's model library the model page shows. Browsing is
-    /// deliberately independent of the running engine, so an engine that is
-    /// stopped — or that has no weights at all — can still be inspected,
-    /// filled from the Hub and compared with the others.
-    @Published var libraryEngine: EngineID = .splash
-    /// Hub search for the model page. Session-scoped: the results live in
-    /// memory only, so switching engines or relaunching drops them.
-    @Published private(set) var hubSearch = HubSearchState()
-    /// Set when a model is picked for an engine that is not running: the switch
-    /// is a bigger step than a model change, so it asks first.
-    @Published var pendingLibraryUse: LibraryUseRequest?
-    /// Set when a switch targets an engine whose pack is not installed. The
-    /// weights can be on disk (browsing works without the runtime), so without
-    /// this the switch would silently do nothing while claiming success.
-    @Published var pendingEngineInstall: EngineID?
-    /// What this Mac should run, per engine; `nil` until the first launch has
-    /// decided. Stored in `AppSettings`, so the model page's tags outlive a
-    /// relaunch without touching the hardware again.
-    @Published private(set) var hardwareRecommendation: HardwareRecommendation?
-    /// The first-run page is up. Only when nothing is installed yet and the
-    /// question has not been answered before.
-    @Published var showsRecommendationPage = false
-    /// Model to download as soon as the recommended engine's install finishes:
-    /// the downloader refuses to run while the pack is missing.
-    @Published var pendingRecommendedDownload: (engine: EngineID, model: String)?
-
-    /// Bumped whenever any engine's tuning is saved. `speculativeMode` reads it
-    /// so a view showing the mode re-renders after the config page saves.
-    @Published private(set) var tuningRevision = 0
+    var downloadTasks: [ModelDownloadTask] { downloads.downloadTasks }
+    /// Hugging Face 浏览器：列表、详情、手填仓库的预检都在 `HubStore`。这边只
+    /// 留只读转发——浏览本来就不该碰磁盘或引擎，谁能不能下载由 AppState 判断。
+    let hub = HubStore()
+    var hubResults: [HubModel] { hub.hubResults }
+    var hubDetail: HubModel? { hub.hubDetail }
+    var hubQuery: String { hub.hubQuery }
+    var hubSort: HubSort { hub.hubSort }
+    var hubFilter: HubFilter { hub.hubFilter }
+    var hubPage: Int { hub.hubPage }
+    var hubHasMore: Bool { hub.hubHasMore }
+    var hubLoading: Bool { hub.hubLoading }
+    var hubDetailLoading: Bool { hub.hubDetailLoading }
+    var hubError: String? { hub.hubError }
+    var hubSearch: HubSearchState { hub.hubSearch }
+    var repoProbe: HubModel? { hub.repoProbe }
+    var repoProbeLoading: Bool { hub.repoProbeLoading }
+    var repoProbeError: String? { hub.repoProbeError }
+    var repoProbeRepo: String { hub.repoProbeRepo }
 
     private var toastWork: DispatchWorkItem?
-    /// Polls the folder a snapshot download writes into, so the card can show
-    /// a percentage without the downloader having to report one.
-    private var downloadWatchTask: Task<Void, Never>?
-    /// Bytes the Hub says the whole repository needs, printed by the downloader
-    /// before the transfer starts.
-    private var downloadTotalBytes = 0
-    /// 本次会话里 downloader 宣布「还要抓」的字节数。Splash 的每个仓库只报
-    /// 尚未进缓存的那部分，续传时它是「剩余」而不是总量，所以总量要用
-    /// `downloadResumeBytes + downloadFetchedBytes` 重新算。
-    private var downloadFetchedBytes = 0
-    /// The running downloader child process; terminating it is how pause and
-    /// cancel stop the transfer while the Hub's partial files stay on disk.
-    private var downloadProcess: Process?
-    /// Sibling marker for the model folder this transfer writes. It is created
-    /// before the child starts and removed only on success, so a canceled or
-    /// crashed download can never pass the scanner as an installed model.
-    private var downloadIncompleteMarker: String?
-    /// Set while a caller waits for a download to end (a launch that has to
-    /// fetch the model's DFlash2 draft first). Reported once, in
-    /// `finishDownload`, whichever way the process ended.
-    private var downloadCompletion: ((DownloadOutcome) -> Void)?
-    /// True while that launch-triggered download runs: it must not steal the
-    /// selection or pop a toast, the engine start right behind it says more.
     private var supplementInFlight = false
-    private var pauseRequested = false
-    private var cancelRequested = false
-    /// 用户直接删掉了正在跑的那一行：停掉子进程后 `finishDownload` 要把
-    /// 任务行和半成品一起清掉，而不是像普通取消那样留一行「已暂停」。
-    private var removeRequested = false
-    private var lastWatchBytes = 0
-    private var lastWatchDate: Date?
-    /// Bytes this transfer already had on disk when it (re)started. A resumed
-    /// download begins counting from here instead of 0, so both the card and
-    /// the download center keep showing 已下载/总量 across a pause.
-    private var downloadResumeBytes = 0
-    /// Hub cache folders the running download fills, discovered from the
-    /// child's `Fetching …` lines. Splash's tqdm only counts finished files —
-    /// its bar sits at 0% for minutes while one shard streams — so byte growth
-    /// under these folders is what actually moves the bar.
-    private var downloadWatchDirectories: [String] = []
-    /// Size of each watched folder when it joined the watch: bytes that were
-    /// already cached before this download started are not new progress.
-    private var downloadWatchBaselines: [String: Int] = [:]
-    /// 正在下载到公共目录的仓库与它的授权引擎：下载成功后据此写授权表、建
-    /// 链接。非公共下载时为 nil。
-    private var pendingSharedRepo: String?
-    private var pendingSharedEngines: [EngineID] = []
     /// The single task that owns a model switch. Nothing else may touch the
     /// engine while it runs — the old weights must be confirmed gone before the
     /// new ones allocate.
@@ -504,8 +314,10 @@ final class AppState: ObservableObject {
     let settings = AppSettings()
     /// Owns the day/night skin choice and applies it to AppKit.
     let theme: ThemeController
-    let history = ChatHistory()
-    let conversation = ConversationStore()
+    /// 写盘失败必须落进日志页（见 `recordHistoryWriteFailure`），所以构造点
+    /// 在 init 里，以便注入回调。
+    let history: ChatHistory
+    let conversation: ConversationStore
     let chatClient = ChatClient()
     /// 图像生成/编辑走同一台引擎的 `/v1/images/generations`，与对话互不干扰。
     let imageClient = ImageClient()
@@ -542,12 +354,63 @@ final class AppState: ObservableObject {
     }
 
     init() {
+        // 历史/对话写盘失败走这一条回调。用静态入口而不是捕获 `self`：`history`
+        // 是 `let`，构造它的那一刻转义闭包还不允许碰 `self`；而回调真正触发的
+        // 时候（用户翻历史、写线程列表）单例早已就绪。
+        history = ChatHistory(onWriteFailure: { message in
+            AppState.recordHistoryWriteFailure(message)
+        })
+        conversation = ConversationStore(onWriteFailure: { message in
+            AppState.recordHistoryWriteFailure(message)
+        })
         theme = ThemeController(settings: settings)
         showsSidebar = UserDefaults.standard.object(forKey: "sidebarVisible") as? Bool ?? true
-        downloadTasks = ModelDownloadStore.load()
-        NotificationCenter.default.addObserver(forName: EngineStore.tuningDidChangeNotification,
-                                               object: nil,
-                                               queue: .main) { [weak self] _ in
+        // 下载中心只负责传输：写日志、弹提示、重扫模型目录这些它不该知道细节的
+        // 事用闭包注入，收尾（要不要选中新模型、公共目录的授权表怎么写）走事件
+        // 回调。这样两边谁都不持有对方，少一个环。
+        downloads.hooks = DownloadCenter.Hooks(
+            log: { [weak self] line, engine in
+                guard let self else { return }
+                self.append(log: line, engine: engine ?? self.activeEngine)
+            },
+            toast: { [weak self] message, transient in
+                self?.toast(message, transient: transient)
+            },
+            setNotice: { [weak self] message in self?.notice = message },
+            reloadModels: { [weak self] in self?.reloadModels() },
+            modelInventoryChanged: { [weak self] in self?.invalidateModelCaches() }
+        )
+        downloads.onEvent = { [weak self] event in self?.handle(event) }
+        // 指标搬进 `MetricsStore` 之后，视图仍然只订阅 AppState；不把 store 的发布
+        // 桥回来，数值会在变而页面不重绘。放在 init 末尾：前面的赋值不该触发重绘。
+        metricsBridge = metrics.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        // 下载中心是第二个 owner：进度、任务行都在它那儿，同样要把发布桥回来。
+        downloadsBridge = downloads.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        // Hub 浏览同理：搜索结果 / 预检结果由 store 发布，界面只认 AppState 的通知。
+        hubBridge = hub.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        // 对话页的会话状态（待删线程、图像工具开关）。
+        chatSessionBridge = chatSession.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        // 引擎会话状态是第三个 owner：服务状态/指标/切换阶段都在它那儿。
+        engineSessionBridge = engineSession.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        // 模型库的清单与推荐由 store 持有，重绘同样要桥回来。
+        modelLibraryBridge = modelLibrary.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        NotificationCenter.default.addObserver(
+            forName: EngineStore.tuningDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
             Task { @MainActor [weak self] in self?.tuningRevision += 1 }
         }
     }
@@ -579,21 +442,24 @@ final class AppState: ObservableObject {
         guard !model.isEmpty else { return nil }
         let key = "\(activeEngine.rawValue)|\(model)"
         if let cache = contextWindowCache, cache.key == key,
-           Date().timeIntervalSince(cache.at) < 20 {
+            Date().timeIntervalSince(cache.at) < 20
+        {
             return cache.value
         }
         var window = engineModels(for: activeEngine)
             .first { $0.id == model }?.maximumContextTokens
         if window == nil || window == 0,
-           let path = catalog.machineModel(model)?.path, !path.isEmpty {
+            let path = catalog.machineModel(model)?.path, !path.isEmpty
+        {
             window = EngineModelStore.meta(of: path).maximumContextTokens
         }
         // GGUF 权重里没有 config.json，引擎停着时上面两条都拿不到值；记住上次
         // 真正拿到的窗口（落 UserDefaults），引擎停下或重开应用后概览「总量」
-        // 才不会退成「—」。
+        // 才不会退成「—」。记忆只在「被告知」的那一刻写（`rememberContextWindows`
+        // 与 `syncController`）：读路径一旦有副作用，任何一次重绘都会改用户设置，
+        // 既难推理也没法停。
         let value: Int?
         if let window, window > 0 {
-            UserDefaults.standard.set(window, forKey: Self.contextWindowKey(key))
             value = window
         } else {
             let remembered = UserDefaults.standard.integer(forKey: Self.contextWindowKey(key))
@@ -604,6 +470,36 @@ final class AppState: ObservableObject {
     }
 
     private static func contextWindowKey(_ key: String) -> String { "contextWindow." + key }
+
+    /// 引擎报告的窗口单独一层记忆：它是**本次加载**收敛后的值（splash 会被
+    /// `--max-context` 和 KV 预算压低），不能拿去当模型自身上限。
+    private static func reportedWindowKey(_ key: String) -> String { "contextWindowEngine." + key }
+
+    /// 模型库刚扫过（或选中模型刚变）：把已知的模型窗口落盘记住。
+    ///
+    /// 写入点放在「重新扫盘」这类真实的状态变化里，而不是 `modelContextWindow`
+    /// 的读取路径上——那个方法每帧都会被界面问到，顺手写 UserDefaults 意味着
+    /// 重绘即改用户设置。这里只在确实知道值时写，且值没变就不重复写。
+    private func rememberContextWindows() {
+        let engine = activeEngine
+        for model in engineModels(for: engine) {
+            guard let window = model.maximumContextTokens, window > 0 else { continue }
+            let key = Self.contextWindowKey("\(engine.rawValue)|\(model.id)")
+            if UserDefaults.standard.integer(forKey: key) != window {
+                UserDefaults.standard.set(window, forKey: key)
+            }
+        }
+    }
+
+    /// 引擎报出本次窗口的那一刻记下来。同样只在状态变化时写。
+    private func rememberReportedWindow() {
+        guard let reported = stats?.maximumContextTokens, reported > 0,
+            !selectedModel.isEmpty
+        else { return }
+        UserDefaults.standard.set(
+            reported,
+            forKey: Self.reportedWindowKey("\(activeEngine.rawValue)|\(selectedModel)"))
+    }
 
     /// 聊天参数留空「最大生成 tokens」时的默认值：先取模型自身上限，再用引擎
     /// **生效窗口**封顶，两者都没报时退回 32768。
@@ -622,9 +518,9 @@ final class AppState: ObservableObject {
         var engineWindow: Int?
         if let reported = stats?.maximumContextTokens, reported > 0 { engineWindow = reported }
         switch (modelContextWindow(selectedModel), engineWindow) {
-        case let (model?, window?): return min(model, window)
-        case let (model?, nil): return model
-        case let (nil, window?): return window
+        case (let model?, let window?): return min(model, window)
+        case (let model?, nil): return model
+        case (nil, let window?): return window
         case (nil, nil): return nil
         }
     }
@@ -632,17 +528,14 @@ final class AppState: ObservableObject {
     /// 概览页「已用 / 总量」的右半边：**模型的上下文上限**。
     ///
     /// 引擎可能把窗口压低（splash 的 `--max-context`、KV 预算），那是「这次能用
-    /// 多少」；这里回答的是「这个模型最多吃多少」，所以不看引擎窗口。GGUF 权重
-    /// 没有 config.json，引擎也没在跑的时候只能靠记忆：每次拿到值就按
-    /// `engine|model` 落到 UserDefaults，停引擎/重启后依然显示 262K 而不是「—」。
+    /// 多少」；这里回答的是「这个模型最多吃多少」，所以优先不看引擎窗口。GGUF
+    /// 权重没有 config.json，引擎也没在跑的时候只能靠记忆（`rememberReportedWindow`
+    /// 在引擎报出窗口时写、这里只读），停引擎/重启后依然显示 262K 而不是「—」。
     var contextWindowCeiling: Int? {
         guard !selectedModel.isEmpty else { return nil }
         if let model = modelContextWindow(selectedModel) { return model }
-        let key = Self.contextWindowKey("\(activeEngine.rawValue)|\(selectedModel)")
-        if let reported = stats?.maximumContextTokens, reported > 0 {
-            UserDefaults.standard.set(reported, forKey: key)
-            return reported
-        }
+        let key = Self.reportedWindowKey("\(activeEngine.rawValue)|\(selectedModel)")
+        if let reported = stats?.maximumContextTokens, reported > 0 { return reported }
         let remembered = UserDefaults.standard.integer(forKey: key)
         return remembered > 0 ? remembered : nil
     }
@@ -654,10 +547,11 @@ final class AppState: ObservableObject {
     /// `prompt + completion`，所以静止时的数字仍然是 KV 里真正躺着的量。
     var contextUsedTokens: Int {
         if generating, livePromptTokens > 0 {
-            return livePromptTokens + Int(decodeMeter.totalTokens.rounded())
+            return livePromptTokens + Int(metrics.streamTotalTokens.rounded())
         }
         guard let last = messages.last(where: { $0.role == "assistant" && ($0.usage?.promptTokens ?? 0) > 0 }),
-              let usage = last.usage else { return 0 }
+            let usage = last.usage
+        else { return 0 }
         return usage.promptTokens + usage.completionTokens
     }
 
@@ -720,7 +614,8 @@ final class AppState: ObservableObject {
         // 卸载旧权重的那段空窗里引擎进程还亮着、阶段会回落到「运行中」——
         // 刚被清空的模型不能说它在跑，那一格宁可空着。
         guard isSwitchingModel,
-              startupStage == EngineStartupStage.ready.rawValue else {
+            startupStage == EngineStartupStage.ready.rawValue
+        else {
             return residentStageText
         }
         return ""
@@ -742,7 +637,8 @@ final class AppState: ObservableObject {
         var parts = [L10n.t(serverState.rawValue)]
         let stage = startupStage
         if !stage.isEmpty, stage != serverState.rawValue,
-           stage != EngineStartupStage.ready.rawValue, stage != "已停止" {
+            stage != EngineStartupStage.ready.rawValue, stage != "已停止"
+        {
             parts.append(L10n.t(stage))
         }
         if serverState == .starting {
@@ -777,257 +673,124 @@ final class AppState: ObservableObject {
     var engineVersion: String { controller?.installation.version ?? "—" }
     var health: (label: String, tone: TagTone) { healthTone(stats) }
 
-    // MARK: 指标 owner 表
+    // MARK: 指标转发
     //
-    // 每个指标格只有一个 owner，owner 缺席时才走声明好的降级链。以前同一个页面
-    // 里 hero 走网关、预填充格走引擎、灵动岛又是引擎优先，两处数字天然对不上；
-    // 现在所有界面（概览 / 灵动岛 / 菜单栏）都从下面这几个函数取数，一格一个
-    // 来源、一个粒度，角标与说明文案由 `MetricOrigin` 直接给出。
-    //
-    // 分工的物理边界：网关只看得见流里的东西（分片节奏、TTFT、请求合计、
-    // usage 里的缓存命中量），队列深度、KV 驻留、显存、草稿接受率这些只有引擎
-    // 量得到。速度类指标 owner = 网关；引擎实时计数只在网关没有会话在跑时兜底
-    //（客户端直连引擎端口），LAST/AVG 永远不参与当前速度。
+    // 曲线、网关聚合、冻结时间这类高频读数整体搬进 `MetricsStore`，它是唯一 owner；
+    // AppState 只把界面已经读惯的名字转过去，所以视图层一行都不用改。
+    // 好处是这些读数变化时不再连带动整棵 AppState 状态树重绘。
 
-    /// 概览曲线与菜单栏的「当前解码速度」。应用内对话也注册在 `GatewayMeter`
-    /// 里，所以曲线和「最近请求」每一行是同一份数据；收尾后归零，不挂 LAST。
-    var totalDecodeRate: Double { decodeReading.value ?? 0 }
+    /// 指标状态机。它的 `objectWillChange` 在 `init` 里桥到 AppState 自己的。
+    let metrics = MetricsStore()
 
-    /// 当前速度读数的来源，界面据此打「网关」/「引擎实时」。
-    /// 只认 LIVE：收尾后的上一请求终值不是当前速度。
-    var speedOrigin: SpeedOrigin { currentSpeedOrigin }
+    /// store 的发布桥回 `objectWillChange`。视图仍然是 `@ObservedObject var state`，
+    /// 桥断了数值虽然在变，页面却不会重画——这是搬移里最容易漏的一根线。
+    private var metricsBridge: AnyCancellable?
+    private var downloadsBridge: AnyCancellable?
+    private var hubBridge: AnyCancellable?
+    private var modelLibraryBridge: AnyCancellable?
+    private var engineSessionBridge: AnyCancellable?
+    private var chatSessionBridge: AnyCancellable?
 
-    /// 解码格的 owner 表输出：`speedOrigin` 的判定 + 它的值，永远同源。
-    var decodeReading: MetricReading {
-        Self.reading(origin: speedOrigin,
-                     gateway: gatewayDecodeRate,
-                     engine: stats?.decodeTokensPerSecond)
-    }
+    var throughput: [ThroughputSample] { metrics.throughput }
+    var acceptance: [ThroughputSample] { metrics.acceptance }
+    var gatewayDecodeRate: Double { metrics.gatewayDecodeRate }
+    var gatewayRateIsLive: Bool { metrics.gatewayRateIsLive }
+    var gatewayPrefillRate: Double { metrics.gatewayPrefillRate }
+    var gatewayTTFTMilliseconds: Double { metrics.gatewayTTFTMilliseconds }
+    var gatewayCacheHitRate: Double { metrics.gatewayCacheHitRate }
+    var gatewayCacheHitRequests: Int { metrics.gatewayCacheHitRequests }
+    var averageDecodeRate: Double { metrics.averageDecodeRate }
+    var gatewayContextTokens: Int { metrics.gatewayContextTokens }
+    var gatewayContextIsLive: Bool { metrics.gatewayContextIsLive }
+    var throughputFrozenAt: Date? { metrics.throughputFrozenAt }
 
-    nonisolated static func reading(origin: SpeedOrigin,
-                                    gateway: Double,
-                                    engine: Double?) -> MetricReading {
-        switch origin {
-        case .gatewayLive: return MetricReading(value: gateway, origin: .gatewayLive)
-        case .engineLive: return MetricReading(value: engine, origin: .engineLive)
-        case .none: return .none
-        }
-    }
+    /// 读数入口都显式收 `stats`/`isRunning`：这两样是 AppState 的状态，
+    /// store 里再存一份就会有两个真相。
+    var decodeReading: MetricReading { metrics.decodeReading(stats: stats, isRunning: isRunning) }
+    var averageDecodeReading: MetricReading { metrics.averageDecodeReading(stats: stats, isRunning: isRunning) }
+    var menuBarDecodeReading: MetricReading { metrics.menuBarDecodeReading(stats: stats, isRunning: isRunning) }
+    var prefillReading: MetricReading { metrics.prefillReading(stats: stats, isRunning: isRunning) }
+    var ttftReading: TTFTReading { metrics.ttftReading(stats: stats, isRunning: isRunning) }
+    var cacheHitReading: MetricReading { metrics.cacheHitReading(stats: stats, isRunning: isRunning) }
+    var speedOrigin: SpeedOrigin { metrics.currentSpeedOrigin(stats: stats, isRunning: isRunning) }
+    var overviewChartEnd: Date { metrics.overviewChartEnd }
 
-    /// HERO 大数字：模型启动以来的平均解码速度，而不是曲线的实时值。
-    ///
-    /// 优先用网关按会话结算的累计量（覆盖所有经过网关的请求，含应用内对话）；
-    /// 没有网关样本时退回引擎自己的 `.lifetimeMean`。两者都不是当前速度，
-    /// 所以 `origin` 是 `gatewayMean` / `engineMean`，界面打 `AVG`。
-    var averageDecodeReading: MetricReading {
-        guard isRunning else { return .none }
-        if averageDecodeRate > 0 {
-            return MetricReading(value: averageDecodeRate, origin: .gatewayMean)
-        }
-        if let lifetime = stats?.lifetimeDecodeTokensPerSecond, lifetime > 0 {
-            return MetricReading(value: lifetime, origin: .engineMean)
-        }
-        if stats?.decodeRateKind == .lifetimeMean,
-           let engine = stats?.decodeTokensPerSecond, engine > 0 {
-            return MetricReading(value: engine, origin: .engineMean)
-        }
-        return .none
-    }
-
-    /// 菜单栏解码格：有实时读数就报实时，空闲时退回「模型启动以来平均」。
-    /// 面板只有一格，不能像概览那样把实时曲线和大数字分开摆——空闲时那格
-    /// 若空着，读者会以为测速坏了。退回的值带着 `.gatewayMean` / `.engineMean`
-    /// 的 origin，面板据此打 `AVG` 角标，不把平均值冒充成此刻速度。
-    var menuBarDecodeReading: MetricReading {
-        let live = decodeReading
-        guard live.value == nil else { return live }
-        return averageDecodeReading
-    }
-
-    /// 预填充格的 owner 表输出。
-    ///
-    /// 预填充是一次性动作，短提示词（几百 token）在 1 秒采样里几乎抓不到
-    /// 引擎的 `in_flight` 实时窗口；换一台引擎，引擎自报字段的名字和粒度还会
-    /// 整个变掉。所以 LAST 这一档走**按请求的实测值**：引擎在响应里自报的
-    /// `timings`（`prompt_n − cached_n` / `prompt_ms`，流式与非流式都带）优先，
-    /// 没有它才退回网关自己算的 TTFT 口径（分子是 usage 里的提示词 token 减去
-    /// 前缀缓存命中量，分母是请求发出到首 token 的墙钟，只对流式响应成立）。
-    /// 只有「此刻真的在预填充」才用引擎的 `.live`（那时网关还没有首 token），
-    /// 其余时间按请求的实测值优先，引擎的 LAST/AVG 只在网关没有会话记录时兜底。
-    var prefillReading: MetricReading {
-        guard isRunning else { return .none }
-        return Self.prefillReading(gateway: gatewayPrefillRate,
-                                   engine: stats?.prefillTokensPerSecond,
-                                   engineKind: stats?.prefillRateKind ?? .none)
-    }
-
-    /// 预填充格的完整 owner 顺序：就地预填充（引擎 LIVE）→ 网关实测 LAST →
-    /// 引擎 LAST / AVG。抽成纯函数，测试可以钉住优先级。
-    nonisolated static func prefillReading(gateway: Double,
-                                           engine: Double?,
-                                           engineKind: EngineRateKind = .none) -> MetricReading {
-        let engineReading = prefillReading(engine: engine, engineKind: engineKind)
-        // 实时预填充只有引擎量得到：这时网关连首 token 都还没拿到。
-        if engineReading.origin == .engineLive { return engineReading }
-        if gateway > 0 { return MetricReading(value: gateway, origin: .gatewayLast) }
-        return engineReading
-    }
-
-    /// 引擎自报速率的翻译层，不含网关。保留给测试和网关缺席时的兜底。
-    nonisolated static func prefillReading(engine: Double?,
-                                           engineKind: EngineRateKind = .none) -> MetricReading {
-        guard let engine, engine > 0 else { return .none }
-        switch engineKind {
-        case .live:
-            return MetricReading(value: engine, origin: .engineLive)
-        case .lastRequest:
-            return MetricReading(value: engine, origin: .engineLast)
-        case .lifetimeMean:
-            return MetricReading(value: engine, origin: .engineMean)
-        case .none:
-            return .none
-        }
-    }
-
-    /// 首字延迟格的 owner 表输出：引擎 status → 网关最近一次实测 → 没有。
-    ///
-    /// 引擎的 TTFT 统计是首选：它有样本时覆盖所有经过引擎的请求，splash 还给
-    /// 的是 p50。但它不是每家都有——oMLX / strata 的 status 没有这个字段，
-    /// splash 在首个请求之前报 0——这时退到网关逐请求量到的首字（应用内对话
-    /// 也注册在网关里）。两侧都没有才画「—」：0 不是「首字很快」。
-    var ttftReading: TTFTReading {
-        guard isRunning else { return .none }
-        return Self.ttftReading(engine: stats?.ttftMilliseconds,
-                                engineKind: stats?.ttftKind ?? .none,
-                                gateway: gatewayTTFTMilliseconds)
-    }
-
-    /// 首字格的 owner 顺序，抽成纯函数给测试钉住。引擎值必须 > 0 才算样本；
-    /// 网关值是「最近一次真的量到首字」的请求，同样 > 0 才可用。
-    nonisolated static func ttftReading(engine: Double?,
-                                        engineKind: EngineTTFTKind = .none,
-                                        gateway: Double) -> TTFTReading {
-        if let engine, engine > 0 {
-            return TTFTReading(milliseconds: engine, source: .engine, kind: engineKind)
-        }
-        if gateway > 0 {
-            return TTFTReading(milliseconds: gateway, source: .gateway, kind: .lastRequest)
-        }
-        return .none
-    }
-
-    /// 缓存命中率格的 owner 表输出。
-    ///
-    /// 主口径是网关按代累计的「命中量 / 提示词总量」（按 token 加权）：它和
-    /// 其他格一样按请求打点，覆盖应用内对话与所有经过网关的客户端，也不依赖
-    /// 任何一家引擎自报字段——换引擎不会让这格变空。网关一个带 usage 的请求
-    /// 都没有时（客户端绕过网关直连引擎端口），退回引擎自己报的开机以来
-    /// 命中率：mlx-serve / MTPLX 的 `cached / prompt` 两个累计计数器、oMLX 的
-    /// `total_cached_tokens / total_prompt_tokens`。两个口径都是累计平均，
-    /// 所以角标只有 `AVG`；没有样本时画「—」，不拿 0% 冒充「一次都没命中」。
-    var cacheHitReading: MetricReading {
-        guard isRunning else { return .none }
-        return Self.cacheHitReading(gateway: gatewayCacheHitRate,
-                                    requests: gatewayCacheHitRequests,
-                                    engine: stats?.cacheHitRate)
-    }
-
-    /// 缓存命中率的 owner 顺序：网关按代累计 → 引擎开机以来。抽成纯函数，
-    /// 测试可以钉住「网关样本优先」与「0% 是合法读数、没样本才是 —」。
-    nonisolated static func cacheHitReading(gateway: Double,
-                                            requests: Int,
-                                            engine: Double?) -> MetricReading {
-        if requests > 0, gateway >= 0, gateway <= 1 {
-            return MetricReading(value: gateway, origin: .gatewayMean)
-        }
-        if let engine, engine >= 0, engine <= 1 {
-            return MetricReading(value: engine, origin: .engineMean)
-        }
-        return .none
-    }
-
-    /// 解码速度读数与它自己的时间基之间的最大跨度。超过这个跨度，重采样器
-    /// 的窗口就覆盖不到调用方所在的时间——这个读数就不再回答「此刻多快」，
-    /// 降级为「没有当前速度」，让引擎 LIVE 计数补位。
-    nonisolated private static let rateReadingFreshness: TimeInterval = 2.0
-    /// `gatewayDecodeRate` 最后一次刷新的时刻，用于 `decodeReading` 的新鲜度
-    /// 门槛。只在主线程读写。
-    private var gatewayReadingAt: Date?
-
-    /// 速度来源的判定。抽成纯函数，测试可以钉住「引擎 LIVE 不能压过网关」、
-    /// 「引擎 LAST/AVG 不算当前速度」「空闲不显示旧值」「读数过旧降级」。
-    /// `gatewayIsLive == false` 时网关值一律不参与——没有 LAST 这种"降级"。
-    nonisolated static func speedOrigin(gateway: Double,
-                                        gatewayIsLive: Bool = true,
-                                        engine: Double?,
-                                        engineKind: EngineRateKind = .none,
-                                        activeRequests: Int = 0,
-                                        gatewayAge: TimeInterval? = nil) -> SpeedOrigin {
-        if gateway > 0, gatewayIsLive,
-           gatewayAge == nil || gatewayAge! <= rateReadingFreshness {
-            return .gatewayLive
-        }
-        if engineKind == .live, let engine, engine > 0, activeRequests > 0 {
-            return .engineLive
-        }
-        return .none
-    }
-
-    /// `speedOrigin` 的界面可见口径：带上主线程那份 `gatewayDecodeRate` 的年龄。
-    var currentSpeedOrigin: SpeedOrigin {
-        guard isRunning else { return .none }
-        return Self.speedOrigin(gateway: gatewayDecodeRate,
-                                gatewayIsLive: gatewayRateIsLive,
-                                engine: stats?.decodeTokensPerSecond,
-                                engineKind: stats?.decodeRateKind ?? .none,
-                                activeRequests: stats?.activeRequests ?? 0,
-                                gatewayAge: gatewayReadingAt.map(Date().timeIntervalSince))
-    }
-
-    /// 概览 60 秒曲线的右缘：请求收尾后冻结在收尾时刻，新请求开始后恢复
-    /// 跟随挂钟。hero 不再有 sparkline，只有概览曲线读这个口径。
-    var overviewChartEnd: Date { throughputFrozenAt ?? Date() }
-
-    /// 概览曲线样本。冻结后只取到 `throughputFrozenAt`，不会随着窗口
-    /// 继续滚动而把曲线抽空。
     func overviewThroughput(window: TimeInterval) -> [ThroughputSample] {
-        guard window > 0 else { return throughput }
-        return Self.suffix(of: throughput, window: window, endingAt: overviewChartEnd)
+        metrics.overviewThroughput(window: window)
     }
 
-    /// 概览用 60 秒、菜单栏用近 5 分钟；序列保留 10 分钟，留一点余量。
-    /// 菜单栏的 sparkline 不冻结，所以这里仍以当前时刻为右缘。
     func recentThroughput(window: TimeInterval) -> [ThroughputSample] {
-        guard window > 0 else { return throughput }
-        return Self.suffix(of: throughput, window: window, endingAt: Date())
+        metrics.recentThroughput(window: window)
     }
 
-    /// Same windows for the draft-acceptance curve, so both charts scroll together.
-    func recentAcceptance(window: TimeInterval) -> [ThroughputSample] {
-        guard window > 0 else { return acceptance }
-        return Self.suffix(of: acceptance, window: window, endingAt: Date())
+    // MARK: 纯函数转发
+    //
+    // 这 7 个静态纯函数被既有测试直接调用（DecodeRateTotalTests / CacheHitTests），
+    // 实现已经搬进 store，留一层转发让测试原样通过。
+
+    nonisolated static func reading(
+        origin: SpeedOrigin,
+        gateway: Double,
+        engine: Double?
+    ) -> MetricReading {
+        MetricsStore.reading(origin: origin, gateway: gateway, engine: engine)
     }
 
-    /// 序列按时间升序排列，用二分找窗口起点；概览每秒都会为几张图各取一次，
-    /// 全表 `filter` 在千余个样本上没有必要。`endingAt` 是窗口右缘：冻结的
-    /// 曲线传收尾时刻，右缘之后（理论上没有）的迟到样本一并排除。
-    private static func suffix(of samples: [ThroughputSample],
-                               window: TimeInterval,
-                               endingAt end: Date) -> [ThroughputSample] {
-        guard !samples.isEmpty else { return [] }
-        let cutoff = end.addingTimeInterval(-window)
-        var low = 0
-        var high = samples.count
-        while low < high {
-            let mid = (low + high) / 2
-            if samples[mid].at < cutoff {
-                low = mid + 1
-            } else {
-                high = mid
-            }
-        }
-        guard low < samples.count else { return [] }
-        return samples[low...].filter { $0.at <= end }
+    nonisolated static func prefillReading(
+        gateway: Double,
+        engine: Double?,
+        engineKind: EngineRateKind = .none
+    ) -> MetricReading {
+        MetricsStore.prefillReading(gateway: gateway, engine: engine, engineKind: engineKind)
+    }
+
+    nonisolated static func prefillReading(
+        engine: Double?,
+        engineKind: EngineRateKind = .none
+    ) -> MetricReading {
+        MetricsStore.prefillReading(engine: engine, engineKind: engineKind)
+    }
+
+    nonisolated static func ttftReading(
+        engine: Double?,
+        engineKind: EngineTTFTKind = .none,
+        gateway: Double
+    ) -> TTFTReading {
+        MetricsStore.ttftReading(engine: engine, engineKind: engineKind, gateway: gateway)
+    }
+
+    nonisolated static func cacheHitReading(
+        gateway: Double,
+        requests: Int,
+        engine: Double?
+    ) -> MetricReading {
+        MetricsStore.cacheHitReading(gateway: gateway, requests: requests, engine: engine)
+    }
+
+    nonisolated static func speedOrigin(
+        gateway: Double,
+        gatewayIsLive: Bool = true,
+        engine: Double?,
+        engineKind: EngineRateKind = .none,
+        activeRequests: Int = 0,
+        gatewayAge: TimeInterval? = nil
+    ) -> SpeedOrigin {
+        MetricsStore.speedOrigin(
+            gateway: gateway,
+            gatewayIsLive: gatewayIsLive,
+            engine: engine,
+            engineKind: engineKind,
+            activeRequests: activeRequests,
+            gatewayAge: gatewayAge)
+    }
+
+    nonisolated static func chartFrozenAt(
+        previous: Date?,
+        wasLive: Bool,
+        isLive: Bool,
+        now: Date
+    ) -> Date? {
+        MetricsStore.chartFrozenAt(previous: previous, wasLive: wasLive, isLive: isLive, now: now)
     }
 
     var endpointURL: String { "http://127.0.0.1:\(port)/v1" }
@@ -1093,7 +856,12 @@ final class AppState: ObservableObject {
         let nextState = controller?.state ?? .stopped
         if serverState != nextState { serverState = nextState }
         let nextStats = controller?.stats
-        if stats != nextStats { stats = nextStats }
+        if stats != nextStats {
+            stats = nextStats
+            // 引擎刚刚报出（或改口）本次窗口：顺手记住是显式的写入点，
+            // 不让读取处去写 UserDefaults。
+            rememberReportedWindow()
+        }
         if let store = controller?.logs, store.latestId != logs.last?.id {
             logs = store.snapshot(limit: 4000)
         } else if controller == nil, !logs.isEmpty {
@@ -1113,216 +881,19 @@ final class AppState: ObservableObject {
         }
 
         let now = Date()
-        // 概览的速度读数统一在这里按 **1 秒一拍** 发布：引擎轮询是 1s，
-        // 应用内对话的分片回调只喂对话页直播条，不再顺带刷新概览。
-        // `@Published` 只在数值真的变化时发布，空闲时不重绘。
-        publishDecodeRate(at: now)
-
-        // 回答结束后先保留最后一次平滑读数，5 秒后才撤掉，免得对话页直播条
-        // 在收尾瞬间台阶式归零；概览速度不受这段保留影响。
-        if !generating, let ended = generationEndedAt, now.timeIntervalSince(ended) >= 5 {
-            generationEndedAt = nil
-            liveDecodeRate = nil
-        }
-        // 取消 / 出错的回复没有「结束保留期」，空闲后立刻撤掉旧读数。
-        if !generating, generationEndedAt == nil, liveDecodeRate != nil {
-            liveDecodeRate = nil
-        }
-
-        // 接受率与吞吐同频采样。引擎给的是会话累计值：空闲时它不变，生成时才爬。
-        // 因此只在「数值真的变了」或「解码读数正在动」的时候落点——否则每秒都会多
-        // 一个样本，概览页的曲线与读数会无谓刷新。
-        if let latest = stats?.draftAcceptance {
-            let cutoff = now.addingTimeInterval(-Self.sampleRetention)
-            let due = acceptance.last.map { now.timeIntervalSince($0.at) >= 0.9 } ?? true
-            let changed = acceptance.last.map { abs($0.value - latest) > 0.0001 } ?? true
-            let rateMoving = stats?.decodeTokensPerSecond.map { reported in
-                throughput.last.map { abs($0.value - reported) > 0.15 } ?? true
-            } ?? false
-            if due, changed || rateMoving {
-                acceptance.append(ThroughputSample(at: now, value: latest))
-                acceptance.removeAll { $0.at < cutoff }
-            }
-        }
+        // 指标那一半（网关聚合 / 曲线 / 接受率）搬进了 store，仍然按 **1 秒一拍**
+        // 发布：引擎轮询是 1s，应用内对话的分片回调只喂对话页直播条，不再顺带刷新
+        // 概览。`@Published` 只在数值真的变化时发布，空闲时不重绘；这里只负责把
+        // 这一拍的引擎状态递进去。
+        metrics.tick(now: now, stats: stats, isRunning: isRunning, activeEngine: activeEngine)
 
         if switchingModel != nil { syncSwitchStage() }
     }
 
-    /// 流式回复的本地测速：每个增量按小数权重喂进连续时间低通估计器。
-    ///
-    /// 这条低通只服务对话页直播条——那里要的是「最后一个脉冲的强度」，按
-    /// 分片节奏刷新是对的。概览的曲线 / 大数字按统一的 1 秒节拍读网关，
-    /// 不再被分片回调推着「立即变化」。
+    /// 流式回复的本地测速委托给指标 store：低通估计器跟着指标一起搬走了，
+    /// 对话页直播条读到的还是同一条曲线。
     private func recordStreamDelta(_ piece: String, at event: Date) {
-        let tokens = TokenEstimator.fractional(piece)
-        guard tokens > 0 else { return }
-        // 用分片真正到达的时刻，而不是主线程排到这一条任务的时刻。UI 忙时
-        // 一批回调会被挤在一起处理，若在此时取 `Date()`，估计器会以为几十个
-        // token 是「瞬间」吐出来的，读数被抬出一个尖峰。
-        decodeMeter.add(tokens: tokens, at: event)
-        let now = Date()
-        if let last = lastLiveRatePublishAt, now.timeIntervalSince(last) < 0.25 { return }
-        lastLiveRatePublishAt = now
-        let chatRate = decodeMeter.rate(at: now)
-        liveDecodeRate = chatRate > 0 ? chatRate : nil
-    }
-
-    /// 概览速度的唯一节拍：读一次网关聚合、发布当前速度与平均速度、
-    /// 落一个 1 秒曲线点、判断是否该冻结曲线。
-    ///
-    /// 应用内对话也注册在 `GatewayMeter` 里，所以这里的实时值、曲线末端与
-    /// 「最近请求」读的是同一份按请求打点。收尾后 `overview.isLive` 立刻
-    /// 变 false：当前速度归零（不再挂 LAST），曲线冻结在最后一个采样点。
-    ///
-    /// 采样规则只有一条：**一拍最多一个点**。`publishDecodeRate` 自己已经
-    /// 按 1 秒闸住，所以这里不再做第二道时间门槛；按「值变了」加密采样
-    /// 更不行——同一秒内的多次 `syncController` 会把 60 秒曲线灌成非等距的点。
-    func publishDecodeRate(at now: Date) {
-        // 一秒一拍：同一拍里 `syncController` 可能被多个状态变化叫醒，
-        // 但概览的数字只该在整秒上变。0.95 留一点定时器抖动余量。
-        if let last = lastSpeedPublishAt, now.timeIntervalSince(last) < 0.95 { return }
-        lastSpeedPublishAt = now
-        // 累计均值的身份先对齐：引擎 / 进程 / 模型换代时清空上一台的成绩。
-        syncLifetimeIdentity()
-        let overview = GatewayMeter.shared.overview(now: now)
-        publishGatewayOverview(overview, at: now)
-        publishGatewayPrefill()
-        publishGatewayTTFT()
-        publishGatewayCacheHit()
-        publishGatewayContext()
-        publishAverageDecodeRate()
-        // 直连引擎端口的请求网关看不见：引擎自己报的 activeRequests 也算
-        // 「还有东西在跑」，Chart 不该在它跑完之前冻结。
-        let live = overview.isLive || (stats?.activeRequests ?? 0) > 0
-        sampleSpeed(at: now, isLive: live)
-        updateChartFreeze(isLive: live, at: now)
-    }
-
-    /// 把网关的聚合读数发布成当前速度的两个 `@Published` 值，并盖上时间戳。
-    ///
-    /// `gatewayReadingAt` 是 owner 表的新鲜度门槛：读数只在真的发布过之后
-    /// 才有资格谈年龄。
-    private func publishGatewayOverview(_ overview: GatewayMeter.Overview, at now: Date) {
-        let changed = gatewayDecodeRate != overview.decodeRate || gatewayRateIsLive != overview.isLive
-        if changed {
-            gatewayDecodeRate = overview.decodeRate
-            gatewayRateIsLive = overview.isLive
-        }
-        // 时间戳每次同步都盖：读数稳定在同一个值时 `changed` 为 false，
-        // 但这一拍仍然是新鲜的。只在数值变化时盖章会把「稳定的高速」
-        // 误判成「过旧」，1 秒节拍下尤其明显。
-        gatewayReadingAt = now
-    }
-
-    /// 发布网关自己算的预填充实测值。它不是「当前速度」，所以不走
-    /// `gatewayReadingAt` 的新鲜度门槛：预填充做完就固定了，只是标成 LAST。
-    private func publishGatewayPrefill() {
-        let next = GatewayMeter.shared.recentPrefill() ?? 0
-        guard abs(gatewayPrefillRate - next) > 0.5 else { return }
-        gatewayPrefillRate = next
-    }
-
-    /// 发布网关实测的最近一次首字。与预填充同样是「做完就固定」的观测，
-    /// 不走 `gatewayReadingAt` 的新鲜度门槛：它描述的是上一轮等了多久，
-    /// 不是「此刻多快」。新一代（换引擎 / 换模型）后读数自然回 0。
-    private func publishGatewayTTFT() {
-        let next = GatewayMeter.shared.recentTTFTMilliseconds() ?? 0
-        guard abs(gatewayTTFTMilliseconds - next) > 0.5 else { return }
-        gatewayTTFTMilliseconds = next
-    }
-
-    /// 发布网关按代累计的缓存命中率。与预填充同样不走新鲜度门槛：它描述的是
-    /// 最近这批有 usage 的请求，做完就固定，直到下一条 usage 回来才跳一格。
-    /// 引擎停下时清回 0 / 0——界面靠 `requests == 0` 区分「没样本」与「0%」。
-    private func publishGatewayCacheHit() {
-        let next = isRunning ? GatewayMeter.shared.cacheHit() : nil
-        let rate = next?.rate ?? 0
-        let requests = next?.requests ?? 0
-        guard abs(gatewayCacheHitRate - rate) > 0.0001
-                || gatewayCacheHitRequests != requests else { return }
-        gatewayCacheHitRate = rate
-        gatewayCacheHitRequests = requests
-    }
-
-    /// 发布 HERO 的「模型启动以来平均」。网关累计量为 0 时保留 0，界面会
-    /// 去看引擎的 `.lifetimeMean`，两处都没有就画「—」。
-    private func publishAverageDecodeRate() {
-        let next = isRunning ? (GatewayMeter.shared.lifetimeAverage() ?? 0) : 0
-        guard abs(averageDecodeRate - next) > 0.0001 else { return }
-        averageDecodeRate = next
-    }
-
-    private func publishGatewayContext() {
-        let next = isRunning ? GatewayMeter.shared.latestContext() : nil
-        let tokens = next?.tokens ?? 0
-        let isLive = next?.isLive ?? false
-        if gatewayContextTokens != tokens { gatewayContextTokens = tokens }
-        if gatewayContextIsLive != isLive { gatewayContextIsLive = isLive }
-    }
-
-    /// 把一次网关读数落到 60 秒曲线上。只有「在跑」且读数 > 0 时落点：
-    /// 静默段不拿 0 去填谷，曲线保留最后一段真实形状；请求收尾由
-    /// `updateChartFreeze` 冻结整张图。一拍一个点由调用方的 1 秒闸保证。
-    private func sampleSpeed(at now: Date, isLive: Bool) {
-        guard isLive else { return }
-        let sample = totalDecodeRate
-        guard sample > 0 else { return }
-        throughput.append(ThroughputSample(at: now, value: sample))
-        throughput.removeAll { $0.at < now.addingTimeInterval(-Self.sampleRetention) }
-    }
-
-    /// 请求全部收尾时把 60 秒曲线冻在收尾时刻；新请求一开始就解冻。
-    /// 冻结的是**右缘**（`overviewChartEnd`），不是样本数组：窗口不再随
-    /// 挂钟向前滑，曲线也就不会在空闲几分钟后被裁空。
-    private func updateChartFreeze(isLive: Bool, at now: Date) {
-        let next = Self.chartFrozenAt(previous: throughputFrozenAt,
-                                      wasLive: chartWasLive,
-                                      isLive: isLive,
-                                      now: now)
-        if throughputFrozenAt != next { throughputFrozenAt = next }
-        chartWasLive = isLive
-    }
-
-    /// 曲线冻结状态的纯逻辑：进行中永远解冻；1 → 0 的那一拍记下收尾时刻；
-    /// 一直空闲时不冻结（否则启动即冻，横轴永远停在开机时刻）。
-    /// 抽出来是为了在没有窗口的测试里钉住这三条。
-    nonisolated static func chartFrozenAt(previous: Date?,
-                                          wasLive: Bool,
-                                          isLive: Bool,
-                                          now: Date) -> Date? {
-        if isLive { return nil }
-        if let previous { return previous }
-        return wasLive ? now : nil
-    }
-
-    /// 累计均值的身份 = 引擎 + 进程 + 进程启动时刻 + 模型。任一变化都说明
-    /// 换了一台「模型启动以来」，上一台的累计量不该再算进来。
-    private func syncLifetimeIdentity() {
-        guard let stats else { return }
-        let uptimeRestarted: Bool
-        if let prev = previousUptimeSeconds, let current = stats.uptimeSeconds, current + 1.0 < prev {
-            uptimeRestarted = true
-        } else {
-            uptimeRestarted = false
-        }
-        previousUptimeSeconds = stats.uptimeSeconds
-
-        let key = [
-            activeEngine.rawValue,
-            stats.instancePid.map(String.init) ?? "-",
-            stats.startedAt.map { String(format: "%.3f", $0) } ?? "-",
-            stats.model ?? "-"
-        ].joined(separator: "|")
-        guard uptimeRestarted || key != lifetimeIdentity else { return }
-        lifetimeIdentity = key
-        GatewayMeter.shared.resetLifetime()
-        if averageDecodeRate != 0 { averageDecodeRate = 0 }
-        if gatewayPrefillRate != 0 { gatewayPrefillRate = 0 }
-        if gatewayTTFTMilliseconds != 0 { gatewayTTFTMilliseconds = 0 }
-        if gatewayCacheHitRate != 0 { gatewayCacheHitRate = 0 }
-        if gatewayCacheHitRequests != 0 { gatewayCacheHitRequests = 0 }
-        if gatewayContextTokens != 0 { gatewayContextTokens = 0 }
-        if gatewayContextIsLive { gatewayContextIsLive = false }
+        metrics.recordStreamDelta(piece, at: event)
     }
 
     func bootstrap() {
@@ -1510,8 +1081,10 @@ final class AppState: ObservableObject {
     func refreshLocalRepos() {
         var local = Set(sharedRepos.map { ModelSharing.canonical($0) })
         for id in EngineCatalog.allIDs {
-            for model in LocalEngineModels.scan(engine: id,
-                                                directory: EnginePaths.modelsDirectory(id)) {
+            for model in LocalEngineModels.scan(
+                engine: id,
+                directory: EnginePaths.modelsDirectory(id))
+            {
                 local.insert(ModelSharing.canonical(model.id))
             }
         }
@@ -1533,6 +1106,9 @@ final class AppState: ObservableObject {
             selectedModel = first.id
             settings.setModel(first.id)
         }
+        // 扫盘之后是唯一「确定知道每个模型窗口」的时刻：在这里落盘记住，
+        // 读取处就不必再写 UserDefaults。
+        rememberContextWindows()
     }
 
     // MARK: hardware
@@ -1595,7 +1171,8 @@ final class AppState: ObservableObject {
     /// exactly when the recommended model is the one that is installed.
     func recommendationTag(for id: String, engine: EngineID) -> String? {
         guard let pick = hardwareRecommendation?.pick(for: engine),
-              ModelLibraryEntry.normalized(pick.model) == ModelLibraryEntry.normalized(id) else { return nil }
+            ModelLibraryEntry.normalized(pick.model) == ModelLibraryEntry.normalized(id)
+        else { return nil }
         return L10n.format("推荐 · %@", pick.reason)
     }
 
@@ -1690,7 +1267,8 @@ final class AppState: ObservableObject {
     /// engines has to know what the destination can serve before it commits.
     func engineModels(for id: EngineID) -> [EngineModel] {
         if let hit = engineModelsCache[id],
-           Date().timeIntervalSince(hit.at) < Self.modelListTTL {
+            Date().timeIntervalSince(hit.at) < Self.modelListTTL
+        {
             return hit.models
         }
         let models = scanEngineModels(for: id)
@@ -1718,13 +1296,15 @@ final class AppState: ObservableObject {
                     // Splash 的视觉能力来自独立的 mmproj 投影（GGUF 旁边的
                     // mmproj-*.gguf），目录扫描看不到；不补这个能力位，视觉
                     // 模型在对话页会被当成纯文本模型，画完图也不回传像素。
-                    let vision = $0.mmprojPath != nil
+                    let vision =
+                        $0.mmprojPath != nil
                         || LocalEngineModels.capabilities(at: $0.path).contains("vision")
                         || LocalEngineModels.capabilities(at: $0.targetName).contains("vision")
-                    return EngineModel(id: $0.id, path: $0.path, bytes: $0.bytes,
-                                       maximumContextTokens: nil, loaded: false, loading: false,
-                                       kind: nil, capabilities: vision ? ["chat", "vision"] : [],
-                                       hidden: false, helper: false, engine: .splash)
+                    return EngineModel(
+                        id: $0.id, path: $0.path, bytes: $0.bytes,
+                        maximumContextTokens: nil, loaded: false, loading: false,
+                        kind: nil, capabilities: vision ? ["chat", "vision"] : [],
+                        hidden: false, helper: false, engine: .splash)
                 }
         }
         let scanned = LocalEngineModels.scan(engine: id, directory: EnginePaths.modelsDirectory(id))
@@ -1743,17 +1323,20 @@ final class AppState: ObservableObject {
             .map { model in
                 // Splash 认 `owner/repo`，两个 pack 认扁平目录名——启动时交给引擎
                 // 的就是这个 id，不能用另一种写法。
-                let id = engine.adapter == .splash || engine.descriptor.modelLayout == .nested
+                let id =
+                    engine.adapter == .splash || engine.descriptor.modelLayout == .nested
                     ? model.id
                     : ModelInstaller.folderName(for: model.id)
-                let vision = model.mmprojPath != nil
+                let vision =
+                    model.mmprojPath != nil
                     || LocalEngineModels.capabilities(at: model.targetName).contains("vision")
-                return EngineModel(id: id,
-                                   path: model.targetName,
-                                   bytes: model.bytes,
-                                   maximumContextTokens: nil, loaded: false, loading: false,
-                                   kind: nil, capabilities: vision ? ["chat", "vision"] : [],
-                                   hidden: false, helper: false, engine: engine)
+                return EngineModel(
+                    id: id,
+                    path: model.targetName,
+                    bytes: model.bytes,
+                    maximumContextTokens: nil, loaded: false, loading: false,
+                    kind: nil, capabilities: vision ? ["chat", "vision"] : [],
+                    hidden: false, helper: false, engine: engine)
             }
     }
 
@@ -1769,7 +1352,8 @@ final class AppState: ObservableObject {
     /// rows whether or not that engine is installed, running or holding a model.
     func libraryEntries(for engine: EngineID) -> [ModelLibraryEntry] {
         if let hit = libraryEntriesCache[engine],
-           Date().timeIntervalSince(hit.at) < Self.modelListTTL {
+            Date().timeIntervalSince(hit.at) < Self.modelListTTL
+        {
             return hit.entries
         }
         let entries = buildLibraryEntries(for: engine)
@@ -1784,75 +1368,50 @@ final class AppState: ObservableObject {
         } else {
             installed = engineModels(for: engine).map { model in
                 let path = model.path ?? (EnginePaths.modelsDirectory(engine) + "/" + model.id)
-                return ModelInfo(id: model.id,
-                                 path: path,
-                                 bytes: model.bytes ?? 0,
-                                 origin: .local,
-                                 targetName: "",
-                                 quantization: ModelQuantization.detect(in: model.id)
-                                     ?? EngineModelStore.meta(of: path).quantization)
+                return ModelInfo(
+                    id: model.id,
+                    path: path,
+                    bytes: model.bytes ?? 0,
+                    origin: .local,
+                    targetName: "",
+                    quantization: ModelQuantization.detect(in: model.id)
+                        ?? EngineModelStore.meta(of: path).quantization)
             }
         }
-        return ModelLibrary.entries(installed: installed,
-                                    engine: engine,
-                                    recommendations: libraryRecommendations(for: engine)) { id in
+        return ModelLibrary.entries(
+            installed: installed,
+            engine: engine,
+            recommendations: libraryRecommendations(for: engine)
+        ) { id in
             engine.adapter == .splash ? self.catalog.draftRepository(id, family: nil) : nil
         }
     }
 
     func browseEngine(_ id: EngineID) {
         libraryEngine = id
-        // 搜索是「这一栏里的这次查询」：换栏就散，否则新栏会顶着一次它从没
-        // 被输入过的查询，把别的引擎的命中当成自己的结果。票号一并作废，
-        // 免得还在路上的答案落进新栏。
-        hubSearchTicket += 1
-        hubSearch = HubSearchState()
+        hub.resetSearch()
     }
 
-    // MARK: Hub search
+    // MARK: hub
 
-    private static let hubClient = HubSearchClient()
-    /// Bumped on every keystroke that starts a search so a slow answer cannot
-    /// overwrite a newer one.
-    private var hubSearchTicket = 0
+    /// 浏览相关的调用点保持不变：视图和本地控制通道仍然问 AppState，动作转给
+    /// `HubStore`。搜索有两个入口（按引擎栏的一次性查询、模型广场的列表分页），
+    /// 两套状态各自独立。
+    func searchHub(_ query: String) { hub.searchHub(query) }
 
-    /// Search the Hub for repositories the current column can serve.
-    ///
-    /// Two requests, not one: the list endpoint's `siblings[].size` is always
-    /// null, so sizes only come from the per-repository endpoint, fetched
-    /// concurrently for the handful of hits that survive the format filter.
-    func searchHub(_ query: String) {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        hubSearchTicket += 1
-        let ticket = hubSearchTicket
-        guard !trimmed.isEmpty else {
-            hubSearch = HubSearchState()
-            return
-        }
-        hubSearch = HubSearchState(query: trimmed, phase: .loading)
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                let hits = try await Self.hubClient.search(trimmed)
-                let enriched = await Self.hubClient.enrich(hits)
-                let results = enriched.compactMap { HubSearchState.result(for: $0) }
-                guard ticket == self.hubSearchTicket else { return }
-                self.hubSearch = HubSearchState(query: trimmed, phase: .idle, results: results)
-            } catch {
-                guard ticket == self.hubSearchTicket else { return }
-                let message = (error as? HubError)?.errorDescription ?? "\(error)"
-                self.hubSearch = HubSearchState(query: trimmed, phase: .failed, error: message)
-            }
-        }
+    func searchHub(_ query: String, sort: String, filter: String? = nil, page: Int = 0) {
+        hub.searchHub(query, sort: sort, filter: filter, page: page)
     }
 
-    /// The search hits the given column may show. Ownership comes from the
-    /// repository's own format, so a row never appears in two columns.
-    func hubResults(for engine: EngineID) -> [HubSearchResult] {
-        hubSearch.results
-            .filter { $0.engines.contains(engine) }
-            .map { $0.targeting(engine) }
-    }
+    func hubResults(for engine: EngineID) -> [HubSearchResult] { hub.hubResults(for: engine) }
+
+    func loadHubDetail(_ repo: String) { hub.loadHubDetail(repo) }
+
+    func closeHubDetail() { hub.closeHubDetail() }
+
+    func probeRepo(_ repo: String) { hub.probeRepo(repo) }
+
+    func clearRepoProbe() { hub.clearRepoProbe() }
 
     // MARK: draft assignments
 
@@ -1875,11 +1434,13 @@ final class AppState: ObservableObject {
     func setDraftAssignment(_ draft: String?, engine: EngineID, model: String) {
         EngineStore.shared.setDraftAssignment(draft, engine: engine, model: model)
         if let draft, !draft.isEmpty {
-            toast(L10n.format("已为 %@ 指定辅助模型 %@", shortModelName(model), shortModelName(draft)),
-                  transient: true)
+            toast(
+                L10n.format("已为 %@ 指定辅助模型 %@", shortModelName(model), shortModelName(draft)),
+                transient: true)
         } else {
-            toast(L10n.format("已清除 %@ 的辅助模型，跟随引擎设置", shortModelName(model)),
-                  transient: true)
+            toast(
+                L10n.format("已清除 %@ 的辅助模型，跟随引擎设置", shortModelName(model)),
+                transient: true)
         }
         if engine == activeEngine, controller?.isRunning == true {
             Task { [weak self] in
@@ -1961,8 +1522,10 @@ final class AppState: ObservableObject {
     /// `nil` means the requested (or currently selected) model is ready.
     /// - Parameter allowingGeneration: 应用内图像生成用。它自己已经把
     ///   `generating` 置真，但换模型正是这次生成要做的事，不能因此拒绝自己。
-    func prepareModelForGateway(_ requestedModel: String?,
-                                allowingGeneration: Bool = false) async -> GatewayModelPreparationError? {
+    func prepareModelForGateway(
+        _ requestedModel: String?,
+        allowingGeneration: Bool = false
+    ) async -> GatewayModelPreparationError? {
         let previous = gatewayPreparationTail
         let operation = Task { @MainActor [weak self] () -> GatewayModelPreparationError? in
             await previous?.value
@@ -1974,9 +1537,12 @@ final class AppState: ObservableObject {
         return await operation.value
     }
 
-    private func prepareModelForGatewayExclusively(_ requestedModel: String?,
-                                                  allowingGeneration: Bool)
-        async -> GatewayModelPreparationError? {
+    private func prepareModelForGatewayExclusively(
+        _ requestedModel: String?,
+        allowingGeneration: Bool
+    )
+        async -> GatewayModelPreparationError?
+    {
         guard !needsEngineSetup, let engines else {
             return .unavailable("还没有安装推理引擎，请先在 flashCat 中安装并启动一个引擎")
         }
@@ -1995,23 +1561,30 @@ final class AppState: ObservableObject {
 
         var orderedEngines = [activeEngine]
         orderedEngines.append(contentsOf: availableEngines.filter { $0 != activeEngine })
-        let modelsByEngine = Dictionary(uniqueKeysWithValues: orderedEngines.map { engine in
-            (engine, engineModels(for: engine).map(\.id))
-        })
+        let modelsByEngine = Dictionary(
+            uniqueKeysWithValues: orderedEngines.map { engine in
+                (engine, engineModels(for: engine).map(\.id))
+            })
 
         let route: GatewayModelRoute
         let wanted = requestedModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if wanted.isEmpty {
             let activeModels = modelsByEngine[activeEngine] ?? []
-            guard let fallback = EngineModelSelection.resolve(saved: selectedModel,
-                                                              available: activeModels) else {
+            guard
+                let fallback = EngineModelSelection.resolve(
+                    saved: selectedModel,
+                    available: activeModels)
+            else {
                 return .badRequest("请求没有 model 字段，flashCat 也没有可用的默认模型")
             }
             route = GatewayModelRoute(model: fallback, engine: activeEngine)
         } else {
-            guard let resolved = GatewayModelRouting.resolve(requestedModel: wanted,
-                                                              orderedEngines: orderedEngines,
-                                                              modelsByEngine: modelsByEngine) else {
+            guard
+                let resolved = GatewayModelRouting.resolve(
+                    requestedModel: wanted,
+                    orderedEngines: orderedEngines,
+                    modelsByEngine: modelsByEngine)
+            else {
                 return .modelNotFound("没有已安装的模型 \(wanted)")
             }
             route = resolved
@@ -2032,8 +1605,9 @@ final class AppState: ObservableObject {
             return .unavailable("flashCat 正在生成回复，暂时不能切换模型")
         }
         if requiresWork || selectedModel != route.model {
-            gateway.logs.append("==> API 请求模型 \(route.model) · \(route.engine.displayName)",
-                                level: .system)
+            gateway.logs.append(
+                "==> API 请求模型 \(route.model) · \(route.engine.displayName)",
+                level: .system)
         }
 
         if !alreadyActive {
@@ -2064,7 +1638,8 @@ final class AppState: ObservableObject {
         if !controller.isRunning {
             await controller.start(localModel: selectedModelInfo, requestedModel: route.model)
         } else if !gatewayModelIsResident(route.model, in: controller),
-                  controller.model != route.model {
+            controller.model != route.model
+        {
             // A running engine with other weights resident: use the same
             // unload-confirm-load path as the switcher. Hot engines do this in
             // place; restart engines stop the process first.
@@ -2079,17 +1654,20 @@ final class AppState: ObservableObject {
             }
         }
 
-        let ready = await controller.waitForSwitchReady(route.model,
-                                                         timeout: route.engine.startupTimeout)
+        let ready = await controller.waitForSwitchReady(
+            route.model,
+            timeout: route.engine.startupTimeout)
         syncController()
         guard ready else {
-            let reason = controller.failureMessage
+            let reason =
+                controller.failureMessage
                 ?? "\(route.engine.displayName) 未能在预期时间内加载 \(route.model)"
             return .failed(reason)
         }
         if requiresWork {
-            gateway.logs.append("==> API 模型已就绪 · \(route.model) · 端口 \(controller.port)",
-                                level: .system)
+            gateway.logs.append(
+                "==> API 模型已就绪 · \(route.model) · 端口 \(controller.port)",
+                level: .system)
         }
         return nil
     }
@@ -2179,9 +1757,11 @@ final class AppState: ObservableObject {
             applyModelFromAnyEngine(id, engine: engine)
             return
         }
-        toast(L10n.format("已把 %@ 设为 %@ 的默认模型，下次启动生效；当前运行的 %@ 不受影响",
-                          shortModelName(id), engine.displayName, activeEngine.displayName),
-              transient: true)
+        toast(
+            L10n.format(
+                "已把 %@ 设为 %@ 的默认模型，下次启动生效；当前运行的 %@ 不受影响",
+                shortModelName(id), engine.displayName, activeEngine.displayName),
+            transient: true)
     }
 
     /// Make `engine` the running one and load `model` on it in one motion.
@@ -2213,8 +1793,9 @@ final class AppState: ObservableObject {
             // 被更新的选择接管了：状态与引擎都归那一代，这里静默退出。
             guard generation == self.switchGeneration else { return }
             guard activated || self.activeEngine == engine else {
-                self.settleModelSwitch(generation: generation,
-                                       outcome: .failed("\(engine.displayName) 没有可用的控制器"))
+                self.settleModelSwitch(
+                    generation: generation,
+                    outcome: .failed("\(engine.displayName) 没有可用的控制器"))
                 return
             }
             self.libraryEngine = engine
@@ -2226,17 +1807,20 @@ final class AppState: ObservableObject {
 
             self.switchStage = "加载新模型"
             guard let controller = self.controller else {
-                self.settleModelSwitch(generation: generation,
-                                       outcome: .failed("\(engine.displayName) 没有可用的控制器"))
+                self.settleModelSwitch(
+                    generation: generation,
+                    outcome: .failed("\(engine.displayName) 没有可用的控制器"))
                 return
             }
             await controller.start(localModel: self.selectedModelInfo, requestedModel: model)
             // 等「真的加载完」而不是「HTTP 壳子绿了」，否则界面会在权重刚
             // 开始搬的时候就退出「切换中」（见 waitForSwitchReady 里的日志）。
             let ready = await controller.waitForSwitchReady(model, timeout: engine.startupTimeout)
-            self.settleModelSwitch(generation: generation, outcome: ready
-                ? .ready
-                : .failed(controller.failureMessage ?? "\(engine.displayName) 未能在预期时间内就绪"))
+            self.settleModelSwitch(
+                generation: generation,
+                outcome: ready
+                    ? .ready
+                    : .failed(controller.failureMessage ?? "\(engine.displayName) 未能在预期时间内就绪"))
         }
     }
 
@@ -2262,8 +1846,9 @@ final class AppState: ObservableObject {
             if target != switchingModel {
                 queuedSwitchModel = target
                 // 排队只是「你的点击没丢」的一过性回执：不留在通知历史里。
-                toast(L10n.format("正在切换模型，完成后自动切到 %@", shortModelName(target)),
-                      transient: true)
+                toast(
+                    L10n.format("正在切换模型，完成后自动切到 %@", shortModelName(target)),
+                    transient: true)
             }
             return
         }
@@ -2280,9 +1865,12 @@ final class AppState: ObservableObject {
         // With weights loaded the switch unloads them first, which leaves the
         // engine without a model for a while — ask before doing that. With
         // nothing resident the pick is only a selection, applied on next start.
-        guard EngineModelSelection.needsConfirmation(isRunning: isRunning,
-                                                     current: selectedModel,
-                                                     target: target) else {
+        guard
+            EngineModelSelection.needsConfirmation(
+                isRunning: isRunning,
+                current: selectedModel,
+                target: target)
+        else {
             commitModelSwitch(to: target)
             return
         }
@@ -2362,16 +1950,19 @@ final class AppState: ObservableObject {
         switchStage = wasRunning ? "准备切换" : "启动引擎"
         switchTask = Task { [weak self] in
             guard let self, let controller = self.controller else {
-                self?.settleModelSwitch(generation: generation,
-                                        outcome: .failed("\(self?.activeEngine.displayName ?? "引擎") 没有可用的控制器"))
+                self?.settleModelSwitch(
+                    generation: generation,
+                    outcome: .failed("\(self?.activeEngine.displayName ?? "引擎") 没有可用的控制器"))
                 return
             }
             guard wasRunning else {
                 await controller.start(localModel: self.selectedModelInfo, requestedModel: id)
                 let ready = await controller.waitForSwitchReady(id, timeout: self.activeEngine.startupTimeout)
-                self.settleModelSwitch(generation: generation, outcome: ready
-                    ? .ready
-                    : .failed(controller.failureMessage ?? "\(self.activeEngine.displayName) 未能在预期时间内就绪"))
+                self.settleModelSwitch(
+                    generation: generation,
+                    outcome: ready
+                        ? .ready
+                        : .failed(controller.failureMessage ?? "\(self.activeEngine.displayName) 未能在预期时间内就绪"))
                 return
             }
             let outcome = await controller.switchModel(id) { stage in
@@ -2419,9 +2010,10 @@ final class AppState: ObservableObject {
         queuedSwitchModel = nil
         retireModelSwitch()
         // 退路回执，不是需要回头再看的状态：加载仍在后台推进，阶段行会说。
-        toast(L10n.format("已取消等待 · %@ 仍在后台加载", engine.displayName),
-              kind: .warning,
-              transient: true)
+        toast(
+            L10n.format("已取消等待 · %@ 仍在后台加载", engine.displayName),
+            kind: .warning,
+            transient: true)
     }
 
     /// Keep the stage line honest if the engine moves on its own between stages.
@@ -2438,9 +2030,10 @@ final class AppState: ObservableObject {
         case .ready:
             // 换模型是读者自己点的那一下的结果，看到「运行中」就够了：
             // 这条只闪一下，不写进通知历史。
-            toast(L10n.format("模型已就绪 · %@", shortModelName(selectedModel)),
-                  kind: .success,
-                  transient: true)
+            toast(
+                L10n.format("模型已就绪 · %@", shortModelName(selectedModel)),
+                kind: .success,
+                transient: true)
         case .failed(let reason):
             notice = reason
             toast("模型切换失败，请查看日志")
@@ -2472,15 +2065,17 @@ final class AppState: ObservableObject {
         switch source {
         case .all:
             let groups = (engines?.available ?? []).map { controller in
-                LogFeed.Group(key: controller.id.rawValue,
-                              tag: controller.id.rawValue,
-                              lines: controller.logs.snapshot(limit: limit))
+                LogFeed.Group(
+                    key: controller.id.rawValue,
+                    tag: controller.id.rawValue,
+                    lines: controller.logs.snapshot(limit: limit))
             }
             return LogFeed.entries(from: groups, limit: limit)
         case .engine(let id):
             let lines = engines?.controller(id)?.logs.snapshot(limit: limit) ?? []
-            return LogFeed.entries(from: [LogFeed.Group(key: id.rawValue, tag: nil, lines: lines)],
-                                   limit: limit)
+            return LogFeed.entries(
+                from: [LogFeed.Group(key: id.rawValue, tag: nil, lines: lines)],
+                limit: limit)
         }
     }
 
@@ -2567,13 +2162,15 @@ final class AppState: ObservableObject {
         return canChat
     }
 
-    func send(_ text: String,
-              attachment: ChatImageAttachment? = nil,
-              lastFrame: ChatImageAttachment? = nil,
-              referenceImages: [ChatImageAttachment] = [],
-              referenceClips: [VideoReferenceClip] = [],
-              image: ImageOptions = ImageOptions(),
-              video: VideoOptions = VideoOptions()) {
+    func send(
+        _ text: String,
+        attachment: ChatImageAttachment? = nil,
+        lastFrame: ChatImageAttachment? = nil,
+        referenceImages: [ChatImageAttachment] = [],
+        referenceClips: [VideoReferenceClip] = [],
+        image: ImageOptions = ImageOptions(),
+        video: VideoOptions = VideoOptions()
+    ) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty || generating { return }
         guard !needsEngineSetup else {
@@ -2585,9 +2182,10 @@ final class AppState: ObservableObject {
             return
         }
         if activeModelSupportsVideo {
-            sendVideo(trimmed, attachment: attachment, lastFrame: lastFrame,
-                      referenceImages: referenceImages, referenceClips: referenceClips,
-                      options: video)
+            sendVideo(
+                trimmed, attachment: attachment, lastFrame: lastFrame,
+                referenceImages: referenceImages, referenceClips: referenceClips,
+                options: video)
             return
         }
         if activeModelSupportsImage {
@@ -2605,7 +2203,8 @@ final class AppState: ObservableObject {
         let needsStartup = !canChat
 
         // 被「停止」的空回答留在界面上，但不该当成一轮空 assistant 发给引擎。
-        var turns: [ChatTurn] = messages
+        var turns: [ChatTurn] =
+            messages
             .filter { !$0.streaming && !$0.content.isEmpty }
             .map { ChatTurn(role: $0.role, content: $0.content) }
         var openingTurn = ChatTurn(role: "user", content: trimmed)
@@ -2617,7 +2216,8 @@ final class AppState: ObservableObject {
         turns.append(openingTurn)
 
         messages.append(ChatMessage(role: "user", content: trimmed, model: selectedModel, createdAt: Date()))
-        messages.append(ChatMessage(role: "assistant", content: "", model: selectedModel, createdAt: Date(), streaming: true))
+        messages.append(
+            ChatMessage(role: "assistant", content: "", model: selectedModel, createdAt: Date(), streaming: true))
         streamMessageID = messages[messages.count - 1].id.uuidString
         // 先把「问题」这条写进最近对话：这样切走之后它在列表里就有自己的
         // 一行（标着「生成中」），后台跑完再原地覆盖成完整的一问一答。
@@ -2629,10 +2229,7 @@ final class AppState: ObservableObject {
         sendGeneration &+= 1
         let generation = sendGeneration
         chatStartupStage = needsStartup ? "模型正在启动中…" : nil
-        liveDecodeRate = nil
-        lastLiveRatePublishAt = nil
-        generationEndedAt = nil
-        decodeMeter.reset()
+        metrics.resetStreamMeter()
 
         // 最大生成 tokens：思考与正文共享的总输出上限。留空时取模型自身上限
         // 并按引擎生效窗口封顶（见 effectiveMaxTokens），4096 那种小默认会让
@@ -2644,19 +2241,21 @@ final class AppState: ObservableObject {
         if !openingTurn.imageURLs.isEmpty {
             systemPrompt += "\n\n随这条消息附上的是你最近生成的成品；先看图再回答，不要只凭对话里的路径猜。"
         }
-        let options = ChatOptions(temperature: settings.temperature,
-                                  topP: settings.topP,
-                                  maxTokens: maxTokensLimit,
-                                  reasoningEffort: settings.effectiveReasoningEffort,
-                                  systemPrompt: systemPrompt,
-                                  thinkingBudget: EngineStore.shared
-                                      .tuning(for: activeEngine)
-                                      .effectiveThinkingBudget(for: activeEngine))
+        let options = ChatOptions(
+            temperature: settings.temperature,
+            topP: settings.topP,
+            maxTokens: maxTokensLimit,
+            reasoningEffort: settings.effectiveReasoningEffort,
+            systemPrompt: systemPrompt,
+            thinkingBudget: EngineStore.shared
+                .tuning(for: activeEngine)
+                .effectiveThinkingBudget(for: activeEngine))
         let model = selectedModel
         // 上下文实时估算的基数：本轮提示词（含系统提示）的 token 数。回复结束
         // 后仍会回落到引擎回报的真实 usage。
-        let promptTokens = TokenEstimator.promptTokens(
-            messages: turns.map { ["role": $0.role, "content": $0.content] })
+        let promptTokens =
+            TokenEstimator.promptTokens(
+                messages: turns.map { ["role": $0.role, "content": $0.content] })
             + TokenEstimator.estimate(options.systemPrompt)
             + turns.reduce(0) { $0 + $1.imageURLs.count } * TokenEstimator.approximateImageTokens
         livePromptTokens = promptTokens
@@ -2698,7 +2297,8 @@ final class AppState: ObservableObject {
             // 之前，冷启动时那段加载几十 GB 权重的时间不能摊进预填充。
             GatewayMeter.shared.markStarted(meterID, at: started)
             let endpointPort = self.port
-            let result = await chatClient.send(port: endpointPort, model: model, turns: turns, options: options,
+            let result = await chatClient.send(
+                port: endpointPort, model: model, turns: turns, options: options,
                 onDelta: { piece, at in
                     GatewayMeter.shared.addTokens(meterID, TokenEstimator.fractional(piece), at: at)
                     Task { @MainActor in
@@ -2729,24 +2329,25 @@ final class AppState: ObservableObject {
                         }
                         guard found else { return }
                         // 思考流同样计入本地测速：思考模型的输出大头在 reasoning，
-                        // 不计的话思考阶段 liveDecodeRate 一直是 nil，对话页直播条
-                        // 只能显示「— tok/s」。
+                        // 不计的话思考阶段的直播条一直是空的，只能显示「— tok/s」。
                         self.recordStreamDelta(piece, at: at)
                     }
                 },
                 onUsage: { usage in
-                    GatewayMeter.shared.noteUsage(meterID,
-                                                  promptTokens: usage.promptTokens,
-                                                  completionTokens: usage.completionTokens,
-                                                  cachedPromptTokens: usage.cachedPromptTokens)
+                    GatewayMeter.shared.noteUsage(
+                        meterID,
+                        promptTokens: usage.promptTokens,
+                        completionTokens: usage.completionTokens,
+                        cachedPromptTokens: usage.cachedPromptTokens)
                     Task { @MainActor in
                         guard self.sendGeneration == generation else { return }
                         guard self.updateStreamingMessage({ $0.usage = usage }) else { return }
                         // 思考截断可见性：引擎按预算收束思考时，reasoning_tokens
                         // 正好落在预算上，用「≥ 预算」判定这次思考被截断。
                         if let budget = options.thinkingBudget,
-                           let reasoning = usage.reasoningTokens,
-                           reasoning >= budget {
+                            let reasoning = usage.reasoningTokens,
+                            reasoning >= budget
+                        {
                             self.controller?.logs.append(
                                 "==> 思考截断：本次思考 \(reasoning) tokens 触及预算 \(budget)，已被强制收束；如需更长思考请在引擎配置调大「思考截断」",
                                 level: .warning)
@@ -2789,7 +2390,7 @@ final class AppState: ObservableObject {
                         // Streaming responses often omit usage; fall back to the
                         // accumulated fraction-weighted estimate so the message
                         // still shows a token count and rate.
-                        tokens = Int(decodeMeter.totalTokens.rounded())
+                        tokens = Int(metrics.streamTotalTokens.rounded())
                         if tokens > 0 {
                             message.usage = ChatUsage(promptTokens: 0, completionTokens: tokens)
                         }
@@ -2797,24 +2398,19 @@ final class AppState: ObservableObject {
                     // 分母取「首分片 → 末分片」，不再把 TTFT / prefill 混进
                     // decode 时长：旧口径让消息下方的总平均天生比直播条低一大截，
                     // 两个数字看起来像彼此矛盾。
-                    if tokens > 0, decodeMeter.decodingSeconds > 0 {
-                        message.tokensPerSecond = Double(tokens) / decodeMeter.decodingSeconds
-                    }
-                    // 收尾时把 LIVE 读数落在最终平均上，而不是瞬间清空。
-                    if let finalRate = message.tokensPerSecond, finalRate > 0 {
-                        liveDecodeRate = finalRate
-                        generationEndedAt = Date()
+                    if tokens > 0, metrics.streamDecodingSeconds > 0 {
+                        message.tokensPerSecond = Double(tokens) / metrics.streamDecodingSeconds
                     }
                 }
             case .failure(let error):
-                GatewayMeter.shared.finish(meterID, failed: !isCancellation(error))
+                GatewayMeter.shared.finish(meterID, failed: !error.isCancellation)
                 guard !stale else { return }
                 self.updateStreamingMessage { message in
                     if message.content.isEmpty {
                         message.content = "出错：\(error.message)"
                     }
                 }
-                if !isCancellation(error) { notice = error.message }
+                if !error.isCancellation { notice = error.message }
             }
             updateStreamingMessage { $0.streaming = false }
             // 这一轮已经被取消时不要再落盘：`messages` 现在可能已经是另一段
@@ -2824,9 +2420,11 @@ final class AppState: ObservableObject {
             generating = false
             // 读者早就切走了：回答落回它自己的会话，再冒一条通知告诉他落在哪。
             if let finished = self.persistStreamingConversation(),
-               let thread = self.threads.first(where: { $0.id == finished }) {
-                self.toast(L10n.format("「%@」已在后台生成完成", thread.title),
-                           kind: .success)
+                let thread = self.threads.first(where: { $0.id == finished })
+            {
+                self.toast(
+                    L10n.format("「%@」已在后台生成完成", thread.title),
+                    kind: .success)
             }
         }
     }
@@ -2866,7 +2464,8 @@ final class AppState: ObservableObject {
     var imageToolModel: EngineModel? {
         let models = imageToolModels
         if !imageToolModelID.isEmpty,
-           let chosen = models.first(where: { $0.id == imageToolModelID }) {
+            let chosen = models.first(where: { $0.id == imageToolModelID })
+        {
             return chosen
         }
         return models.first
@@ -2894,9 +2493,11 @@ final class AppState: ObservableObject {
     ///
     /// 编排复用 `prepareModelForGateway(allowingGeneration:)`：加载几十 GB 的
     /// 图像权重、把对话模型换出去，都走网关那条已经验证过冷启动的路径。
-    private func sendImage(_ prompt: String,
-                           attachment: ChatImageAttachment?,
-                           options: ImageOptions) {
+    private func sendImage(
+        _ prompt: String,
+        attachment: ChatImageAttachment?,
+        options: ImageOptions
+    ) {
         let model = selectedModel
         // 蒸馏包的采样表写在权重里：引擎只认那个步数，个别包收到别的值会直接
         // 拒绝。面板已经把滑杆换成固定值，这里再把请求对齐一次，别让旧设置
@@ -2910,7 +2511,8 @@ final class AppState: ObservableObject {
         var sourceBase64: String?
         if let attachment {
             guard let imported = ImageStore.importImage(atPath: attachment.path),
-                  let encoded = ImageStore.base64(atPath: imported) else {
+                let encoded = ImageStore.base64(atPath: imported)
+            else {
                 notice = "读取图片失败：\(attachment.name)"
                 return
             }
@@ -2918,11 +2520,14 @@ final class AppState: ObservableObject {
             sourceBase64 = encoded
         }
 
-        messages.append(ChatMessage(role: "user", content: prompt, model: model,
-                                    createdAt: Date(), imagePath: sourcePath))
-        let placeholder = ChatMessage(role: "assistant", content: "", model: model,
-                                      createdAt: Date(), streaming: true,
-                                      imageProgress: "正在准备图像模型")
+        messages.append(
+            ChatMessage(
+                role: "user", content: prompt, model: model,
+                createdAt: Date(), imagePath: sourcePath))
+        let placeholder = ChatMessage(
+            role: "assistant", content: "", model: model,
+            createdAt: Date(), streaming: true,
+            imageProgress: "正在准备图像模型")
         messages.append(placeholder)
         streamMessageID = placeholder.id.uuidString
         history.save(messages: messages, threadID: threadID)
@@ -2935,16 +2540,18 @@ final class AppState: ObservableObject {
         imageTask?.cancel()
         imageTask = Task { [weak self] in
             guard let self else { return }
-            let preparation = await self.prepareModelForGateway(model,
-                                                                allowingGeneration: true)
+            let preparation = await self.prepareModelForGateway(
+                model,
+                allowingGeneration: true)
             guard self.sendGeneration == generation else { return }
             if let preparation {
                 self.failImage(preparation.message)
                 return
             }
 
-            let meterID = GatewayMeter.shared.begin(model: model, dialect: "image",
-                                                    promptTokens: 0)
+            let meterID = GatewayMeter.shared.begin(
+                model: model, dialect: "image",
+                promptTokens: 0)
             GatewayMeter.shared.markStarted(meterID, at: Date())
             self.generationStatus = sourceBase64 == nil ? "正在生成图像" : "正在重绘图像"
             let request = ImageGenerationRequest(
@@ -2956,8 +2563,10 @@ final class AppState: ObservableObject {
                 sourceBase64: sourceBase64,
                 strength: sourceBase64 == nil ? nil : options.strength,
                 mode: sourceBase64 == nil ? nil : "variation")
-            let outcome = await self.imageClient.generate(port: self.port,
-                                                          request: request) { [weak self] progress in
+            let outcome = await self.imageClient.generate(
+                port: self.port,
+                request: request
+            ) { [weak self] progress in
                 Task { @MainActor in
                     guard let self, self.sendGeneration == generation else { return }
                     self.updateStreamingMessage { $0.imageProgress = progress }
@@ -2973,10 +2582,11 @@ final class AppState: ObservableObject {
                 let path = ImageStore.save(result.png)
                 // 图注用引擎实际跑的步数：Turbo 这类蒸馏包会把 20 步请求
                 // 改写成自己的 8 步 sigma 表，写请求值会让图注和面板打架。
-                let note = self.imageNote(options: options,
-                                          attachment: attachment,
-                                          path: path,
-                                          actualSteps: result.steps)
+                let note = self.imageNote(
+                    options: options,
+                    attachment: attachment,
+                    path: path,
+                    actualSteps: result.steps)
                 self.updateStreamingMessage { message in
                     message.streaming = false
                     message.imageProgress = nil
@@ -2992,13 +2602,14 @@ final class AppState: ObservableObject {
                     // 只登记模型生成的成品；用户底图挂在前面那条 user 消息的
                     // imagePath 上，不会走到这里。历史只保留六段对话，图库自己
                     // 留一份索引，删掉对话也不会把已保存的作品一起抹掉。
-                    ImageGalleryStore.shared.record(GalleryImage(
-                        path: path,
-                        prompt: prompt,
-                        model: model,
-                        createdAt: Date(),
-                        note: note,
-                        seed: seed))
+                    ImageGalleryStore.shared.record(
+                        GalleryImage(
+                            path: path,
+                            prompt: prompt,
+                            model: model,
+                            createdAt: Date(),
+                            note: note,
+                            seed: seed))
                 }
                 if path == nil { self.notice = "图像已生成，但写入磁盘失败" }
             case .failure(let error):
@@ -3036,7 +2647,8 @@ final class AppState: ObservableObject {
         sent.append(openingTurn)
 
         messages.append(ChatMessage(role: "user", content: text, model: chatModel, createdAt: Date()))
-        messages.append(ChatMessage(role: "assistant", content: "", model: chatModel, createdAt: Date(), streaming: true))
+        messages.append(
+            ChatMessage(role: "assistant", content: "", model: chatModel, createdAt: Date(), streaming: true))
         streamMessageID = messages[messages.count - 1].id.uuidString
         // 先把这一问摆进最近对话：换模型要几十秒，用户中途切走也点得回来。
         history.save(messages: messages, threadID: threadID)
@@ -3046,27 +2658,28 @@ final class AppState: ObservableObject {
         sendGeneration &+= 1
         let generation = sendGeneration
         chatStartupStage = needsStartup ? "模型正在启动中…" : nil
-        liveDecodeRate = nil
-        lastLiveRatePublishAt = nil
-        generationEndedAt = nil
-        decodeMeter.reset()
+        metrics.resetStreamMeter()
 
-        var options = ChatOptions(temperature: settings.temperature,
-                                  topP: settings.topP,
-                                  maxTokens: effectiveMaxTokens,
-                                  reasoningEffort: settings.effectiveReasoningEffort,
-                                  systemPrompt: settings.systemPrompt,
-                                  thinkingBudget: EngineStore.shared
-                                      .tuning(for: activeEngine)
-                                      .effectiveThinkingBudget(for: activeEngine))
+        var options = ChatOptions(
+            temperature: settings.temperature,
+            topP: settings.topP,
+            maxTokens: effectiveMaxTokens,
+            reasoningEffort: settings.effectiveReasoningEffort,
+            systemPrompt: settings.systemPrompt,
+            thinkingBudget: EngineStore.shared
+                .tuning(for: activeEngine)
+                .effectiveThinkingBudget(for: activeEngine))
         // 工具描述已经写清用途，系统提示只补一句「别光描述、直接画」。
-        options.systemPrompt = options.systemPrompt.isEmpty
+        options.systemPrompt =
+            options.systemPrompt.isEmpty
             ? ImageTool.guidance
             : options.systemPrompt + "\n\n" + ImageTool.guidance
-        options.systemPrompt += seesImages
+        options.systemPrompt +=
+            seesImages
             ? "\n\n画完的成品会作为图片回传给你。先看清画面再回答或继续改，不要只凭提示词猜。"
             : "\n\n你看不到图片本身，只拿得到路径与尺寸。不要编造画面里没确认的细节。"
-        let tools = ChatToolSchema(ImageTool.schema(sizeOptions: ImageModelProfile(model: imageModel).presets.map(\.id)))
+        let tools = ChatToolSchema(
+            ImageTool.schema(sizeOptions: ImageModelProfile(model: imageModel).presets.map(\.id)))
         let imageOptions = ImageOptionsStore.load()
         // 整组图共用一个 seed：同一条提示词重发能复现，图注里也能看见。
         let seriesSeed = Int.random(in: 1...1_000_000_000)
@@ -3089,9 +2702,12 @@ final class AppState: ObservableObject {
 
             // 引擎可能还停在上一轮画图用的图像模型上（用户中途停止过），
             // 直接发聊天请求会 503。先把对话模型换回显存，已经在了就是空操作。
-            if let problem = await self.ensureResidentModel(chatModel, stage: { stage in
-                self.setToolStage(stage, generation: generation)
-            }) {
+            if let problem = await self.ensureResidentModel(
+                chatModel,
+                stage: { stage in
+                    self.setToolStage(stage, generation: generation)
+                })
+            {
                 self.finishImageToolTurn(failure: problem, generation: generation)
                 return
             }
@@ -3108,16 +2724,19 @@ final class AppState: ObservableObject {
                 guard self.sendGeneration == generation, !Task.isCancelled else { return }
                 // 轮次用完、或这一轮已经画满：最后一趟不带工具，模型只能把
                 // 这一组图讲完，不会又画一轮把对话卡在这里。
-                let roundTools = (rounds >= ImageTool.maximumRounds || drawn >= ImageTool.maximumImagesPerTurn)
+                let roundTools =
+                    (rounds >= ImageTool.maximumRounds || drawn >= ImageTool.maximumImagesPerTurn)
                     ? ChatToolSchema() : tools
                 let started = Date()
-                let promptTokens = TokenEstimator.promptTokens(
-                    messages: sent.map { ["role": $0.role, "content": $0.content] })
+                let promptTokens =
+                    TokenEstimator.promptTokens(
+                        messages: sent.map { ["role": $0.role, "content": $0.content] })
                     + TokenEstimator.estimate(options.systemPrompt)
                     + sent.reduce(0) { $0 + $1.imageURLs.count } * TokenEstimator.approximateImageTokens
                 self.livePromptTokens = promptTokens
-                let meterID = GatewayMeter.shared.begin(model: chatModel, dialect: "chat",
-                                                        promptTokens: promptTokens)
+                let meterID = GatewayMeter.shared.begin(
+                    model: chatModel, dialect: "chat",
+                    promptTokens: promptTokens)
                 GatewayMeter.shared.markStarted(meterID, at: started)
 
                 let result = await self.chatClient.send(
@@ -3157,10 +2776,11 @@ final class AppState: ObservableObject {
                         }
                     },
                     onUsage: { reported in
-                        GatewayMeter.shared.noteUsage(meterID,
-                                                      promptTokens: reported.promptTokens,
-                                                      completionTokens: reported.completionTokens,
-                                                      cachedPromptTokens: reported.cachedPromptTokens)
+                        GatewayMeter.shared.noteUsage(
+                            meterID,
+                            promptTokens: reported.promptTokens,
+                            completionTokens: reported.completionTokens,
+                            cachedPromptTokens: reported.cachedPromptTokens)
                     },
                     onStatus: { status in
                         Task { @MainActor in
@@ -3183,8 +2803,8 @@ final class AppState: ObservableObject {
                 var answer = ""
                 switch result {
                 case .failure(let error):
-                    GatewayMeter.shared.finish(meterID, failed: !isCancellation(error))
-                    if stale || isCancellation(error) { return }
+                    GatewayMeter.shared.finish(meterID, failed: !error.isCancellation)
+                    if stale || error.isCancellation { return }
                     self.finishImageToolTurn(failure: error.message, generation: generation)
                     return
                 case .success(let text):
@@ -3203,12 +2823,14 @@ final class AppState: ObservableObject {
                 }
                 usage.finishReason = reported.finishReason
 
-                let calls = roundTools.isEmpty
+                let calls =
+                    roundTools.isEmpty
                     ? []
                     : self.chatClient.lastToolCalls.filter { $0.name == ImageTool.name }
                 guard !calls.isEmpty else {
-                    self.finishImageToolTurn(content: transcript, usage: usage,
-                                             generation: generation, started: turnStarted)
+                    self.finishImageToolTurn(
+                        content: transcript, usage: usage,
+                        generation: generation, started: turnStarted)
                     return
                 }
 
@@ -3217,18 +2839,21 @@ final class AppState: ObservableObject {
                 var drawnPaths: [String] = []
                 for call in calls {
                     guard self.sendGeneration == generation, !Task.isCancelled else { return }
-                    let outcome = await self.runImageTool(call,
-                                                          imageModel: imageModel,
-                                                          chatModel: chatModel,
-                                                          generation: generation,
-                                                          allowance: ImageTool.maximumImagesPerTurn - drawn,
-                                                          seed: seriesSeed,
-                                                          options: imageOptions)
+                    let outcome = await self.runImageTool(
+                        call,
+                        imageModel: imageModel,
+                        chatModel: chatModel,
+                        generation: generation,
+                        allowance: ImageTool.maximumImagesPerTurn - drawn,
+                        seed: seriesSeed,
+                        options: imageOptions)
                     drawn += outcome.drawn
                     results.append(outcome.result)
                     drawnPaths.append(contentsOf: outcome.imagePaths)
-                    sent.append(ChatTurn(role: "tool", content: outcome.result.content,
-                                         toolCallID: outcome.result.callID))
+                    sent.append(
+                        ChatTurn(
+                            role: "tool", content: outcome.result.content,
+                            toolCallID: outcome.result.callID))
                 }
                 self.recordToolExchange(calls: calls, results: results, generation: generation)
                 rounds += 1
@@ -3239,12 +2864,14 @@ final class AppState: ObservableObject {
                     let urls = self.imageURLs(for: drawnPaths)
                     if !urls.isEmpty {
                         self.setToolStage("正在看刚画的图…", generation: generation)
-                        sent.append(ChatTurn(role: "user",
-                                             content: self.visionFeedback(
-                                                count: urls.count,
-                                                canDrawMore: rounds < ImageTool.maximumRounds
-                                                    && drawn < ImageTool.maximumImagesPerTurn),
-                                             imageURLs: urls))
+                        sent.append(
+                            ChatTurn(
+                                role: "user",
+                                content: self.visionFeedback(
+                                    count: urls.count,
+                                    canDrawMore: rounds < ImageTool.maximumRounds
+                                        && drawn < ImageTool.maximumImagesPerTurn),
+                                imageURLs: urls))
                     }
                 }
                 // 常驻时没有「换回」这一步，阶段行已经在 runImageTool 里清掉。
@@ -3265,29 +2892,35 @@ final class AppState: ObservableObject {
     /// 执行一次画图调用：把图像模型换进来、逐张画完、再换回对话模型。
     /// 结果无论成败都写一段 JSON 回给模型——失败也要让它知道为什么，
     /// 它才能向用户解释或者少画两张。
-    private func runImageTool(_ call: ChatToolCall,
-                              imageModel: EngineModel,
-                              chatModel: String,
-                              generation: Int,
-                              allowance: Int,
-                              seed: Int,
-                              options: ImageOptions) async -> ImageToolOutcome {
+    private func runImageTool(
+        _ call: ChatToolCall,
+        imageModel: EngineModel,
+        chatModel: String,
+        generation: Int,
+        allowance: Int,
+        seed: Int,
+        options: ImageOptions
+    ) async -> ImageToolOutcome {
         let parsed: ImageTool.Call
         switch ImageTool.parse(call) {
         case .success(let value):
             parsed = value
         case .failure(let error):
-            return ImageToolOutcome(result: ChatToolResult(callID: call.id,
-                                                           content: ImageTool.failure(error.message)),
-                                    drawn: 0, imagePaths: [])
+            return ImageToolOutcome(
+                result: ChatToolResult(
+                    callID: call.id,
+                    content: ImageTool.failure(error.message)),
+                drawn: 0, imagePaths: [])
         }
         guard allowance > 0 else {
-            return ImageToolOutcome(result: ChatToolResult(
-                callID: call.id,
-                content: ImageTool.failure("这一轮已经画满 \(ImageTool.maximumImagesPerTurn) 张了，先把这组图交给用户。")),
-                                    drawn: 0, imagePaths: [])
+            return ImageToolOutcome(
+                result: ChatToolResult(
+                    callID: call.id,
+                    content: ImageTool.failure("这一轮已经画满 \(ImageTool.maximumImagesPerTurn) 张了，先把这组图交给用户。")),
+                drawn: 0, imagePaths: [])
         }
-        let prompts = parsed.prompts.count > allowance
+        let prompts =
+            parsed.prompts.count > allowance
             ? Array(parsed.prompts.prefix(allowance))
             : parsed.prompts
 
@@ -3297,16 +2930,19 @@ final class AppState: ObservableObject {
         let size = Self.sanitizedCanvas(parsed.size, profile: profile, fallback: options.size)
 
         setToolStage("正在准备图像模型 \(imageModel.shortName)…", generation: generation)
-        if let error = await ensureResidentModel(imageModel.id,
-                                                 stage: { [weak self] stage in
-                                                     self?.setToolStage(stage, generation: generation)
-                                                 },
-                                                 alongside: imageToolResident) {
+        if let error = await ensureResidentModel(
+            imageModel.id,
+            stage: { [weak self] stage in
+                self?.setToolStage(stage, generation: generation)
+            },
+            alongside: imageToolResident)
+        {
             _ = await ensureResidentModel(chatModel, stage: { _ in })
-            return ImageToolOutcome(result: ChatToolResult(
-                callID: call.id,
-                content: ImageTool.failure("图像模型没能加载：\(error)")),
-                                    drawn: 0, imagePaths: [])
+            return ImageToolOutcome(
+                result: ChatToolResult(
+                    callID: call.id,
+                    content: ImageTool.failure("图像模型没能加载：\(error)")),
+                drawn: 0, imagePaths: [])
         }
 
         var images: [(path: String, note: String)] = []
@@ -3314,22 +2950,25 @@ final class AppState: ObservableObject {
         for (index, prompt) in prompts.enumerated() {
             if Task.isCancelled || sendGeneration != generation { break }
             setToolStage("正在画第 \(index + 1)/\(prompts.count) 张…", generation: generation)
-            let meterID = GatewayMeter.shared.begin(model: imageModel.id, dialect: "image",
-                                                    promptTokens: TokenEstimator.estimate(prompt))
+            let meterID = GatewayMeter.shared.begin(
+                model: imageModel.id, dialect: "image",
+                promptTokens: TokenEstimator.estimate(prompt))
             GatewayMeter.shared.markStarted(meterID)
-            let request = ImageGenerationRequest(model: imageModel.id,
-                                                 prompt: prompt,
-                                                 size: size,
-                                                 seed: seed,
-                                                 steps: steps,
-                                                 sourceBase64: nil,
-                                                 strength: nil,
-                                                 mode: nil)
+            let request = ImageGenerationRequest(
+                model: imageModel.id,
+                prompt: prompt,
+                size: size,
+                seed: seed,
+                steps: steps,
+                sourceBase64: nil,
+                strength: nil,
+                mode: nil)
             let outcome = await imageClient.generate(port: port, request: request) { [weak self] progress in
                 Task { @MainActor in
                     guard let self, self.sendGeneration == generation else { return }
-                    self.setToolStage("正在画第 \(index + 1)/\(prompts.count) 张 · \(progress)",
-                                      generation: generation)
+                    self.setToolStage(
+                        "正在画第 \(index + 1)/\(prompts.count) 张 · \(progress)",
+                        generation: generation)
                 }
             }
             switch outcome {
@@ -3339,24 +2978,29 @@ final class AppState: ObservableObject {
                     failureMessage = "图片已经生成，但写入磁盘失败"
                     continue
                 }
-                let requestOptions = ImageOptions(size: size, steps: steps, seed: seed,
-                                                  strength: options.strength)
-                let note = imageNote(options: requestOptions,
-                                     attachment: nil,
-                                     path: path,
-                                     actualSteps: result.steps)
+                let requestOptions = ImageOptions(
+                    size: size, steps: steps, seed: seed,
+                    strength: options.strength)
+                let note = imageNote(
+                    options: requestOptions,
+                    attachment: nil,
+                    path: path,
+                    actualSteps: result.steps)
                 images.append((path, note))
                 appendToolImage(path: path, note: note, seed: seed, generation: generation)
-                ImageGalleryStore.shared.record(GalleryImage(
-                    path: path,
-                    prompt: prompt,
-                    model: imageModel.id,
-                    createdAt: Date(),
-                    note: note,
-                    seed: seed))
+                ImageGalleryStore.shared.record(
+                    GalleryImage(
+                        path: path,
+                        prompt: prompt,
+                        model: imageModel.id,
+                        createdAt: Date(),
+                        note: note,
+                        seed: seed))
             case .failure(let error):
-                // ImageClientError 不是 ChatError，取消与否看任务本身。
-                let cancelled = Task.isCancelled
+                // 三个客户端错误类型现在都有自己的 `isCancellation`，判据不再看文案；
+                // `Task.isCancelled` 仍然要留：任务在错误交回来之前就被撤销时，
+                // 拿到的可能是 `.transport`。
+                let cancelled = error.isCancellation || Task.isCancelled
                 GatewayMeter.shared.finish(meterID, failed: !cancelled)
                 failureMessage = error.message
                 if cancelled { break }
@@ -3367,8 +3011,9 @@ final class AppState: ObservableObject {
         // 否则（设置关掉、或引擎为了腾内存把对话模型挤掉了）必须换回来——
         // 不换的话下一趟聊天要等引擎重新加载，用户看到的是「模型正在启动」。
         if imageToolResident,
-           let controller,
-           gatewayModelIsResident(chatModel, in: controller) {
+            let controller,
+            gatewayModelIsResident(chatModel, in: controller)
+        {
             setToolStage(nil, generation: generation)
         } else {
             setToolStage("正在换回对话模型…", generation: generation)
@@ -3377,18 +3022,20 @@ final class AppState: ObservableObject {
         }
 
         guard !images.isEmpty else {
-            return ImageToolOutcome(result: ChatToolResult(
-                callID: call.id,
-                content: ImageTool.failure(failureMessage ?? "没有画出图片")),
-                                    drawn: 0, imagePaths: [])
+            return ImageToolOutcome(
+                result: ChatToolResult(
+                    callID: call.id,
+                    content: ImageTool.failure(failureMessage ?? "没有画出图片")),
+                drawn: 0, imagePaths: [])
         }
         var content = ImageTool.result(images: images, seed: seed, size: size)
         if let failureMessage {
             content += "（有 \(prompts.count - images.count) 张失败：\(failureMessage)）"
         }
-        return ImageToolOutcome(result: ChatToolResult(callID: call.id, content: content),
-                                drawn: images.count,
-                                imagePaths: images.map(\.path))
+        return ImageToolOutcome(
+            result: ChatToolResult(callID: call.id, content: content),
+            drawn: images.count,
+            imagePaths: images.map(\.path))
     }
 
     /// 把某个模型换进显存，但不改 `selectedModel`：工具只是借用图像模型，
@@ -3396,15 +3043,18 @@ final class AppState: ObservableObject {
     ///
     /// `alongside` 为真时只加载、不卸载已经常驻的模型：图像模型进来时对话模型
     /// 还要接着把这一轮写完，换掉它就得再花几十秒加载回来。
-    private func ensureResidentModel(_ target: String,
-                                     stage: @escaping (String) -> Void,
-                                     alongside: Bool = false) async -> String? {
+    private func ensureResidentModel(
+        _ target: String,
+        stage: @escaping (String) -> Void,
+        alongside: Bool = false
+    ) async -> String? {
         guard let controller else { return "推理引擎未就绪" }
         if gatewayModelIsResident(target, in: controller) { return nil }
         if !controller.isRunning {
             await controller.start()
         }
-        let outcome = alongside
+        let outcome =
+            alongside
             ? await controller.loadModelKeepingResident(target, stage: stage)
             : await controller.switchModel(target, stage: stage)
         switch outcome {
@@ -3424,11 +3074,15 @@ final class AppState: ObservableObject {
             if !message.toolCalls.isEmpty {
                 let answered = Set(message.toolResults.map(\.callID))
                 if message.toolCalls.allSatisfy({ answered.contains($0.id) }) {
-                    turns.append(ChatTurn(role: "assistant", content: message.content,
-                                          toolCalls: message.toolCalls))
+                    turns.append(
+                        ChatTurn(
+                            role: "assistant", content: message.content,
+                            toolCalls: message.toolCalls))
                     for result in message.toolResults {
-                        turns.append(ChatTurn(role: "tool", content: result.content,
-                                              toolCallID: result.callID))
+                        turns.append(
+                            ChatTurn(
+                                role: "tool", content: result.content,
+                                toolCallID: result.callID))
                     }
                     continue
                 }
@@ -3442,16 +3096,19 @@ final class AppState: ObservableObject {
     /// 模型可能忽略枚举自己编尺寸：解析成宽高后用这一族的规则校一遍，
     /// 不合格就退回用户当前设置；连用户设置都不适用时（换了图像模型家族），
     /// 取这一族的第一个预设，而不是让引擎去拒绝一个它画不了的长宽比。
-    private static func sanitizedCanvas(_ raw: String?,
-                                        profile: ImageModelProfile,
-                                        fallback: String) -> String {
+    private static func sanitizedCanvas(
+        _ raw: String?,
+        profile: ImageModelProfile,
+        fallback: String
+    ) -> String {
         func acceptable(_ value: String) -> Bool {
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             let parts = trimmed.split(separator: "x")
             guard parts.count == 2,
-                  let width = Int(parts[0]),
-                  let height = Int(parts[1]),
-                  profile.isValidCanvas(width: width, height: height) else { return false }
+                let width = Int(parts[0]),
+                let height = Int(parts[1]),
+                profile.isValidCanvas(width: width, height: height)
+            else { return false }
             return profile.allowsCustomCanvas || profile.presets.contains { $0.id == trimmed }
         }
         if let raw, acceptable(raw) { return raw.lowercased() }
@@ -3498,16 +3155,19 @@ final class AppState: ObservableObject {
         var text = "你刚画好了这 \(count) 张图，下面按生成顺序附上成品。"
         text += "先逐张看清画面：主体、构图、文字、手部这些细节，是否达到你在提示词里写的要求。"
         text += "描述时只说你真正看到的，不要照着提示词编。"
-        text += canDrawMore
+        text +=
+            canDrawMore
             ? "达到要求就用一两句话向用户交代；需要改就继续调用 \(ImageTool.name) 补画，只补要改的，别重复画已经满意的。"
             : "这一轮的画图次数已经用完，直接根据看到的画面收尾；还需要改的地方，用文字告诉用户。"
         return text
     }
 
     /// 调用与结果留在消息里，下一轮（甚至重启后）还要按原样回放给引擎。
-    private func recordToolExchange(calls: [ChatToolCall],
-                                    results: [ChatToolResult],
-                                    generation: Int) {
+    private func recordToolExchange(
+        calls: [ChatToolCall],
+        results: [ChatToolResult],
+        generation: Int
+    ) {
         guard sendGeneration == generation else { return }
         updateStreamingMessage { message in
             message.toolCalls.append(contentsOf: calls)
@@ -3516,10 +3176,12 @@ final class AppState: ObservableObject {
     }
 
     /// 这一轮画完：压上累计用量、收掉「生成中」，再落盘。
-    private func finishImageToolTurn(content: String,
-                                     usage: ChatUsage,
-                                     generation: Int,
-                                     started: Date) {
+    private func finishImageToolTurn(
+        content: String,
+        usage: ChatUsage,
+        generation: Int,
+        started: Date
+    ) {
         guard sendGeneration == generation else { return }
         let elapsed = Date().timeIntervalSince(started)
         updateStreamingMessage { message in
@@ -3529,22 +3191,18 @@ final class AppState: ObservableObject {
             message.seconds = elapsed
             if usage.completionTokens > 0 {
                 message.usage = usage
-                if decodeMeter.decodingSeconds > 0 {
-                    message.tokensPerSecond = Double(usage.completionTokens) / decodeMeter.decodingSeconds
+                if metrics.streamDecodingSeconds > 0 {
+                    message.tokensPerSecond = Double(usage.completionTokens) / metrics.streamDecodingSeconds
                 }
             } else {
                 // 流式响应常省略 usage，退回按分片估的数字，消息右下角不至于是空的。
-                let tokens = Int(decodeMeter.totalTokens.rounded())
+                let tokens = Int(metrics.streamTotalTokens.rounded())
                 if tokens > 0 {
                     message.usage = ChatUsage(promptTokens: 0, completionTokens: tokens)
-                    if decodeMeter.decodingSeconds > 0 {
-                        message.tokensPerSecond = Double(tokens) / decodeMeter.decodingSeconds
+                    if metrics.streamDecodingSeconds > 0 {
+                        message.tokensPerSecond = Double(tokens) / metrics.streamDecodingSeconds
                     }
                 }
-            }
-            if let rate = message.tokensPerSecond, rate > 0 {
-                liveDecodeRate = rate
-                generationEndedAt = Date()
             }
         }
         chatStartupStage = nil
@@ -3571,19 +3229,22 @@ final class AppState: ObservableObject {
     /// 视频模型的发送链路：对话、历史、打点都复用，只把端点换成
     /// `/v1/video/generations`。服务端回的是 rgb8 原始帧，VideoClient 在客户端
     /// 封装成 MP4 后落盘，消息里只留路径。
-    private func sendVideo(_ prompt: String,
-                           attachment: ChatImageAttachment?,
-                           lastFrame: ChatImageAttachment?,
-                           referenceImages: [ChatImageAttachment],
-                           referenceClips: [VideoReferenceClip],
-                           options: VideoOptions) {
+    private func sendVideo(
+        _ prompt: String,
+        attachment: ChatImageAttachment?,
+        lastFrame: ChatImageAttachment?,
+        referenceImages: [ChatImageAttachment],
+        referenceClips: [VideoReferenceClip],
+        options: VideoOptions
+    ) {
         let model = selectedModel
         let seed = options.seed ?? Int.random(in: 1...1_000_000_000)
         var sourcePath: String?
         var sourceBase64: String?
         if let attachment {
             guard let imported = ImageStore.importImage(atPath: attachment.path),
-                  let encoded = ImageStore.base64(atPath: imported) else {
+                let encoded = ImageStore.base64(atPath: imported)
+            else {
                 notice = "读取首帧图片失败：\(attachment.name)"
                 return
             }
@@ -3594,7 +3255,8 @@ final class AppState: ObservableObject {
         var lastFrameBase64: String?
         if let lastFrame {
             guard let imported = ImageStore.importImage(atPath: lastFrame.path),
-                  let encoded = ImageStore.base64(atPath: imported) else {
+                let encoded = ImageStore.base64(atPath: imported)
+            else {
                 notice = "读取尾帧图片失败：\(lastFrame.name)"
                 return
             }
@@ -3614,17 +3276,20 @@ final class AppState: ObservableObject {
         let referenceClipPaths = referenceClips.map(\.path)
         let usesReferences = !referenceImagePaths.isEmpty || !referenceClipPaths.isEmpty
 
-        messages.append(ChatMessage(role: "user", content: prompt, model: model,
-                                    createdAt: Date(),
-                                    imagePath: usesReferences ? nil : sourcePath,
-                                    videoLastFramePath: usesReferences ? nil : lastFramePath,
-                                    videoReferenceImagePaths:
-                                        referenceImagePaths.isEmpty ? nil : referenceImagePaths,
-                                    videoReferenceClipPaths:
-                                        referenceClipPaths.isEmpty ? nil : referenceClipPaths))
-        let placeholder = ChatMessage(role: "assistant", content: "", model: model,
-                                      createdAt: Date(), streaming: true,
-                                      videoProgress: "正在准备视频模型")
+        messages.append(
+            ChatMessage(
+                role: "user", content: prompt, model: model,
+                createdAt: Date(),
+                imagePath: usesReferences ? nil : sourcePath,
+                videoLastFramePath: usesReferences ? nil : lastFramePath,
+                videoReferenceImagePaths:
+                    referenceImagePaths.isEmpty ? nil : referenceImagePaths,
+                videoReferenceClipPaths:
+                    referenceClipPaths.isEmpty ? nil : referenceClipPaths))
+        let placeholder = ChatMessage(
+            role: "assistant", content: "", model: model,
+            createdAt: Date(), streaming: true,
+            videoProgress: "正在准备视频模型")
         messages.append(placeholder)
         streamMessageID = placeholder.id.uuidString
         history.save(messages: messages, threadID: threadID)
@@ -3640,13 +3305,17 @@ final class AppState: ObservableObject {
             // 参考素材先读完再加载模型：文件有问题就早点报错，不必让用户等
             // 几十 GB 的权重加载完才发现参考视频读不了。
             var referenceImagesBase64: [String] = []
-            let referencePixel = options.referenceDetail == .max
+            let referencePixel =
+                options.referenceDetail == .max
                 ? 1280
                 : max(options.dimensions.width, options.dimensions.height)
             for path in referenceImagePaths {
                 guard self.sendGeneration == generation else { return }
-                guard let encoded = ImageStore.jpegBase64(atPath: path,
-                                                          maximumPixel: CGFloat(referencePixel)) else {
+                guard
+                    let encoded = ImageStore.jpegBase64(
+                        atPath: path,
+                        maximumPixel: CGFloat(referencePixel))
+                else {
                     self.failVideo("读取参考图失败：\((path as NSString).lastPathComponent)")
                     return
                 }
@@ -3655,7 +3324,8 @@ final class AppState: ObservableObject {
             var referencePayloads: [VideoReferencePayload] = []
             if !referenceClipPaths.isEmpty {
                 let canvas = options.dimensions
-                let maximum = options.referenceDetail == .max
+                let maximum =
+                    options.referenceDetail == .max
                     ? CGSize(width: 1280, height: 1280)
                     : CGSize(width: canvas.width, height: canvas.height)
                 for (index, path) in referenceClipPaths.enumerated() {
@@ -3666,12 +3336,13 @@ final class AppState: ObservableObject {
                     do {
                         let frames = try await VideoReferenceExtractor.frames(
                             url: URL(fileURLWithPath: path),
-                            maximumSize: maximum) { [weak self] text in
-                                Task { @MainActor in
-                                    guard let self, self.sendGeneration == generation else { return }
-                                    self.updateStreamingMessage { $0.videoProgress = text }
-                                }
+                            maximumSize: maximum
+                        ) { [weak self] text in
+                            Task { @MainActor in
+                                guard let self, self.sendGeneration == generation else { return }
+                                self.updateStreamingMessage { $0.videoProgress = text }
                             }
+                        }
                         referencePayloads.append(VideoReferencePayload(framesBase64: frames))
                     } catch is CancellationError {
                         return
@@ -3681,16 +3352,18 @@ final class AppState: ObservableObject {
                     }
                 }
             }
-            let preparation = await self.prepareModelForGateway(model,
-                                                                allowingGeneration: true)
+            let preparation = await self.prepareModelForGateway(
+                model,
+                allowingGeneration: true)
             guard self.sendGeneration == generation else { return }
             if let preparation {
                 self.failVideo(preparation.message)
                 return
             }
 
-            let meterID = GatewayMeter.shared.begin(model: model, dialect: "video",
-                                                    promptTokens: 0)
+            let meterID = GatewayMeter.shared.begin(
+                model: model, dialect: "video",
+                promptTokens: 0)
             GatewayMeter.shared.markStarted(meterID, at: Date())
             if usesReferences {
                 self.generationStatus = "正在生成视频（\(referenceImagesBase64.count) 张参考图 · \(referencePayloads.count) 段参考视频）"
@@ -3715,8 +3388,10 @@ final class AppState: ObservableObject {
                 referenceImagesBase64: referenceImagesBase64,
                 referenceVideos: referencePayloads,
                 referenceDetail: options.referenceDetail)
-            let outcome = await self.videoClient.generate(port: self.port,
-                                                          request: request) { [weak self] progress in
+            let outcome = await self.videoClient.generate(
+                port: self.port,
+                request: request
+            ) { [weak self] progress in
                 Task { @MainActor in
                     guard let self, self.sendGeneration == generation else { return }
                     self.updateStreamingMessage { $0.videoProgress = progress }
@@ -3734,11 +3409,12 @@ final class AppState: ObservableObject {
                     VideoStore.save(mp4)
                 }.value
                 guard self.sendGeneration == generation else { return }
-                let note = self.videoNote(options: options, source: sourcePath,
-                                          lastFrame: lastFramePath,
-                                          referenceImages: referenceImagePaths.count,
-                                          referenceClips: referencePayloads.count,
-                                          result: result, seed: seed)
+                let note = self.videoNote(
+                    options: options, source: sourcePath,
+                    lastFrame: lastFramePath,
+                    referenceImages: referenceImagePaths.count,
+                    referenceClips: referencePayloads.count,
+                    result: result, seed: seed)
                 self.updateStreamingMessage { message in
                     message.streaming = false
                     message.videoProgress = nil
@@ -3754,12 +3430,14 @@ final class AppState: ObservableObject {
                     self.notice = "视频已生成，但写入磁盘失败"
                 } else if let path {
                     // 和图片一样单独记一份：历史只留最近六段，删对话也不该丢作品。
-                    VideoGalleryStore.shared.record(GalleryVideo(path: path,
-                                                                 prompt: prompt,
-                                                                 model: model,
-                                                                 createdAt: Date(),
-                                                                 note: note,
-                                                                 seed: seed))
+                    VideoGalleryStore.shared.record(
+                        GalleryVideo(
+                            path: path,
+                            prompt: prompt,
+                            model: model,
+                            createdAt: Date(),
+                            note: note,
+                            seed: seed))
                 }
             case .failure(let error):
                 GatewayMeter.shared.finish(meterID, failed: true)
@@ -3790,7 +3468,8 @@ final class AppState: ObservableObject {
         let lowered = raw.lowercased()
         if lowered.contains("does not support references")
             || lowered.contains("declares no 'ref2va'")
-            || lowered.contains("ref2va pack cannot serve") {
+            || lowered.contains("ref2va pack cannot serve")
+        {
             return "这个视频模型不支持参考素材。参考图/参考视频需要 REF2VA 视频包；首尾帧请换用 FL2VA/LTX 包。"
         }
         if lowered.contains("attach at least one image or video") {
@@ -3806,11 +3485,13 @@ final class AppState: ObservableObject {
             return "参考视频太短：至少需要 5 帧（约 0.2 秒）。换一段更长的视频。"
         }
         if lowered.contains("ref_videos") || lowered.contains("ref_images")
-            || lowered.contains("ref_image_size") {
+            || lowered.contains("ref_image_size")
+        {
             return "参考素材没有被接受（\(raw)）。参考图请用 PNG/JPEG，参考视频至少 5 帧。"
         }
         if lowered.contains("out of memory") || lowered.contains("oom")
-            || lowered.contains("insufficient memory") || lowered.contains("memory") {
+            || lowered.contains("insufficient memory") || lowered.contains("memory")
+        {
             return "显存不够生成这段视频。把分辨率或帧数调小一些再试（例如 512×384、49 帧）。"
         }
         if lowered.contains("vae_encoder") || lowered.contains("last frame conditioning") {
@@ -3834,17 +3515,21 @@ final class AppState: ObservableObject {
         return raw
     }
 
-    private func videoNote(options: VideoOptions,
-                           source: String?,
-                           lastFrame: String?,
-                           referenceImages: Int = 0,
-                           referenceClips: Int = 0,
-                           result: VideoGenerationResult,
-                           seed: Int) -> String {
-        var parts = ["\(result.width)×\(result.height)",
-                     "\(result.frames) 帧",
-                     "\(result.fps)fps",
-                     "\(options.steps) 步"]
+    private func videoNote(
+        options: VideoOptions,
+        source: String?,
+        lastFrame: String?,
+        referenceImages: Int = 0,
+        referenceClips: Int = 0,
+        result: VideoGenerationResult,
+        seed: Int
+    ) -> String {
+        var parts = [
+            "\(result.width)×\(result.height)",
+            "\(result.frames) 帧",
+            "\(result.fps)fps",
+            "\(options.steps) 步",
+        ]
         if source != nil, lastFrame != nil {
             parts.append("首尾帧生视频")
         } else if source != nil {
@@ -3890,10 +3575,12 @@ final class AppState: ObservableObject {
         return raw
     }
 
-    private func imageNote(options: ImageOptions,
-                           attachment: ChatImageAttachment?,
-                           path: String?,
-                           actualSteps: Int? = nil) -> String {
+    private func imageNote(
+        options: ImageOptions,
+        attachment: ChatImageAttachment?,
+        path: String?,
+        actualSteps: Int? = nil
+    ) -> String {
         var parts: [String] = []
         if let path, let pixels = ImageStore.pixelSize(atPath: path) {
             parts.append("\(Int(pixels.width))×\(Int(pixels.height))")
@@ -3931,11 +3618,6 @@ final class AppState: ObservableObject {
     /// 与网关共用 Kit 里的同一套估算，避免两个页面对同一段文本给出不同 token 数。
     static func estimateTokens(_ text: String) -> Int {
         TokenEstimator.estimate(text)
-    }
-
-    private func isCancellation(_ error: ChatError) -> Bool {
-        error.message.localizedCaseInsensitiveContains("cancel")
-            || error.message.localizedCaseInsensitiveContains("取消")
     }
 
     func cancelGeneration() {
@@ -3977,9 +3659,10 @@ final class AppState: ObservableObject {
         if messages.last?.role == "user" { messages.removeLast() }
         // 图生图那一轮：底图是用户消息的一部分，重来一次也要带着它。
         let attachment = lastUser.imagePath.map { path in
-            ChatImageAttachment(path: path,
-                                name: (path as NSString).lastPathComponent,
-                                pixelSize: ImageStore.pixelSize(atPath: path))
+            ChatImageAttachment(
+                path: path,
+                name: (path as NSString).lastPathComponent,
+                pixelSize: ImageStore.pixelSize(atPath: path))
         }
         send(lastUser.content, attachment: attachment)
     }
@@ -4019,25 +3702,26 @@ final class AppState: ObservableObject {
         }
         detachGenerationForThreadSwitch()
         messages = thread.messages.map {
-            ChatMessage(role: $0.role, content: $0.content, model: $0.model,
-                        createdAt: $0.createdAt, usage: $0.usage,
-                        seconds: $0.seconds, tokensPerSecond: $0.tokensPerSecond,
-                        firstTokenSeconds: $0.firstTokenSeconds,
-                        thinkingSeconds: $0.thinkingSeconds,
-                        reasoning: $0.reasoning,
-                        interrupted: $0.interrupted,
-                        imagePath: $0.imagePath,
-                        imageNote: $0.imageNote,
-                        imageSourcePath: $0.imageSourcePath,
-                        imageStrength: $0.imageStrength,
-                        imageSeed: $0.imageSeed,
-                        imagePaths: $0.imagePaths,
-                        toolCalls: $0.toolCalls,
-                        toolResults: $0.toolResults,
-                        videoPath: $0.videoPath,
-                        videoNote: $0.videoNote,
-                        videoSourcePath: $0.videoSourcePath,
-                        videoLastFramePath: $0.videoLastFramePath)
+            ChatMessage(
+                role: $0.role, content: $0.content, model: $0.model,
+                createdAt: $0.createdAt, usage: $0.usage,
+                seconds: $0.seconds, tokensPerSecond: $0.tokensPerSecond,
+                firstTokenSeconds: $0.firstTokenSeconds,
+                thinkingSeconds: $0.thinkingSeconds,
+                reasoning: $0.reasoning,
+                interrupted: $0.interrupted,
+                imagePath: $0.imagePath,
+                imageNote: $0.imageNote,
+                imageSourcePath: $0.imageSourcePath,
+                imageStrength: $0.imageStrength,
+                imageSeed: $0.imageSeed,
+                imagePaths: $0.imagePaths,
+                toolCalls: $0.toolCalls,
+                toolResults: $0.toolResults,
+                videoPath: $0.videoPath,
+                videoNote: $0.videoNote,
+                videoSourcePath: $0.videoSourcePath,
+                videoLastFramePath: $0.videoLastFramePath)
         }
         threadID = thread.id
         // 打开的这段对话就是「当前对话」：不写回 `conversation.json` 的话，
@@ -4126,7 +3810,8 @@ final class AppState: ObservableObject {
         // 界面和引擎会各说各话，直到有人手动重启。先停引擎再动手。
         let serving = engine == activeEngine && selectedModel == id
         if serving { stopService() }
-        let path = engineModels(for: engine).first(where: { $0.id == id })?.path
+        let path =
+            engineModels(for: engine).first(where: { $0.id == id })?.path
             ?? EnginePaths.modelPath(for: engine, model: id)
         do {
             try FileManager.default.removeItem(atPath: path)
@@ -4172,21 +3857,23 @@ final class AppState: ObservableObject {
             return false
         }
         let recommendation = ModelRecommendations.recommendation(for: id)
-        let draft = engine.adapter == .splash
+        let draft =
+            engine.adapter == .splash
             ? (catalog.draftRepository(id, family: family) ?? recommendation?.draftRepository)
             : nil
 
         let plan: ModelInstaller.Plan
         do {
-            plan = try ModelInstaller.plan(engine: engine,
-                                           model: id,
-                                           draftRepository: draft,
-                                           cache: settings.hfCache)
+            plan = try ModelInstaller.plan(
+                engine: engine,
+                model: id,
+                draftRepository: draft,
+                cache: settings.hfCache)
         } catch {
             notice = (error as? ModelInstaller.Failure)?.message ?? "\(error)"
             return false
         }
-        return startDownload(plan, engine: engine, id: id, shared: nil)
+        return downloads.startDownload(plan, engine: engine, id: id, shared: nil)
     }
 
     /// 从 Hub 下任意仓库到公共目录，并记下它给哪些引擎用。
@@ -4219,124 +3906,18 @@ final class AppState: ObservableObject {
         }
         let plan: ModelInstaller.Plan
         do {
-            plan = try ModelInstaller.sharedPlan(repo: target,
-                                                 engines: engines,
-                                                 cache: settings.hfCache)
+            plan = try ModelInstaller.sharedPlan(
+                repo: target,
+                engines: engines,
+                cache: settings.hfCache)
         } catch {
             notice = (error as? ModelInstaller.Failure)?.message ?? "\(error)"
             return false
         }
-        return startDownload(plan, engine: engines.first ?? libraryEngine, id: target, shared: engines)
+        return downloads.startDownload(plan, engine: engines.first ?? libraryEngine, id: target, shared: engines)
     }
 
     /// 改一个共享模型能被哪些引擎看见：写授权表并同步链接，模型页随即重算。
-    /// 搜索/推荐列表。请求会被下一次调用取消，所以连点排序按钮不会乱序上屏。
-    /// 翻页/换筛选走同一个入口，只是把 page 与 filter 一起带下去。
-    func searchHub(_ query: String, sort: String, filter: String? = nil, page: Int = 0) {
-        let value = HubSort(rawValue: sort) ?? .trending
-        let bucket = filter.flatMap(HubFilter.init(rawValue:)) ?? hubFilter
-        hubQuery = query
-        hubSort = value
-        hubFilter = bucket
-        hubPage = max(0, page)
-        hubSearchTask?.cancel()
-        hubError = nil
-        hubLoading = true
-        let current = hubPage
-        hubSearchTask = Task { [weak self] in
-            do {
-                let models = try await HubClient.search(
-                    query: query,
-                    sort: value,
-                    filter: bucket,
-                    page: current
-                )
-                guard !Task.isCancelled else { return }
-                self?.hubResults = models
-                self?.hubHasMore = models.count >= HubClient.pageSize
-                self?.hubLoading = false
-                // Quantization and memory need real file sizes, which the list
-                // endpoint does not return. Show the rows immediately, then
-                // fill in metadata a few repositories at a time.
-                let enriched = await HubClient.enrich(models)
-                guard !Task.isCancelled else { return }
-                self?.hubResults = enriched
-            } catch {
-                guard !Task.isCancelled else { return }
-                self?.hubResults = []
-                self?.hubHasMore = false
-                self?.hubLoading = false
-                self?.hubError = error.localizedDescription
-            }
-        }
-    }
-
-    /// 打开某个仓库的模型卡：文件清单和 README 都在这一个请求里补齐。
-    func loadHubDetail(_ repo: String) {
-        hubDetailTask?.cancel()
-        hubDetail = nil
-        hubError = nil
-        hubDetailLoading = true
-        hubDetailTask = Task { [weak self] in
-            do {
-                let detail = try await HubClient.detail(repo)
-                guard !Task.isCancelled else { return }
-                self?.hubDetail = detail
-                self?.hubDetailLoading = false
-            } catch {
-                guard !Task.isCancelled else { return }
-                self?.hubDetailLoading = false
-                self?.hubError = error.localizedDescription
-            }
-        }
-    }
-
-    func closeHubDetail() {
-        hubDetailTask?.cancel()
-        hubDetail = nil
-        hubDetailLoading = false
-    }
-
-    /// 手填仓库 id 的预检。输入每停一次就调一次，上一次的请求直接取消——
-    /// 中间态的仓库 id（`Youssof`、`Youssofal/`）不查，省掉一堆必然 404 的请求。
-    func probeRepo(_ repo: String) {
-        let key = ModelSharing.canonical(repo.trimmingCharacters(in: .whitespacesAndNewlines))
-        guard key != repoProbeKey else { return }
-        repoProbeKey = key
-        repoProbeRepo = key
-        repoProbeTask?.cancel()
-        repoProbeError = nil
-        guard key.split(separator: "/").count == 2 else {
-            repoProbe = nil
-            repoProbeLoading = false
-            return
-        }
-        repoProbe = nil
-        repoProbeLoading = true
-        repoProbeTask = Task { [weak self] in
-            do {
-                let detail = try await HubClient.detail(key)
-                guard !Task.isCancelled else { return }
-                self?.repoProbe = detail
-                self?.repoProbeLoading = false
-            } catch {
-                guard !Task.isCancelled else { return }
-                self?.repoProbe = nil
-                self?.repoProbeLoading = false
-                self?.repoProbeError = error.localizedDescription
-            }
-        }
-    }
-
-    /// 弹窗关掉就丢掉预检结果：下次打开是另一个仓库，留着旧卡会先闪一下。
-    func clearRepoProbe() {
-        repoProbeTask?.cancel()
-        repoProbe = nil
-        repoProbeLoading = false
-        repoProbeError = nil
-        repoProbeKey = ""
-        repoProbeRepo = ""
-    }
 
     /// 这个仓库是不是已经在本机了（公共目录或任一引擎的模型目录）。
     /// 判定放在这里而不是视图：置灰只是表现，真正的门在这儿。
@@ -4349,9 +3930,10 @@ final class AppState: ObservableObject {
         ModelSharing.setEngines(Set(engines), for: repo)
         EngineModelStore.invalidateMetaCache()
         reloadModels()
-        toast(engines.isEmpty
-            ? "已收回 \(repo) 的引擎授权"
-            : "\(repo) 现在可用于 \(engines.map(\.displayName).joined(separator: "、"))")
+        toast(
+            engines.isEmpty
+                ? "已收回 \(repo) 的引擎授权"
+                : "\(repo) 现在可用于 \(engines.map(\.displayName).joined(separator: "、"))")
     }
 
     /// 删除公共目录里的权重：先收回授权（各引擎的链接随之删掉），再删文件。
@@ -4380,163 +3962,6 @@ final class AppState: ObservableObject {
         toast("已下载 " + repo + "，可用于 " + engines.map(\.displayName).joined(separator: "、"))
     }
 
-    /// - Returns: whether the process started; `false` comes with a `notice`.
-    @discardableResult
-    private func startDownload(_ plan: ModelInstaller.Plan,
-                               engine: EngineID,
-                               id: String,
-                               shared: [EngineID]?) -> Bool {
-        pendingSharedRepo = shared == nil ? nil : id
-        pendingSharedEngines = shared ?? []
-        pauseRequested = false
-        cancelRequested = false
-        removeRequested = false
-        downloadSpeed = 0
-        // Resume, not restart: a paused/failed row already recorded where the
-        // transfer stood, and the Hub's partial files are still on disk. Seed
-        // the progress with those bytes so the bar continues from 已下载/总量
-        // instead of dropping back to 0%. A brand-new download has no row and
-        // therefore starts at zero.
-        let previous = downloadTasks.first { $0.engine == engine && $0.model == id }
-        let resumeTotal = max(previous?.totalBytes ?? 0, 0)
-        let previousBytes = max(previous?.downloadedBytes ?? 0, 0)
-        // Without a known total the row still knows how many bytes were on
-        // disk; keep them and let the first TOTAL line supply the denominator.
-        let resumeBytes = resumeTotal > 0 ? min(previousBytes, resumeTotal) : previousBytes
-        downloadResumeBytes = resumeBytes
-        downloadFetchedBytes = 0
-        lastWatchBytes = resumeBytes
-        lastWatchDate = nil
-        downloadWatchDirectories = []
-        downloadWatchBaselines = [:]
-        downloadIncompleteMarker = plan.incompleteMarker
-        // 标记只下在「本来就不存在」的目标上，且必须落在模型目录内：否则一次
-        // 失败的重复下载会给已装好的模型盖章，之后「移除」就会删掉好权重。
-        if let marker = plan.incompleteMarker,
-           !Paths.fileExists(plan.destination),
-           FlashCatPaths.contains(plan.destination, in: EnginePaths.modelsRoot) {
-            Paths.ensureDirectory((marker as NSString).deletingLastPathComponent)
-            FileManager.default.createFile(atPath: marker, contents: nil)
-        }
-        upsertTask(engine: engine, model: id) { task in
-            task.status = .downloading
-            task.shared = shared
-            task.downloadedBytes = resumeBytes
-            task.totalBytes = max(task.totalBytes, resumeTotal)
-            if task.addedAt.timeIntervalSinceNow < -60 * 60 * 24 * 30 { task.addedAt = Date() }
-        }
-        downloadingModel = id
-        downloadingEngine = engine
-        downloadTotalBytes = resumeTotal
-        downloadFraction = resumeTotal > 0 ? Double(resumeBytes) / Double(resumeTotal) : 0
-        append(log: shared == nil
-            ? "==> \(engine.displayName) 下载模型：\(id)"
-            : "==> 下载模型到公共目录：\(id)", engine: engine)
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: plan.executable)
-        process.arguments = plan.arguments
-        process.currentDirectoryURL = URL(fileURLWithPath: plan.workingDirectory)
-        process.environment = plan.environment
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        process.standardInput = FileHandle.nullDevice
-
-        // Where this child's Hub cache lives: splash downloads land there
-        // before the finished assembly is installed into the models folder.
-        let hubCacheRoot = plan.environment["HF_HUB_CACHE"]
-            ?? (plan.environment["HF_HOME"].map { $0 + "/hub" }
-                ?? (Paths.home + "/.cache/huggingface/hub"))
-
-        TailReader.read(pipe) { line in
-            DispatchQueue.main.async {
-                self.append(log: line, engine: engine)
-                if let total = Self.totalBytes(in: line) {
-                    // Snapshot downloader: TOTAL is the repository's full size,
-                    // so it is the denominator with or without a resume.
-                    self.downloadTotalBytes = max(total, self.downloadResumeBytes)
-                    self.upsertTask(engine: engine, model: id) {
-                        $0.totalBytes = max($0.totalBytes, self.downloadTotalBytes)
-                    }
-                    if let directory = plan.watchDirectory {
-                        if !self.downloadWatchDirectories.contains(directory) {
-                            self.downloadWatchDirectories.append(directory)
-                        }
-                        self.startDownloadWatch(engine: engine, model: id)
-                    }
-                } else if let fetch = Self.fetchPlan(in: line) {
-                    // Splash's installer announces every repository it is
-                    // about to fetch with its exact byte size. On a fresh
-                    // download those sizes sum to the total; on a resume the
-                    // cache already holds part of the repository and the
-                    // announcement only covers what is still missing, so the
-                    // denominator is 已下载 + 剩余, never just 剩余.
-                    self.downloadFetchedBytes += fetch.bytes
-                    self.downloadTotalBytes = max(self.downloadTotalBytes,
-                                                  self.downloadResumeBytes + self.downloadFetchedBytes)
-                    self.upsertTask(engine: engine, model: id) {
-                        $0.totalBytes = max($0.totalBytes, self.downloadTotalBytes)
-                    }
-                    let directory = hubCacheRoot + "/models--"
-                        + fetch.repo.replacingOccurrences(of: "/", with: "--")
-                    if !self.downloadWatchDirectories.contains(directory) {
-                        self.downloadWatchDirectories.append(directory)
-                    }
-                    self.startDownloadWatch(engine: engine, model: id)
-                } else if self.downloadTotalBytes == 0,
-                          let match = TextPattern.firstMatch("(\\d{1,3})%", line),
-                          let value = Double(match[1]) {
-                    // Fallback when no total is known: the downloader's own
-                    // percentage. Snapshot engines and splash both report
-                    // byte totals now, so this only covers unusual output.
-                    let fraction = min(max(value / 100, 0), 1)
-                    self.downloadFraction = fraction
-                    if self.downloadTotalBytes > 0 {
-                        self.upsertTask(engine: engine, model: id) {
-                            $0.downloadedBytes = Int(fraction * Double(self.downloadTotalBytes))
-                        }
-                    }
-                }
-            }
-        }
-
-        process.terminationHandler = { finished in
-            let status = finished.terminationStatus
-            // 走到这里时下载进程已经退出，回调只带三个可发送的值；用
-            // `Task { @MainActor }` 而不是闭包里的 `self?`——弱引用在
-            // `@Sendable` 闭包里被当成「可变捕获」，严格并发会报错。
-            Task { @MainActor in
-                AppState.shared.finishDownload(engine: engine, model: id, status: status)
-            }
-        }
-
-        do {
-            try process.run()
-            downloadProcess = process
-            return true
-        } catch {
-            downloadingModel = nil
-            downloadingEngine = nil
-            downloadFraction = nil
-            downloadTotalBytes = 0
-            downloadResumeBytes = 0
-            downloadFetchedBytes = 0
-            lastWatchBytes = 0
-            lastWatchDate = nil
-            downloadWatchDirectories = []
-            downloadWatchBaselines = [:]
-            downloadIncompleteMarker = nil
-            if let marker = plan.incompleteMarker {
-                try? FileManager.default.removeItem(atPath: marker)
-            }
-            removeTask(engine: engine, model: id)
-            notice = "无法启动下载：\(error.localizedDescription)"
-            return false
-        }
-    }
-
     /// Run a download and wait for it to end.
     ///
     /// Only the launch path uses this: a start that has to fetch the model's
@@ -4544,16 +3969,16 @@ final class AppState: ObservableObject {
     /// never has to download inside its own startup (its launcher refuses to
     /// touch the network).
     private func downloadAndWait(_ id: String, engine: EngineID, family: String?) async -> DownloadOutcome {
-        guard downloadingModel == nil else {
-            let other = downloadingModel.map(shortModelName) ?? "另一个模型"
+        guard downloads.downloadingModel == nil else {
+            let other = downloads.downloadingModel.map(shortModelName) ?? "另一个模型"
             return .failed("正在下载 \(other)，等它结束后再启动")
         }
         return await withCheckedContinuation { continuation in
-            downloadCompletion = { continuation.resume(returning: $0) }
+            downloads.setCompletion { continuation.resume(returning: $0) }
             if !downloadModel(id, engine: engine, family: family) {
                 // Nothing started, so nothing will call back: release the
                 // caller with the notice downloadModel already wrote.
-                downloadCompletion = nil
+                downloads.setCompletion(nil)
                 continuation.resume(returning: .failed(notice ?? "无法启动下载"))
             }
         }
@@ -4597,17 +4022,12 @@ final class AppState: ObservableObject {
         }
     }
 
-    // MARK: Download center
+    // MARK: download center
 
-    /// Stop the running transfer. Partial files stay in the destination's
-    /// `.cache`, so 继续 picks up exactly where this left off.
-    func pauseDownload() {
-        guard let process = downloadProcess, let model = downloadingModel else { return }
-        pauseRequested = true
-        downloadSpeed = 0
-        append(log: "==> 暂停下载：\(model)，进度已保留", engine: downloadingEngine ?? .splash)
-        process.terminate()
-    }
+    /// 下载中心对外的门面。界面与本地控制通道（`ControlServer+Documents`）
+    /// 原来直接调这些方法，搬进 store 之后仍然从这里转一下——策略留在这一侧，
+    /// 传输动作委托出去。
+    func pauseDownload() { downloads.pauseDownload() }
 
     /// Continue a paused transfer: the same snapshot downloader runs again and
     /// the Hub resumes its partial files.
@@ -4620,290 +4040,64 @@ final class AppState: ObservableObject {
         downloadModel(task.model, engine: task.engine)
     }
 
-    // MARK: termination
+    func cancelDownload(_ task: ModelDownloadTask) { downloads.cancelDownload(task) }
 
-    private var terminatingDownloadPid: Int32?
+    /// Remove a finished/failed/stale row from the center.
+    func removeTask(_ task: ModelDownloadTask) { downloads.removeTask(task) }
 
-    /// Quit-time cleanup that is not engine lifecycle. The downloader is a child
-    /// process too, and an orphaned one keeps pulling gigabytes to disk with no
-    /// window left to stop it from.
+    /// Quit-time cleanup that is not engine lifecycle. Gateway and control
+    /// server first, then the downloader child: an orphaned one keeps pulling
+    /// gigabytes to disk with no window left to stop it from.
     func prepareForTermination() {
         gateway.stop()
         control.stop()
-        guard let process = downloadProcess, process.isRunning else { return }
-        terminatingDownloadPid = processPid(process)
-        append(log: "==> 退出应用，终止正在进行的下载", engine: downloadingEngine ?? activeEngine)
-        process.terminate()
+        downloads.prepareForTermination()
     }
 
-    /// SIGTERM was ignored, or the child is blocked inside a network read.
-    /// Partial files stay on disk, so the next launch resumes the transfer
-    /// instead of starting over.
     func finishTermination() {
-        guard let pid = terminatingDownloadPid else { return }
-        terminatingDownloadPid = nil
-        kill(pid, SIGKILL)
+        downloads.finishTermination()
     }
 
-    /// Drop a task from the center. For a running transfer that means
-    /// terminating the child; partial files stay on disk so nothing else is
-    /// destroyed — a later download simply resumes them.
-    func cancelDownload(_ task: ModelDownloadTask) {
-        if let process = downloadProcess,
-           downloadingModel == task.model, downloadingEngine == task.engine {
-            cancelRequested = true
-            downloadSpeed = 0
-            append(log: "==> 取消下载：\(task.model)", engine: task.engine)
-            process.terminate()
-        } else {
-            removeTask(engine: task.engine, model: task.model)
-            discardPartialDownload(task)
-            toast("已从下载中心移除")
-        }
-    }
-
-    /// Removing a paused/failed row is the explicit "throw the partial bytes
-    /// away" action. Only folders still carrying the incomplete marker are
-    /// touched, so a finished model that happens to share the id is safe.
-    private func discardPartialDownload(_ task: ModelDownloadTask) {
-        let path: String
-        if let shared = task.shared, !shared.isEmpty {
-            path = ModelSharing.path(for: task.model)
-        } else if task.engine.adapter == .splash {
-            return
-        } else {
-            path = EnginePaths.modelPath(for: task.engine, model: task.model)
-        }
-        let marker = ModelInstaller.incompleteMarker(for: path)
-        guard Paths.fileExists(marker),
-              FlashCatPaths.contains(path, in: EnginePaths.modelsRoot) else { return }
-        try? FileManager.default.removeItem(atPath: path)
-        try? FileManager.default.removeItem(atPath: marker)
-        EngineModelStore.invalidateMetaCache()
-        reloadModels()
-    }
-
-    /// Remove a finished/failed/stale row from the center.
-    ///
-    /// Deleting the row of the transfer that is still running has to stop the
-    /// child as well: the progress watcher upserts the row every half second,
-    /// so merely dropping it from the list would make it reappear immediately.
-    func removeTask(_ task: ModelDownloadTask) {
-        if let process = downloadProcess, process.isRunning,
-           downloadingModel == task.model, downloadingEngine == task.engine {
-            removeRequested = true
-            cancelRequested = true
-            downloadSpeed = 0
-            append(log: "==> 删除下载任务并停止传输：\(task.model)", engine: task.engine)
-            process.terminate()
-            return
-        }
-        removeTask(engine: task.engine, model: task.model)
-        discardPartialDownload(task)
-    }
-
-    private func upsertTask(engine: EngineID, model: String, _ mutate: (inout ModelDownloadTask) -> Void) {
-        if let index = downloadTasks.firstIndex(where: { $0.engine == engine && $0.model == model }) {
-            mutate(&downloadTasks[index])
-        } else {
-            var task = ModelDownloadTask(engine: engine, model: model, status: .downloading)
-            mutate(&task)
-            downloadTasks.append(task)
-        }
-        ModelDownloadStore.save(downloadTasks)
-    }
-
-    private func removeTask(engine: EngineID, model: String) {
-        downloadTasks.removeAll { $0.engine == engine && $0.model == model }
-        ModelDownloadStore.save(downloadTasks)
-        // 下载行消失 = 这份权重在磁盘上定形了，下次扫描重新读字节数。
-        EngineModelStore.invalidateMetaCache()
-    }
-
-    private static func totalBytes(in line: String) -> Int? {
-        guard line.hasPrefix("TOTAL ") else { return nil }
-        return Int(line.dropFirst(6).trimmingCharacters(in: .whitespaces))
-    }
-
-    /// `Fetching 8 file(s), 20.43 GB, from owner/repo@38740b847e4c; cached
-    /// files are reused.` — how the Splash installer announces each repository
-    /// it is about to fetch, with its exact size (hub.py prints GB as 1e9
-    /// bytes). The repo's Hub cache folder is where those bytes land.
-    private static func fetchPlan(in line: String) -> (bytes: Int, repo: String)? {
-        guard let match = TextPattern.firstMatch(
-            "Fetching \\d+ file\\(s\\), ([\\d.]+) (GB|MB|KB), from ([^@\\s]+)@", line),
-              let value = Double(match[1]) else { return nil }
-        let multiplier: Double
-        switch match[2] {
-        case "GB": multiplier = 1e9
-        case "MB": multiplier = 1e6
-        default: multiplier = 1e3
-        }
-        return (Int((value * multiplier).rounded()), match[3])
-    }
-
-    /// Watch the folders the running download fills and turn bytes on disk
-    /// into a percentage, plus a smoothed transfer speed for the download
-    /// center. The walk happens off the main actor: a model folder holds
-    /// thousands of shards and the UI thread has a card to animate.
-    private func startDownloadWatch(engine: EngineID, model: String) {
-        downloadWatchTask?.cancel()
-        downloadWatchTask = Task { [weak self] in
-            while !Task.isCancelled {
-                guard let self else { return }
-                let directories = self.downloadWatchDirectories
-                let sizes = await Task.detached(priority: .utility) {
-                    directories.map { ModelInstaller.size(of: $0) }
-                }.value
-                guard !Task.isCancelled else { return }
-                // A folder's first sighting sets its baseline, so weights that
-                // were already in the cache before this download don't count.
-                // The bytes the resumed transfer started with are added back on
-                // top: they are part of this model, unlike a foreign cache entry.
-                var downloaded = self.downloadResumeBytes
-                for (index, directory) in directories.enumerated() {
-                    if let baseline = self.downloadWatchBaselines[directory] {
-                        downloaded += max(sizes[index] - baseline, 0)
-                    } else {
-                        self.downloadWatchBaselines[directory] = sizes[index]
-                    }
-                }
-                let now = Date()
-
-                if let last = self.lastWatchDate,
-                   now.timeIntervalSince(last) > 0, downloaded > self.lastWatchBytes {
-                    let instant = Double(downloaded - self.lastWatchBytes) / now.timeIntervalSince(last)
-                    self.downloadSpeed = self.lastWatchBytes == 0
-                        ? instant
-                        : self.downloadSpeed * 0.65 + instant * 0.35
-                }
-                self.lastWatchBytes = downloaded
-                self.lastWatchDate = now
-                let total = self.downloadTotalBytes
-                if total > 0 {
-                    self.downloadFraction = min(max(Double(downloaded) / Double(total), 0), 1)
-                }
-                self.upsertTask(engine: engine, model: model) { task in
-                    task.downloadedBytes = downloaded
-                    task.totalBytes = max(task.totalBytes, total)
-                }
-                try? await Task.sleep(nanoseconds: 500_000_000)
-            }
-        }
-    }
-
-    private func finishDownload(engine: EngineID, model: String, status: Int32) {
-        let sharedRepo = pendingSharedRepo
-        let sharedEngines = pendingSharedEngines
-        let incompleteMarker = downloadIncompleteMarker
-        downloadIncompleteMarker = nil
-        pendingSharedRepo = nil
-        pendingSharedEngines = []
-        downloadWatchTask?.cancel()
-        downloadWatchTask = nil
-        downloadProcess = nil
-        downloadingModel = nil
-        downloadingEngine = nil
-        downloadFraction = nil
-        downloadTotalBytes = 0
-        downloadSpeed = 0
-        downloadResumeBytes = 0
-        downloadFetchedBytes = 0
-        lastWatchBytes = 0
-        lastWatchDate = nil
-        downloadWatchDirectories = []
-        downloadWatchBaselines = [:]
-        reloadModels()
-
-        // A launch may be waiting on this download; it resumes exactly once,
-        // whichever branch below ends up running.
-        var outcome = DownloadOutcome.failed("下载失败，退出码 \(status)")
-        defer {
-            let completion = downloadCompletion
-            downloadCompletion = nil
-            completion?(outcome)
-        }
-
-        if pauseRequested {
-            pauseRequested = false
-            upsertTask(engine: engine, model: model) { $0.status = .paused }
-            append(log: "==> 已暂停 \(model)，可从下载中心继续", engine: engine)
-            toast("已暂停下载，进度已保留", transient: true)
-            outcome = .cancelled
-            return
-        }
-        if cancelRequested {
-            cancelRequested = false
-            if removeRequested {
-                // 用户点的是删除而不是暂停：行和半成品一起清掉。
-                removeRequested = false
-                let stale = ModelDownloadTask(engine: engine, model: model, status: .paused,
-                                              shared: sharedRepo == nil ? nil : sharedEngines)
-                removeTask(engine: engine, model: model)
-                discardPartialDownload(stale)
-                append(log: "==> 已删除下载任务 \(model)，半成品已清理", engine: engine)
-                toast("已从下载中心移除")
-                outcome = .cancelled
+    /// 下载收尾。这两件事都要看当前引擎与启动流程，所以由 AppState 消费，
+    /// store 只报告「下完了」。
+    private func handle(_ event: DownloadEvent) {
+        switch event {
+        case .modelReady(let engine, let model, let installed):
+            // 启动前补件之后紧跟的是启动本身：没有提示要回答，选中模型也不能
+            // 在启动底下被换掉。
+            guard !supplementInFlight else { return }
+            guard engine == activeEngine else {
+                toast(L10n.format("已下载 %@，切到 %@ 就能用", model, engine.displayName))
                 return
             }
-            // Keep the row as paused: the partial bytes and the marker are
-            // still on disk, so the model card must keep showing that state
-            // instead of flipping back to a clickable "下载". Removing the row
-            // is a second, explicit step in the download center.
-            upsertTask(engine: engine, model: model) { $0.status = .paused }
-            append(log: "==> 已停止下载 \(model)，进度已保留", engine: engine)
-            toast("已停止下载，可在下载中心继续或移除", transient: true)
-            outcome = .cancelled
-            return
+            applyModel(installed)
+            toast(L10n.format("已下载 %@", model))
+        case .shareRequested(let repo, let engines):
+            publishShared(repo: repo, engines: engines)
         }
-
-        guard status == 0 else {
-            upsertTask(engine: engine, model: model) { $0.status = .failed }
-            append(log: "==> 下载失败，退出码 \(status)", engine: engine)
-            let message = "模型下载失败，退出码 \(status)（下载中心里可重试）"
-            notice = message
-            outcome = .failed(message)
-            return
-        }
-
-        removeTask(engine: engine, model: model)
-        if let incompleteMarker {
-            try? FileManager.default.removeItem(atPath: incompleteMarker)
-        }
-        // The scan at the top of this method still saw the marker; drop the
-        // cached byte count and rescan now that the destination is complete,
-        // so the card can flip from progress to "使用".
-        EngineModelStore.invalidateMetaCache()
-        reloadModels()
-
-        if let sharedRepo {
-            publishShared(repo: sharedRepo, engines: sharedEngines)
-            append(log: "==> 已下载 \(sharedRepo) 到公共目录", engine: engine)
-            return
-        }
-
-        // Splash addresses a model by its repository id, the packs by the
-        // folder name flashCat gave it.
-        let repo = model.split(separator: ":", maxSplits: 1).first.map(String.init) ?? model
-        let installed = engine.adapter == .splash
-            || engine.descriptor.modelLayout == .nested
-            || engine.descriptor.modelLayout == .external
-            ? model
-            : ModelInstaller.folderName(for: repo)
-        append(log: "==> 已下载 \(model)", engine: engine)
-        outcome = .finished
-        // A launch-triggered fetch is followed by the launch itself: no toast
-        // to answer, and the selection must not move under the start.
-        guard !supplementInFlight else { return }
-        guard engine == activeEngine else {
-            toast(L10n.format("已下载 %@，切到 %@ 就能用", model, engine.displayName))
-            return
-        }
-        applyModel(installed)
-        toast(L10n.format("已下载 %@", model))
     }
 
     /// Engine logs are per engine; only the running engine's copy is on screen.
+    /// 历史写盘失败在 ChatHistory 的后台串行队列上触发，要回到主 actor 才能
+    /// 写日志流。写成静态入口是为了让 `history` 的构造闭包不必捕获 `self`
+    ///（init 期间不允许），代价是只对单例有效——而 AppState 本来就是单例。
+    nonisolated private static func recordHistoryWriteFailure(_ message: String) {
+        Task { @MainActor in
+            AppState.shared.reportHistoryWriteFailure(message)
+        }
+    }
+
+    /// 日志页读的就是当前引擎的日志流，失败优先落在那里。引擎还没挂上时退到
+    /// 网关日志：两条都是会落盘的真实文件，反正不许让失败凭空消失。
+    private func reportHistoryWriteFailure(_ message: String) {
+        if let store = controller?.logs {
+            store.append(message, level: .error)
+            logs = store.snapshot(limit: 4000)
+        } else {
+            gateway.logs.append(message, level: .error)
+        }
+    }
+
     private func append(log line: String, engine: EngineID) {
         engines?.controller(engine)?.logs.append(line, level: .system)
         if engine == activeEngine { logs = controller?.logs.snapshot(limit: 4000) ?? [] }
@@ -4923,10 +4117,12 @@ final class AppState: ObservableObject {
     ///   粘贴板、已经改好的设置），留在历史里只是噪音，所以只闪几秒，不占通知
     ///   历史与未读数。失败、阻塞、后台任务完成和破坏性操作仍然留存——那是读
     ///   者回头要看的。
-    func toast(_ message: String,
-               title: String? = nil,
-               kind: IslandNotice.Kind? = nil,
-               transient: Bool = false) {
+    func toast(
+        _ message: String,
+        title: String? = nil,
+        kind: IslandNotice.Kind? = nil,
+        transient: Bool = false
+    ) {
         // Classify from the source text (the kind rules are written against
         // Chinese phrases) before swapping in the localized message. Callers
         // that already know the lifecycle phase pass an explicit kind so a
@@ -4993,7 +4189,7 @@ final class AppState: ObservableObject {
     }
 }
 
-let SPLASH_VERSION = "1.4.0"
+let splashVersion = "1.4.0"
 
 /// Streams a child process pipe line by line without blocking the main thread.
 ///

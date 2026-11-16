@@ -1,5 +1,9 @@
-import XCTest
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import FlashCatKit
+import XCTest
+
 @testable import FlashCat
 
 final class ModelLibraryTests: XCTestCase {
@@ -7,22 +11,25 @@ final class ModelLibraryTests: XCTestCase {
     /// 带上引擎，否则 ForEach 收到重复 id，懒加载网格会出现空位甚至整页空白。
     func testAllScopeEntriesHaveUniqueIdentity() {
         let rows = EngineCatalog.allIDs.flatMap { engine in
-            ModelLibrary.entries(installed: [],
-                                 engine: engine,
-                                 recommendations: ModelRecommendations.list(for: engine),
-                                 draftRepository: { _ in nil })
+            ModelLibrary.entries(
+                installed: [],
+                engine: engine,
+                recommendations: ModelRecommendations.list(for: engine),
+                draftRepository: { _ in nil })
         }
 
         XCTAssertFalse(rows.isEmpty)
         XCTAssertEqual(Set(rows.map(\.identity)).count, rows.count)
-        XCTAssertLessThan(Set(rows.map(\.id)).count, rows.count,
-                          "目录里有跨引擎共享的模型，裸 id 本就会重复")
+        XCTAssertLessThan(
+            Set(rows.map(\.id)).count, rows.count,
+            "目录里有跨引擎共享的模型，裸 id 本就会重复")
     }
 
     func testIdentityIncludesEngine() {
         let entry = ModelLibraryEntry(
-            model: ModelInfo(id: "owner/repo", path: "", bytes: 0, origin: .recommended,
-                             targetName: ""),
+            model: ModelInfo(
+                id: "owner/repo", path: "", bytes: 0, origin: .recommended,
+                targetName: ""),
             engine: .omlx,
             recommendation: nil,
             draftRepository: nil,

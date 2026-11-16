@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// What the engine page can do with one release from the pack index.
@@ -38,8 +41,10 @@ public enum EnginePackOffers {
     /// dropped, because offering 0.7.1 next to an installed 0.7.2 only invites
     /// accidental downgrades. With nothing installed, every release is an
     /// `install` and the list stays newest first.
-    public static func offers(installed: [String],
-                              releases: [EnginePackRelease]) -> [EnginePackOffer] {
+    public static func offers(
+        installed: [String],
+        releases: [EnginePackRelease]
+    ) -> [EnginePackOffer] {
         let newestInstalled = installed.max { EngineVersionOrder.isNewer($1, than: $0) }
         var result: [EnginePackOffer] = []
         for release in releases {

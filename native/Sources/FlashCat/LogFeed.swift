@@ -1,5 +1,8 @@
-import Foundation
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import FlashCatKit
+import Foundation
 
 /// 日志页可以看的一个来源。默认是 `all`：每台已装引擎的尾巴并成一份，出问题
 /// 时先看「全部」，不用先猜是哪台引擎写的；排查具体一台时再从菜单里挑。

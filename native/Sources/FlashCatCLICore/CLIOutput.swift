@@ -1,9 +1,16 @@
-import Foundation
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
+import Darwin
 import FlashCatKit
+import Foundation
 
 /// Process exit codes are part of the CLI contract: scripts can tell "app not
 /// running" from "bad usage" without parsing stderr.
-public enum CLIExit: Int32, Sendable {
+///
+/// `CaseIterable` 是给测试和 `help` 用的：退出码的含义只在
+/// `CLICommandTable.exitCodes` 里写一遍，遍历这里就能核对「每个码都有说明」。
+public enum CLIExit: Int32, CaseIterable, Sendable {
     case success = 0
     case failure = 1
     case usage = 2
@@ -28,6 +35,32 @@ public struct CLIError: Error, LocalizedError, Sendable {
     public var errorDescription: String? { message }
 }
 
+/// 直接对文件描述符写，而不是 `FileHandle.write(_:)`：后者在 EPIPE 时抛的是
+/// ObjC 异常，Swift 的 do/catch 接不住，会让 `flashcat chat … | head -1` 直接崩掉。
+/// 入口忽略 SIGPIPE 之后 `write(2)` 只会返回 -1，把失败变成返回值就能安静收场。
+public enum CLIStandardIO {
+    /// 返回 false 表示这次没写成功（典型是下游关掉了管道），调用方应当放弃后续写入。
+    @discardableResult
+    public static func write(_ text: String, to descriptor: Int32) -> Bool {
+        let bytes = Data(text.utf8)
+        return bytes.withUnsafeBytes { buffer -> Bool in
+            guard let base = buffer.baseAddress else { return true }
+            var offset = 0
+            while offset < buffer.count {
+                let written = Darwin.write(descriptor, base + offset, buffer.count - offset)
+                if written > 0 {
+                    offset += written
+                    continue
+                }
+                // EINTR 是被信号打断，重试即可；EPIPE 及其它错误都是不可恢复的。
+                if written < 0, errno == EINTR { continue }
+                return false
+            }
+            return true
+        }
+    }
+}
+
 /// ANSI colour is opt-out: `--no-color`, a non-tty stdout, or `NO_COLOR` all
 /// turn it off. Machine-readable `--json` output never contains escapes.
 public final class CLIOutput {
@@ -36,15 +69,25 @@ public final class CLIOutput {
     public var color: Bool
     public var verbose: Bool
 
-    private let stdoutWrite: (String) -> Void
-    private let stderrWrite: (String) -> Void
+    /// stdout 已被下游关闭（典型是 `flashcat chat … | head -1`）。EPIPE 不会自愈，
+    /// 之后的每次写都只会再失败一次；命令据此提前收手，进程按 0 退出（coreutils 约定）。
+    public private(set) var brokenPipe = false
 
-    public init(json: Bool = false,
-                quiet: Bool = false,
-                color: Bool = false,
-                verbose: Bool = false,
-                stdout: @escaping (String) -> Void = { FileHandle.standardOutput.write(Data($0.utf8)) },
-                stderr: @escaping (String) -> Void = { FileHandle.standardError.write(Data($0.utf8)) }) {
+    private let stdoutWrite: (String) -> Bool
+    private let stderrWrite: (String) -> Bool
+
+    public init(
+        json: Bool = false,
+        quiet: Bool = false,
+        color: Bool = false,
+        verbose: Bool = false,
+        stdout: @escaping (String) -> Bool = {
+            CLIStandardIO.write($0, to: FileHandle.standardOutput.fileDescriptor)
+        },
+        stderr: @escaping (String) -> Bool = {
+            CLIStandardIO.write($0, to: FileHandle.standardError.fileDescriptor)
+        }
+    ) {
         self.json = json
         self.quiet = quiet
         self.color = color && !json
@@ -56,27 +99,30 @@ public final class CLIOutput {
     // MARK: Basic writes
 
     public func write(_ text: String) {
-        stdoutWrite(text)
+        guard !brokenPipe else { return }
+        if !stdoutWrite(text) { brokenPipe = true }
     }
 
     public func line(_ text: String = "") {
-        stdoutWrite(text + "\n")
+        write(text + "\n")
     }
 
     public func errorLine(_ text: String) {
-        stderrWrite(text + "\n")
+        // stderr 断了没有恢复动作，也没有别的通道汇报这件事；忽略返回值，
+        // 但不能因此连带上游把已经成功写出的 stdout 结果当成失败。
+        _ = stderrWrite(text + "\n")
     }
 
     /// Partial stderr write for streaming reasoning; no forced newline.
     public func errorText(_ text: String) {
-        stderrWrite(text)
+        _ = stderrWrite(text)
     }
 
     /// Status/progress messages go to stderr so `flashcat models download |
     /// jq` keeps stdout clean.
     public func note(_ text: String) {
         guard !quiet else { return }
-        stderrWrite(paint(text, "2") + "\n")
+        _ = stderrWrite(paint(text, "2") + "\n")
     }
 
     public func success(_ text: String) {
@@ -112,9 +158,12 @@ public final class CLIOutput {
         }
         // JSON errors go to stderr like every other failure; stdout stays a
         // clean data channel.
-        errorLine(encode(Body(ok: false,
-                              error: ControlErrorBody(code: "cli_error", message: error.message),
-                              hint: error.hint)))
+        errorLine(
+            encode(
+                Body(
+                    ok: false,
+                    error: ControlErrorBody(code: "cli_error", message: error.message),
+                    hint: error.hint)))
     }
 
     // MARK: Tables

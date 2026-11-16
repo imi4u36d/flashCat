@@ -1,6 +1,9 @@
-import SwiftUI
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AppKit
 import FlashCatKit
+import SwiftUI
 
 /// Drives pack installs: loads the release index once, then runs one install at
 /// a time (they write into the same folder tree). Driven by the engines page
@@ -96,8 +99,10 @@ final class EngineInstallCenter: ObservableObject {
         // 不再停在本机文件检查上，而是改用上游 GitHub 的版本构建安装。
         guard release.hasAvailableSource else {
             if !afterBuild, case .update(_, let upstreamRelease) = upstream[id] {
-                onToast?(L10n.format("%@ 的安装包不在本机，改为从 GitHub 构建 %@",
-                                     id.displayName, upstreamRelease.version))
+                onToast?(
+                    L10n.format(
+                        "%@ 的安装包不在本机，改为从 GitHub 构建 %@",
+                        id.displayName, upstreamRelease.version))
                 _ = buildAndInstall(upstreamRelease, for: id)
             } else {
                 let message = L10n.format("下载源不可用：%@", release.url)
@@ -266,7 +271,8 @@ final class EngineInstallCenter: ObservableObject {
     /// user explicitly asks to check again.
     func checkUpstream(force: Bool = false) async {
         if !force, let checkedAt = upstreamCheckedAt,
-           Date().timeIntervalSince(checkedAt) < 6 * 3600, !upstream.isEmpty {
+            Date().timeIntervalSince(checkedAt) < 6 * 3600, !upstream.isEmpty
+        {
             return
         }
         refreshInstalled()
@@ -288,7 +294,8 @@ final class EngineInstallCenter: ObservableObject {
     /// 几次 GitHub 请求，也更不容易撞上未登录接口的限额。
     func checkUpstream(for id: EngineID, force: Bool = false) async {
         if !force, let checkedAt = upstreamCheckedAt,
-           Date().timeIntervalSince(checkedAt) < 6 * 3600, upstream[id] != nil {
+            Date().timeIntervalSince(checkedAt) < 6 * 3600, upstream[id] != nil
+        {
             return
         }
         refreshInstalled()
@@ -324,8 +331,9 @@ final class EngineInstallCenter: ObservableObject {
             do {
                 release = try await checker.latest(for: id)
                 upstreamReleases[id] = release
-                upstream[id] = EngineUpstreamComparison.status(installed: installed[id] ?? [],
-                                                              release: release)
+                upstream[id] = EngineUpstreamComparison.status(
+                    installed: installed[id] ?? [],
+                    release: release)
             } catch {
                 phases[id] = .failed(message: error.localizedDescription)
                 progress[id] = nil
@@ -413,7 +421,8 @@ final class EngineInstallCenter: ObservableObject {
                     owner.runningStepIndex[id] = nil
                     owner.clearProgress(id)
                     owner.phases[id] = .failed(message: error.localizedDescription)
-                    owner.onToast?(L10n.format("%@ %@ 构建失败：%@", id.displayName, release.version, error.localizedDescription))
+                    owner.onToast?(
+                        L10n.format("%@ %@ 构建失败：%@", id.displayName, release.version, error.localizedDescription))
                     owner.onInstallFailed?(id)
                 }
             }
@@ -422,4 +431,3 @@ final class EngineInstallCenter: ObservableObject {
     }
 
 }
-

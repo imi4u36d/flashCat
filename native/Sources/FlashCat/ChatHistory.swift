@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 struct ChatThread: Identifiable {
@@ -10,6 +13,15 @@ struct ChatThread: Identifiable {
 /// Sidebar conversation history: newest first, capped at six entries.
 final class ChatHistory {
     private let limit = 6
+
+    /// 写盘失败必须能被看见：历史是用户找回上一轮回答的唯一途径，静默失败
+    /// 等于「保存成功」的假象。这里注入闭包而不是直接持有 LogStore，是因为
+    /// 写盘发生在后台串行队列上，而 LogStore 归 AppState 所有，两者不该互相耦合。
+    private let onWriteFailure: (@Sendable (String) -> Void)?
+
+    init(onWriteFailure: (@Sendable (String) -> Void)? = nil) {
+        self.onWriteFailure = onWriteFailure
+    }
 
     private struct StoredThread: Codable {
         let id: String
@@ -102,38 +114,42 @@ final class ChatHistory {
         }
         if let stored = try? JSONDecoder().decode([StoredThread].self, from: data) {
             return stored.map { item in
-                ChatThread(id: item.id, title: item.title,
-                          updatedAt: Date(timeIntervalSince1970: item.updatedAt),
-                          messages: item.messages.map { message in
-                              let usage = (message.promptTokens != nil || message.completionTokens != nil)
-                                  ? ChatUsage(promptTokens: message.promptTokens ?? 0,
-                                              completionTokens: message.completionTokens ?? 0)
-                                  : nil
-                              return ChatMessage(role: message.role, content: message.content,
-                                                 model: message.model,
-                                                 createdAt: message.createdAt.map { Date(timeIntervalSince1970: $0) },
-                                                 usage: usage,
-                                                 seconds: message.seconds,
-                                                 tokensPerSecond: message.tokensPerSecond,
-                                                 firstTokenSeconds: message.firstTokenSeconds,
-                                                 thinkingSeconds: message.thinkingSeconds,
-                                                 reasoning: message.reasoning,
-                                                 interrupted: message.interrupted ?? false,
-                                                 imagePath: message.imagePath,
-                                                 imageNote: message.imageNote,
-                                                 imageSourcePath: message.imageSourcePath,
-                                                 imageStrength: message.imageStrength,
-                                                 imageSeed: message.imageSeed,
-                                                 imagePaths: message.imagePaths ?? [],
-                                                 toolCalls: message.toolCalls ?? [],
-                                                 toolResults: message.toolResults ?? [],
-                                                 videoPath: message.videoPath,
-                                                 videoNote: message.videoNote,
-                                                 videoSourcePath: message.videoSourcePath,
-                                                 videoLastFramePath: message.videoLastFramePath,
-                                                 videoReferenceImagePaths: message.videoReferenceImagePaths,
-                                                 videoReferenceClipPaths: message.videoReferenceClipPaths)
-                          })
+                ChatThread(
+                    id: item.id, title: item.title,
+                    updatedAt: Date(timeIntervalSince1970: item.updatedAt),
+                    messages: item.messages.map { message in
+                        let usage =
+                            (message.promptTokens != nil || message.completionTokens != nil)
+                            ? ChatUsage(
+                                promptTokens: message.promptTokens ?? 0,
+                                completionTokens: message.completionTokens ?? 0)
+                            : nil
+                        return ChatMessage(
+                            role: message.role, content: message.content,
+                            model: message.model,
+                            createdAt: message.createdAt.map { Date(timeIntervalSince1970: $0) },
+                            usage: usage,
+                            seconds: message.seconds,
+                            tokensPerSecond: message.tokensPerSecond,
+                            firstTokenSeconds: message.firstTokenSeconds,
+                            thinkingSeconds: message.thinkingSeconds,
+                            reasoning: message.reasoning,
+                            interrupted: message.interrupted ?? false,
+                            imagePath: message.imagePath,
+                            imageNote: message.imageNote,
+                            imageSourcePath: message.imageSourcePath,
+                            imageStrength: message.imageStrength,
+                            imageSeed: message.imageSeed,
+                            imagePaths: message.imagePaths ?? [],
+                            toolCalls: message.toolCalls ?? [],
+                            toolResults: message.toolResults ?? [],
+                            videoPath: message.videoPath,
+                            videoNote: message.videoNote,
+                            videoSourcePath: message.videoSourcePath,
+                            videoLastFramePath: message.videoLastFramePath,
+                            videoReferenceImagePaths: message.videoReferenceImagePaths,
+                            videoReferenceClipPaths: message.videoReferenceClipPaths)
+                    })
             }
         }
         return Self.decodeLegacy(data)
@@ -156,49 +172,52 @@ final class ChatHistory {
                 }
                 let elapsed = item["elapsed"] as? Double
                 let tokens = (item["tokens"] as? Int) ?? 0
-                return ChatMessage(role: role, content: text, model: item["model"] as? String,
-                                   createdAt: Self.parseLegacyDate(item["createdAt"] as? String),
-                                   usage: usage,
-                                   seconds: elapsed,
-                                   tokensPerSecond: legacyRate(tokens: tokens, elapsed: elapsed),
-                                   firstTokenSeconds: (item["ttft"] as? Double).map { $0 / 1000 })
+                return ChatMessage(
+                    role: role, content: text, model: item["model"] as? String,
+                    createdAt: Self.parseLegacyDate(item["createdAt"] as? String),
+                    usage: usage,
+                    seconds: elapsed,
+                    tokensPerSecond: legacyRate(tokens: tokens, elapsed: elapsed),
+                    firstTokenSeconds: (item["ttft"] as? Double).map { $0 / 1000 })
             }
             guard !converted.isEmpty else { return nil }
             let stamp = row["updatedAt"] as? String ?? ""
-            return ChatThread(id: row["id"] as? String ?? UUID().uuidString,
-                              title: row["title"] as? String ?? "对话",
-                              updatedAt: formatter.date(from: stamp) ?? Date(),
-                              messages: converted)
+            return ChatThread(
+                id: row["id"] as? String ?? UUID().uuidString,
+                title: row["title"] as? String ?? "对话",
+                updatedAt: formatter.date(from: stamp) ?? Date(),
+                messages: converted)
         }
     }
 
     private static func stored(_ message: ChatMessage) -> StoredMessage {
-        StoredMessage(role: message.role,
-                      content: message.content,
-                      model: message.model,
-                      createdAt: message.createdAt?.timeIntervalSince1970,
-                      promptTokens: message.usage?.promptTokens,
-                      completionTokens: message.usage?.completionTokens,
-                      seconds: message.seconds,
-                      tokensPerSecond: message.tokensPerSecond,
-                      firstTokenSeconds: message.firstTokenSeconds,
-                      reasoning: message.reasoning,
-                      thinkingSeconds: message.thinkingSeconds,
-                      interrupted: message.interrupted ? true : nil,
-                      imagePath: message.imagePath,
-                      imageNote: message.imageNote,
-                      imageSourcePath: message.imageSourcePath,
-                      imageStrength: message.imageStrength,
-                      imageSeed: message.imageSeed,
-                      imagePaths: message.imagePaths.isEmpty ? nil : message.imagePaths,
-                      toolCalls: message.toolCalls.isEmpty ? nil : message.toolCalls,
-                      toolResults: message.toolResults.isEmpty ? nil : message.toolResults,
-                      videoPath: message.videoPath,
-                      videoNote: message.videoNote,
-                      videoSourcePath: message.videoSourcePath,
-                      videoLastFramePath: message.videoLastFramePath,
-                      videoReferenceImagePaths: message.videoReferenceImagePaths,
-                      videoReferenceClipPaths: message.videoReferenceClipPaths)
+        StoredMessage(
+            role: message.role,
+            content: message.content,
+            model: message.model,
+            createdAt: message.createdAt?.timeIntervalSince1970,
+            promptTokens: message.usage?.promptTokens,
+            completionTokens: message.usage?.completionTokens,
+            seconds: message.seconds,
+            tokensPerSecond: message.tokensPerSecond,
+            firstTokenSeconds: message.firstTokenSeconds,
+            reasoning: message.reasoning,
+            thinkingSeconds: message.thinkingSeconds,
+            interrupted: message.interrupted ? true : nil,
+            imagePath: message.imagePath,
+            imageNote: message.imageNote,
+            imageSourcePath: message.imageSourcePath,
+            imageStrength: message.imageStrength,
+            imageSeed: message.imageSeed,
+            imagePaths: message.imagePaths.isEmpty ? nil : message.imagePaths,
+            toolCalls: message.toolCalls.isEmpty ? nil : message.toolCalls,
+            toolResults: message.toolResults.isEmpty ? nil : message.toolResults,
+            videoPath: message.videoPath,
+            videoNote: message.videoNote,
+            videoSourcePath: message.videoSourcePath,
+            videoLastFramePath: message.videoLastFramePath,
+            videoReferenceImagePaths: message.videoReferenceImagePaths,
+            videoReferenceClipPaths: message.videoReferenceClipPaths)
     }
 
     static func parseLegacyDate(_ raw: String?) -> Date? {
@@ -228,20 +247,26 @@ final class ChatHistory {
 
     /// 历史文件可能越滚越大，序列化和写盘放在主线程会让每轮回答结束时
     /// 顿一下。缓存同步更新，磁盘写入排到串行后台队列，顺序保持不变。
-    private let writeQueue = DispatchQueue(label: "com.zhuo.flashCat.chat-history",
-                                           qos: .utility)
+    private let writeQueue = DispatchQueue(
+        label: "com.zhuo.flashCat.chat-history",
+        qos: .utility)
 
     private func write(_ threads: [ChatThread]) {
         cache = threads
         let stored = threads.map { thread in
-            StoredThread(id: thread.id, title: thread.title,
-                         updatedAt: thread.updatedAt.timeIntervalSince1970,
-                         messages: thread.messages.map(Self.stored))
+            StoredThread(
+                id: thread.id, title: thread.title,
+                updatedAt: thread.updatedAt.timeIntervalSince1970,
+                messages: thread.messages.map(Self.stored))
         }
+        let sink = onWriteFailure
         writeQueue.async {
             Paths.ensureDirectory(Paths.supportDirectory)
-            if let data = try? JSONEncoder().encode(stored) {
-                try? data.write(to: URL(fileURLWithPath: Paths.historyFile))
+            do {
+                let data = try JSONEncoder().encode(stored)
+                try data.write(to: URL(fileURLWithPath: Paths.historyFile))
+            } catch {
+                sink?("讨论列表保存失败（\(Paths.historyFile)）：\(error.localizedDescription)")
             }
         }
     }
@@ -256,13 +281,14 @@ final class ChatHistory {
     static func savable(_ messages: [ChatMessage]) -> [ChatMessage] {
         // 图像/视频消息的正文是空的：媒体在 imagePath/videoPath 里，不能按文本判空丢掉。
         messages.filter {
-            !$0.streaming && (!$0.content.isEmpty || $0.interrupted
-                              || $0.imagePath != nil || !$0.imagePaths.isEmpty
-                              || !$0.toolCalls.isEmpty
-                              || $0.videoPath != nil
-                              || $0.videoLastFramePath != nil
-                              || !($0.videoReferenceImagePaths ?? []).isEmpty
-                              || !($0.videoReferenceClipPaths ?? []).isEmpty)
+            !$0.streaming
+                && (!$0.content.isEmpty || $0.interrupted
+                    || $0.imagePath != nil || !$0.imagePaths.isEmpty
+                    || !$0.toolCalls.isEmpty
+                    || $0.videoPath != nil
+                    || $0.videoLastFramePath != nil
+                    || !($0.videoReferenceImagePaths ?? []).isEmpty
+                    || !($0.videoReferenceClipPaths ?? []).isEmpty)
         }
     }
 
@@ -280,8 +306,10 @@ final class ChatHistory {
         if let index = threads.firstIndex(where: { $0.id == threadID }) {
             threads.remove(at: index)
         }
-        threads.insert(ChatThread(id: threadID, title: title, updatedAt: Date(),
-                                  messages: completed), at: 0)
+        threads.insert(
+            ChatThread(
+                id: threadID, title: title, updatedAt: Date(),
+                messages: completed), at: 0)
         write(Array(threads.prefix(limit)))
     }
 }
@@ -289,6 +317,13 @@ final class ChatHistory {
 /// The conversation currently open in the chat pane. Kept separate from the
 /// history list so a restart of the app resumes the same context.
 final class ConversationStore {
+    /// 与 `ChatHistory` 同理：对话记录是整个会话的唯一持久副本，写失败必须能被看见。
+    private let onWriteFailure: (@Sendable (String) -> Void)?
+
+    init(onWriteFailure: (@Sendable (String) -> Void)? = nil) {
+        self.onWriteFailure = onWriteFailure
+    }
+
     private struct StoredMessage: Codable {
         let role: String
         let content: String
@@ -326,32 +361,34 @@ final class ConversationStore {
             return Self.decodeLegacy(data)
         }
         return stored.map { item in
-            let usage = (item.promptTokens != nil || item.completionTokens != nil)
+            let usage =
+                (item.promptTokens != nil || item.completionTokens != nil)
                 ? ChatUsage(promptTokens: item.promptTokens ?? 0, completionTokens: item.completionTokens ?? 0)
                 : nil
-            return ChatMessage(role: item.role, content: item.content, model: item.model,
-                               createdAt: item.createdAt.map { Date(timeIntervalSince1970: $0) },
-                               usage: usage,
-                               seconds: item.seconds,
-                               tokensPerSecond: item.tokensPerSecond,
-                               firstTokenSeconds: item.firstTokenSeconds,
-                               thinkingSeconds: item.thinkingSeconds,
-                               reasoning: item.reasoning,
-                               interrupted: item.interrupted ?? false,
-                               imagePath: item.imagePath,
-                               imageNote: item.imageNote,
-                               imageSourcePath: item.imageSourcePath,
-                               imageStrength: item.imageStrength,
-                               imageSeed: item.imageSeed,
-                               imagePaths: item.imagePaths ?? [],
-                               toolCalls: item.toolCalls ?? [],
-                               toolResults: item.toolResults ?? [],
-                               videoPath: item.videoPath,
-                               videoNote: item.videoNote,
-                               videoSourcePath: item.videoSourcePath,
-                               videoLastFramePath: item.videoLastFramePath,
-                               videoReferenceImagePaths: item.videoReferenceImagePaths,
-                               videoReferenceClipPaths: item.videoReferenceClipPaths)
+            return ChatMessage(
+                role: item.role, content: item.content, model: item.model,
+                createdAt: item.createdAt.map { Date(timeIntervalSince1970: $0) },
+                usage: usage,
+                seconds: item.seconds,
+                tokensPerSecond: item.tokensPerSecond,
+                firstTokenSeconds: item.firstTokenSeconds,
+                thinkingSeconds: item.thinkingSeconds,
+                reasoning: item.reasoning,
+                interrupted: item.interrupted ?? false,
+                imagePath: item.imagePath,
+                imageNote: item.imageNote,
+                imageSourcePath: item.imageSourcePath,
+                imageStrength: item.imageStrength,
+                imageSeed: item.imageSeed,
+                imagePaths: item.imagePaths ?? [],
+                toolCalls: item.toolCalls ?? [],
+                toolResults: item.toolResults ?? [],
+                videoPath: item.videoPath,
+                videoNote: item.videoNote,
+                videoSourcePath: item.videoSourcePath,
+                videoLastFramePath: item.videoLastFramePath,
+                videoReferenceImagePaths: item.videoReferenceImagePaths,
+                videoReferenceClipPaths: item.videoReferenceClipPaths)
         }
     }
 
@@ -368,59 +405,75 @@ final class ConversationStore {
             }
             let elapsed = row["elapsed"] as? Double
             let tokens = (row["tokens"] as? Int) ?? 0
-            return ChatMessage(role: role, content: text, model: row["model"] as? String,
-                               createdAt: ChatHistory.parseLegacyDate(row["createdAt"] as? String),
-                               usage: usage,
-                               seconds: elapsed,
-                               tokensPerSecond: legacyRate(tokens: tokens, elapsed: elapsed),
-                               firstTokenSeconds: (row["ttft"] as? Double).map { $0 / 1000 })
+            return ChatMessage(
+                role: role, content: text, model: row["model"] as? String,
+                createdAt: ChatHistory.parseLegacyDate(row["createdAt"] as? String),
+                usage: usage,
+                seconds: elapsed,
+                tokensPerSecond: legacyRate(tokens: tokens, elapsed: elapsed),
+                firstTokenSeconds: (row["ttft"] as? Double).map { $0 / 1000 })
         }
     }
 
-    private let writeQueue = DispatchQueue(label: "com.zhuo.flashCat.conversation",
-                                           qos: .utility)
+    private let writeQueue = DispatchQueue(
+        label: "com.zhuo.flashCat.conversation",
+        qos: .utility)
 
     func save(_ messages: [ChatMessage]) {
         let stored = messages.filter { !$0.streaming }.map { message in
-            StoredMessage(role: message.role, content: message.content,
-                          promptTokens: message.usage?.promptTokens,
-                          completionTokens: message.usage?.completionTokens,
-                          seconds: message.seconds,
-                          tokensPerSecond: message.tokensPerSecond,
-                          firstTokenSeconds: message.firstTokenSeconds,
-                          model: message.model,
-                          createdAt: message.createdAt?.timeIntervalSince1970,
-                          reasoning: message.reasoning,
-                          thinkingSeconds: message.thinkingSeconds,
-                          interrupted: message.interrupted ? true : nil,
-                          imagePath: message.imagePath,
-                          imageNote: message.imageNote,
-                          imageSourcePath: message.imageSourcePath,
-                          imageStrength: message.imageStrength,
-                          imageSeed: message.imageSeed,
-                          imagePaths: message.imagePaths.isEmpty ? nil : message.imagePaths,
-                          toolCalls: message.toolCalls.isEmpty ? nil : message.toolCalls,
-                          toolResults: message.toolResults.isEmpty ? nil : message.toolResults,
-                          videoPath: message.videoPath,
-                          videoNote: message.videoNote,
-                          videoSourcePath: message.videoSourcePath,
-                          videoLastFramePath: message.videoLastFramePath,
-                          videoReferenceImagePaths: message.videoReferenceImagePaths,
-                          videoReferenceClipPaths: message.videoReferenceClipPaths)
+            StoredMessage(
+                role: message.role, content: message.content,
+                promptTokens: message.usage?.promptTokens,
+                completionTokens: message.usage?.completionTokens,
+                seconds: message.seconds,
+                tokensPerSecond: message.tokensPerSecond,
+                firstTokenSeconds: message.firstTokenSeconds,
+                model: message.model,
+                createdAt: message.createdAt?.timeIntervalSince1970,
+                reasoning: message.reasoning,
+                thinkingSeconds: message.thinkingSeconds,
+                interrupted: message.interrupted ? true : nil,
+                imagePath: message.imagePath,
+                imageNote: message.imageNote,
+                imageSourcePath: message.imageSourcePath,
+                imageStrength: message.imageStrength,
+                imageSeed: message.imageSeed,
+                imagePaths: message.imagePaths.isEmpty ? nil : message.imagePaths,
+                toolCalls: message.toolCalls.isEmpty ? nil : message.toolCalls,
+                toolResults: message.toolResults.isEmpty ? nil : message.toolResults,
+                videoPath: message.videoPath,
+                videoNote: message.videoNote,
+                videoSourcePath: message.videoSourcePath,
+                videoLastFramePath: message.videoLastFramePath,
+                videoReferenceImagePaths: message.videoReferenceImagePaths,
+                videoReferenceClipPaths: message.videoReferenceClipPaths)
         }
         guard !stored.isEmpty else { return }
+        let sink = onWriteFailure
         writeQueue.async {
             Paths.ensureDirectory(Paths.supportDirectory)
-            if let data = try? JSONEncoder().encode(stored) {
-                try? data.write(to: URL(fileURLWithPath: Paths.conversationFile))
+            do {
+                let data = try JSONEncoder().encode(stored)
+                try data.write(to: URL(fileURLWithPath: Paths.conversationFile))
+            } catch {
+                sink?("对话记录保存失败（\(Paths.conversationFile)）：\(error.localizedDescription)")
             }
         }
     }
 
     func clear() {
         // 走同一条队列：先前的 save 必须先落盘，再删文件，顺序不能反。
+        let sink = onWriteFailure
         writeQueue.async {
-            try? FileManager.default.removeItem(atPath: Paths.conversationFile)
+            do {
+                try FileManager.default.removeItem(atPath: Paths.conversationFile)
+            } catch let error as NSError
+                where error.domain == NSCocoaErrorDomain && error.code == NSFileNoSuchFileError
+            {
+                // 文件本来就不存在时删除会报错，这种失败等价于成功。
+            } catch {
+                sink?("清空对话记录失败：\(error.localizedDescription)")
+            }
         }
     }
 

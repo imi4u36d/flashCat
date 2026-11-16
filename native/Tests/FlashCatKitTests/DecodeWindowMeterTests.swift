@@ -1,4 +1,8 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import XCTest
+
 @testable import FlashCatKit
 
 /// 解码速率估计器（`DecodeWindowMeter`）的回归测试。
@@ -19,17 +23,19 @@ final class DecodeWindowMeterTests: XCTestCase {
 
     /// 喂一段恒定速率的流。生成器每次给出「下一批 token 数」，内部按
     /// `rate` 换算到达时刻——节奏由生成器决定，总量只由速率与时长决定。
-    private func stream(rate R: Double,
-                        seconds: Double,
-                        window W: TimeInterval = 1.0,
-                        next: () -> Double) -> DecodeWindowMeter {
-        var meter = DecodeWindowMeter(window: W)
+    private func stream(
+        rate: Double,
+        seconds: Double,
+        window: TimeInterval = 1.0,
+        next: () -> Double
+    ) -> DecodeWindowMeter {
+        var meter = DecodeWindowMeter(window: window)
         var time = 0.0
         while time < seconds {
             let take = next()
             guard take > 0 else { break }
             meter.add(tokens: take, at: epoch.addingTimeInterval(time))
-            time += take / R
+            time += take / rate
         }
         return meter
     }
@@ -51,8 +57,9 @@ final class DecodeWindowMeterTests: XCTestCase {
             seen.append(meter.rate(at: epoch.addingTimeInterval(5.5)))
         }
         XCTAssertGreaterThan(seen[0], 90)
-        XCTAssertEqual(seen[0], seen[1], accuracy: 5.0,
-                       "逐 token \(seen[0]) 与成批 \(seen[1]) 的稳态读数不一致")
+        XCTAssertEqual(
+            seen[0], seen[1], accuracy: 5.0,
+            "逐 token \(seen[0]) 与成批 \(seen[1]) 的稳态读数不一致")
     }
 
     /// 稳态读数与取样时刻无关：同一段流上 20 个不同相位的读数必须完全
@@ -93,8 +100,9 @@ final class DecodeWindowMeterTests: XCTestCase {
 
     func testWindowTokensIsDistributionIndependent() {
         let meter = stream(rate: 100, seconds: 6, window: 1.0) { 1 }
-        XCTAssertEqual(meter.windowTokens(endingAt: epoch.addingTimeInterval(5.5)),
-                       100.0, accuracy: 2.0)
+        XCTAssertEqual(
+            meter.windowTokens(endingAt: epoch.addingTimeInterval(5.5)),
+            100.0, accuracy: 2.0)
     }
 
     // MARK: 停顿与收尾
@@ -227,7 +235,8 @@ final class DecodeWindowMeterTests: XCTestCase {
         // b 每片 1 token × 11 片 = 11。
         let now = epoch.addingTimeInterval(2.99)
         XCTAssertEqual(a.windowTokens(endingAt: now), 21.0, accuracy: 1.5)
-        XCTAssertEqual(a.windowTokens(endingAt: now) + b.windowTokens(endingAt: now),
-                       32.0, accuracy: 2.0)
+        XCTAssertEqual(
+            a.windowTokens(endingAt: now) + b.windowTokens(endingAt: now),
+            32.0, accuracy: 2.0)
     }
 }

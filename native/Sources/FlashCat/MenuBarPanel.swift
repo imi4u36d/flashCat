@@ -1,6 +1,9 @@
-import SwiftUI
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AppKit
 import FlashCatKit
+import SwiftUI
 
 // MARK: - 菜单栏图标
 
@@ -34,12 +37,15 @@ enum MenuBarIcon {
         let image = NSImage(size: NSSize(width: pointSize, height: pointSize))
         for scale in [2.0, 3.0] {
             let pixel = Int(pointSize * scale)
-            guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil,
-                                             pixelsWide: pixel, pixelsHigh: pixel,
-                                             bitsPerSample: 8, samplesPerPixel: 4,
-                                             hasAlpha: true, isPlanar: false,
-                                             colorSpaceName: .deviceRGB,
-                                             bytesPerRow: 0, bitsPerPixel: 0) else { continue }
+            guard
+                let rep = NSBitmapImageRep(
+                    bitmapDataPlanes: nil,
+                    pixelsWide: pixel, pixelsHigh: pixel,
+                    bitsPerSample: 8, samplesPerPixel: 4,
+                    hasAlpha: true, isPlanar: false,
+                    colorSpaceName: .deviceRGB,
+                    bytesPerRow: 0, bitsPerPixel: 0)
+            else { continue }
             rep.size = NSSize(width: pointSize, height: pointSize)
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
@@ -89,9 +95,10 @@ enum MenuBarIcon {
 
             // 右下角告警点：先挖出一圈透明间隙，点才不会和描边粘在一起。
             let dot = rect.width * 0.27
-            let dotRect = NSRect(x: rect.width - dot - rect.width * 0.03,
-                                 y: rect.height * 0.03,
-                                 width: dot, height: dot)
+            let dotRect = NSRect(
+                x: rect.width - dot - rect.width * 0.03,
+                y: rect.height * 0.03,
+                width: dot, height: dot)
             let gap = dotRect.insetBy(dx: -rect.width * 0.075, dy: -rect.width * 0.075)
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current?.compositingOperation = .clear
@@ -124,9 +131,10 @@ enum MenuBarIcon {
         path.move(to: point(1.2, 6.9))
         path.line(to: point(1.2, 10.5))
         // 左耳外侧上坡，收在尖耳尖上
-        path.curve(to: point(3.9, 16.9),
-                   controlPoint1: point(1.2, 12.4),
-                   controlPoint2: point(2.4, 15.5))
+        path.curve(
+            to: point(3.9, 16.9),
+            controlPoint1: point(1.2, 12.4),
+            controlPoint2: point(2.4, 15.5))
         // 左耳内侧下坡（直线让耳尖保持锐利，和应用图标一致）
         path.line(to: point(7.0, 12.8))
         // 双耳之间的头顶
@@ -134,19 +142,22 @@ enum MenuBarIcon {
         // 右耳内侧上坡
         path.line(to: point(14.1, 16.9))
         // 右耳外侧下坡
-        path.curve(to: point(16.8, 10.5),
-                   controlPoint1: point(15.6, 15.5),
-                   controlPoint2: point(16.8, 12.4))
+        path.curve(
+            to: point(16.8, 10.5),
+            controlPoint1: point(15.6, 15.5),
+            controlPoint2: point(16.8, 12.4))
         path.line(to: point(16.8, 6.9))
         // 右下角
-        path.curve(to: point(13.2, 2.9),
-                   controlPoint1: point(16.8, 4.7),
-                   controlPoint2: point(15.1, 2.9))
+        path.curve(
+            to: point(13.2, 2.9),
+            controlPoint1: point(16.8, 4.7),
+            controlPoint2: point(15.1, 2.9))
         path.line(to: point(4.8, 2.9))
         // 左下角
-        path.curve(to: point(1.2, 6.9),
-                   controlPoint1: point(2.9, 2.9),
-                   controlPoint2: point(1.2, 4.7))
+        path.curve(
+            to: point(1.2, 6.9),
+            controlPoint1: point(2.9, 2.9),
+            controlPoint2: point(1.2, 4.7))
         path.close()
         return path
     }
@@ -496,52 +507,63 @@ struct MenuBarPanel: View {
                 // 进程在跑但权重还没就位（启动、切换、加载权重、预热）：给一条
                 // 带转圈的生命周期行；下面的读数条保留，只是暂时没有数据。
                 if !stageText.isEmpty {
-                    NoticeRow(symbol: nil,
-                              text: stageText,
-                              tint: DS.warn,
-                              showsSpinner: true)
-                        .transition(.dsRowInsert)
+                    NoticeRow(
+                        symbol: nil,
+                        text: stageText,
+                        tint: DS.warn,
+                        showsSpinner: true
+                    )
+                    .transition(.dsRowInsert)
                 }
             } else {
                 switch state.serverState {
                 case .ready:
                     EmptyView()
                 case .starting, .stopping:
-                    NoticeRow(symbol: nil,
-                              text: stageText,
-                              tint: DS.warn,
-                              showsSpinner: true)
-                        .transition(.dsRowInsert)
+                    NoticeRow(
+                        symbol: nil,
+                        text: stageText,
+                        tint: DS.warn,
+                        showsSpinner: true
+                    )
+                    .transition(.dsRowInsert)
                 case .failed:
-                    NoticeRow(symbol: "exclamationmark.triangle.fill",
-                              text: state.failureMessage ?? "引擎异常，打开日志查看原因",
-                              tint: DS.err,
-                              showsSpinner: false,
-                              actionLabel: "日志",
-                              action: { onOpenMainWindow(.logs) })
-                        .transition(.dsRowInsert)
+                    NoticeRow(
+                        symbol: "exclamationmark.triangle.fill",
+                        text: state.failureMessage ?? "引擎异常，打开日志查看原因",
+                        tint: DS.err,
+                        showsSpinner: false,
+                        actionLabel: "日志",
+                        action: { onOpenMainWindow(.logs) }
+                    )
+                    .transition(.dsRowInsert)
                 case .stopped:
                     // 已停止且没选模型时才提示；正常停止态不再占一行横幅。
                     if state.selectedModel.isEmpty {
-                        NoticeRow(symbol: "pause.circle",
-                                  text: "还没有选择模型，在模型页选一个即可启动",
-                                  tint: DS.text2,
-                                  showsSpinner: false)
-                            .transition(.dsRowInsert)
+                        NoticeRow(
+                            symbol: "pause.circle",
+                            text: "还没有选择模型，在模型页选一个即可启动",
+                            tint: DS.text2,
+                            showsSpinner: false
+                        )
+                        .transition(.dsRowInsert)
                     }
                 }
             }
 
             // 读数条常驻：没有实时数据时显示「—」，面板不会因为停止或加载而少一截。
-            MetricStrip(decode: state.serverState == .ready ? state.menuBarDecodeReading : .none,
-                        ttft: state.serverState == .ready ? state.ttftReading : .none,
-                        prefill: state.serverState == .ready ? state.prefillReading : .none)
+            MetricStrip(
+                decode: state.serverState == .ready ? state.menuBarDecodeReading : .none,
+                ttft: state.serverState == .ready ? state.ttftReading : .none,
+                prefill: state.serverState == .ready ? state.prefillReading : .none)
 
             if state.serverState == .ready, let peak = sparklinePeak {
-                Sparkline(values: state.recentThroughput(window: 300).map(\.value),
-                          peak: peak,
-                          tint: DS.accent)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                Sparkline(
+                    values: state.recentThroughput(window: 300).map(\.value),
+                    peak: peak,
+                    tint: DS.accent
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
     }
@@ -623,9 +645,11 @@ struct MenuBarPanel: View {
         }
     }
 
-    private func footerButton(_ title: String,
-                              symbol: String,
-                              action: @escaping () -> Void) -> some View {
+    private func footerButton(
+        _ title: String,
+        symbol: String,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Label(L10n.t(title), systemImage: symbol)
         }
@@ -650,13 +674,15 @@ private struct MetricStrip: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            cell("解码", value: number(decode.value), unit: "tok/s",
-                 tag: decodeTag, tagTint: decodeTagTint)
+            cell(
+                "解码", value: number(decode.value), unit: "tok/s",
+                tag: decodeTag, tagTint: decodeTagTint)
             DSDivider(vertical: true)
             cell("首字", value: milliseconds(ttft.milliseconds), unit: "ms")
             DSDivider(vertical: true)
-            cell("预填充", value: number(prefill.value), unit: "tok/s",
-                 tag: prefillTag, tagTint: prefillTagTint)
+            cell(
+                "预填充", value: number(prefill.value), unit: "tok/s",
+                tag: prefillTag, tagTint: prefillTagTint)
         }
         .background(DS.bg, in: DS.rect(DS.Radius.md))
         .overlay(
@@ -667,11 +693,13 @@ private struct MetricStrip: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func cell(_ label: String,
-                      value: String,
-                      unit: String?,
-                      tag: String? = nil,
-                      tagTint: Color = DS.text3) -> some View {
+    private func cell(
+        _ label: String,
+        value: String,
+        unit: String?,
+        tag: String? = nil,
+        tagTint: Color = DS.text3
+    ) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text(L10n.t(label))
@@ -784,8 +812,9 @@ private struct Sparkline: View {
                             path.closeSubpath()
                         }
                         .fill(
-                            LinearGradient(colors: [tint.opacity(0.22), tint.opacity(0.01)],
-                                           startPoint: .top, endPoint: .bottom)
+                            LinearGradient(
+                                colors: [tint.opacity(0.22), tint.opacity(0.01)],
+                                startPoint: .top, endPoint: .bottom)
                         )
                     }
                     Path { path in
@@ -793,8 +822,9 @@ private struct Sparkline: View {
                         path.move(to: first)
                         for point in points.dropFirst() { path.addLine(to: point) }
                     }
-                    .stroke(tint.opacity(0.9),
-                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                    .stroke(
+                        tint.opacity(0.9),
+                        style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
                 }
             }
             .frame(height: 26)
@@ -806,8 +836,9 @@ private struct Sparkline: View {
         let step = size.width / CGFloat(values.count - 1)
         return values.enumerated().map { index, value in
             let normalized = min(max(value / maxValue, 0), 1)
-            return CGPoint(x: CGFloat(index) * step,
-                           y: size.height * (1 - CGFloat(normalized)) * 0.92 + 1)
+            return CGPoint(
+                x: CGFloat(index) * step,
+                y: size.height * (1 - CGFloat(normalized)) * 0.92 + 1)
         }
     }
 }

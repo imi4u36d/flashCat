@@ -1,6 +1,9 @@
-import Foundation
-import AppKit
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AVFoundation
+import AppKit
+import Foundation
 
 /// 视频图库里的一条作品：模型在对话里生成、已经落成 MP4 的文件。
 ///
@@ -67,18 +70,21 @@ final class VideoGalleryStore: Sendable {
         for thread in threads {
             for (index, message) in thread.messages.enumerated() {
                 guard message.role == "assistant",
-                      let path = message.videoPath, !path.isEmpty,
-                      !known.contains(path),
-                      FileManager.default.fileExists(atPath: path)
+                    let path = message.videoPath, !path.isEmpty,
+                    !known.contains(path),
+                    FileManager.default.fileExists(atPath: path)
                 else { continue }
-                let prompt = thread.messages[..<index]
+                let prompt =
+                    thread.messages[..<index]
                     .last(where: { $0.role == "user" })?.content ?? ""
-                values.append(GalleryVideo(path: path,
-                                           prompt: prompt,
-                                           model: message.model ?? "",
-                                           createdAt: message.createdAt ?? thread.updatedAt,
-                                           note: message.videoNote,
-                                           seed: Self.seed(in: message.videoNote)))
+                values.append(
+                    GalleryVideo(
+                        path: path,
+                        prompt: prompt,
+                        model: message.model ?? "",
+                        createdAt: message.createdAt ?? thread.updatedAt,
+                        note: message.videoNote,
+                        seed: Self.seed(in: message.videoNote)))
                 known.insert(path)
                 added = true
             }
@@ -108,27 +114,29 @@ final class VideoGalleryStore: Sendable {
 
     private static func read(_ url: URL) -> [GalleryVideo] {
         guard let data = try? Data(contentsOf: url),
-              let stored = try? JSONDecoder().decode([StoredVideo].self, from: data)
+            let stored = try? JSONDecoder().decode([StoredVideo].self, from: data)
         else { return [] }
         return stored.map { item in
-            GalleryVideo(path: item.path,
-                         prompt: item.prompt,
-                         model: item.model,
-                         createdAt: Date(timeIntervalSince1970: item.createdAt),
-                         note: item.note,
-                         seed: item.seed)
+            GalleryVideo(
+                path: item.path,
+                prompt: item.prompt,
+                model: item.model,
+                createdAt: Date(timeIntervalSince1970: item.createdAt),
+                note: item.note,
+                seed: item.seed)
         }
     }
 
     private func write(_ values: [GalleryVideo]) {
         Paths.ensureDirectory(fileURL.deletingLastPathComponent().path)
         let stored = values.map { item in
-            StoredVideo(path: item.path,
-                        prompt: item.prompt,
-                        model: item.model,
-                        createdAt: item.createdAt.timeIntervalSince1970,
-                        note: item.note,
-                        seed: item.seed)
+            StoredVideo(
+                path: item.path,
+                prompt: item.prompt,
+                model: item.model,
+                createdAt: item.createdAt.timeIntervalSince1970,
+                note: item.note,
+                seed: item.seed)
         }
         guard let data = try? JSONEncoder().encode(stored) else { return }
         try? data.write(to: fileURL, options: .atomic)
@@ -166,14 +174,17 @@ enum VideoThumbnailStore {
         let image: NSImage? = await withCheckedContinuation { continuation in
             generator.generateCGImagesAsynchronously(
                 forTimes: [NSValue(time: CMTime(value: 0, timescale: 600))]) { _, cgImage, _, result, _ in
-                guard result == .succeeded, let cgImage else {
-                    continuation.resume(returning: nil)
-                    return
+                    guard result == .succeeded, let cgImage else {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+                    continuation.resume(
+                        returning: NSImage(
+                            cgImage: cgImage,
+                            size: NSSize(
+                                width: cgImage.width,
+                                height: cgImage.height)))
                 }
-                continuation.resume(returning: NSImage(cgImage: cgImage,
-                                                      size: NSSize(width: cgImage.width,
-                                                                   height: cgImage.height)))
-            }
         }
         if let image {
             let cost = max(1, Int(image.size.width * image.size.height)) * 4

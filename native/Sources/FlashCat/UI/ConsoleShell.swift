@@ -1,6 +1,9 @@
-import SwiftUI
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AppKit
 import FlashCatKit
+import SwiftUI
 
 /// 控制台根视图：左侧悬浮 Liquid Glass 导航面板 + 顶部悬浮玻璃标题栏与灵动岛 + 七个原生页面。
 struct ConsoleView: View {
@@ -20,11 +23,13 @@ struct ConsoleView: View {
             HStack(spacing: 0) {
                 if state.showsSidebar {
                     HStack(spacing: 0) {
-                        ConsoleNavigationPanel(state: state,
-                                               chat: state.chat,
-                                               openDownloads: { showDownloads = true },
-                                               openFeedback: { showFeedback = true })
-                            .frame(width: DS.Layout.sidebarWidth)
+                        ConsoleNavigationPanel(
+                            state: state,
+                            chat: state.chat,
+                            openDownloads: { showDownloads = true },
+                            openFeedback: { showFeedback = true }
+                        )
+                        .frame(width: DS.Layout.sidebarWidth)
                         DSDivider(vertical: true)
                     }
                     .transition(.move(edge: .leading).combined(with: .opacity))
@@ -75,11 +80,16 @@ struct ConsoleView: View {
         }
         .overlay {
             if showCommand {
-                CommandPalette(state: state,
-                               openDownloads: { showDownloads = true },
-                               openHub: { showHub = true; state.section = .models },
-                               dismiss: { showCommand = false })
-                    .transition(.opacity)
+                CommandPalette(
+                    state: state,
+                    openDownloads: { showDownloads = true },
+                    openHub: {
+                        showHub = true
+                        state.section = .models
+                    },
+                    dismiss: { showCommand = false }
+                )
+                .transition(.opacity)
             }
         }
         .sheet(isPresented: $showDownloads) { DownloadCenterSheet(state: state) }
@@ -91,10 +101,14 @@ struct ConsoleView: View {
         .alert("切换模型？", isPresented: modelSwitchShown) {
             Button("取消", role: .cancel) { state.cancelModelSwitchRequest() }
             Button("停止并切换") { state.confirmModelSwitch() }
-        } message: { Text(modelSwitchMessage) }
-        .alert("\(state.pendingEngineInstall?.displayName ?? "该引擎") 还没安装",
-               isPresented: engineInstallShown,
-               presenting: state.pendingEngineInstall) { _ in
+        } message: {
+            Text(modelSwitchMessage)
+        }
+        .alert(
+            "\(state.pendingEngineInstall?.displayName ?? "该引擎") 还没安装",
+            isPresented: engineInstallShown,
+            presenting: state.pendingEngineInstall
+        ) { _ in
             Button("去安装") { state.confirmEngineInstall() }
             Button("取消", role: .cancel) { state.cancelEngineInstall() }
         } message: { engine in
@@ -104,7 +118,9 @@ struct ConsoleView: View {
             Button(L10n.t(request.needsDownload ? "切换并下载" : "切换并使用")) { state.confirmLibraryUse() }
             Button("取消", role: .cancel) { state.cancelLibraryUse() }
         } message: { request in
-            Text("\(request.model) 属于 \(request.engine.displayName)，切换会先停掉 \(state.activeEngine.displayName)，再以这个模型启动 \(request.engine.displayName)。")
+            Text(
+                "\(request.model) 属于 \(request.engine.displayName)，切换会先停掉 \(state.activeEngine.displayName)，再以这个模型启动 \(request.engine.displayName)。"
+            )
         }
         .alert("删除这段对话？", isPresented: threadDeleteShown, presenting: state.pendingThreadDelete) { _ in
             Button("删除", role: .destructive) { state.confirmThreadDelete() }
@@ -122,10 +138,12 @@ struct ConsoleView: View {
         switch state.section {
         case .overview: OverviewPage(state: state, chat: state.chat)
         case .chat: ChatPage(state: state, chat: state.chat)
-        case .models: ModelsPage(state: state,
-                                 engine: state.libraryEngine,
-                                 showingHub: $showHub,
-                                 showingDownloads: $showDownloads)
+        case .models:
+            ModelsPage(
+                state: state,
+                engine: state.libraryEngine,
+                showingHub: $showHub,
+                showingDownloads: $showDownloads)
         case .engines: EnginesPage(state: state, installs: state.installs)
         case .logs: LogsPage(state: state)
         case .settings: SettingsPage(state: state)
@@ -134,13 +152,15 @@ struct ConsoleView: View {
     }
 
     private var modelSwitchShown: Binding<Bool> {
-        Binding(get: { state.confirmingModelSwitch != nil },
-                set: { if !$0 { state.cancelModelSwitchRequest() } })
+        Binding(
+            get: { state.confirmingModelSwitch != nil },
+            set: { if !$0 { state.cancelModelSwitchRequest() } })
     }
 
     private var threadDeleteShown: Binding<Bool> {
-        Binding(get: { state.pendingThreadDelete != nil },
-                set: { if !$0 { state.cancelThreadDelete() } })
+        Binding(
+            get: { state.pendingThreadDelete != nil },
+            set: { if !$0 { state.cancelThreadDelete() } })
     }
 
     private var modelSwitchMessage: String {
@@ -150,13 +170,15 @@ struct ConsoleView: View {
     }
 
     private var engineInstallShown: Binding<Bool> {
-        Binding(get: { state.pendingEngineInstall != nil },
-                set: { if !$0 { state.cancelEngineInstall() } })
+        Binding(
+            get: { state.pendingEngineInstall != nil },
+            set: { if !$0 { state.cancelEngineInstall() } })
     }
 
     private var libraryUseShown: Binding<Bool> {
-        Binding(get: { state.pendingLibraryUse != nil },
-                set: { if !$0 { state.cancelLibraryUse() } })
+        Binding(
+            get: { state.pendingLibraryUse != nil },
+            set: { if !$0 { state.cancelLibraryUse() } })
     }
 }
 
@@ -252,10 +274,12 @@ struct ConsoleNavigationPanel: View {
     private var workspace: some View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(Self.primaryPages) { page in
-                GlassNavRow(page: page,
-                            active: state.section == page,
-                            badge: 0,
-                            namespace: selection) {
+                GlassNavRow(
+                    page: page,
+                    active: state.section == page,
+                    badge: 0,
+                    namespace: selection
+                ) {
                     state.section = page
                 }
             }
@@ -266,10 +290,12 @@ struct ConsoleNavigationPanel: View {
                 .padding(.bottom, 3)
 
             ForEach(Self.consolePages) { page in
-                GlassNavRow(page: page,
-                            active: state.section == page,
-                            badge: page == .models ? modelCount : 0,
-                            namespace: selection) {
+                GlassNavRow(
+                    page: page,
+                    active: state.section == page,
+                    badge: page == .models ? modelCount : 0,
+                    namespace: selection
+                ) {
                     state.section = page
                 }
             }
@@ -302,12 +328,14 @@ struct ConsoleNavigationPanel: View {
             } else {
                 VStack(alignment: .leading, spacing: 1) {
                     ForEach(chat.threads.prefix(14)) { thread in
-                        GlassRecentRow(title: thread.title,
-                                       date: state.generatingThreadID == thread.id
-                                           ? L10n.t("生成中")
-                                           : recentDate(thread.updatedAt),
-                                       active: state.currentThreadID == thread.id && state.section == .chat,
-                                       generating: state.generatingThreadID == thread.id) {
+                        GlassRecentRow(
+                            title: thread.title,
+                            date: state.generatingThreadID == thread.id
+                                ? L10n.t("生成中")
+                                : recentDate(thread.updatedAt),
+                            active: state.currentThreadID == thread.id && state.section == .chat,
+                            generating: state.generatingThreadID == thread.id
+                        ) {
                             state.openThread(thread)
                             state.section = .chat
                         } onDelete: {
@@ -456,7 +484,10 @@ private struct GlassNavRow: View {
         .buttonStyle(.plainHit)
         .help(L10n.t(page.rawValue))
         .onHover { value in
-            guard !reduceMotion else { hovering = value; return }
+            guard !reduceMotion else {
+                hovering = value
+                return
+            }
             withAnimation(DS.Motion.snappy) { hovering = value }
         }
     }

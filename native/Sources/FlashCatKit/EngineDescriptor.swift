@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 // MARK: - Open enums
@@ -152,10 +155,15 @@ public enum EngineJSONTemplateValue: Codable, Hashable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
-        if container.decodeNil() { self = .null }
-        else if let value = try? container.decode(Bool.self) { self = .bool(value) }
-        else if let value = try? container.decode(Int.self) { self = .int(value) }
-        else { self = .string(try container.decode(String.self)) }
+        if container.decodeNil() {
+            self = .null
+        } else if let value = try? container.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? container.decode(Int.self) {
+            self = .int(value)
+        } else {
+            self = .string(try container.decode(String.self))
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -183,9 +191,11 @@ public struct EngineModelAction: Codable, Hashable, Sendable {
     public let path: String
     public let body: [String: EngineJSONTemplateValue]?
 
-    public init(method: EngineHTTPMethod = .post,
-                path: String,
-                body: [String: EngineJSONTemplateValue]? = nil) {
+    public init(
+        method: EngineHTTPMethod = .post,
+        path: String,
+        body: [String: EngineJSONTemplateValue]? = nil
+    ) {
         self.method = method
         self.path = path
         self.body = body
@@ -197,9 +207,11 @@ public struct EngineModelControlSpec: Codable, Hashable, Sendable {
     public let unload: EngineModelAction?
     public let rescan: EngineModelAction?
 
-    public init(load: EngineModelAction? = nil,
-                unload: EngineModelAction? = nil,
-                rescan: EngineModelAction? = nil) {
+    public init(
+        load: EngineModelAction? = nil,
+        unload: EngineModelAction? = nil,
+        rescan: EngineModelAction? = nil
+    ) {
         self.load = load
         self.unload = unload
         self.rescan = rescan
@@ -226,22 +238,24 @@ public struct EngineDescriptor: Codable, Hashable, Sendable, Identifiable {
     public let license: String?
     public let upstreamRepository: String?
 
-    public init(id: EngineID,
-                displayName: String,
-                summary: String = "",
-                accentColor: String = "#767676",
-                adapter: EngineAdapterID = .standard,
-                defaultPort: Int,
-                minMacOS: String = "26.0",
-                portRangeSize: Int = 20,
-                startupTimeout: TimeInterval = 300,
-                switchMode: ModelSwitchMode,
-                capabilities: [EngineCapability],
-                modelLayout: EngineModelLayout = .flat,
-                modelControl: EngineModelControlSpec? = nil,
-                telemetry: [EngineTelemetrySource] = [],
-                license: String? = nil,
-                upstreamRepository: String? = nil) {
+    public init(
+        id: EngineID,
+        displayName: String,
+        summary: String = "",
+        accentColor: String = "#767676",
+        adapter: EngineAdapterID = .standard,
+        defaultPort: Int,
+        minMacOS: String = "26.0",
+        portRangeSize: Int = 20,
+        startupTimeout: TimeInterval = 300,
+        switchMode: ModelSwitchMode,
+        capabilities: [EngineCapability],
+        modelLayout: EngineModelLayout = .flat,
+        modelControl: EngineModelControlSpec? = nil,
+        telemetry: [EngineTelemetrySource] = [],
+        license: String? = nil,
+        upstreamRepository: String? = nil
+    ) {
         self.id = id
         self.displayName = displayName
         self.summary = summary
@@ -328,8 +342,10 @@ public enum EngineCatalog {
             summary: "通用 MLX 引擎，多模型热切换，MTP / DFlash2 按模型配置。",
             accentColor: "#177F86", adapter: .omlx,
             defaultPort: 8100, minMacOS: "15.0", startupTimeout: 180, switchMode: .hot,
-            capabilities: [.chat, .streaming, .vision, .reasoning, .multiModel,
-                           .hotLoad, .hotUnload, .modelRescan],
+            capabilities: [
+                .chat, .streaming, .vision, .reasoning, .multiModel,
+                .hotLoad, .hotUnload, .modelRescan,
+            ],
             modelLayout: .flat,
             modelControl: EngineModelControlSpec(
                 load: EngineModelAction(path: "/v1/models/{model}/load"),
@@ -347,7 +363,7 @@ public enum EngineCatalog {
             defaultPort: 8200, minMacOS: "26.0", startupTimeout: 300, switchMode: .restart,
             capabilities: [.chat, .streaming, .vision, .reasoning, .singleModel, .mtp, .serial],
             telemetry: [
-                EngineTelemetrySource(role: .status, path: "/v1/mtplx/snapshot", format: .mtplxSnapshot),
+                EngineTelemetrySource(role: .status, path: "/v1/mtplx/snapshot", format: .mtplxSnapshot)
             ],
             license: "Apache-2.0", upstreamRepository: "youssofal/mtplx"),
         EngineDescriptor(
@@ -355,8 +371,10 @@ public enum EngineCatalog {
             summary: "原生 MLX / GGUF 通用引擎，多模型热加载，无需 Python。",
             accentColor: "#0A84FF", adapter: .mlxServe,
             defaultPort: 8300, minMacOS: "26.4", startupTimeout: 600, switchMode: .hot,
-            capabilities: [.chat, .streaming, .vision, .reasoning, .image, .multiModel,
-                           .hotLoad, .hotUnload, .modelRescan, .toolUse],
+            capabilities: [
+                .chat, .streaming, .vision, .reasoning, .image, .multiModel,
+                .hotLoad, .hotUnload, .modelRescan, .toolUse,
+            ],
             modelLayout: .nested,
             modelControl: EngineModelControlSpec(
                 load: EngineModelAction(

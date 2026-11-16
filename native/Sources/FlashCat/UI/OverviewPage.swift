@@ -1,7 +1,10 @@
-import SwiftUI
-import Charts
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AppKit
+import Charts
 import FlashCatKit
+import SwiftUI
 
 /// 概览：线性/工作台风——顶部模型控制带、5 格连通 KPI 指标条、60 秒吞吐图表 + API 网关、底部最近请求。
 struct OverviewPage: View {
@@ -16,7 +19,8 @@ struct OverviewPage: View {
     private var peak: Double { max(samples.map(\.value).max() ?? 0, 1) }
 
     private var modelTitle: String {
-        state.selectedModelInfo?.shortName ?? (state.selectedModel.isEmpty ? "未选择模型" : state.shortModelName(state.selectedModel))
+        state.selectedModelInfo?.shortName
+            ?? (state.selectedModel.isEmpty ? "未选择模型" : state.shortModelName(state.selectedModel))
     }
 
     private var modelTitleParts: (name: String, variant: String?) {
@@ -142,9 +146,10 @@ struct OverviewPage: View {
                 }
 
                 HStack(spacing: 8) {
-                    DSStatusDot(color: state.canChat ? DS.ok : (state.isModelBusy ? DS.warn : DS.text4),
-                                live: state.canChat,
-                                size: 6)
+                    DSStatusDot(
+                        color: state.canChat ? DS.ok : (state.isModelBusy ? DS.warn : DS.text4),
+                        live: state.canChat,
+                        size: 6)
                     Text(runningText)
                         .font(DS.Font.sm)
                         .foregroundStyle(DS.text2)
@@ -204,9 +209,11 @@ struct OverviewPage: View {
     private func metricsRow(compact: Bool) -> some View {
         if compact {
             GlassEffectContainer(spacing: 10) {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 10, alignment: .top)],
-                          alignment: .leading,
-                          spacing: 10) {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 180), spacing: 10, alignment: .top)],
+                    alignment: .leading,
+                    spacing: 10
+                ) {
                     averageMetricCell
                         .dsSurface(radius: DS.Radius.md)
                     contextMetricCell
@@ -237,22 +244,27 @@ struct OverviewPage: View {
     }
 
     private var averageMetricCell: some View {
-        kpiCell(title: "平均解码",
-                value: rateText(averageRate),
-                unit: averageRate > 0 ? "tok/s" : nil,
-                trailing: {
-            DSSparkline(values: Array(samples.suffix(24).map(\.value)),
-                        color: DS.accent,
-                        floor: max(peak, 1))
+        kpiCell(
+            title: "平均解码",
+            value: rateText(averageRate),
+            unit: averageRate > 0 ? "tok/s" : nil,
+            trailing: {
+                DSSparkline(
+                    values: Array(samples.suffix(24).map(\.value)),
+                    color: DS.accent,
+                    floor: max(peak, 1)
+                )
                 .frame(width: 56, height: 18)
-        })
+            })
     }
 
     private var contextMetricCell: some View {
         let ceiling = state.contextWindowCeiling.map { "/ \(Format.tokensShort($0))" } ?? "/ —"
-        return kpiCell(title: "当前上下文",
-                       value: Format.tokens(state.overviewContextUsedTokens),
-                       unit: ceiling) {
+        return kpiCell(
+            title: "当前上下文",
+            value: Format.tokens(state.overviewContextUsedTokens),
+            unit: ceiling
+        ) {
             EmptyView()
         } bottom: {
             DSMeter(value: contextProgress, tint: DS.accent)
@@ -261,21 +273,24 @@ struct OverviewPage: View {
     }
 
     private var ttftMetricCell: some View {
-        kpiCell(title: "首字延迟",
-                value: ttftText,
-                unit: ttftText == "—" ? nil : "ms")
+        kpiCell(
+            title: "首字延迟",
+            value: ttftText,
+            unit: ttftText == "—" ? nil : "ms")
     }
 
     private var prefillMetricCell: some View {
-        kpiCell(title: "预填充",
-                value: prefillText,
-                unit: prefillText == "—" ? nil : "tok/s")
+        kpiCell(
+            title: "预填充",
+            value: prefillText,
+            unit: prefillText == "—" ? nil : "tok/s")
     }
 
     private var cacheMetricCell: some View {
-        kpiCell(title: "缓存命中率",
-                value: cacheHitText,
-                unit: cacheHitText == "—" ? nil : "%")
+        kpiCell(
+            title: "缓存命中率",
+            value: cacheHitText,
+            unit: cacheHitText == "—" ? nil : "%")
     }
 
     private func kpiCell<Trailing: View, Bottom: View>(
@@ -377,8 +392,9 @@ struct OverviewPage: View {
                             AreaMark(x: .value("时间", sample.at), y: .value("tok/s", sample.value))
                                 .interpolationMethod(.monotone)
                                 .foregroundStyle(
-                                    LinearGradient(colors: [DS.accent.opacity(0.16), .clear],
-                                                   startPoint: .top, endPoint: .bottom)
+                                    LinearGradient(
+                                        colors: [DS.accent.opacity(0.16), .clear],
+                                        startPoint: .top, endPoint: .bottom)
                                 )
                             LineMark(x: .value("时间", sample.at), y: .value("tok/s", sample.value))
                                 .interpolationMethod(.monotone)
@@ -456,9 +472,10 @@ struct OverviewPage: View {
 
     private var gatewayCard: some View {
         DSPanel(title: "API 网关", subtitle: "OpenAI + Claude") {
-            DSChip(text: gateway.isRunning ? "ONLINE" : "OFFLINE",
-                   dot: gateway.isRunning ? DS.ok : DS.text4,
-                   live: gateway.isRunning)
+            DSChip(
+                text: gateway.isRunning ? "ONLINE" : "OFFLINE",
+                dot: gateway.isRunning ? DS.ok : DS.text4,
+                live: gateway.isRunning)
         } content: {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(spacing: 0) {

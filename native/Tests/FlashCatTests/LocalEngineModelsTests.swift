@@ -1,4 +1,8 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import XCTest
+
 @testable import FlashCat
 
 final class LocalEngineModelsTests: XCTestCase {
@@ -11,8 +15,9 @@ final class LocalEngineModelsTests: XCTestCase {
         try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
         try #"{"model_type":"minimax_h3","partition":"fl2va"}"#
             .write(to: model.appendingPathComponent("config.json"), atomically: true, encoding: .utf8)
-        try #"{}"#.write(to: model.appendingPathComponent("tokenizer_config.json"),
-                         atomically: true, encoding: .utf8)
+        try #"{}"#.write(
+            to: model.appendingPathComponent("tokenizer_config.json"),
+            atomically: true, encoding: .utf8)
         try Data().write(to: model.appendingPathComponent("video_vae.safetensors"))
 
         let models = LocalEngineModels.scan(engine: .mlxServe, directory: root.path)
@@ -29,17 +34,18 @@ final class LocalEngineModelsTests: XCTestCase {
         let model = root.appendingPathComponent("Qwen-Image-Test")
         try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
         try #"{"_class_name":"QwenImage21Pipeline"}"#
-            .write(to: model.appendingPathComponent("model_index.json"),
-                   atomically: true, encoding: .utf8)
-        try #"{}"#.write(to: model.appendingPathComponent("tokenizer_config.json"),
-                         atomically: true, encoding: .utf8)
+            .write(
+                to: model.appendingPathComponent("model_index.json"),
+                atomically: true, encoding: .utf8)
+        try #"{}"#.write(
+            to: model.appendingPathComponent("tokenizer_config.json"),
+            atomically: true, encoding: .utf8)
 
         let models = LocalEngineModels.scan(engine: .mlxServe, directory: root.path)
         XCTAssertEqual(models.count, 1)
         XCTAssertEqual(models.first?.capabilities, ["image"])
         XCTAssertTrue(models.first?.supportsImage == true)
     }
-
 
     func testScanDetectsVisionFromConfig() throws {
         let root = FileManager.default.temporaryDirectory
@@ -49,10 +55,12 @@ final class LocalEngineModelsTests: XCTestCase {
         // 目录名故意不带 VL，确保认出来的是 config.json 里的视觉塔。
         let model = root.appendingPathComponent("PlainFolderName")
         try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
-        try #"{"model_type":"qwen3_5","architectures":["Qwen3_5ForConditionalGeneration"],"vision_config":{"depth":27}}"#
+        try
+            #"{"model_type":"qwen3_5","architectures":["Qwen3_5ForConditionalGeneration"],"vision_config":{"depth":27}}"#
             .write(to: model.appendingPathComponent("config.json"), atomically: true, encoding: .utf8)
-        try #"{}"#.write(to: model.appendingPathComponent("tokenizer_config.json"),
-                         atomically: true, encoding: .utf8)
+        try #"{}"#.write(
+            to: model.appendingPathComponent("tokenizer_config.json"),
+            atomically: true, encoding: .utf8)
 
         let models = LocalEngineModels.scan(engine: .mlxServe, directory: root.path)
         XCTAssertEqual(models.count, 1)
@@ -77,7 +85,6 @@ final class LocalEngineModelsTests: XCTestCase {
         XCTAssertTrue(models.first?.supportsVision == true)
     }
 
-
     func testScanDetectsVisionFromArchitecture() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("flashcat-local-models-\(UUID().uuidString)")
@@ -88,8 +95,9 @@ final class LocalEngineModelsTests: XCTestCase {
         try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
         try #"{"model_type":"qwen2","architectures":["Qwen2VLForConditionalGeneration"]}"#
             .write(to: model.appendingPathComponent("config.json"), atomically: true, encoding: .utf8)
-        try #"{}"#.write(to: model.appendingPathComponent("tokenizer_config.json"),
-                         atomically: true, encoding: .utf8)
+        try #"{}"#.write(
+            to: model.appendingPathComponent("tokenizer_config.json"),
+            atomically: true, encoding: .utf8)
 
         let models = LocalEngineModels.scan(engine: .mlxServe, directory: root.path)
         XCTAssertEqual(models.first?.capabilities, ["chat", "vision"])
@@ -105,8 +113,9 @@ final class LocalEngineModelsTests: XCTestCase {
         try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
         try #"{"model_type":"qwen3_5","architectures":["Qwen3_5ForCausalLM"]}"#
             .write(to: model.appendingPathComponent("config.json"), atomically: true, encoding: .utf8)
-        try #"{}"#.write(to: model.appendingPathComponent("tokenizer_config.json"),
-                         atomically: true, encoding: .utf8)
+        try #"{}"#.write(
+            to: model.appendingPathComponent("tokenizer_config.json"),
+            atomically: true, encoding: .utf8)
 
         let models = LocalEngineModels.scan(engine: .mlxServe, directory: root.path)
         XCTAssertEqual(models.count, 1)

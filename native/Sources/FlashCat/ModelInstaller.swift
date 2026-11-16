@@ -1,5 +1,8 @@
-import Foundation
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import FlashCatKit
+import Foundation
 
 /// Everything the model page needs to install weights for one engine.
 ///
@@ -71,15 +74,18 @@ enum ModelInstaller {
 
     // MARK: Plan
 
-    static func plan(engine: EngineID,
-                     model: String,
-                     draftRepository: String?,
-                     cache: String) throws -> Plan {
+    static func plan(
+        engine: EngineID,
+        model: String,
+        draftRepository: String?,
+        cache: String
+    ) throws -> Plan {
         switch engine.adapter {
         case .splash:
-            return try splashPlan(model: model,
-                                  draftRepository: draftRepository,
-                                  cache: cache)
+            return try splashPlan(
+                model: model,
+                draftRepository: draftRepository,
+                cache: cache)
         case .omlx, .mtplx:
             return try snapshotPlan(engine: engine, model: model, cache: cache)
         case .mlxServe:
@@ -91,9 +97,11 @@ enum ModelInstaller {
         }
     }
 
-    private static func splashPlan(model: String,
-                                   draftRepository: String?,
-                                   cache: String) throws -> Plan {
+    private static func splashPlan(
+        model: String,
+        draftRepository: String?,
+        cache: String
+    ) throws -> Plan {
         guard let installation = EngineInstallations.newest(.splash, version: nil) else {
             throw Failure.message("还没有安装 Splash 引擎，无法下载模型")
         }
@@ -105,29 +113,34 @@ enum ModelInstaller {
         guard Paths.fileExists(script) else {
             throw Failure.message("Splash 引擎缺少 install/models.py")
         }
-        var arguments = ["-u", script,
-                         "--models", Paths.modelsDirectory,
-                         "--model", model]
+        var arguments = [
+            "-u", script,
+            "--models", Paths.modelsDirectory,
+            "--model", model,
+        ]
         if let draftRepository {
             arguments += ["--draft-model", draftRepository]
         }
         arguments.append("prepare")
-        return Plan(engine: .splash,
-                    model: model,
-                    executable: runtime.pythonPath,
-                    arguments: arguments,
-                    workingDirectory: runtime.root,
-                    environment: environment(pythonRoot: runtime.root, cache: cache),
-                    watchDirectory: nil,
-                    destination: Paths.modelsDirectory,
-                    incompleteMarker: nil)
+        return Plan(
+            engine: .splash,
+            model: model,
+            executable: runtime.pythonPath,
+            arguments: arguments,
+            workingDirectory: runtime.root,
+            environment: environment(pythonRoot: runtime.root, cache: cache),
+            watchDirectory: nil,
+            destination: Paths.modelsDirectory,
+            incompleteMarker: nil)
     }
 
     /// 任取一个 Hub 仓库下到公共目录。下载器仍是引擎包里那个
     /// `huggingface_hub`，跟落盘位置无关：哪个 pack 装了就用哪个，都没有才
     /// 报错。
-    static func sharedPlan(repo: String, engines: [EngineID],
-                           cache: String) throws -> Plan {
+    static func sharedPlan(
+        repo: String, engines: [EngineID],
+        cache: String
+    ) throws -> Plan {
         var candidates = engines
         candidates += EngineCatalog.allIDs
         var python: String?
@@ -137,18 +150,21 @@ enum ModelInstaller {
             // Shared downloads require a Python pack. Native adapters use their
             // own puller and never receive flashCat's snapshot script.
             guard let installation = EngineInstallations.newest(id, version: nil),
-                  installation.entrypoint.path.contains("/python/"),
-                  Paths.fileExists(installation.entrypoint.path) else { continue }
+                installation.entrypoint.path.contains("/python/"),
+                Paths.fileExists(installation.entrypoint.path)
+            else { continue }
             python = installation.entrypoint.path
             root = installation.root.path
             break
         }
         if python == nil,
-           engines.contains(.mlxServe) || seen.contains(.mlxServe),
-           let installation = EngineInstallations.newest(.mlxServe, version: nil) {
-            return try mlxServeSharedPlan(repo: repo,
-                                          installation: installation,
-                                          cache: cache)
+            engines.contains(.mlxServe) || seen.contains(.mlxServe),
+            let installation = EngineInstallations.newest(.mlxServe, version: nil)
+        {
+            return try mlxServeSharedPlan(
+                repo: repo,
+                installation: installation,
+                cache: cache)
         }
         guard let python, let root else {
             throw Failure.message("公共下载需要已安装的 MLX-Serve，或任意一个带 Python 的引擎包：Splash、oMLX、MTPLX、Strata")
@@ -159,22 +175,25 @@ enum ModelInstaller {
         var arguments = [script, name, destination]
         let trimmed = cache.trimmingCharacters(in: .whitespaces)
         if !trimmed.isEmpty { arguments += ["--cache", trimmed] }
-        return Plan(engine: engines.first ?? .omlx,
-                    model: name,
-                    executable: python,
-                    arguments: arguments,
-                    workingDirectory: root,
-                    environment: environment(pythonRoot: root, cache: cache),
-                    watchDirectory: destination,
-                    destination: destination,
-                    incompleteMarker: incompleteMarker(for: destination))
+        return Plan(
+            engine: engines.first ?? .omlx,
+            model: name,
+            executable: python,
+            arguments: arguments,
+            workingDirectory: root,
+            environment: environment(pythonRoot: root, cache: cache),
+            watchDirectory: destination,
+            destination: destination,
+            incompleteMarker: incompleteMarker(for: destination))
     }
 
     /// Use MLX-Serve's native puller when no Python downloader is installed,
     /// then move the completed nested repository into flashCat's shared layout.
-    private static func mlxServeSharedPlan(repo: String,
-                                           installation: EngineInstallation,
-                                           cache: String) throws -> Plan {
+    private static func mlxServeSharedPlan(
+        repo: String,
+        installation: EngineInstallation,
+        cache: String
+    ) throws -> Plan {
         let name = repo.split(separator: ":", maxSplits: 1).first.map(String.init) ?? repo
         let home = Paths.supportDirectory + "/engine-homes/mlx-serve-shared"
         let stagingRoot = home + "/.mlx-serve/models"
@@ -186,21 +205,24 @@ enum ModelInstaller {
         environment["HOME"] = home
         environment["MLX_SERVE_NO_UPDATE_CHECK"] = "1"
         let script = """
-        set -euo pipefail
-        "$1" pull "$2"
-        mkdir -p "$(dirname "$3")"
-        mv "$4" "$3"
-        """
-        return Plan(engine: .mlxServe,
-                    model: repo,
-                    executable: "/bin/sh",
-                    arguments: ["-c", script, "flashcat-mlx-serve",
-                                installation.entrypoint.path, repo, destination, staged],
-                    workingDirectory: installation.root.path,
-                    environment: environment,
-                    watchDirectory: staged,
-                    destination: destination,
-                    incompleteMarker: incompleteMarker(for: destination))
+            set -euo pipefail
+            "$1" pull "$2"
+            mkdir -p "$(dirname "$3")"
+            mv "$4" "$3"
+            """
+        return Plan(
+            engine: .mlxServe,
+            model: repo,
+            executable: "/bin/sh",
+            arguments: [
+                "-c", script, "flashcat-mlx-serve",
+                installation.entrypoint.path, repo, destination, staged,
+            ],
+            workingDirectory: installation.root.path,
+            environment: environment,
+            watchDirectory: staged,
+            destination: destination,
+            incompleteMarker: incompleteMarker(for: destination))
     }
 
     private static func snapshotPlan(engine: EngineID, model: String, cache: String) throws -> Plan {
@@ -226,15 +248,16 @@ enum ModelInstaller {
         let trimmed = cache.trimmingCharacters(in: .whitespaces)
         if !trimmed.isEmpty { arguments += ["--cache", trimmed] }
 
-        return Plan(engine: engine,
-                    model: model,
-                    executable: python,
-                    arguments: arguments,
-                    workingDirectory: installation.root.path,
-                    environment: environment(pythonRoot: installation.root.path, cache: cache),
-                    watchDirectory: destination,
-                    destination: destination,
-                    incompleteMarker: incompleteMarker(for: destination))
+        return Plan(
+            engine: engine,
+            model: model,
+            executable: python,
+            arguments: arguments,
+            workingDirectory: installation.root.path,
+            environment: environment(pythonRoot: installation.root.path, cache: cache),
+            watchDirectory: destination,
+            destination: destination,
+            incompleteMarker: incompleteMarker(for: destination))
     }
 
     /// mlx-serve owns its downloader. Redirect its isolated HOME's model store
@@ -260,15 +283,16 @@ enum ModelInstaller {
         var environment = self.environment(pythonRoot: installation.root.path, cache: cache)
         environment["HOME"] = engineHome
         environment["MLX_SERVE_NO_UPDATE_CHECK"] = "1"
-        return Plan(engine: engine,
-                    model: model,
-                    executable: installation.entrypoint.path,
-                    arguments: ["pull", model],
-                    workingDirectory: installation.root.path,
-                    environment: environment,
-                    watchDirectory: destination,
-                    destination: destination,
-                    incompleteMarker: incompleteMarker(for: destination))
+        return Plan(
+            engine: engine,
+            model: model,
+            executable: installation.entrypoint.path,
+            arguments: ["pull", model],
+            workingDirectory: installation.root.path,
+            environment: environment,
+            watchDirectory: destination,
+            destination: destination,
+            incompleteMarker: incompleteMarker(for: destination))
     }
 
     /// Strata's installer knows which members of a sharded GGUF repository are
@@ -291,22 +315,25 @@ enum ModelInstaller {
         }
         var environment = self.environment(pythonRoot: root, cache: cache)
         environment["PYTHONPATH"] = root
-        return Plan(engine: engine,
-                    model: model,
-                    executable: installation.entrypoint.path,
-                    arguments: ["-u", wrapper,
-                                "--strata-root", root,
-                                "--models", data,
-                                "--support", EnginePaths.supportDirectory,
-                                "--model-path", selectedPath,
-                                "--install-only",
-                                "--family", profile.family,
-                                "--model", profile.model],
-                    workingDirectory: root,
-                    environment: environment,
-                    watchDirectory: data,
-                    destination: data,
-                    incompleteMarker: incompleteMarker(for: selectedPath))
+        return Plan(
+            engine: engine,
+            model: model,
+            executable: installation.entrypoint.path,
+            arguments: [
+                "-u", wrapper,
+                "--strata-root", root,
+                "--models", data,
+                "--support", EnginePaths.supportDirectory,
+                "--model-path", selectedPath,
+                "--install-only",
+                "--family", profile.family,
+                "--model", profile.model,
+            ],
+            workingDirectory: root,
+            environment: environment,
+            watchDirectory: data,
+            destination: data,
+            incompleteMarker: incompleteMarker(for: selectedPath))
     }
 
     /// A pack must never inherit the user's Python environment; a stray
@@ -367,7 +394,9 @@ enum ModelInstaller {
             }
             return nil
         }
-        for (enable, host, port) in [("HTTPSEnable", "HTTPSProxy", "HTTPSPort"), ("HTTPEnable", "HTTPProxy", "HTTPPort")] {
+        for (enable, host, port) in [
+            ("HTTPSEnable", "HTTPSProxy", "HTTPSPort"), ("HTTPEnable", "HTTPProxy", "HTTPPort"),
+        ] {
             guard value(enable) == "1", let host = value(host), let port = value(port), !host.isEmpty else { continue }
             return "http://\(host):\(port)"
         }
@@ -399,57 +428,57 @@ enum ModelInstaller {
     /// partial files stay in `<destination>/.cache`), reporting the repo size
     /// first so the app can turn bytes on disk into a percentage.
     static let script = """
-    #!/usr/bin/env python3
-    \"\"\"Download one Hub repository into an engine's model folder.
+        #!/usr/bin/env python3
+        \"\"\"Download one Hub repository into an engine's model folder.
 
-    flashCat runs this with the Python that ships inside the engine pack, so
-    every engine fetches weights through the same huggingface_hub with the same
-    cache. `TOTAL <bytes>` is printed before the transfer so the app can show a
-    percentage from the folder size, and the resolved path comes last.
+        flashCat runs this with the Python that ships inside the engine pack, so
+        every engine fetches weights through the same huggingface_hub with the same
+        cache. `TOTAL <bytes>` is printed before the transfer so the app can show a
+        percentage from the folder size, and the resolved path comes last.
 
-    usage: hf_snapshot.py <owner/repo> <destination> [--cache DIR] [--revision REV]
-    \"\"\"
+        usage: hf_snapshot.py <owner/repo> <destination> [--cache DIR] [--revision REV]
+        \"\"\"
 
-    import argparse
-    import os
-    import sys
-
-
-    def main() -> int:
-        parser = argparse.ArgumentParser()
-        parser.add_argument("repo")
-        parser.add_argument("destination")
-        parser.add_argument("--cache", default=None)
-        parser.add_argument("--revision", default=None)
-        args = parser.parse_args()
-
-        from huggingface_hub import HfApi, snapshot_download
-
-        cached = args.cache or None
-        total = 0
-        try:
-            info = HfApi().model_info(args.repo, revision=args.revision, files_metadata=True)
-            total = sum(size.size or 0 for size in (info.siblings or []))
-        except Exception as error:  # size is a nicety, never a reason to stop
-            print(f"Warning: 无法读取仓库大小：{error}", file=sys.stderr, flush=True)
-        print(f"TOTAL {total}", flush=True)
-
-        os.makedirs(args.destination, exist_ok=True)
-        path = snapshot_download(
-            repo_id=args.repo,
-            revision=args.revision,
-            local_dir=args.destination,
-            cache_dir=cached,
-            max_workers=8,
-        )
-        print(f"DONE {path}", flush=True)
-        return 0
+        import argparse
+        import os
+        import sys
 
 
-    if __name__ == "__main__":
-        sys.exit(main())
+        def main() -> int:
+            parser = argparse.ArgumentParser()
+            parser.add_argument("repo")
+            parser.add_argument("destination")
+            parser.add_argument("--cache", default=None)
+            parser.add_argument("--revision", default=None)
+            args = parser.parse_args()
 
-    """
+            from huggingface_hub import HfApi, snapshot_download
+
+            cached = args.cache or None
+            total = 0
+            try:
+                info = HfApi().model_info(args.repo, revision=args.revision, files_metadata=True)
+                total = sum(size.size or 0 for size in (info.siblings or []))
+            except Exception as error:  # size is a nicety, never a reason to stop
+                print(f"Warning: 无法读取仓库大小：{error}", file=sys.stderr, flush=True)
+            print(f"TOTAL {total}", flush=True)
+
+            os.makedirs(args.destination, exist_ok=True)
+            path = snapshot_download(
+                repo_id=args.repo,
+                revision=args.revision,
+                local_dir=args.destination,
+                cache_dir=cached,
+                max_workers=8,
+            )
+            print(f"DONE {path}", flush=True)
+            return 0
+
+
+        if __name__ == "__main__":
+            sys.exit(main())
+
+        """
 
     // MARK: Progress
 
@@ -460,9 +489,10 @@ enum ModelInstaller {
         for case let entry as String in enumerator {
             let path = directory + "/" + entry
             guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
-                  let kind = attributes[.type] as? FileAttributeType,
-                  kind == .typeRegular,
-                  let bytes = attributes[.size] as? NSNumber else { continue }
+                let kind = attributes[.type] as? FileAttributeType,
+                kind == .typeRegular,
+                let bytes = attributes[.size] as? NSNumber
+            else { continue }
             total += bytes.intValue
         }
         return total

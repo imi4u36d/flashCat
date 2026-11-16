@@ -1,5 +1,8 @@
-import Foundation
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import FlashCatKit
+import Foundation
 
 /// What the model page knows about this Mac, so its suggestions carry a
 /// "fits / does not fit" verdict instead of raw numbers only.
@@ -9,9 +12,10 @@ struct DeviceProfile: Equatable {
     let freeDiskBytes: Int64
 
     static func current() -> DeviceProfile {
-        DeviceProfile(chipName: chipName(),
-                      memoryGB: Int((Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824).rounded()),
-                      freeDiskBytes: freeDiskBytes())
+        DeviceProfile(
+            chipName: chipName(),
+            memoryGB: Int((Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824).rounded()),
+            freeDiskBytes: freeDiskBytes())
     }
 
     /// Same facts as the kit's fit rules take, so the two never drift apart.
@@ -33,7 +37,8 @@ struct DeviceProfile: Equatable {
     private static func freeDiskBytes() -> Int64 {
         let url = URL(fileURLWithPath: NSHomeDirectory())
         if let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
-           let capacity = values.volumeAvailableCapacityForImportantUsage {
+            let capacity = values.volumeAvailableCapacityForImportantUsage
+        {
             return capacity
         }
         var stat = statfs()

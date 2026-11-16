@@ -1,4 +1,8 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import XCTest
+
 @testable import FlashCatKit
 
 /// End-to-end install of a **real** runtime pack archive. Skipped unless the
@@ -19,7 +23,8 @@ final class PackInstallIntegrationTests: XCTestCase {
         guard FileManager.default.fileExists(atPath: archive) else {
             throw XCTSkip("FLASHCAT_TEST_PACK does not exist: \(archive)")
         }
-        root = FileManager.default.temporaryDirectory
+        root =
+            FileManager.default.temporaryDirectory
             .appendingPathComponent("flashcat-pack-\(UUID().uuidString)").path
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
     }
@@ -33,17 +38,19 @@ final class PackInstallIntegrationTests: XCTestCase {
     func testInstallsRealPackArchive() async throws {
         let environment = ProcessInfo.processInfo.environment
         let archive = environment["FLASHCAT_TEST_PACK"]!
-        let expectedEngine = environment["FLASHCAT_TEST_ENGINE"]
+        let expectedEngine =
+            environment["FLASHCAT_TEST_ENGINE"]
             .flatMap(EngineID.init(rawValue:)) ?? .omlx
         let expectedVersion = environment["FLASHCAT_TEST_VERSION"] ?? "0.7.2"
         let expectedSHA = environment["FLASHCAT_TEST_PACK_SHA"] ?? sha256(of: archive)
         let bytes = (try? FileManager.default.attributesOfItem(atPath: archive)[.size] as? Int) ?? nil
 
         let installer = EngineInstaller(environment: EngineInstallEnvironment(packsDirectory: root))
-        let release = EnginePackRelease(version: expectedVersion,
-                                        url: URL(fileURLWithPath: archive).absoluteString,
-                                        sha256: expectedSHA,
-                                        bytes: bytes)
+        let release = EnginePackRelease(
+            version: expectedVersion,
+            url: URL(fileURLWithPath: archive).absoluteString,
+            sha256: expectedSHA,
+            bytes: bytes)
 
         let phases = Counter()
         let installation = try await installer.install(release, for: expectedEngine) { phase in
@@ -52,8 +59,9 @@ final class PackInstallIntegrationTests: XCTestCase {
 
         XCTAssertEqual(installation.manifest.id, expectedEngine)
         XCTAssertEqual(installation.manifest.version, expectedVersion)
-        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: installation.entrypoint.path),
-                      "entrypoint must be executable: \(installation.entrypoint.path)")
+        XCTAssertTrue(
+            FileManager.default.isExecutableFile(atPath: installation.entrypoint.path),
+            "entrypoint must be executable: \(installation.entrypoint.path)")
         let versions = await installer.installedVersions(expectedEngine)
         XCTAssertEqual(versions, [expectedVersion])
         let installedRoot = await installer.installedRoot(expectedEngine, version: expectedVersion)
@@ -67,7 +75,8 @@ final class PackInstallIntegrationTests: XCTestCase {
         // Make sure the entrypoint actually runs on this machine.
         let process = Process()
         process.executableURL = installation.entrypoint
-        process.arguments = installation.entrypoint.lastPathComponent == "python3"
+        process.arguments =
+            installation.entrypoint.lastPathComponent == "python3"
             ? ["-c", "import sys; print(sys.version_info[0])"]
             : ["--version"]
         let pipe = Pipe()
@@ -93,15 +102,17 @@ final class PackInstallIntegrationTests: XCTestCase {
 
     func testRejectsCorruptArchiveWithoutDamagingExistingInstall() async throws {
         let archive = ProcessInfo.processInfo.environment["FLASHCAT_TEST_PACK"]!
-        let expectedEngine = ProcessInfo.processInfo.environment["FLASHCAT_TEST_ENGINE"]
+        let expectedEngine =
+            ProcessInfo.processInfo.environment["FLASHCAT_TEST_ENGINE"]
             .flatMap(EngineID.init(rawValue:)) ?? .omlx
         let expectedVersion = ProcessInfo.processInfo.environment["FLASHCAT_TEST_VERSION"] ?? "0.7.2"
         let installer = EngineInstaller(environment: EngineInstallEnvironment(packsDirectory: root))
 
-        var good = EnginePackRelease(version: expectedVersion,
-                                     url: URL(fileURLWithPath: archive).absoluteString,
-                                     sha256: ProcessInfo.processInfo.environment["FLASHCAT_TEST_PACK_SHA"]
-                                        ?? sha256(of: archive))
+        var good = EnginePackRelease(
+            version: expectedVersion,
+            url: URL(fileURLWithPath: archive).absoluteString,
+            sha256: ProcessInfo.processInfo.environment["FLASHCAT_TEST_PACK_SHA"]
+                ?? sha256(of: archive))
         _ = try await installer.install(good, for: expectedEngine) { _ in }
 
         good.version = expectedVersion + ".corrupt"
@@ -138,7 +149,9 @@ private final class Counter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         // Download progress fires constantly; keep one sample per stage.
-        if case .downloading = phase, phases.contains(where: { if case .downloading = $0 { return true } else { return false } }) {
+        if case .downloading = phase,
+            phases.contains(where: { if case .downloading = $0 { return true } else { return false } })
+        {
             return
         }
         phases.append(phase)

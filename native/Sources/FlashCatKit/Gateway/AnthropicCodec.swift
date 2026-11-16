@@ -1,8 +1,11 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
-/// A failed request, carrying the status and error type the client should see.
-/// `type` uses Anthropic's error taxonomy; the OpenAI passthrough paths raise
-/// `upstream` and forward the engine's own body instead.
+/// 一次失败的请求，带上客户端应当看到的状态码与错误类型。
+/// `type` 走 Anthropic 的错误分类；OpenAI 直通路径的传输层失败（502/504）改抛
+/// `upstream`，并把引擎自己的正文原样转出去。
 public struct GatewayAPIError: Error {
     public var status: Int
     public var type: String
@@ -22,7 +25,7 @@ public struct GatewayAPIError: Error {
         GatewayAPIError(status: 404, type: "not_found_error", message: message)
     }
 
-    /// Engine not running / not ready yet.
+    /// 引擎没在运行，或还没就绪。
     public static func overloaded(_ message: String) -> GatewayAPIError {
         GatewayAPIError(status: 503, type: "overloaded_error", message: message)
     }
@@ -31,32 +34,31 @@ public struct GatewayAPIError: Error {
         ["type": "error", "error": ["type": type, "message": message]]
     }
 
-    /// OpenAI-shaped error, for the passthrough routes.
+    /// OpenAI 形状的错误，给直通路由用。
     public func openAIEnvelope() -> [String: Any] {
         ["error": ["message": message, "type": type, "code": nil]]
     }
 }
 
-/// Translates between the Anthropic Messages API and the OpenAI Chat
-/// Completions API. Pure functions over `[String: Any]` JSON — no I/O — so the
-/// whole surface is unit-testable.
+/// 在 Anthropic Messages API 与 OpenAI Chat Completions API 之间做翻译。全是
+/// 基于 `[String: Any]` JSON 的纯函数、不碰 I/O，所以整个表面都能单测。
 ///
-/// Covered: system prompts, plain and multimodal (base64 image) content,
-/// `tool_use` / `tool_result` blocks, `tools` / `tool_choice`, stop sequences,
-/// sampling parameters, non-streaming responses, and the full SSE event
-/// sequence (`message_start` … `message_stop`) including `thinking` blocks for
-/// engines that report `reasoning_content`.
+/// 覆盖：system 提示、纯文本与多模态（base64 图片）内容、`tool_use` /
+/// `tool_result` 块、`tools` / `tool_choice`、停止序列、采样参数、非流式响应，
+/// 以及完整的 SSE 事件序列（`message_start` … `message_stop`），包括引擎上报
+/// `reasoning_content` 时生成的 `thinking` 块。
 public enum AnthropicCodec {
 
-    // MARK: - Request: Anthropic → OpenAI
+    // MARK: - Request: Anthropic → OpenAI（请求翻译：Anthropic 转 OpenAI）
 
-    /// Builds the OpenAI chat-completions payload for a `/v1/messages` body.
-    /// `stream` is returned separately so the caller can pick the transport.
+    /// 为一份 `/v1/messages` 请求体拼出 OpenAI chat-completions 载荷。
+    /// `stream` 单独返回，好让调用方挑传输方式。
     public static func translateRequest(_ payload: [String: Any]) throws -> (openai: [String: Any], stream: Bool) {
         guard let model = payload["model"] as? String, !model.isEmpty else {
             throw GatewayAPIError.badRequest("messages: model 是必填字段")
         }
-        let maxTokens = (payload["max_tokens"] as? Int)
+        let maxTokens =
+            (payload["max_tokens"] as? Int)
             ?? (payload["max_tokens"] as? Double).map(Int.init)
         guard let maxTokens, maxTokens > 0 else {
             throw GatewayAPIError.badRequest("max_tokens: 该字段必填，且必须是正整数")
@@ -107,13 +109,15 @@ public enum AnthropicCodec {
         return (openai, stream)
     }
 
-    /// One Anthropic message becomes one or more OpenAI messages: a user turn
-    /// holding `tool_result` blocks turns into `role:"tool"` messages followed
-    /// by an ordinary user message for any text it also carries.
-    private static func appendMessage(role: String,
-                                      content: Any?,
-                                      index: Int,
-                                      into openaiMessages: inout [[String: Any]]) throws {
+    /// 一条 Anthropic 消息会变成一到多条 OpenAI 消息：带 `tool_result` 块的
+    /// user 轮次拆成若干 `role:"tool"` 消息，它同时携带的文本则再补一条普通
+    /// user 消息。
+    private static func appendMessage(
+        role: String,
+        content: Any?,
+        index: Int,
+        into openaiMessages: inout [[String: Any]]
+    ) throws {
         if let text = content as? String {
             openaiMessages.append(["role": role, "content": text])
             return
@@ -166,15 +170,15 @@ public enum AnthropicCodec {
                     "content": text,
                 ])
             case "thinking", "redacted_thinking", "document", "search_result":
-                // Engines have no way to re-feed hidden reasoning; documents
-                // and web results are not part of the OpenAI surface. Skip.
+                // 引擎没办法把隐藏推理再喂回去；文档与网页结果也不在 OpenAI 接口
+                // 里。直接跳过。
                 continue
             default:
                 throw GatewayAPIError.badRequest("messages[\(index)].content[\(blockIndex)].type: 不支持的内容块 \(type)")
             }
         }
 
-        // OpenAI expects tool answers before anything else from the same turn.
+        // OpenAI 要求同一轮里的工具回答排在最前面。
         openaiMessages.append(contentsOf: toolResults)
 
         if !toolCalls.isEmpty {
@@ -197,9 +201,12 @@ public enum AnthropicCodec {
         switch type {
         case "base64":
             guard let mediaType = source["media_type"] as? String,
-                  let data = source["data"] as? String else { return nil }
-            return ["type": "image_url",
-                    "image_url": ["url": "data:\(mediaType);base64,\(data)"]]
+                let data = source["data"] as? String
+            else { return nil }
+            return [
+                "type": "image_url",
+                "image_url": ["url": "data:\(mediaType);base64,\(data)"],
+            ]
         case "url":
             guard let url = source["url"] as? String else { return nil }
             return ["type": "image_url", "image_url": ["url": url]]
@@ -234,7 +241,7 @@ public enum AnthropicCodec {
         }
     }
 
-    // MARK: - Response: OpenAI → Anthropic
+    // MARK: - Response: OpenAI → Anthropic（响应翻译：OpenAI 转 Anthropic）
 
     public static func translateResponse(_ openai: [String: Any]) -> [String: Any] {
         let choices = openai["choices"] as? [[String: Any]] ?? []
@@ -255,7 +262,8 @@ public enum AnthropicCodec {
             for call in toolCalls {
                 let function = call["function"] as? [String: Any] ?? [:]
                 let arguments = (function["arguments"] as? String) ?? "{}"
-                let input = (try? JSONSerialization.jsonObject(with: Data(arguments.utf8)))
+                let input =
+                    (try? JSONSerialization.jsonObject(with: Data(arguments.utf8)))
                     ?? ["_raw": arguments]
                 content.append([
                     "type": "tool_use",
@@ -276,8 +284,9 @@ public enum AnthropicCodec {
             "role": "assistant",
             "model": (openai["model"] as? String) ?? "",
             "content": content,
-            "stop_reason": stopReason(from: choice["finish_reason"] as? String,
-                                      hasToolUse: content.contains { $0["type"] as? String == "tool_use" }),
+            "stop_reason": stopReason(
+                from: choice["finish_reason"] as? String,
+                hasToolUse: content.contains { $0["type"] as? String == "tool_use" }),
             "stop_sequence": NSNull(),
             "usage": [
                 "input_tokens": int(usage["prompt_tokens"]) ?? 0,
@@ -295,11 +304,10 @@ public enum AnthropicCodec {
         }
     }
 
-    // MARK: - Streaming: OpenAI chunks → Anthropic events
+    // MARK: - Streaming: OpenAI chunks → Anthropic events（流式：分片转事件）
 
-    /// Stateful translator for one streamed response. It consumes OpenAI
-    /// `chat.completion.chunk` objects and emits complete SSE frames in the
-    /// Anthropic event grammar.
+    /// 一次流式响应的有状态翻译器：吃进 OpenAI 的 `chat.completion.chunk` 对象，
+    /// 吐出符合 Anthropic 事件语法的完整 SSE 帧。
     public final class StreamTranslator {
         private let model: String
         private var inputTokens = 0
@@ -308,8 +316,8 @@ public enum AnthropicCodec {
         /// 当前打开的块。两个布尔量 + 「下标总是 nextBlockIndex-1」的写法在
         /// 「文本后又来思考」时会算错下标，把正文写进思考块。
         private var openBlock: (index: Int, kind: BlockKind)?
-        /// OpenAI tool-call index → Anthropic block index, for tools that
-        /// stream their arguments across several chunks.
+        /// OpenAI 的 tool-call 下标 → Anthropic 的块下标，给那些参数分好几片
+        /// 流式到达的工具用。
         private var toolBlocks: [Int: Int] = [:]
         private var openBlocks: [Int] = []
         private var nextBlockIndex = 0
@@ -320,7 +328,7 @@ public enum AnthropicCodec {
             self.inputTokens = inputTokens
         }
 
-        /// `message_start` plus a leading `ping`.
+        /// `message_start`，外加开头一个 `ping`。
         public func startEvents() -> [String] {
             let message: [String: Any] = [
                 "id": "msg_" + UUID().uuidString,
@@ -333,13 +341,14 @@ public enum AnthropicCodec {
                 "usage": ["input_tokens": inputTokens, "output_tokens": 0],
             ]
             return [
-                frame(event: "message_start",
-                      object: ["type": "message_start", "message": message]),
+                frame(
+                    event: "message_start",
+                    object: ["type": "message_start", "message": message]),
                 frame(object: ["type": "ping"]),
             ]
         }
 
-        /// Translates one parsed OpenAI chunk into zero or more frames.
+        /// 把一片解析好的 OpenAI chunk 翻成零到多帧。
         public func consume(chunk: [String: Any]) -> [String] {
             var frames: [String] = []
             guard let choices = chunk["choices"] as? [[String: Any]] else {
@@ -350,7 +359,7 @@ public enum AnthropicCodec {
             let delta = choice["delta"] as? [String: Any] ?? [:]
             absorbUsage(chunk)
 
-            // Thinking engines surface hidden reasoning as reasoning_content.
+            // 会思考的引擎把隐藏推理放在 reasoning_content 里。
             if let reasoning = delta["reasoning_content"] as? String, !reasoning.isEmpty {
                 frames.append(contentsOf: openThinkingBlock())
                 frames.append(thinkingDelta(reasoning))
@@ -376,7 +385,7 @@ public enum AnthropicCodec {
             return frames
         }
 
-        /// Closes whatever blocks are open and emits the terminal events.
+        /// 关掉还开着的块，并发出结尾事件。
         public func finishEvents() -> [String] {
             var frames: [String] = []
             for index in openBlocks.reversed() {
@@ -384,19 +393,21 @@ public enum AnthropicCodec {
             }
             openBlocks.removeAll()
             openBlock = nil
-            // A tool block that streamed without the engine ever sending an
-            // explicit finish_reason still ends as a tool call.
+            // 引擎始终没发 finish_reason 的工具块，收尾时照样按工具调用结束。
             let reason = stopReason ?? (toolBlocks.isEmpty ? "end_turn" : "tool_use")
-            frames.append(frame(event: "message_delta", object: [
-                "type": "message_delta",
-                "delta": ["stop_reason": reason, "stop_sequence": NSNull()],
-                "usage": ["output_tokens": outputTokens],
-            ]))
+            frames.append(
+                frame(
+                    event: "message_delta",
+                    object: [
+                        "type": "message_delta",
+                        "delta": ["stop_reason": reason, "stop_sequence": NSNull()],
+                        "usage": ["output_tokens": outputTokens],
+                    ]))
             frames.append(frame(object: ["type": "message_stop"]))
             return frames
         }
 
-        // MARK: private
+        // MARK: private（内部实现）
 
         private func absorbUsage(_ chunk: [String: Any]) {
             guard let usage = chunk["usage"] as? [String: Any] else { return }
@@ -425,32 +436,37 @@ public enum AnthropicCodec {
             nextBlockIndex += 1
             openBlock = (index, kind)
             openBlocks.append(index)
-            frames.append(frame(object: [
-                "type": "content_block_start",
-                "index": index,
-                "content_block": kind == .text
-                    ? ["type": "text", "text": ""]
-                    : ["type": "thinking", "thinking": ""],
-            ]))
+            frames.append(
+                frame(object: [
+                    "type": "content_block_start",
+                    "index": index,
+                    "content_block": kind == .text
+                        ? ["type": "text", "text": ""]
+                        : ["type": "thinking", "thinking": ""],
+                ]))
             return frames
         }
 
         private func textDelta(_ text: String) -> String {
             let index = openBlock?.index ?? 0
-            return frame(event: "content_block_delta", object: [
-                "type": "content_block_delta",
-                "index": index,
-                "delta": ["type": "text_delta", "text": text],
-            ])
+            return frame(
+                event: "content_block_delta",
+                object: [
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": ["type": "text_delta", "text": text],
+                ])
         }
 
         private func thinkingDelta(_ text: String) -> String {
             let index = openBlock?.index ?? 0
-            return frame(event: "content_block_delta", object: [
-                "type": "content_block_delta",
-                "index": index,
-                "delta": ["type": "thinking_delta", "thinking": text],
-            ])
+            return frame(
+                event: "content_block_delta",
+                object: [
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": ["type": "thinking_delta", "thinking": text],
+                ])
         }
 
         private func consumeToolCall(_ call: [String: Any]) -> [String] {
@@ -458,8 +474,7 @@ public enum AnthropicCodec {
             let openaiIndex = int(call["index"]) ?? 0
 
             if toolBlocks[openaiIndex] == nil {
-                // Close any open text/thinking block first: Anthropic blocks
-                // never interleave.
+                // 先把开着的 text/thinking 块关掉：Anthropic 的块不能交错。
                 if let current = openBlock {
                     frames.append(close(current.index))
                     openBlock = nil
@@ -469,25 +484,29 @@ public enum AnthropicCodec {
                 nextBlockIndex += 1
                 toolBlocks[openaiIndex] = blockIndex
                 openBlocks.append(blockIndex)
-                frames.append(frame(object: [
-                    "type": "content_block_start",
-                    "index": blockIndex,
-                    "content_block": [
-                        "type": "tool_use",
-                        "id": (call["id"] as? String) ?? "toolu_\(blockIndex)",
-                        "name": (function["name"] as? String) ?? "",
-                        "input": [:],
-                    ],
-                ]))
+                frames.append(
+                    frame(object: [
+                        "type": "content_block_start",
+                        "index": blockIndex,
+                        "content_block": [
+                            "type": "tool_use",
+                            "id": (call["id"] as? String) ?? "toolu_\(blockIndex)",
+                            "name": (function["name"] as? String) ?? "",
+                            "input": [:],
+                        ],
+                    ]))
             }
 
             if let fragment = (call["function"] as? [String: Any])?["arguments"] as? String, !fragment.isEmpty {
                 let index = toolBlocks[openaiIndex] ?? 0
-                frames.append(frame(event: "content_block_delta", object: [
-                    "type": "content_block_delta",
-                    "index": index,
-                    "delta": ["type": "input_json_delta", "partial_json": fragment],
-                ]))
+                frames.append(
+                    frame(
+                        event: "content_block_delta",
+                        object: [
+                            "type": "content_block_delta",
+                            "index": index,
+                            "delta": ["type": "input_json_delta", "partial_json": fragment],
+                        ]))
             }
             return frames
         }
@@ -502,14 +521,15 @@ public enum AnthropicCodec {
         }
     }
 
-    // MARK: - Errors
+    // MARK: - Errors（错误翻译）
 
-    /// Rewrites an upstream (OpenAI-shaped) error into the envelope the
-    /// requesting dialect expects. Anthropic clients get the `type`/`message`
-    /// pair; status codes are preserved with sensible fallbacks.
+    /// 把上游（OpenAI 形状）的错误改写成请求方言期望的信封。Anthropic 客户端
+    /// 拿到 `type`/`message` 这一对；状态码不在这里处理——调用方沿用上游响应的
+    /// `status`，本函数只在引擎没给 `type` 时按状态码推断一个。
     public static func errorEnvelope(from body: Data, upstreamStatus: Int) -> [String: Any] {
         if let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
-           let error = object["error"] as? [String: Any] {
+            let error = object["error"] as? [String: Any]
+        {
             let message = (error["message"] as? String) ?? "引擎返回错误"
             let type = (error["type"] as? String) ?? anthropicType(for: upstreamStatus)
             return ["type": "error", "error": ["type": type, "message": message]]
@@ -530,11 +550,12 @@ public enum AnthropicCodec {
         }
     }
 
-    // MARK: - Token counting
+    // MARK: - Token counting（token 估算）
 
-    /// Approximate input-token count for `/v1/messages/count_tokens`. The
-    /// heuristic matches the chat page's estimate: CJK characters count once,
-    /// everything else once per four characters; images are flat.
+    /// 给 `/v1/messages/count_tokens` 用的近似输入 token 数。权重口径与
+    /// `TokenEstimator` 一致（CJK/全角约 1 字 1 token，其余约 4 字符 1 token），
+    /// 但这里是整数累加、末尾直接截断，那边按小数权重向上取整，所以同一条文本两边
+    /// 的结果不会完全相等；图片不计实际尺寸，按固定 1000 计。
     public static func countInputTokens(_ payload: [String: Any]) -> Int {
         var total = 0
         if let system = flattenText(payload["system"]) { total += estimate(system) }
@@ -583,7 +604,7 @@ public enum AnthropicCodec {
         return cjk + other / 4
     }
 
-    // MARK: - helpers
+    // MARK: - helpers（辅助函数）
 
     private static func flattenText(_ value: Any?) -> String? {
         if let text = value as? String { return text }
@@ -602,8 +623,7 @@ public enum AnthropicCodec {
         return nil
     }
 
-    /// One complete SSE frame: named event (when the client should be able to
-    /// dispatch on it) plus its JSON payload.
+    /// 一帧完整的 SSE：带名事件（当客户端需要靠它分发时）加上 JSON 载荷。
     public static func frame(event: String? = nil, object: Any) -> String {
         let data = (try? JSONSerialization.data(withJSONObject: object)) ?? Data("{}".utf8)
         var result = ""

@@ -1,7 +1,10 @@
-import SwiftUI
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AppKit
 import Combine
 import FlashCatKit
+import SwiftUI
 
 // MARK: - 主窗口
 
@@ -172,7 +175,9 @@ final class StatusBarController: NSObject, NSWindowDelegate {
 
     private func observeState() {
         // 状态变化时换图标：运行中实心、过渡态压暗、停止描边、异常带告警点。
-        state.$serverState
+        // 服务状态已经搬进 `EngineSessionStore`；这里和下面 `theme.$mode` 一样，
+        // 直接取 store 的发布者，避免为一个发布者在 AppState 上再开一条转发。
+        state.engineSession.$serverState
             .removeDuplicates()
             .receive(on: RunLoop.main)
             .sink { [weak self] newState in
@@ -217,7 +222,8 @@ final class StatusBarController: NSObject, NSWindowDelegate {
         guard let button = statusItem.button else { return }
 
         if let event = NSApp.currentEvent,
-           event.type == .rightMouseUp || (event.type == .leftMouseDown && event.modifierFlags.contains(.control)) {
+            event.type == .rightMouseUp || (event.type == .leftMouseDown && event.modifierFlags.contains(.control))
+        {
             if presenter.isPresented {
                 dismiss(animated: false)
             }
@@ -287,7 +293,8 @@ final class StatusBarController: NSObject, NSWindowDelegate {
         guard let buttonWindow = button.window else { return }
         let buttonRectInWindow = button.convert(button.bounds, to: nil)
         let buttonScreenRect = buttonWindow.convertToScreen(buttonRectInWindow)
-        let screenFrame = (buttonWindow.screen ?? NSScreen.main)?.visibleFrame
+        let screenFrame =
+            (buttonWindow.screen ?? NSScreen.main)?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
 
         let totalHeight = max(220, currentCardHeight + Metrics.shadowTop + Metrics.shadowBottom)
@@ -345,7 +352,8 @@ final class StatusBarController: NSObject, NSWindowDelegate {
             stopItem.target = self
             menu.addItem(stopItem)
 
-            let restartItem = NSMenuItem(title: L10n.t("重启服务"), action: #selector(menuRestartService), keyEquivalent: "")
+            let restartItem = NSMenuItem(
+                title: L10n.t("重启服务"), action: #selector(menuRestartService), keyEquivalent: "")
             restartItem.target = self
             menu.addItem(restartItem)
         } else {

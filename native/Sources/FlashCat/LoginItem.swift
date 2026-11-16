@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 /// Launch-at-login is implemented with a LaunchAgent plist, the same mechanism
@@ -13,22 +16,23 @@ enum LoginItem {
         }
         let executable = Bundle.main.executablePath ?? ""
         if executable.isEmpty { return }
-        let escaped = executable
+        let escaped =
+            executable
             .replacing("&", with: "&amp;")
             .replacing("<", with: "&lt;")
         Paths.ensureDirectory(Paths.home + "/Library/LaunchAgents")
         let plist = """
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-          <key>Label</key><string>\(label)</string>
-          <key>ProgramArguments</key><array><string>\(escaped)</string></array>
-          <key>RunAtLoad</key><true/>
-          <key>ProcessType</key><string>Interactive</string>
-        </dict>
-        </plist>
-        """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+              <key>Label</key><string>\(label)</string>
+              <key>ProgramArguments</key><array><string>\(escaped)</string></array>
+              <key>RunAtLoad</key><true/>
+              <key>ProcessType</key><string>Interactive</string>
+            </dict>
+            </plist>
+            """
         try? plist.write(toFile: file, atomically: true, encoding: .utf8)
     }
 

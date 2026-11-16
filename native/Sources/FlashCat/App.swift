@@ -1,6 +1,9 @@
-import SwiftUI
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AppKit
 import FlashCatKit
+import SwiftUI
 
 private enum MainWindowGeometry {
     static let defaultSize = NSSize(width: 1280, height: 820)
@@ -21,8 +24,10 @@ struct FlashCatApp: App {
             // 窗口内容全部是 SwiftUI 原生视图（含启动页），没有网页层。
             console
         }
-        .defaultSize(width: MainWindowGeometry.defaultSize.width,
-                     height: MainWindowGeometry.defaultSize.height)
+        .defaultSize(
+            width: MainWindowGeometry.defaultSize.width,
+            height: MainWindowGeometry.defaultSize.height
+        )
         .windowResizability(.contentMinSize)
         .windowStyle(.hiddenTitleBar)
         .commands {
@@ -91,8 +96,10 @@ struct FlashCatApp: App {
     /// SwiftUI / AppKit 视图。
     private var console: some View {
         ConsoleView(state: state)
-            .frame(minWidth: MainWindowGeometry.minimumSize.width,
-                   minHeight: MainWindowGeometry.minimumSize.height)
+            .frame(
+                minWidth: MainWindowGeometry.minimumSize.width,
+                minHeight: MainWindowGeometry.minimumSize.height
+            )
             .overlay(MainWindow.bridge())
             // 原生视图自己排标题栏那一行（红绿灯留白 + 侧栏折叠手柄），
             // 因此要吃掉安全区，让内容从窗口最顶端开始画。
@@ -188,12 +195,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             target.setContentSize(MainWindowGeometry.defaultSize)
             target.center()
         } else if target.frame.width < minimumWindowSize.width
-                    || target.frame.height < minimumWindowSize.height {
+            || target.frame.height < minimumWindowSize.height
+        {
             // Older builds allowed the window to be shrunk below the layout's
             // floor. Recover to a usable size the next time the app launches.
             target.setContentSize(
-                NSSize(width: max(target.contentLayoutRect.width, MainWindowGeometry.defaultSize.width),
-                       height: max(target.contentLayoutRect.height, MainWindowGeometry.defaultSize.height))
+                NSSize(
+                    width: max(target.contentLayoutRect.width, MainWindowGeometry.defaultSize.width),
+                    height: max(target.contentLayoutRect.height, MainWindowGeometry.defaultSize.height))
             )
         }
         Self.clampToVisibleScreen(target)
@@ -217,8 +226,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard !onScreen, let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         let visible = screen.visibleFrame
-        let size = NSSize(width: min(max(frame.width, MainWindowGeometry.minimumSize.width), visible.width),
-                          height: min(max(frame.height, MainWindowGeometry.minimumSize.height), visible.height))
+        let size = NSSize(
+            width: min(max(frame.width, MainWindowGeometry.minimumSize.width), visible.width),
+            height: min(max(frame.height, MainWindowGeometry.minimumSize.height), visible.height))
         let origin = NSPoint(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2)
         window.setFrame(NSRect(origin: origin, size: size), display: true)
     }
@@ -226,8 +236,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 红绿灯往右下偏移，与自绘标题栏控件及灵动岛的 `25pt` 水平中线精确对齐。
     private func offsetTrafficLights(in window: NSWindow) {
         guard window.canBecomeMain,
-              window is NSPanel == false,
-              !window.styleMask.contains(.fullScreen) else { return }
+            window is NSPanel == false,
+            !window.styleMask.contains(.fullScreen)
+        else { return }
         let titlebarCenterFromTop: CGFloat = 25
         let types: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
         for (index, type) in types.enumerated() {
@@ -238,9 +249,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let origin = trafficLightOrigins[index] else { continue }
             let targetY: CGFloat
             if let superview = button.superview,
-               let content = window.contentView,
-               content.bounds.height > 0 {
-                let yInContent = content.isFlipped
+                let content = window.contentView,
+                content.bounds.height > 0
+            {
+                let yInContent =
+                    content.isFlipped
                     ? titlebarCenterFromTop
                     : content.bounds.maxY - titlebarCenterFromTop
                 let centerInSuperview = superview.convert(NSPoint(x: 0, y: yInContent), from: content).y
@@ -313,13 +326,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let state = AppState.shared
         let engine = state.controller
         let installed = state.installedEngineIDs
-            .map { EngineInstallations.newest($0, version: nil).map { "\($0.id.displayName) \($0.manifest.version)" } ?? $0.displayName }
+            .map {
+                EngineInstallations.newest($0, version: nil).map { "\($0.id.displayName) \($0.manifest.version)" }
+                    ?? $0.displayName
+            }
             .joined(separator: "、")
         let alert = NSAlert()
         alert.messageText = "flashCat"
         alert.informativeText = L10n.format(
             "本地推理控制台 · v%@\n当前引擎：%@\n已安装：%@\n模型目录：%@",
-            SPLASH_VERSION,
+            splashVersion,
             engine.map { "\($0.id.displayName) \($0.installation.version)" } ?? L10n.t("未选择"),
             installed.isEmpty ? L10n.t("无") : installed,
             EnginePaths.modelsRoot

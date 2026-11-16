@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import SwiftUI
 
 /// macOS 26 Liquid Glass 的统一入口。
@@ -31,10 +34,12 @@ struct LiquidGlassSurface<S: Shape>: View {
 
 extension View {
     /// 在视图上应用一层原生 Liquid Glass。
-    func liquidGlassSurface<S: Shape>(_ shape: S,
-                                      tint: Color? = nil,
-                                      interactive: Bool = false,
-                                      clear: Bool = false) -> some View {
+    func liquidGlassSurface<S: Shape>(
+        _ shape: S,
+        tint: Color? = nil,
+        interactive: Bool = false,
+        clear: Bool = false
+    ) -> some View {
         var glass: Glass = clear ? .clear : .regular
         if let tint {
             glass = glass.tint(tint)
@@ -75,8 +80,9 @@ struct LiquidGlassPanel<Content: View>: View {
     var body: some View {
         content()
             .glassEffect(.regular, in: shape)
-            .shadow(color: .black.opacity(scheme == .dark ? 0.24 : 0.04),
-                    radius: 10, x: 0, y: 4)
+            .shadow(
+                color: .black.opacity(scheme == .dark ? 0.24 : 0.04),
+                radius: 10, x: 0, y: 4)
     }
 }
 
@@ -119,10 +125,11 @@ struct GlassFilterBar<Value: Hashable>: View {
     var maxSearchWidth: CGFloat = 200
 
     var body: some View {
-        DSFilterBar(selection: $selection,
-                    options: options,
-                    query: $query,
-                    placeholder: placeholder,
-                    maxSearchWidth: maxSearchWidth)
+        DSFilterBar(
+            selection: $selection,
+            options: options,
+            query: $query,
+            placeholder: placeholder,
+            maxSearchWidth: maxSearchWidth)
     }
 }

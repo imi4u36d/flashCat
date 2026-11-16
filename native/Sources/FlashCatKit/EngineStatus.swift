@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import Foundation
 
 // MARK: - Rate semantics
@@ -129,30 +132,32 @@ public struct EngineStatus: Sendable, Equatable {
     /// engine does not say, and the caller falls back to the built-in list.
     public var reasoningEfforts: [String]?
 
-    public init(state: EngineRunState = .stopped,
-                model: String? = nil,
-                loadedModels: [String] = [],
-                decodeTokensPerSecond: Double? = nil,
-                prefillTokensPerSecond: Double? = nil,
-                decodeRateKind: EngineRateKind = .none,
-                prefillRateKind: EngineRateKind = .none,
-                lifetimeDecodeTokensPerSecond: Double? = nil,
-                draftAcceptance: Double? = nil,
-                ttftMilliseconds: Double? = nil,
-                ttftKind: EngineTTFTKind = .none,
-                activeRequests: Int = 0,
-                queuedRequests: Int = 0,
-                requestsCompleted: Int = 0,
-                requestsFailed: Int = 0,
-                memoryBytes: Int? = nil,
-                peakMemoryBytes: Int? = nil,
-                maximumContextTokens: Int? = nil,
-                startedAt: Double? = nil,
-                uptimeSeconds: Double? = nil,
-                processIdentifier: Int32? = nil,
-                detail: String? = nil,
-                extras: [String: Double] = [:],
-                reasoningEfforts: [String]? = nil) {
+    public init(
+        state: EngineRunState = .stopped,
+        model: String? = nil,
+        loadedModels: [String] = [],
+        decodeTokensPerSecond: Double? = nil,
+        prefillTokensPerSecond: Double? = nil,
+        decodeRateKind: EngineRateKind = .none,
+        prefillRateKind: EngineRateKind = .none,
+        lifetimeDecodeTokensPerSecond: Double? = nil,
+        draftAcceptance: Double? = nil,
+        ttftMilliseconds: Double? = nil,
+        ttftKind: EngineTTFTKind = .none,
+        activeRequests: Int = 0,
+        queuedRequests: Int = 0,
+        requestsCompleted: Int = 0,
+        requestsFailed: Int = 0,
+        memoryBytes: Int? = nil,
+        peakMemoryBytes: Int? = nil,
+        maximumContextTokens: Int? = nil,
+        startedAt: Double? = nil,
+        uptimeSeconds: Double? = nil,
+        processIdentifier: Int32? = nil,
+        detail: String? = nil,
+        extras: [String: Double] = [:],
+        reasoningEfforts: [String]? = nil
+    ) {
         self.state = state
         self.model = model
         self.loadedModels = loadedModels
@@ -214,18 +219,20 @@ public struct EngineModel: Identifiable, Sendable, Equatable {
     public var helper: Bool
     public var engine: EngineID
 
-    public init(id: String,
-                path: String? = nil,
-                bytes: Int? = nil,
-                maximumContextTokens: Int? = nil,
-                loaded: Bool = false,
-                loading: Bool = false,
-                kind: String? = nil,
-                architecture: String? = nil,
-                capabilities: [String] = [],
-                hidden: Bool = false,
-                helper: Bool = false,
-                engine: EngineID) {
+    public init(
+        id: String,
+        path: String? = nil,
+        bytes: Int? = nil,
+        maximumContextTokens: Int? = nil,
+        loaded: Bool = false,
+        loading: Bool = false,
+        kind: String? = nil,
+        architecture: String? = nil,
+        capabilities: [String] = [],
+        hidden: Bool = false,
+        helper: Bool = false,
+        engine: EngineID
+    ) {
         self.id = id
         self.path = path
         self.bytes = bytes
@@ -310,17 +317,30 @@ public enum JSONValue {
     }
 
     public static func number(_ value: Any?) -> Double? {
+        let number: Double
         switch value {
-        case let number as Double: return number.isFinite ? number : nil
-        case let number as Int: return Double(number)
-        case let number as NSNumber: return number.doubleValue
-        case let text as String: return Double(text)
+        case let value as Double: number = value
+        case let value as Int: number = Double(value)
+        case let value as NSNumber: number = value.doubleValue
+        // `"nan"` / `"1e999"` 都能被 Double(_:) 解析成功，随后在 Int(_:) 上
+        // trap；字符串来自引擎 JSON 与 `--props`，都是外部输入。
+        case let value as String:
+            guard let parsed = Double(value) else { return nil }
+            number = parsed
         default: return nil
         }
+        // 所有分支统一过滤 NaN/±inf：调用方会把它当「有值但很大」继续算，漏
+        // 出去就是一次运行期崩溃，而缺字段只该退化成 nil。
+        guard number.isFinite else { return nil }
+        return number
     }
 
     public static func int(_ value: Any?) -> Int? {
-        number(value).map { Int($0) }
+        guard let number = number(value) else { return nil }
+        // 1e20、-9.3e18 这类在 JSON 里完全合法，但 Int(Double) 对它们（以及
+        // NaN/±inf）是 trap 而不是 nil。先向零取整再用 Int(exactly:)：截断语义
+        // 与 Int(Double) 一致，越界则得到 nil。
+        return Int(exactly: number.rounded(.towardZero))
     }
 
     public static func bool(_ value: Any?) -> Bool? {

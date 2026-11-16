@@ -1,12 +1,17 @@
-import Foundation
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import FlashCatKit
+import Foundation
 
 /// Finds the app bundle the CLI belongs to. When the command is symlinked into
 /// `~/.local/bin` the executable resolves back into the bundle, so `app open`
 /// and the bundled pack index still find the right installation.
 public enum AppLocator {
-    public static func resolve(environment: [String: String],
-                               executable: String = CommandLine.arguments.first ?? "") -> URL? {
+    public static func resolve(
+        environment: [String: String],
+        executable: String = CommandLine.arguments.first ?? ""
+    ) -> URL? {
         if let explicit = environment["FLASHCAT_APP"], !explicit.isEmpty {
             let url = URL(fileURLWithPath: explicit)
             return url.pathExtension == "app" ? url : url.deletingLastPathComponent()
@@ -32,7 +37,8 @@ public enum AppLocator {
         // `argv[0]` can be a PATH-resolved name; Bundle.main knows the real
         // file when it exists.
         if !FileManager.default.fileExists(atPath: url.path),
-           let resolved = Bundle.main.executableURL {
+            let resolved = Bundle.main.executableURL
+        {
             url = resolved
         }
         url = url.resolvingSymlinksInPath()
@@ -68,12 +74,21 @@ public enum AppLocator {
 public struct LocalState {
     public let environment: [String: String]
     public let app: URL?
+    /// `engines.json` 的位置；测试注入临时文件，避免读到真实应用的引擎配置。
+    public let engineConfigurationFile: String
     private let defaults: UserDefaults?
 
-    public init(environment: [String: String] = ProcessInfo.processInfo.environment) {
+    /// `defaults` / `engineConfigurationFile` 可注入：`config` 的离线路径要能用临时域与临时
+    /// 文件跑单测，否则测试会写坏用户真实的偏好设置和 engines.json。
+    public init(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        defaults: UserDefaults? = nil,
+        engineConfigurationFile: String = FlashCatPaths.engineConfigurationFile
+    ) {
         self.environment = environment
         self.app = AppLocator.resolve(environment: environment)
-        self.defaults = UserDefaults(suiteName: FlashCatPaths.preferencesDomain)
+        self.defaults = defaults ?? UserDefaults(suiteName: FlashCatPaths.preferencesDomain)
+        self.engineConfigurationFile = engineConfigurationFile
     }
 
     public var extraEngineRoots: [String] {
@@ -124,6 +139,17 @@ public struct LocalState {
     public var controlEnabled: Bool { bool("controlAPIEnabled", fallback: true) }
     public var selectedModel: String { string("model") ?? "" }
 
+    /// `nil` 表示连应用偏好域都打不开（沙箱/权限问题），此时 `config set` 必须报错而不是假装写入。
+    public var preferencesAvailable: Bool { defaults != nil }
+
+    public func setPreference(_ value: Any, forKey key: String) {
+        defaults?.set(value, forKey: key)
+    }
+
+    public func flushPreferences() {
+        _ = defaults?.synchronize()
+    }
+
     // MARK: engines.json
 
     public struct EngineConfiguration: Equatable {
@@ -132,31 +158,67 @@ public struct LocalState {
         public var port: [String: Int] = [:]
     }
 
+    /// 读 `engines.json` 的结果：配置本体 + 读不动时的原因。
+    ///
+    /// 为什么要带原因：以前这里用 `try?` 把「文件坏了」「顶层不是对象」和
+    /// 「文件不存在」一律折成空配置，`status` / `config list` 于是打出一份
+    /// 看起来完全正常、其实全由默认值拼出来的文档，用户看不到磁盘上那份
+    /// JSON 已经损坏。文件不存在是首次启动的正常状态，不算问题。
+    public struct EngineConfigurationReadout: Equatable {
+        public let configuration: EngineConfiguration
+        /// 非 nil 表示配置没读成、值已按空配置处理；这条理由可以直接给人看。
+        public let warning: String?
+    }
+
     /// 文件在、却读不动。调用方据此打一行警告：以前这种情况会被静默当成
     /// 「没有引擎」，`status` 于是输出一份看起来很正常的假文档。
-    public static func engineConfigurationIsUnreadable() -> Bool {
-        let path = FlashCatPaths.engineConfigurationFile
-        guard FileManager.default.fileExists(atPath: path) else { return false }
-        guard let data = FileManager.default.contents(atPath: path) else { return true }
-        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] == nil
+    public func engineConfigurationIsUnreadable() -> Bool {
+        engineConfigurationReadout().warning != nil
+    }
+
+    public func engineConfigurationReadout() -> EngineConfigurationReadout {
+        let path = engineConfigurationFile
+        guard FileManager.default.fileExists(atPath: path) else {
+            return EngineConfigurationReadout(configuration: EngineConfiguration(), warning: nil)
+        }
+        let data: Data
+        do {
+            data = try Data(contentsOf: URL(fileURLWithPath: path))
+        } catch {
+            return EngineConfigurationReadout(
+                configuration: EngineConfiguration(),
+                warning: "engines.json 读不出来（\(error.localizedDescription)），引擎与端口按默认值处理：\(path)")
+        }
+        let object: [String: Any]
+        do {
+            guard let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                return EngineConfigurationReadout(
+                    configuration: EngineConfiguration(),
+                    warning: "engines.json 的顶层不是对象，引擎与端口按默认值处理：\(path)")
+            }
+            object = parsed
+        } catch {
+            return EngineConfigurationReadout(
+                configuration: EngineConfiguration(),
+                warning: "engines.json 解析失败（\(error.localizedDescription)），引擎与端口按默认值处理：\(path)")
+        }
+        return EngineConfigurationReadout(configuration: LocalState.parse(object), warning: nil)
     }
 
     public var engineConfiguration: EngineConfiguration {
-        let path = FlashCatPaths.engineConfigurationFile
-        guard FileManager.default.fileExists(atPath: path) else { return EngineConfiguration() }
-        guard let data = FileManager.default.contents(atPath: path),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return EngineConfiguration()
-        }
+        engineConfigurationReadout().configuration
+    }
+
+    private static func parse(_ object: [String: Any]) -> EngineConfiguration {
         var configuration = EngineConfiguration()
         if let active = object["active"] as? [String: Any],
-           let version = active["version"] as? String {
+            let version = active["version"] as? String
+        {
             configuration.active = version
         }
         for (key, raw) in object {
-            // `active` and `default` are bookkeeping rows, not engines: the
-            // former is the engine that ran last, the latter the startup
-            // preference. Neither carries per-engine model/port fields.
+            // `active` 与 `default` 是记账行，不是引擎：前者记上次跑过的引擎，
+            // 后者是启动偏好，都不带 per-engine 的 model/port 字段。
             guard key != "active", key != "default", let value = raw as? [String: Any] else { continue }
             if let model = value["lastModel"] as? String, !model.isEmpty {
                 configuration.lastModel[key] = model
@@ -171,8 +233,9 @@ public struct LocalState {
     public var activeEngine: EngineID {
         let configuration = engineConfiguration
         if let active = configuration.active,
-           let id = EngineID(rawValue: active),
-           newest(id) != nil {
+            let id = EngineID(rawValue: active),
+            newest(id) != nil
+        {
             return id
         }
         return installedIDs.first ?? .splash
@@ -181,6 +244,25 @@ public struct LocalState {
     public var enginePort: Int {
         let configuration = engineConfiguration
         return configuration.port[activeEngine.rawValue] ?? activeEngine.defaultPort
+    }
+
+    /// 离线文档的唯一取数口：这里只收集事实，文档长什么样由 `ControlEngineDocuments`
+    /// 决定，`status --offline`、`engines --offline` 与 App 的 `/v1/status` 因此同源。
+    public func engineDocumentInputs() -> [ControlEngineDocumentInput] {
+        let configuration = engineConfiguration
+        let active = activeEngine
+        let selected = selectedModel
+        return EngineCatalog.allIDs.map { id in
+            ControlEngineDocumentInput(
+                id: id,
+                installedVersion: newest(id)?.version,
+                installedVersions: installed(id).map(\.version),
+                isActive: active == id,
+                phase: .stopped,
+                configuredPort: configuration.port[id.rawValue],
+                selectedModel: selected,
+                lastModel: configuration.lastModel[id.rawValue])
+        }
     }
 
     // MARK: Models
@@ -211,13 +293,18 @@ public struct LocalState {
                     let childPath = path + "/" + child
                     var childIsDirectory: ObjCBool = false
                     guard manager.fileExists(atPath: childPath, isDirectory: &childIsDirectory),
-                          childIsDirectory.boolValue else { continue }
-                    models.append(LocalModel(id: entry + "/" + child, engine: engine.rawValue,
-                                             path: childPath, bytes: directoryBytes(childPath)))
+                        childIsDirectory.boolValue
+                    else { continue }
+                    models.append(
+                        LocalModel(
+                            id: entry + "/" + child, engine: engine.rawValue,
+                            path: childPath, bytes: directoryBytes(childPath)))
                 }
             } else {
-                models.append(LocalModel(id: entry, engine: engine.rawValue,
-                                         path: path, bytes: directoryBytes(path)))
+                models.append(
+                    LocalModel(
+                        id: entry, engine: engine.rawValue,
+                        path: path, bytes: directoryBytes(path)))
             }
         }
         return models
@@ -260,13 +347,15 @@ public struct CLIContext {
     public var stdinIsTTY: Bool
     public var executable: String
 
-    public init(invocation: CLIInvocation,
-                environment: [String: String],
-                output: CLIOutput,
-                local: LocalState,
-                isTTY: Bool,
-                stdinIsTTY: Bool,
-                executable: String) {
+    public init(
+        invocation: CLIInvocation,
+        environment: [String: String],
+        output: CLIOutput,
+        local: LocalState,
+        isTTY: Bool,
+        stdinIsTTY: Bool,
+        executable: String
+    ) {
         self.invocation = invocation
         self.environment = environment
         self.output = output
@@ -310,13 +399,15 @@ public struct CLIContext {
 
     public func engineArgument(_ index: Int = 0) throws -> EngineID {
         guard invocation.arguments.indices.contains(index) else {
-            throw CLIError("需要引擎 id（\(EngineCatalog.allIDs.map(\.rawValue).joined(separator: " / "))）",
-                           exit: .usage)
+            throw CLIError(
+                "需要引擎 id（\(EngineCatalog.allIDs.map(\.rawValue).joined(separator: " / "))）",
+                exit: .usage)
         }
         let raw = invocation.arguments[index]
         guard let id = EngineID(rawValue: raw), EngineCatalog.allIDs.contains(id) else {
-            throw CLIError("未知引擎：\(raw)", exit: .usage,
-                           hint: "可用：" + EngineCatalog.allIDs.map(\.rawValue).joined(separator: ", "))
+            throw CLIError(
+                "未知引擎：\(raw)", exit: .usage,
+                hint: "可用：" + EngineCatalog.allIDs.map(\.rawValue).joined(separator: ", "))
         }
         return id
     }

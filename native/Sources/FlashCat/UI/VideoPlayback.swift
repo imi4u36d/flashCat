@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
 import AppKit
 
 /// 显式用 QuickTime 打开本地视频。
@@ -8,8 +11,10 @@ enum VideoPlayback {
         let file = URL(fileURLWithPath: path)
         let quickTime = URL(fileURLWithPath: "/System/Applications/QuickTime Player.app")
         let configuration = NSWorkspace.OpenConfiguration()
-        NSWorkspace.shared.open([file], withApplicationAt: quickTime,
-                                configuration: configuration) { _, error in
+        NSWorkspace.shared.open(
+            [file], withApplicationAt: quickTime,
+            configuration: configuration
+        ) { _, error in
             if error != nil {
                 NSWorkspace.shared.open(file)
             }

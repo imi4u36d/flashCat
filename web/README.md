@@ -264,6 +264,11 @@ cp *.gguf "$C/Library/Application Support/dev.flashcat.desktop/models/"
 | iOS 模拟器（CPU） | 715 ms | 151 tok/s | Metal 在模拟器上会卡死，已按上面关掉 |
 | Android 模拟器（CPU） | 17.1 s | 1.2 tok/s | 首次加载 400MB 占大头；swiftshader，**不代表真机** |
 
+**iOS 真机包**这台机器上生成不了：钥匙串里有开发证书（Team `9RTKA6ACRT`），但 Xcode 里没登录
+Apple ID，`xcodebuild` 报 `No Accounts` / `No profiles for 'dev.flashcat.desktop'`。
+`gen/apple/project.yml` 里已经把 `DEVELOPMENT_TEAM` 与 `CODE_SIGN_STYLE: Automatic` 配好，
+在 Xcode → Settings → Accounts 里登录后，连一台设备（或让 CI 用 `APPLE_*` secrets）即可出 IPA。
+
 **iOS 链接的两个坑**（都已在仓库里修好）：`build.rs` 要显式带上
 `Accelerate/Metal/MetalKit/Foundation`（ggml 编进静态库，cargo 不会替你加）；
 `gen/apple` 的 xcodeproj 由 `project.yml` 生成，框架要加在 `project.yml` 的

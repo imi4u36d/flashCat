@@ -66,6 +66,10 @@ targets:
         RUST_LOG: info
     settings:
       base:
+        # 自动签名：证书在钥匙串里（Apple Development: wxwzmail@163.com），
+        # Team ID 从证书 subject 的 OU 取。真机包还要连着设备或放到 CI secrets。
+        DEVELOPMENT_TEAM: 9RTKA6ACRT
+        CODE_SIGN_STYLE: Automatic
         ENABLE_BITCODE: false
         ARCHS: [arm64]
         VALID_ARCHS: arm64 

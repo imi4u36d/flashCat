@@ -793,9 +793,7 @@ struct ChatPage: View {
                             .foregroundStyle(DS.text3)
                     }
 
-                    if !supportsMedia {
-                        ChatModelThinkingControl(state: state, chat: chat)
-                    }
+                    ChatModelControl(state: state, chat: chat)
 
                     if chat.generating {
                         DSIconButton(

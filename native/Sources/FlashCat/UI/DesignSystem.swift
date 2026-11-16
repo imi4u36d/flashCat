@@ -682,6 +682,7 @@ struct DSMenuTriggerLabel: View {
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(kind == .primary ? Color.white.opacity(0.82) : DS.text2)
                     .lineLimit(1)
+                    .fixedSize()
             }
             if trailingChevron && kind != .icon {
                 Image(systemName: "chevron.down")

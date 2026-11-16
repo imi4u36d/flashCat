@@ -531,4 +531,47 @@ final class StatusParserTests: XCTestCase {
         XCTAssertEqual(strata.lifetimeDecodeTokensPerSecond ?? 0, 50.0, accuracy: 0.001)
     }
 
+    /// 引擎上报的数值是外部数据（引擎 JSON / `--props`）：`"nan"`、`"inf"`、
+    /// `"1e999"` 都能被 `Double(_:)` 解析成功，而 `Int(Double)` 对它们是运行期
+    /// trap——等同仓库禁止的 fatalError。缺字段只该退化成 nil，不能崩。
+    func testNonFiniteAndHugeNumbersDegradeInsteadOfCrashing() {
+        for raw in ["nan", "NaN", "-nan", "inf", "-inf", "infinity", "1e999", "-1e999"] {
+            XCTAssertNil(JSONValue.number(raw), raw)
+            XCTAssertNil(JSONValue.int(raw), raw)
+        }
+        XCTAssertNil(JSONValue.number(Double.nan))
+        XCTAssertNil(JSONValue.number(Double.infinity))
+        XCTAssertNil(JSONValue.number(NSNumber(value: Double.nan)))
+        XCTAssertNil(JSONValue.number(NSNumber(value: Double.infinity)))
+        XCTAssertNil(JSONValue.int(Double.nan))
+        XCTAssertNil(JSONValue.int(NSNumber(value: Double.infinity)))
+
+        // 1e20 在 JSON 里完全合法，只是超出 Int 范围：Int(1e20) 是 trap。
+        XCTAssertEqual(JSONValue.number("1e20"), 1e20 as Double)
+        XCTAssertEqual(JSONValue.number(NSNumber(value: 1e20 as Double)), 1e20 as Double)
+        XCTAssertNil(JSONValue.int("1e20"))
+        XCTAssertNil(JSONValue.int(NSNumber(value: 1e20 as Double)))
+        XCTAssertNil(JSONValue.int(Double(Int.max)))
+
+        // 正常值与截断语义不受影响。
+        XCTAssertEqual(JSONValue.int("42"), 42)
+        XCTAssertEqual(JSONValue.int(3.9), 3)
+        XCTAssertEqual(JSONValue.int(NSNumber(value: -7)), -7)
+        XCTAssertEqual(JSONValue.number("0.5"), 0.5)
+        XCTAssertEqual(JSONValue.number(1), 1.0)
+
+        // 端到端：解析器读到 "nan" 只能当成「没有上报」。
+        let splash = EngineStatusParser.splash(status: ["metrics": ["ttft_ms": ["p50": "nan"]]])
+        XCTAssertNil(splash.ttftMilliseconds)
+        XCTAssertEqual(splash.ttftKind, .none)
+
+        let mlx = EngineStatusParser.prometheusJSON([
+            "gauges": ["requests_running": "1e999", "requests_waiting": "inf"],
+            "histograms": ["time_to_first_token_seconds": ["count": "inf", "sum": "1e999"]],
+        ])
+        XCTAssertEqual(mlx.activeRequests, 0)
+        XCTAssertEqual(mlx.queuedRequests, 0)
+        XCTAssertNil(mlx.ttftMilliseconds)
+    }
+
 }

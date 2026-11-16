@@ -5,6 +5,7 @@ import FlashCatKit
 /// 日志页：顶部过滤条 + 一块玻璃控制台，版式对齐 WebUI。
 struct LogsPage: View {
     @ObservedObject var state: AppState
+    @State private var selectedEngine: EngineID?
     @State private var level: LogsFilter = .all
     @State private var query = ""
     /// 输入框里的搜索词停顿后再用于过滤，避免每次按键都扫一遍几千行日志。
@@ -14,6 +15,10 @@ struct LogsPage: View {
     @State private var expanded: Set<Int> = []
     @State private var hoveredId: Int?
 
+    private var effectiveEngine: EngineID {
+        selectedEngine ?? state.activeEngine
+    }
+
     /// 展开详情里的完整时间，和行首的 HH:mm:ss 互补。
     private static let fullDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -22,7 +27,9 @@ struct LogsPage: View {
     }()
 
     private func display() -> LogsDigest {
-        LogsDigest.make(from: paused ? frozen : state.logs, level: level, query: appliedQuery)
+        LogsDigest.make(from: paused ? frozen : state.logs(for: effectiveEngine),
+                        level: level,
+                        query: appliedQuery)
     }
 
     var body: some View {
@@ -61,137 +68,120 @@ struct LogsPage: View {
     }
 
     private func filterBar(_ data: LogsDigest) -> some View {
-        GlassFilterBar(selection: $level,
-                       options: LogsFilter.allCases.map { item in
-                           (item, "\(item.label) (\(data.counts[item] ?? 0))")
-                       },
-                       query: $query,
-                       placeholder: "搜索")
+        DSFilterBar(selection: $level,
+                    options: LogsFilter.allCases.map { item in
+                        (item, "\(item.label) (\(data.counts[item] ?? 0))")
+                    },
+                    query: $query,
+                    placeholder: "搜索")
     }
 
     @ViewBuilder
     private func actionButtons(_ data: LogsDigest) -> some View {
-        Button {
+        DSIconButton(systemName: "doc.on.doc", help: "复制筛选后的日志", size: 28) {
             state.copy(data.lines.map(\.text).joined(separator: "\n"), label: "已复制筛选后的日志")
-        } label: {
-            Image(systemName: "doc.on.doc")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Console.secondary)
-                .frame(width: 32, height: 32)
-                .background {
-                    LiquidGlassSurface(shape: Circle(), interactive: true)
-                }
         }
-        .buttonStyle(.plainHit)
         .disabled(data.lines.isEmpty)
-        .help("复制筛选后的日志")
 
-        Button {
-            let path = Paths.logFile
+        DSIconButton(systemName: "doc.text", help: "打开日志文件", size: 28) {
+            let path = EnginePaths.logFile(effectiveEngine)
             guard Paths.fileExists(path) else {
                 state.toast("日志文件尚未创建")
                 return
             }
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
-        } label: {
-            Image(systemName: "doc.text")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Console.secondary)
-                .frame(width: 32, height: 32)
-                .background {
-                    LiquidGlassSurface(shape: Circle(), interactive: true)
-                }
         }
-        .buttonStyle(.plainHit)
-        .help("打开日志文件")
 
         Button {
             if paused {
                 paused = false
                 frozen = []
             } else {
-                frozen = state.logs
+                frozen = state.logs(for: effectiveEngine)
                 paused = true
             }
         } label: {
             Label(L10n.t(paused ? "继续" : "暂停"), systemImage: paused ? "play.fill" : "pause.fill")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Console.secondary)
-                .padding(.horizontal, 14)
-                .frame(height: 34)
-                .background {
-                    LiquidGlassSurface(shape: Capsule(), interactive: true)
-                }
         }
-        .buttonStyle(.plainHit)
+        .buttonStyle(.ds(.secondary, size: .regular))
 
-        Button {
-            state.clearLogs()
+        DSIconButton(systemName: "trash", help: "清空日志", size: 28) {
+            state.clearLogs(for: effectiveEngine)
             frozen = []
-        } label: {
-            Image(systemName: "trash")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Console.secondary)
-                .frame(width: 32, height: 32)
-                .background {
-                    LiquidGlassSurface(shape: Circle(), interactive: true)
-                }
         }
-        .buttonStyle(.plainHit)
-        .help("清空日志")
+    }
+
+    private var engineLogMenu: some View {
+        DSMenu {
+            DSMenuTriggerLabel(title: "\(effectiveEngine.rawValue).log", size: .small)
+        } content: {
+            ForEach(EngineCatalog.allIDs, id: \.self) { id in
+                Button {
+                    selectedEngine = id
+                    paused = false
+                    frozen = []
+                    expanded = []
+                } label: {
+                    let suffix = id == state.activeEngine ? " · \(L10n.t("当前"))" : ""
+                    if id == effectiveEngine {
+                        Label("\(id.rawValue).log\(suffix)", systemImage: "checkmark")
+                    } else {
+                        Text("\(id.rawValue).log\(suffix)")
+                    }
+                }
+            }
+        }
+        .help(L10n.t("切换查看不同引擎的日志"))
     }
 
     private func console(_ data: LogsDigest) -> some View {
         ScrollViewReader { proxy in
-            GlassCard(padding: 0, content: {
-                VStack(spacing: 0) {
-                    HStack(spacing: 7) {
-                        Circle()
-                            .fill(Console.ok)
-                            .frame(width: 6, height: 6)
-                        Text("LIVE")
-                            .font(.system(size: 9.5, weight: .bold, design: .monospaced))
-                            .tracking(0.8)
-                            .foregroundStyle(Console.ok)
-                        Text("\(state.activeEngine.rawValue).log")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(Console.tertiary)
-                        Spacer(minLength: 0)
-                        Text("\(data.lines.count) 行")
-                            .font(.system(size: 10.5, design: .monospaced))
-                            .foregroundStyle(Console.tertiary)
-                    }
-                    .padding(.horizontal, 16)
-                    .frame(height: 42)
+            VStack(spacing: 0) {
+                HStack(spacing: 7) {
+                    DSStatusDot(color: paused ? DS.warn : DS.ok, live: !paused, size: 6)
+                    Text(verbatim: paused ? "PAUSED" : "LIVE")
+                        .font(DS.Font.mono(10, weight: .semibold))
+                        .tracking(0.8)
+                        .foregroundStyle(paused ? DS.warn : DS.ok)
+                    engineLogMenu
+                    Spacer(minLength: 0)
+                    Text("\(data.lines.count) 行")
+                        .font(DS.Font.mono(11))
+                        .foregroundStyle(DS.text3)
+                        .monospacedDigit()
+                }
+                .padding(.horizontal, 14)
+                .frame(height: 38)
 
-                    Rectangle().fill(Console.insetStroke).frame(height: 1)
+                DSDivider()
 
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 1) {
-                            // 新行从顶上插入，跟随「最新」的方式就是回到顶部。
-                            Color.clear.frame(height: 1).id("logTop")
-                            if data.lines.isEmpty {
-                                Text("启动引擎后，日志会实时出现在这里")
-                                    .font(.system(size: 11.5))
-                                    .foregroundStyle(Console.tertiary)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 40)
-                            } else {
-                                ForEach(data.lines) { line in
-                                    row(line).id(line.id)
-                                }
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        // 新行从顶上插入，跟随「最新」的方式就是回到顶部。
+                        Color.clear.frame(height: 1).id("logTop")
+                        if data.lines.isEmpty {
+                            Text("启动引擎后，日志会实时出现在这里")
+                                .font(DS.Font.sm)
+                                .foregroundStyle(DS.text3)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 40)
+                        } else {
+                            ForEach(data.lines) { line in
+                                row(line).id(line.id)
                             }
                         }
-                        .padding(12)
                     }
-                    .scrollIndicators(.never)
-                    .defaultScrollAnchor(.top)
-                    .onChange(of: data.lines.count) { _, _ in
-                        guard !paused else { return }
-                        proxy.scrollTo("logTop", anchor: .top)
-                    }
+                    .padding(10)
                 }
-            })
+                .scrollIndicators(.never)
+                .defaultScrollAnchor(.top)
+                .onChange(of: data.lines.count) { _, _ in
+                    guard !paused else { return }
+                    proxy.scrollTo("logTop", anchor: .top)
+                }
+            }
+            .dsSurface(radius: DS.Radius.lg)
+            .clipShape(DS.rect(DS.Radius.lg))
             .frame(maxHeight: .infinity)
         }
     }
@@ -204,42 +194,43 @@ struct LogsPage: View {
 
         return VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(Motion.standard) {
+                withAnimation(DS.Motion.smooth) {
                     if isExpanded { expanded.remove(line.id) } else { expanded.insert(line.id) }
                 }
             } label: {
                 HStack(spacing: 10) {
                     Text(line.clockText)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Console.tertiary)
+                        .font(DS.Font.mono(10.5))
+                        .foregroundStyle(DS.text3)
                         .monospacedDigit()
-                        .frame(width: 56, alignment: .leading)
+                        .frame(width: 58, alignment: .leading)
 
                     HStack(spacing: 5) {
-                        Circle()
-                            .fill(tone)
-                            .frame(width: 5, height: 5)
+                        DSStatusDot(color: tone, live: false, size: 5)
                         Text(line.level.label)
-                            .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                            .font(DS.Font.mono(9, weight: .semibold))
                             .tracking(0.5)
                             .foregroundStyle(tone)
                     }
                     .padding(.horizontal, 6)
-                    .frame(width: 62, height: 17, alignment: .leading)
+                    .frame(width: 62, height: 18, alignment: .leading)
                     .background {
-                        Capsule().fill(tone.opacity(line.level == .info ? 0.07 : 0.13))
+                        DS.rect(4).fill(tone.opacity(0.12))
+                    }
+                    .overlay {
+                        DS.rect(4).strokeBorder(tone.opacity(0.25), lineWidth: 1)
                     }
 
                     Text(line.text)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(line.level == .error ? Console.danger : Console.text)
+                        .font(DS.Font.mono(11.5))
+                        .foregroundStyle(line.level == .error ? DS.err : DS.text)
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(Console.tertiary)
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .foregroundStyle(DS.text3)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                         .opacity(highlighted ? 1 : 0.3)
                         .frame(width: 10)
@@ -253,18 +244,18 @@ struct LogsPage: View {
 
             if isExpanded {
                 detail(line)
-                    .padding(.leading, 74)
+                    .padding(.leading, 76)
                     .padding(.trailing, 8)
                     .padding(.bottom, 8)
                     .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
             }
         }
         .background {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(highlighted ? Console.inset : .clear)
+            DS.rect(DS.Radius.sm)
+                .fill(highlighted ? DS.hover : .clear)
         }
         .onHover { hovering in
-            withAnimation(Motion.quick) {
+            withAnimation(DS.Motion.snappy) {
                 if hovering {
                     hoveredId = line.id
                 } else if hoveredId == line.id {
@@ -278,8 +269,8 @@ struct LogsPage: View {
     private func detail(_ line: LogLine) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(line.text)
-                .font(.system(size: 11.5, design: .monospaced))
-                .foregroundStyle(Console.text)
+                .font(DS.Font.mono(11.5))
+                .foregroundStyle(DS.text)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -292,28 +283,21 @@ struct LogsPage: View {
                     state.copy(line.text, label: "已复制该行日志")
                 } label: {
                     Label("复制", systemImage: "doc.on.doc")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Console.secondary)
-                        .padding(.horizontal, 8)
-                        .frame(height: 22)
-                        .background {
-                            Capsule().fill(Console.inset)
-                        }
                 }
-                .buttonStyle(.plainHit)
+                .buttonStyle(.ds(.secondary, size: .small))
             }
-            .font(.system(size: 10))
-            .foregroundStyle(Console.tertiary)
+            .font(DS.Font.mono(10.5))
+            .foregroundStyle(DS.text3)
             .labelStyle(.titleAndIcon)
         }
         .padding(10)
         .background {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Console.cardStrong.opacity(0.55))
+            DS.rect(DS.Radius.md)
+                .fill(DS.bg)
         }
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(Console.insetStroke, lineWidth: 1)
+            DS.rect(DS.Radius.md)
+                .strokeBorder(DS.line, lineWidth: 1)
         }
     }
 }

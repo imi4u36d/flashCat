@@ -23,16 +23,16 @@ struct HubSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Hairline()
+            DSDivider()
             HStack(spacing: 0) {
                 listPane.frame(width: 430)
-                Rectangle().fill(Native.hairline).frame(width: 1)
+                DSDivider(vertical: true)
                 detailPane.frame(maxWidth: .infinity)
             }
-            Hairline()
+            DSDivider()
             if !state.repoProbeRepo.isEmpty {
                 probeRow
-                Hairline()
+                DSDivider()
             }
             footer
         }
@@ -44,27 +44,24 @@ struct HubSheet: View {
             }
         }
         .onDisappear { state.closeHubDetail() }
+        .onExitCommand { dismiss() }
     }
 
     private var header: some View {
         HStack(spacing: 12) {
-            ArcadeIcon(symbol: "sparkle.magnifyingglass",
-                       colors: [Native.violet, Native.blue],
-                       size: 30,
-                       glyphScale: 0.46,
-                       glow: false)
+            IconTile(symbol: "sparkle.magnifyingglass", color: DS.accent, size: 30)
             VStack(alignment: .leading, spacing: 2) {
                 Text("模型广场")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Native.label)
+                    .font(DS.Font.lg.weight(.semibold))
+                    .foregroundStyle(DS.text)
                 Text("搜 Hugging Face 上的权重，下载到公共目录，再决定哪个引擎看得见")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Native.tertiary)
+                    .font(DS.Font.xs)
+                    .foregroundStyle(DS.text3)
             }
             Spacer(minLength: 8)
-            IconAction(systemName: "xmark", help: "关闭模型广场") { dismiss() }
+            DSIconButton(systemName: "xmark", help: "关闭模型广场") { dismiss() }
         }
-        .padding(.horizontal, Native.pagePadding)
+        .padding(.horizontal, 18)
         .padding(.vertical, 14)
     }
 
@@ -73,7 +70,7 @@ struct HubSheet: View {
     private var listPane: some View {
         VStack(spacing: 0) {
             searchBar
-            Hairline()
+            DSDivider()
             ScrollView {
                 LazyVStack(spacing: 10) {
                     if state.hubLoading && models.isEmpty {
@@ -96,15 +93,9 @@ struct HubSheet: View {
                                                 page: state.hubPage + 1)
                             } label: {
                                 Text(L10n.t(state.hubLoading ? "加载中…" : "加载更多"))
-                                    .font(.system(size: 12, weight: .medium))
                                     .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 12)
-                                    .background {
-                                        LiquidGlassSurface(shape: Capsule(), interactive: true)
-                                    }
                             }
-                            .buttonStyle(.plainHit)
-                            .foregroundStyle(Native.accent)
+                            .buttonStyle(.ds(.secondary, size: .regular))
                             .disabled(state.hubLoading)
                             .padding(.top, 2)
                         }
@@ -122,62 +113,47 @@ struct HubSheet: View {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Native.tertiary)
+                    .foregroundStyle(DS.text3)
                 TextField("搜索模型仓库，例如 Qwen3 Coder", text: $query)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 12.5))
+                    .font(DS.Font.md)
                     .focused($searchFocused)
+                    .onSubmit { runSearch(page: 0) }
                 if !query.isEmpty {
                     Button {
                         query = ""
                         runSearch(page: 0)
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(Native.tertiary)
+                            .foregroundStyle(DS.text3)
                     }
                     .buttonStyle(.plainHit)
                 }
                 Button("搜索") { runSearch(page: 0) }
-                    .buttonStyle(.consolePrimary)
+                    .buttonStyle(.ds(.primary, size: .small))
                     .disabled(state.hubLoading)
             }
-            .padding(.horizontal, 11)
-            .frame(height: 34)
-            .background {
-                LiquidGlassSurface(
-                    shape: RoundedRectangle(cornerRadius: 9, style: .continuous),
-                    tint: searchFocused ? Native.accent.opacity(0.08) : nil
-                )
-            }
+            .padding(.horizontal, 10)
+            .frame(height: 32)
+            .dsInputSurface(radius: DS.Radius.md, focused: searchFocused)
 
             HStack(spacing: 8) {
-                NativeSegmented(selection: $filter,
-                                options: HubFilter.allCases.map { ($0, filterLabel($0)) },
-                                width: 210)
+                DSSegmented(selection: $filter,
+                            options: HubFilter.allCases.map { ($0, filterLabel($0)) })
                     .onChange(of: filter) { _, _ in runSearch(page: 0) }
 
                 Spacer(minLength: 0)
 
-                Menu {
+                DSMenu {
+                    DSMenuTriggerLabel(
+                        title: sort == .trending ? "趋势" : "下载量",
+                        systemImage: "arrow.up.arrow.down",
+                        size: .regular
+                    )
+                } content: {
                     Button("趋势") { sort = .trending; runSearch(page: 0) }
                     Button("下载量") { sort = .downloads; runSearch(page: 0) }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.up.arrow.down")
-                            .font(.system(size: 9, weight: .bold))
-                        Text(L10n.t(sort == .trending ? "趋势" : "下载量"))
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundStyle(Native.secondary)
-                    .padding(.horizontal, 11)
-                    .frame(height: 28)
-                    .background {
-                        LiquidGlassSurface(shape: Capsule(), interactive: true)
-                    }
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
             }
         }
         .padding(.horizontal, 14)
@@ -217,16 +193,17 @@ struct HubSheet: View {
         VStack(spacing: 8) {
             Image(systemName: "wifi.exclamationmark")
                 .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(Native.orange)
+                .foregroundStyle(DS.warn)
             Text("搜不到 Hugging Face")
-                .font(.system(size: 13, weight: .semibold))
+                .font(DS.Font.md.weight(.semibold))
+                .foregroundStyle(DS.text)
             Text(message)
-                .font(Native.captionFont)
-                .foregroundStyle(Native.tertiary)
+                .font(DS.Font.xs)
+                .foregroundStyle(DS.text3)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 300)
             Button("重试") { runSearch(page: 0) }
-                .buttonStyle(.consoleSecondary)
+                .buttonStyle(.ds(.secondary, size: .regular))
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 32)
@@ -299,23 +276,25 @@ struct HubSheet: View {
                                     size: 40)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(shortName(detail.id))
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(Native.label)
+                            .font(DS.Font.title)
+                            .foregroundStyle(DS.text)
                         Text(detail.id)
-                            .font(Native.monoFont)
-                            .foregroundStyle(Native.tertiary)
+                            .font(DS.Font.mono(11.5))
+                            .foregroundStyle(DS.text3)
                             .textSelection(.enabled)
                     }
                     Spacer(minLength: 8)
                     VStack(alignment: .trailing, spacing: 4) {
                         if let size = detail.sizeBytes, size > 0 {
                             Text(Format.size(Int(clamping: size)))
-                                .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(Native.metricNum)
+                                .font(DS.Font.mono(15, weight: .semibold))
+                                .foregroundStyle(DS.text)
+                                .monospacedDigit()
                         }
                         Text(downloadsText(detail.downloads))
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(Native.tertiary)
+                            .font(DS.Font.xs)
+                            .foregroundStyle(DS.text3)
+                            .monospacedDigit()
                     }
                 }
 
@@ -333,49 +312,50 @@ struct HubSheet: View {
                 if let card = detail.modelCard, !card.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("模型卡")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(Native.secondary)
+                            .font(DS.Font.sm.weight(.semibold))
+                            .foregroundStyle(DS.text2)
                         MarkdownView(text: ModelCardText.normalized(card))
                     }
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background { GlassSurface(radius: Native.radiusTile) }
+                    .dsSurface(radius: DS.Radius.md)
                 }
 
                 if !detail.files.isEmpty {
                     VStack(alignment: .leading, spacing: 0) {
                         Text("文件")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(Native.secondary)
+                            .font(DS.Font.sm.weight(.semibold))
+                            .foregroundStyle(DS.text2)
                             .padding(.bottom, 6)
                         ForEach(detail.files.prefix(40), id: \.name) { file in
                             HStack(spacing: 8) {
                                 Image(systemName: "doc")
                                     .font(.system(size: 9))
-                                    .foregroundStyle(Native.tertiary)
+                                    .foregroundStyle(DS.text3)
                                 Text(file.name)
-                                    .font(Native.monoSmall)
-                                    .foregroundStyle(Native.secondary)
+                                    .font(DS.Font.mono(10.5))
+                                    .foregroundStyle(DS.text2)
                                     .lineLimit(1)
                                     .truncationMode(.middle)
                                 Spacer(minLength: 8)
                                 if let size = file.size {
                                     Text(Format.size(Int(clamping: size)))
-                                        .font(Native.monoSmall)
-                                        .foregroundStyle(Native.tertiary)
+                                        .font(DS.Font.mono(10.5))
+                                        .foregroundStyle(DS.text3)
+                                        .monospacedDigit()
                                 }
                             }
                             .padding(.vertical, 3)
                         }
                         if detail.files.count > 40 {
                             Text("另有 \(detail.files.count - 40) 个文件")
-                                .font(.system(size: 10))
-                                .foregroundStyle(Native.tertiary)
+                                .font(DS.Font.xs)
+                                .foregroundStyle(DS.text3)
                                 .padding(.top, 4)
                         }
                     }
                     .padding(12)
-                    .background { GlassSurface(radius: Native.radiusTile) }
+                    .dsSurface(radius: DS.Radius.md)
                 }
 
             }
@@ -402,13 +382,13 @@ struct HubSheet: View {
         return HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(L10n.t(local ? "已在本机" : "下载到公共目录"))
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Native.label)
+                    .font(DS.Font.sm.weight(.semibold))
+                    .foregroundStyle(DS.text)
                 Text(local
                      ? "公共目录里已有这份权重，可直接在模型页使用"
                      : "一份权重供引擎共用，默认授权给 \(target.displayName)")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Native.tertiary)
+                    .font(DS.Font.xs)
+                    .foregroundStyle(DS.text3)
             }
             Spacer(minLength: 8)
             if local {
@@ -417,7 +397,7 @@ struct HubSheet: View {
                     state.section = .models
                     dismiss()
                 }
-                .buttonStyle(.consoleSecondary)
+                .buttonStyle(.ds(.secondary, size: .regular))
             } else {
                 Button {
                     state.downloadShared(detail.id, engines: [target])
@@ -425,12 +405,12 @@ struct HubSheet: View {
                 } label: {
                     Label("下载", systemImage: "arrow.down.circle")
                 }
-                .buttonStyle(.consolePrimary)
+                .buttonStyle(.ds(.primary, size: .regular))
                 .disabled(busy)
             }
         }
         .padding(12)
-        .background { GlassSurface(radius: Native.radiusTile, tint: Native.accentSoft) }
+        .dsSurface(radius: DS.Radius.md, fill: DS.accentSoft, stroke: DS.accent.opacity(0.25))
     }
 
     private func targetEngine(for model: HubModel) -> EngineID {
@@ -443,22 +423,25 @@ struct HubSheet: View {
             HStack(spacing: 7) {
                 Image(systemName: "link")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Native.tertiary)
+                    .foregroundStyle(DS.text3)
                 TextField("直接填 owner/repo 下载", text: $directRepo)
                     .textFieldStyle(.plain)
-                    .font(Native.monoFont)
+                    .font(DS.Font.mono(11.5))
                     .focused($directRepoFocused)
+                    .onSubmit(downloadDirect)
                 Button("下载", action: downloadDirect)
-                    .buttonStyle(.consoleSecondary)
+                    .buttonStyle(.ds(.secondary, size: .small))
                     .disabled(directRepo.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             .padding(.horizontal, 10)
-            .frame(height: 32)
+            .frame(height: 30)
             .background {
-                LiquidGlassSurface(
-                    shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
-                    tint: directRepoFocused ? Native.accent.opacity(0.08) : nil
-                )
+                DS.rect(DS.Radius.md)
+                    .fill(DS.bg)
+            }
+            .overlay {
+                DS.rect(DS.Radius.md)
+                    .strokeBorder(directRepoFocused ? DS.line3 : DS.line2, lineWidth: 1)
             }
             .frame(maxWidth: 360)
 
@@ -466,20 +449,21 @@ struct HubSheet: View {
 
             if !models.isEmpty {
                 Text("第 \(state.hubPage + 1) 页 · \(models.count) 条")
-                    .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(Native.tertiary)
-                IconAction(systemName: "chevron.left", help: "上一页") {
+                    .font(DS.Font.mono(10.5))
+                    .foregroundStyle(DS.text3)
+                    .monospacedDigit()
+                DSIconButton(systemName: "chevron.left", help: "上一页") {
                     runSearch(page: max(0, state.hubPage - 1))
                 }
                 .disabled(state.hubPage == 0 || state.hubLoading)
 
-                IconAction(systemName: "chevron.right", help: "下一页") {
+                DSIconButton(systemName: "chevron.right", help: "下一页") {
                     runSearch(page: state.hubPage + 1)
                 }
                 .disabled(!state.hubHasMore || state.hubLoading)
             }
         }
-        .padding(.horizontal, Native.pagePadding)
+        .padding(.horizontal, 18)
         .padding(.vertical, 12)
     }
 
@@ -488,23 +472,23 @@ struct HubSheet: View {
             if state.repoProbeLoading {
                 ProgressView().controlSize(.small)
                 Text("检查 \(state.repoProbeRepo)…")
-                    .font(Native.monoSmall)
-                    .foregroundStyle(Native.secondary)
+                    .font(DS.Font.mono(10.5))
+                    .foregroundStyle(DS.text2)
             } else if let error = state.repoProbeError, !error.isEmpty {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 10))
-                    .foregroundStyle(Native.orange)
+                    .foregroundStyle(DS.warn)
                 Text(error)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Native.orange)
+                    .font(DS.Font.xs)
+                    .foregroundStyle(DS.warn)
                     .lineLimit(1)
             } else if let probe = state.repoProbe {
                 Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: 10))
-                    .foregroundStyle(Native.green)
+                    .foregroundStyle(DS.ok)
                 Text(probe.id)
-                    .font(Native.monoSmall)
-                    .foregroundStyle(Native.secondary)
+                    .font(DS.Font.mono(10.5))
+                    .foregroundStyle(DS.text2)
                 if let size = probe.sizeBytes, size > 0 {
                     Tag(text: Format.size(Int(clamping: size)), tone: .neutral)
                 }
@@ -515,9 +499,9 @@ struct HubSheet: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, Native.pagePadding)
+        .padding(.horizontal, 18)
         .padding(.vertical, 6)
-        .background(Native.recess.opacity(0.6))
+        .background(DS.bg)
         .task(id: directRepo) {
             let repo = directRepo.trimmingCharacters(in: .whitespacesAndNewlines)
             guard repo.contains("/") else {
@@ -541,9 +525,6 @@ struct HubSheet: View {
 }
 
 /// 模型广场左侧的结果卡。
-///
-/// 纯白画布上单独一层玻璃会发灰、压低正文对比度，所以卡片把玻璃压在
-/// 一层足够白的面板上，再用细描边勾出边界；选中态才用强调色底 + 色边。
 private struct HubModelRowCard: View {
     let model: HubModel
     let selected: Bool
@@ -553,10 +534,6 @@ private struct HubModelRowCard: View {
     let memoryText: String?
     let downloadsText: String
     let action: () -> Void
-
-    private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: Console.cardRadius, style: .continuous)
-    }
 
     private var family: ModelFamily {
         ModelFamily.resolve(id: model.id, tags: model.tags)
@@ -569,19 +546,19 @@ private struct HubModelRowCard: View {
                     ModelFamilyIcon(family: family, size: 36)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(shortName)
-                            .font(.system(size: 13.5, weight: .semibold))
-                            .foregroundStyle(Native.label)
+                            .font(DS.Font.md.weight(.semibold))
+                            .foregroundStyle(DS.text)
                             .lineLimit(1)
                         Text(model.id)
-                            .font(Native.monoSmall)
-                            .foregroundStyle(Native.tertiary)
+                            .font(DS.Font.mono(10.5))
+                            .foregroundStyle(DS.text3)
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
                     Spacer(minLength: 6)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(selected ? Native.accent : Native.tertiary.opacity(0.6))
+                        .foregroundStyle(selected ? DS.accent : DS.text3.opacity(0.6))
                         .padding(.top, 4)
                 }
 
@@ -608,11 +585,15 @@ private struct HubModelRowCard: View {
                     metric("arrow.down", downloadsText)
                 }
             }
-            .padding(13)
+            .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .consoleCardSurface(tint: selected ? Console.accent.opacity(0.10) : nil,
-                                interactive: true)
-            .contentShape(shape)
+            .dsSurface(
+                radius: DS.Radius.lg,
+                fill: selected ? DS.accentSoft : DS.surface,
+                stroke: selected ? DS.accent.opacity(0.45) : DS.line,
+                hoverable: true
+            )
+            .contentShape(DS.rect(DS.Radius.lg))
         }
         .buttonStyle(.plainHit)
     }
@@ -621,10 +602,11 @@ private struct HubModelRowCard: View {
         HStack(spacing: 4) {
             Image(systemName: symbol)
                 .font(.system(size: 9.5, weight: .semibold))
-                .foregroundStyle(Native.tertiary)
+                .foregroundStyle(DS.text3)
             Text(text)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(Native.secondary)
+                .font(DS.Font.mono(10, weight: .medium))
+                .foregroundStyle(DS.text2)
+                .monospacedDigit()
                 .lineLimit(1)
         }
     }

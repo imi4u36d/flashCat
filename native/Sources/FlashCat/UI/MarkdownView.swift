@@ -13,18 +13,333 @@ struct MarkdownView: View {
     var caching: Bool = true
     /// 对话气泡按文字自身宽度收拢；资料卡等页面仍铺满可用宽度。
     var fillsWidth: Bool = true
+    /// 流式吐字时末尾 1~2 个字符的渐显透明度，nil 表示完全不透明。
+    var tailFadeAlpha: Double? = nil
 
     private var blocks: [MarkdownBlock] { MarkdownBlock.parse(text, caching: caching) }
+    private var segments: [MarkdownSegment] { MarkdownSegment.group(blocks) }
 
     var body: some View {
-        // 整条回答合并成一个 `Text`：SwiftUI 的文本选择无法跨越多个 `Text`，
-        // 逐块渲染时只能选中当前一块，无法从一行拖选到另一行。合并后既支持
-        // 连续选择与复制，点击时也不会因为某一行的文本视图重新布局而抖动。
-        Text(MarkdownComposer.compose(blocks))
-            .textSelection(.enabled)
-            .lineSpacing(3)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: fillsWidth ? .infinity : nil, alignment: .leading)
+        // 连续的文字块（标题、段落、列表）仍然合并成一个 `Text`，保持跨段落
+        // 拖选与复制；代码块、引用、表格、分隔线则各自独立成块，避免字符级底色
+        // 在每行后面画出参差不齐的高亮条。
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+                switch segment {
+                case .text(let group):
+                    let isLast = index == segments.count - 1
+                    Text(MarkdownComposer.compose(group, tailFadeAlpha: isLast ? tailFadeAlpha : nil))
+                        .textSelection(.enabled)
+                        .lineSpacing(4.5)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: fillsWidth ? .infinity : nil, alignment: .leading)
+
+                case .code(let language, let code):
+                    CodeBlockView(language: language, code: code)
+
+                case .quote(let lines):
+                    QuoteBlockView(lines: lines)
+
+                case .table(let rows):
+                    MarkdownTableView(rows: rows)
+
+                case .rule:
+                    Rectangle()
+                        .fill(DS.line2)
+                        .frame(height: 1)
+                        .padding(.vertical, 4)
+                }
+            }
+        }
+        .frame(maxWidth: fillsWidth ? .infinity : nil, alignment: .leading)
+    }
+}
+
+/// 流式吐字动画包装：按 60fps 节拍平滑推进可见字符数，并在末尾 1~2 个字符
+/// 附带柔和的渐显过渡，避免网络分片整块跳出带来的生硬感。
+struct StreamingMarkdownView: View {
+    let text: String
+    let streaming: Bool
+    var fillsWidth: Bool = false
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var revealedProgress: Double
+    @State private var targetLength: Int
+    @State private var activeStreaming: Bool
+    @State private var pumpTask: Task<Void, Never>?
+
+    init(text: String, streaming: Bool, fillsWidth: Bool = false) {
+        self.text = text
+        self.streaming = streaming
+        self.fillsWidth = fillsWidth
+        let initial = text.count > 40 ? Double(text.count) : Double(min(1, text.count))
+        _revealedProgress = State(initialValue: initial)
+        _targetLength = State(initialValue: text.count)
+        _activeStreaming = State(initialValue: streaming)
+    }
+
+    private var targetCount: Int { text.count }
+
+    var body: some View {
+        if !streaming || reduceMotion {
+            MarkdownView(text: text, caching: !streaming, fillsWidth: fillsWidth)
+                .onDisappear { stopPump() }
+        } else {
+            let count = min(targetCount, max(targetCount > 0 ? 1 : 0, Int(ceil(revealedProgress))))
+            let slice = count >= targetCount ? text : String(text.prefix(count))
+            MarkdownView(text: slice,
+                         caching: false,
+                         fillsWidth: fillsWidth,
+                         tailFadeAlpha: leadingTailAlpha())
+                .onAppear {
+                    targetLength = text.count
+                    activeStreaming = streaming
+                    if text.count > 40, revealedProgress < Double(text.count) {
+                        revealedProgress = Double(text.count)
+                    }
+                    ensurePumpRunning()
+                }
+                .onDisappear { stopPump() }
+                .onChange(of: text.count) { _, newCount in
+                    targetLength = newCount
+                    if Double(newCount) < revealedProgress {
+                        revealedProgress = Double(newCount)
+                    }
+                    ensurePumpRunning()
+                }
+                .onChange(of: streaming) { _, active in
+                    activeStreaming = active
+                    if !active {
+                        stopPump()
+                        revealedProgress = Double(text.count)
+                    }
+                }
+        }
+    }
+
+    private func ensurePumpRunning() {
+        guard activeStreaming, !reduceMotion, revealedProgress < Double(targetLength) else { return }
+        guard pumpTask == nil else { return }
+        pumpTask = Task { @MainActor in
+            var last = Date()
+            while !Task.isCancelled, activeStreaming, revealedProgress < Double(targetLength) {
+                try? await Task.sleep(for: .milliseconds(16))
+                if Task.isCancelled { break }
+                let now = Date()
+                let dt = min(0.05, max(1.0 / 120.0, now.timeIntervalSince(last)))
+                last = now
+                let target = Double(targetLength)
+                let backlog = target - revealedProgress
+                guard backlog > 0 else { break }
+                let speed = max(26.0, backlog * 14.0)
+                revealedProgress = min(target, revealedProgress + speed * dt)
+            }
+            pumpTask = nil
+        }
+    }
+
+    private func stopPump() {
+        pumpTask?.cancel()
+        pumpTask = nil
+    }
+
+    private func leadingTailAlpha() -> Double? {
+        guard revealedProgress < Double(targetCount) else { return nil }
+        let frac = revealedProgress - floor(revealedProgress)
+        return 0.35 + 0.65 * (frac == 0 ? 1.0 : frac)
+    }
+}
+
+// MARK: - Segments & Block Views
+
+private enum MarkdownSegment {
+    case text([MarkdownBlock])
+    case code(String?, String)
+    case quote([AttributedString])
+    case table([[String]])
+    case rule
+
+    static func group(_ blocks: [MarkdownBlock]) -> [MarkdownSegment] {
+        var result: [MarkdownSegment] = []
+        var textBuffer: [MarkdownBlock] = []
+
+        func flushText() {
+            guard !textBuffer.isEmpty else { return }
+            result.append(.text(textBuffer))
+            textBuffer.removeAll(keepingCapacity: true)
+        }
+
+        for block in blocks {
+            switch block.kind {
+            case .heading, .paragraph, .bullet, .ordered:
+                textBuffer.append(block)
+            case .code(let language, let code):
+                flushText()
+                result.append(.code(language, code))
+            case .quote(let lines):
+                flushText()
+                result.append(.quote(lines))
+            case .table(let rows):
+                flushText()
+                result.append(.table(rows))
+            case .rule:
+                flushText()
+                result.append(.rule)
+            }
+        }
+        flushText()
+        return result
+    }
+}
+
+private struct CodeBlockView: View {
+    let language: String?
+    let code: String
+    @State private var copied = false
+    @State private var resetTask: Task<Void, Never>?
+
+    private var displayLanguage: String {
+        guard let language, !language.isEmpty else { return "code" }
+        return language.lowercased()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text(displayLanguage)
+                    .font(DS.Font.mono(11, weight: .medium))
+                    .foregroundStyle(DS.text3)
+
+                Spacer(minLength: 0)
+
+                Button(action: copyCode) {
+                    HStack(spacing: 4) {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 10, weight: copied ? .semibold : .regular))
+                            .contentTransition(.symbolEffect(.replace))
+                        Text(copied ? "已复制" : "复制")
+                            .font(DS.Font.xs)
+                    }
+                    .foregroundStyle(copied ? DS.accent : DS.text3)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plainHit)
+                .animation(DS.Motion.snappy, value: copied)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            .background(DS.surface)
+
+            Rectangle()
+                .fill(DS.line)
+                .frame(height: 1)
+
+            ScrollView(.horizontal, showsIndicators: true) {
+                Text(code.isEmpty ? " " : code)
+                    .font(DS.Font.mono(12.5))
+                    .foregroundStyle(DS.text)
+                    .lineSpacing(4)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: true, vertical: true)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DS.rect(DS.Radius.md).fill(DS.bg))
+        .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line2, lineWidth: 1))
+        .clipShape(DS.rect(DS.Radius.md))
+    }
+
+    private func copyCode() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(code, forType: .string)
+        resetTask?.cancel()
+        withAnimation(DS.Motion.snappy) { copied = true }
+        resetTask = Task {
+            try? await Task.sleep(for: .seconds(1.2))
+            guard !Task.isCancelled else { return }
+            withAnimation(DS.Motion.snappy) { copied = false }
+        }
+    }
+}
+
+private struct QuoteBlockView: View {
+    let lines: [AttributedString]
+
+    private var composed: AttributedString {
+        var out = AttributedString()
+        for (index, line) in lines.enumerated() {
+            if index > 0 {
+                var br = AttributedString("\n")
+                br.font = .system(size: 13.5)
+                out += br
+            }
+            out += MarkdownComposer.inline(line, font: .system(size: 13.5), color: DS.text2)
+        }
+        return out
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(DS.accent.opacity(0.65))
+                .frame(width: 3)
+
+            Text(composed)
+                .lineSpacing(4)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(DS.rect(DS.Radius.md).fill(DS.surface.opacity(0.75)))
+        .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line, lineWidth: 1))
+    }
+}
+
+private struct MarkdownTableView: View {
+    let rows: [[String]]
+
+    private var columnCount: Int {
+        rows.map(\.count).max() ?? 0
+    }
+
+    var body: some View {
+        if !rows.isEmpty, columnCount > 0 {
+            ScrollView(.horizontal, showsIndicators: false) {
+                Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                    ForEach(Array(rows.enumerated()), id: \.offset) { rowIndex, row in
+                        if rowIndex > 0 {
+                            Rectangle()
+                                .fill(DS.line)
+                                .frame(height: 1)
+                                .gridCellUnsizedAxes([.horizontal])
+                        }
+                        GridRow {
+                            ForEach(0..<columnCount, id: \.self) { col in
+                                let cell = col < row.count ? row[col] : ""
+                                Text(MarkdownComposer.inlineTableCell(cell, isHeader: rowIndex == 0))
+                                    .lineSpacing(3)
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 7)
+                                    .frame(maxWidth: 320, alignment: .leading)
+                            }
+                        }
+                        .background(rowIndex == 0 ? DS.raised : Color.clear)
+                    }
+                }
+            }
+            .background(DS.rect(DS.Radius.md).fill(DS.surface))
+            .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line2, lineWidth: 1))
+            .clipShape(DS.rect(DS.Radius.md))
+        }
     }
 }
 
@@ -34,12 +349,10 @@ struct MarkdownView: View {
 /// 行内样式（粗体、斜体、行内代码、链接）由 Foundation 的 Markdown
 /// 解析器产出，这里只负责补上块级字体、颜色与块之间的间距。
 private enum MarkdownComposer {
-    private static let bodySize: CGFloat = 13
-    private static let monoSize: CGFloat = 11.5
+    private static let bodySize: CGFloat = 14
+    private static let inlineCodeBackground = Color.adaptive(dark: 0x26262E, light: 0xEAEAEF)
 
-    private static var codeBackground: Color { Native.recess }
-
-    static func compose(_ blocks: [MarkdownBlock]) -> AttributedString {
+    static func compose(_ blocks: [MarkdownBlock], tailFadeAlpha: Double? = nil) -> AttributedString {
         var result = AttributedString()
         for block in blocks {
             if !result.characters.isEmpty {
@@ -47,50 +360,46 @@ private enum MarkdownComposer {
             }
             result += content(for: block.kind)
         }
+        if let tailFadeAlpha, tailFadeAlpha < 0.99, !result.characters.isEmpty {
+            let count = min(2, result.characters.count)
+            let start = result.index(result.endIndex, offsetByCharacters: -count)
+            let baseColor = result[start..<result.endIndex].foregroundColor ?? DS.text
+            result[start..<result.endIndex].foregroundColor = baseColor.opacity(tailFadeAlpha)
+        }
         return result
+    }
+
+    static func inlineTableCell(_ text: String, isHeader: Bool) -> AttributedString {
+        let parsed: AttributedString
+        if let attributed = try? AttributedString(
+            markdown: text,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        ) {
+            parsed = attributed
+        } else {
+            parsed = AttributedString(text)
+        }
+        return inline(parsed,
+                      font: .system(size: 12.5, weight: isHeader ? .semibold : .regular),
+                      color: isHeader ? DS.text : DS.text2)
     }
 
     private static func content(for kind: MarkdownBlock.Kind) -> AttributedString {
         switch kind {
         case .heading(let level, let content):
             return inline(content,
-                          font: .system(size: headingSize(level), weight: .bold),
-                          color: Native.label)
+                          font: .system(size: headingSize(level), weight: .semibold),
+                          color: DS.text)
 
         case .paragraph(let content):
-            return inline(content, font: .system(size: bodySize), color: Native.label)
-
-        case .code(let language, let code):
-            var out = AttributedString()
-            if let language, !language.isEmpty {
-                out += styled(AttributedString(language),
-                              font: .system(size: 9.5, weight: .semibold, design: .monospaced),
-                              color: Native.tertiary)
-                out += newline()
-            }
-            var codeText = AttributedString(code)
-            codeText.font = .system(size: monoSize, design: .monospaced)
-            codeText.foregroundColor = Native.label
-            codeText.backgroundColor = codeBackground
-            out += codeText
-            return out
-
-        case .quote(let lines):
-            let pieces = lines.map { line -> AttributedString in
-                var bar = AttributedString("▎ ")
-                bar.font = .system(size: 12.5)
-                bar.foregroundColor = Native.accent.opacity(0.55)
-                bar += inline(line, font: .system(size: 12.5), color: Native.secondary)
-                return bar
-            }
-            return joined(pieces, separator: newline())
+            return inline(content, font: .system(size: bodySize), color: DS.text)
 
         case .bullet(let items):
             let pieces = items.map { item -> AttributedString in
                 var marker = AttributedString("•  ")
-                marker.font = .system(size: bodySize)
-                marker.foregroundColor = Native.accent
-                marker += inline(item, font: .system(size: bodySize), color: Native.label)
+                marker.font = .system(size: bodySize, weight: .semibold)
+                marker.foregroundColor = DS.accent
+                marker += inline(item, font: .system(size: bodySize), color: DS.text)
                 return marker
             }
             return joined(pieces, separator: newline())
@@ -98,29 +407,23 @@ private enum MarkdownComposer {
         case .ordered(let items):
             let pieces = items.map { item -> AttributedString in
                 var marker = AttributedString("\(item.number).  ")
-                marker.font = .system(size: 11, weight: .semibold, design: .monospaced)
-                marker.foregroundColor = Native.tertiary
-                marker += inline(item.content, font: .system(size: bodySize), color: Native.label)
+                marker.font = .system(size: 12.5, weight: .semibold, design: .monospaced)
+                marker.foregroundColor = DS.text3
+                marker += inline(item.content, font: .system(size: bodySize), color: DS.text)
                 return marker
             }
             return joined(pieces, separator: newline())
 
-        case .table(let rows):
-            return table(rows)
-
-        case .rule:
-            var rule = AttributedString(String(repeating: "─", count: 40))
-            rule.font = .system(size: 10)
-            rule.foregroundColor = Native.tertiary
-            return rule
+        case .code, .quote, .table, .rule:
+            return AttributedString()
         }
     }
 
     // MARK: Inline styling
 
-    private static func inline(_ source: AttributedString,
-                               font: Font,
-                               color: Color) -> AttributedString {
+    static func inline(_ source: AttributedString,
+                       font: Font,
+                       color: Color) -> AttributedString {
         var text = source
         text.font = font
         text.foregroundColor = color
@@ -131,16 +434,17 @@ private enum MarkdownComposer {
             return run.range
         }
         for range in codeRanges {
-            text[range].font = .system(size: 12, design: .monospaced)
-            text[range].backgroundColor = codeBackground
+            text[range].font = .system(size: 12.5, design: .monospaced)
+            text[range].foregroundColor = DS.text
+            text[range].backgroundColor = inlineCodeBackground
         }
-        return text
-    }
-
-    private static func styled(_ text: AttributedString, font: Font, color: Color) -> AttributedString {
-        var text = text
-        text.font = font
-        text.foregroundColor = color
+        let linkRanges = text.runs.compactMap { run -> Range<AttributedString.Index>? in
+            guard run.link != nil else { return nil }
+            return run.range
+        }
+        for range in linkRanges {
+            text[range].foregroundColor = DS.accent
+        }
         return text
     }
 
@@ -162,53 +466,10 @@ private enum MarkdownComposer {
 
     private static func headingSize(_ level: Int) -> CGFloat {
         switch level {
-        case 1: return 20
-        case 2: return 17
+        case 1: return 19
+        case 2: return 16.5
         case 3: return 15
-        default: return 13.5
-        }
-    }
-
-    // MARK: Tables
-
-    private static func table(_ rows: [[String]]) -> AttributedString {
-        guard !rows.isEmpty else { return AttributedString() }
-        let columns = rows.map(\.count).max() ?? 0
-        guard columns > 0 else { return AttributedString() }
-
-        var widths = Array(repeating: 0, count: columns)
-        for row in rows {
-            for (index, cell) in row.enumerated() where index < columns {
-                widths[index] = max(widths[index], displayWidth(cell))
-            }
-        }
-
-        var out = AttributedString()
-        for (rowIndex, row) in rows.enumerated() {
-            var line = ""
-            for column in 0..<columns {
-                let cell = column < row.count ? row[column] : ""
-                line += cell
-                if column < columns - 1 {
-                    let padding = max(1, widths[column] - displayWidth(cell) + 2)
-                    line += String(repeating: " ", count: padding)
-                }
-            }
-            var piece = AttributedString(line)
-            piece.font = rowIndex == 0
-                ? .system(size: 11, weight: .semibold, design: .monospaced)
-                : .system(size: 11, design: .monospaced)
-            piece.foregroundColor = rowIndex == 0 ? Native.label : Native.secondary
-            if rowIndex > 0 { out += newline() }
-            out += piece
-        }
-        return out
-    }
-
-    /// 等宽字体里 CJK 字符占两格，用它估算表格列宽。
-    private static func displayWidth(_ text: String) -> Int {
-        text.reduce(0) { width, character in
-            width + (character.unicodeScalars.contains { $0.value >= 0x1100 } ? 2 : 1)
+        default: return 14
         }
     }
 }
@@ -238,6 +499,9 @@ struct MarkdownBlock: Identifiable {
     nonisolated(unsafe) private static var parseCacheOrder: [String] = []
     nonisolated(unsafe) private static var streamingCache: (source: String, blocks: [MarkdownBlock])?
     private static let parseCacheLimit = 32
+    nonisolated(unsafe) private static var inlineCache: [String: AttributedString] = [:]
+    nonisolated(unsafe) private static var inlineCacheOrder: [String] = []
+    private static let inlineCacheLimit = 512
 
     static func parse(_ source: String, caching: Bool = true) -> [MarkdownBlock] {
         if !caching {
@@ -289,13 +553,40 @@ struct MarkdownBlock: Identifiable {
         func inline(_ text: String) -> AttributedString {
             let trimmed = text.trimmingCharacters(in: .whitespaces)
             guard !trimmed.isEmpty else { return AttributedString(text) }
-            if let parsed = try? AttributedString(
+            // 纯文本快路径：不含任何行内 Markdown 语法字符时直接构造，避免每次
+            // 流式重解析都对整段历史段落调用昂贵的 Foundation Markdown 解析器。
+            if !trimmed.contains(where: { "*_`~\\[]<&".contains($0) }),
+               !trimmed.contains("http") {
+                return AttributedString(trimmed)
+            }
+            parseCacheLock.lock()
+            if let hit = inlineCache[trimmed] {
+                parseCacheLock.unlock()
+                return hit
+            }
+            parseCacheLock.unlock()
+
+            let parsed: AttributedString
+            if let attributed = try? AttributedString(
                 markdown: trimmed,
                 options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
             ) {
-                return parsed
+                parsed = attributed
+            } else {
+                parsed = AttributedString(text)
             }
-            return AttributedString(text)
+
+            parseCacheLock.lock()
+            if inlineCache[trimmed] == nil {
+                inlineCache[trimmed] = parsed
+                inlineCacheOrder.append(trimmed)
+                if inlineCacheOrder.count > inlineCacheLimit {
+                    let oldest = inlineCacheOrder.removeFirst()
+                    inlineCache.removeValue(forKey: oldest)
+                }
+            }
+            parseCacheLock.unlock()
+            return parsed
         }
 
         while index < lines.count {

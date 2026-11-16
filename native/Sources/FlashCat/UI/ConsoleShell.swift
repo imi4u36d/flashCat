@@ -2,8 +2,7 @@ import SwiftUI
 import AppKit
 import FlashCatKit
 
-/// 控制台根视图：悬浮玻璃导航列 + 浮层标题栏 + 六个原生页面 + 启动页。
-/// 导航列不再贴边占满，而是以圆角玻璃卡片的形式浮在画布左侧。
+/// 控制台根视图：固定左侧导航栏 + 44pt 顶栏 + 页面区 + 标题栏中央状态胶囊。
 struct ConsoleView: View {
     @ObservedObject var state: AppState
     @ObservedObject private var theme = AppState.shared.theme
@@ -14,70 +13,54 @@ struct ConsoleView: View {
     @State private var showFeedback = false
     @State private var islandExpanded = false
 
-    /// 悬浮导航列的尺寸。列本身不再占满窗口高度到底：顶部对齐主视口的
-    /// `contentTopInset`、底部对齐 `contentBottomInset`，玻璃边和页面内容的
-    /// 起止线共用同一条，左右留白则让画布从两侧透出来。
-    private enum NavPanel {
-        static let width: CGFloat = 208
-        static let leadingInset: CGFloat = 12
-        static let trailingGap: CGFloat = 12
-        static var reservedWidth: CGFloat { width + leadingInset + trailingGap }
-    }
-
-    private var navReservedWidth: CGFloat {
-        state.showsSidebar ? NavPanel.reservedWidth : 0
+    private var sidebarReservedWidth: CGFloat {
+        state.showsSidebar ? DS.Layout.sidebarWidth + 1 : 0
     }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            // 画布铺满整窗，导航列与主视口共享同一层渐变，
-            // 玻璃下透出的颜色因此始终和右侧保持一致。
             ConsoleBackdrop(accent: state.section.keyColor)
 
             HStack(spacing: 0) {
                 if state.showsSidebar {
-                    ConsoleNavigationPanel(state: state,
-                                           chat: state.chat)
-                        .frame(width: NavPanel.width)
-                        .padding(.leading, NavPanel.leadingInset)
-                        .padding(.trailing, NavPanel.trailingGap)
-                        .padding(.top, Console.contentTopInset)
-                        .padding(.bottom, Console.contentBottomInset)
-                        .transition(.move(edge: .leading).combined(with: .opacity))
+                    HStack(spacing: 0) {
+                        ConsoleNavigationPanel(state: state, chat: state.chat)
+                            .frame(width: DS.Layout.sidebarWidth)
+                        DSDivider(vertical: true)
+                    }
+                    .transition(.move(edge: .leading).combined(with: .opacity))
                 }
 
-                ZStack {
-                    pageContent
-                        .id(state.section)
-                        .transition(.opacity.combined(with: .offset(y: 8)))
+                VStack(spacing: 0) {
+                    ConsoleTitlebar(state: state,
+                                    chat: state.chat,
+                                    openCommand: { showCommand = true },
+                                    openDownloads: { showDownloads = true },
+                                    openFeedback: { showFeedback = true })
+                        .frame(height: DS.Layout.titlebarHeight)
+
+                    DSDivider()
+
+                    ZStack {
+                        pageContent
+                            .id(state.section)
+                            .transition(.dsPage)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .animation(DS.Motion.smooth, value: state.section)
+                    .clipped()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .animation(Motion.standard, value: state.section)
             }
-
-            // 标题栏自己的安全背景层：先铺一层稳定的底色，再让悬浮的玻璃控件
-            // 和灵动岛坐在上面。没有这层时，页面内容、玻璃高光和灵动岛会直接
-            // 叠在一起互相透视，切页或滚动时会看到明显的层叠脏边。
-            TitlebarBackdrop()
-                .frame(height: Console.titlebarHeight)
-                .frame(maxWidth: .infinity, alignment: .top)
-                .allowsHitTesting(false)
-
-            ConsoleTitlebar(state: state,
-                            navReservedWidth: navReservedWidth,
-                            openDownloads: { showDownloads = true },
-                            openFeedback: { showFeedback = true })
-                .frame(height: Console.titlebarHeight)
-                .frame(maxWidth: .infinity, alignment: .top)
+            .animation(DS.Motion.smooth, value: state.showsSidebar)
         }
-        // 画布之下还有一层：没有自定义图片时它兜住桌面，毛玻璃强度跟着
-        // 「背景模糊」走。放在这里而不是 App 的 scene body 里，保证它跟
-        // ConsoleView 一起观察背景参数，不至于一整轮更新都收不到。
         .background { DesktopBackdrop().ignoresSafeArea() }
-        .tint(Console.accent)
+        .tint(DS.accent)
         .preferredColorScheme(preferredScheme)
         .overlay(alignment: .top) {
-            DynamicIslandLayer(state: state, expanded: $islandExpanded)
+            DynamicIslandLayer(state: state,
+                               expanded: $islandExpanded,
+                               leadingOffset: sidebarReservedWidth)
         }
         .overlay {
             if isShowingOnboarding {
@@ -118,7 +101,6 @@ struct ConsoleView: View {
         } message: { request in
             Text("\(request.model) 属于 \(request.engine.displayName)，切换会先停掉 \(state.activeEngine.displayName)，再以这个模型启动 \(request.engine.displayName)。")
         }
-        // 侧栏与对话页两处入口都挂到同一个挂起态上，确认只在壳层弹一次。
         .alert("删除这段对话？", isPresented: threadDeleteShown, presenting: state.pendingThreadDelete) { _ in
             Button("删除", role: .destructive) { state.confirmThreadDelete() }
             Button("取消", role: .cancel) { state.cancelThreadDelete() }
@@ -127,8 +109,6 @@ struct ConsoleView: View {
         }
     }
 
-    /// 引导页（首次推荐 / 引擎安装）是否盖住控制台。两个来源合成一个布尔，
-    /// 让淡出动画在任意一条离开路径上都能触发。
     private var isShowingOnboarding: Bool {
         state.isPresentingLaunchPage || state.showsRecommendationPage
     }
@@ -183,34 +163,99 @@ struct ConsoleView: View {
     }
 }
 
-// MARK: - Floating glass navigation
+// MARK: - Docked Sidebar
 
-/// 悬浮导航列：取消传统侧栏的整块背景与分隔线，
-/// 把页面导航、最近对话和底部工具合成一块垂直玻璃组件。
+/// 固定在左侧的平面导航栏：`DS.bg` 底 + 1px 右边线，承载工作区、控制台与最近对话。
 struct ConsoleNavigationPanel: View {
     @ObservedObject var state: AppState
     @ObservedObject var chat: ChatStore
+    @ObservedObject private var background = BackgroundSettings.shared
 
     @Namespace private var selection
+    @State private var hoveringNewChat = false
 
-    var body: some View {
-        LiquidGlassPanel(radius: 26) {
-            VStack(alignment: .leading, spacing: 0) {
-                workspace
+    private static let primaryPages: [Page] = [.chat, .lab]
+    private static let consolePages: [Page] = [.overview, .models, .engines, .logs]
 
-                recents
-                    .padding(.top, 14)
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        }
-        .animation(Motion.standard, value: state.section)
+    private var sidebarFill: Color {
+        let transparent = background.image != nil || background.desktopReveal > 0
+        return DS.bg.opacity(transparent ? 0.88 : 1)
     }
 
-    /// 主工作区：概览到设置，最后一行是实验室。
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // 顶部 44pt 留给系统红绿灯，背景支持拖窗。
+            Color.clear
+                .frame(height: DS.Layout.titlebarHeight)
+                .background(WindowDragArea())
+
+            newChatButton
+                .padding(.horizontal, 10)
+                .padding(.bottom, DS.Space.sm)
+
+            workspace
+                .padding(.horizontal, 10)
+
+            DSSectionLabel(text: "最近对话")
+                .padding(.horizontal, 18)
+                .padding(.top, DS.Space.lg)
+                .padding(.bottom, DS.Space.xs)
+
+            recents
+                .padding(.horizontal, 10)
+
+            sidebarFooter
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(sidebarFill)
+        .animation(DS.Motion.smooth, value: state.section)
+    }
+
+    private var newChatButton: some View {
+        let shape = DS.rect(DS.Radius.md)
+        return Button {
+            state.newConversation()
+            state.section = .chat
+        } label: {
+            HStack(spacing: DS.Space.sm) {
+                Image(systemName: "square.and.pencil")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(DS.text2)
+                Text(L10n.t("新对话"))
+                    .font(DS.Font.md.weight(.medium))
+                    .foregroundStyle(DS.text)
+                Spacer(minLength: 4)
+                DSKbd(text: "⌘N")
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 32)
+            .background(shape.fill(hoveringNewChat ? DS.raised : DS.surface))
+            .overlay(shape.strokeBorder(hoveringNewChat ? DS.line3 : DS.line2, lineWidth: 1))
+            .contentShape(shape)
+        }
+        .buttonStyle(DSPressStyle(scale: 0.98))
+        .onHover { value in
+            withAnimation(DS.Motion.snappy) { hoveringNewChat = value }
+        }
+    }
+
     private var workspace: some View {
-        VStack(spacing: 4) {
-            ForEach(Page.workspace) { page in
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Self.primaryPages) { page in
+                GlassNavRow(page: page,
+                            active: state.section == page,
+                            badge: 0,
+                            namespace: selection) {
+                    state.section = page
+                }
+            }
+
+            DSSectionLabel(text: "控制台")
+                .padding(.horizontal, 8)
+                .padding(.top, 10)
+                .padding(.bottom, 3)
+
+            ForEach(Self.consolePages) { page in
                 GlassNavRow(page: page,
                             active: state.section == page,
                             badge: page == .models ? modelCount : 0,
@@ -222,7 +267,10 @@ struct ConsoleNavigationPanel: View {
     }
 
     private var modelCount: Int {
-        state.libraryEntries(for: state.libraryEngine).filter(\.installed).count
+        EngineCatalog.allIDs
+            .flatMap { state.libraryEntries(for: $0) }
+            .filter(\.installed)
+            .count
     }
 
     private func recentDate(_ date: Date) -> String {
@@ -234,40 +282,66 @@ struct ConsoleNavigationPanel: View {
 
     private var recents: some View {
         ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 2) {
-                Rectangle()
-                    .fill(Console.glassStroke)
-                    .frame(height: 0.5)
-                    .padding(.horizontal, 6)
-                    .padding(.bottom, 12)
-
-                Text("最近对话")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Console.secondary)
+            if chat.threads.isEmpty {
+                Text(L10n.t("暂无历史对话"))
+                    .font(DS.Font.xs)
+                    .foregroundStyle(DS.text4)
                     .padding(.horizontal, 8)
-                    .padding(.bottom, 6)
-
-                ForEach(chat.threads.prefix(6)) { thread in
-                    GlassRecentRow(title: thread.title,
-                                   // 还在生成的那一段（可能已经切走、在后台跑）
-                                   // 用「生成中」替掉时间，回答落在哪儿一目了然。
-                                   date: state.generatingThreadID == thread.id
-                                       ? L10n.t("生成中")
-                                       : recentDate(thread.updatedAt),
-                                   active: state.currentThreadID == thread.id) {
-                        state.openThread(thread)
-                        state.section = .chat
-                    } onDelete: {
-                        // 删之前先挂起：确认弹窗在壳层，别这里直接落盘。
-                        state.requestThreadDelete(thread)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                VStack(alignment: .leading, spacing: 1) {
+                    ForEach(chat.threads.prefix(14)) { thread in
+                        GlassRecentRow(title: thread.title,
+                                       date: state.generatingThreadID == thread.id
+                                           ? L10n.t("生成中")
+                                           : recentDate(thread.updatedAt),
+                                       active: state.currentThreadID == thread.id && state.section == .chat,
+                                       generating: state.generatingThreadID == thread.id) {
+                            state.openThread(thread)
+                            state.section = .chat
+                        } onDelete: {
+                            state.requestThreadDelete(thread)
+                        }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.bottom, DS.Space.sm)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.never)
-        // 剩余高度都给最近对话：窗口压到最矮时只在列表内部滚动。
         .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private var sidebarFooter: some View {
+        VStack(spacing: 0) {
+            DSDivider()
+
+            HStack(spacing: 6) {
+                Spacer(minLength: 4)
+
+                DSIconButton(
+                    systemName: state.theme.mode.resolvedIsDark ? "sun.max" : "moon",
+                    help: "切换外观"
+                ) {
+                    state.theme.set(state.theme.mode.resolvedIsDark ? .light : .dark)
+                }
+
+                DSIconButton(
+                    systemName: Page.settings.symbol,
+                    help: "设置",
+                    tint: state.section == .settings ? DS.accent : nil
+                ) {
+                    state.section = .settings
+                }
+                .background(
+                    DS.rect(DS.Radius.sm + 1)
+                        .fill(state.section == .settings ? DS.raised : .clear)
+                )
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+        }
     }
 }
 
@@ -279,73 +353,57 @@ private struct GlassNavRow: View {
     let action: () -> Void
 
     @State private var hovering = false
-    @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var rowShape: RoundedRectangle { DS.rect(DS.Radius.sm) }
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 11) {
+            HStack(spacing: 9) {
                 Image(systemName: page.symbol)
-                    .font(.system(size: 16, weight: .semibold))
-                    .symbolRenderingMode(.hierarchical)
-                    .frame(width: 24)
+                    .font(.system(size: 13, weight: active ? .medium : .regular))
+                    .foregroundStyle(active ? DS.text : (hovering ? DS.text : DS.text2))
+                    .frame(width: 18)
                 Text(L10n.t(page.rawValue))
-                    .font(.system(size: 14, weight: active ? .semibold : .regular))
+                    .font(.system(size: 13, weight: active ? .medium : .regular))
                 Spacer(minLength: 4)
                 if badge > 0 {
                     Text(verbatim: "\(badge)")
-                        .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Console.tertiary)
+                        .font(DS.Font.mono(10))
+                        .foregroundStyle(active ? DS.text2 : DS.text3)
                         .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(Console.inset))
+                        .frame(height: 16)
+                        .background(DS.rect(4).fill(DS.surface))
+                        .overlay(DS.rect(4).strokeBorder(DS.line, lineWidth: 1))
                 }
             }
-            .foregroundStyle(active ? Console.text
-                                    : (hovering ? Console.text : Console.secondary))
-            .padding(.horizontal, 12)
-            .frame(height: 42)
+            .foregroundStyle(active ? DS.text : (hovering ? DS.text : DS.text2))
+            .padding(.horizontal, 8)
+            .frame(height: DS.Layout.rowHeight)
             .background {
                 if active {
-                    activeCapsule
+                    rowShape
+                        .fill(DS.selected)
+                        .overlay(rowShape.strokeBorder(DS.line, lineWidth: 1))
+                        .overlay(alignment: .leading) {
+                            Capsule()
+                                .fill(DS.accent)
+                                .frame(width: 2, height: 14)
+                                .padding(.leading, 1)
+                        }
+                        .matchedGeometryEffect(id: "nav.selection", in: namespace)
                 } else if hovering {
-                    hoverCapsule
+                    rowShape.fill(DS.hover)
                 }
             }
-            .contentShape(Capsule())
+            .contentShape(rowShape)
         }
         .buttonStyle(.plainHit)
         .help(L10n.t(page.rawValue))
         .onHover { value in
             guard !reduceMotion else { hovering = value; return }
-            withAnimation(Motion.quick) { hovering = value }
+            withAnimation(DS.Motion.snappy) { hovering = value }
         }
-    }
-
-    /// 选中态：中性玻璃胶囊。只靠层次与描边区分，不再使用强调色填充。
-    private var activeCapsule: some View {
-        Capsule()
-            .fill(Console.glassSelected)
-            .overlay {
-                Capsule().fill(.clear)
-                    .glassEffect(.regular.interactive(), in: Capsule())
-            }
-            .overlay {
-                Capsule().strokeBorder(Console.glassStroke, lineWidth: 0.8)
-            }
-            .shadow(color: Console.shadow.opacity(scheme == .dark ? 0.35 : 0.10),
-                    radius: 8, x: 0, y: 3)
-            .matchedGeometryEffect(id: "nav.selection", in: namespace)
-    }
-
-    /// Hover：中性玻璃底，不做位移和缩放。
-    private var hoverCapsule: some View {
-        LiquidGlassSurface(shape: Capsule(),
-                           tint: Console.glassGroup,
-                           interactive: true)
-            .overlay {
-                Capsule().strokeBorder(Console.glassStroke, lineWidth: 0.8)
-            }
     }
 }
 
@@ -353,57 +411,52 @@ private struct GlassRecentRow: View {
     let title: String
     let date: String
     let active: Bool
+    let generating: Bool
     let action: () -> Void
     let onDelete: () -> Void
 
     @State private var hovering = false
 
-    private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: 9, style: .continuous)
-    }
+    private var shape: RoundedRectangle { DS.rect(DS.Radius.sm) }
 
     var body: some View {
-        // 删除按钮与整行是兄弟而不是父子：套在行按钮的 label 里，
-        // 外层按钮会把点击整个吃掉，垃圾桶点不动。
         ZStack(alignment: .trailing) {
             Button(action: action) {
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(active ? Console.accent : Console.tertiary.opacity(0.7))
-                        .frame(width: 5, height: 5)
+                HStack(spacing: 7) {
+                    if generating {
+                        DSStatusDot(color: DS.accent, live: true, size: 5)
+                    }
                     Text(title)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(active ? Console.text : Console.secondary)
+                        .font(DS.Font.sm)
+                        .foregroundStyle(active ? DS.text : (hovering ? DS.text : DS.text2))
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     Text(date)
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Console.tertiary)
+                        .font(DS.Font.mono(10))
+                        .foregroundStyle(generating ? DS.accent : DS.text4)
                         .lineLimit(1)
                         .opacity(hovering ? 0 : 1)
                 }
                 .padding(.horizontal, 8)
-                .frame(height: 30)
+                .frame(height: 28)
                 .background {
-                    ZStack {
-                        if active {
-                            shape.fill(Console.inset)
-                        }
-                        LiquidGlassSurface(shape: shape, interactive: true)
-                            .opacity(hovering && !active ? 1 : 0)
+                    if active {
+                        shape.fill(DS.selected)
+                            .overlay(shape.strokeBorder(DS.line, lineWidth: 1))
+                    } else if hovering {
+                        shape.fill(DS.hover)
                     }
                 }
                 .contentShape(shape)
             }
             .buttonStyle(.plainHit)
 
-            // 悬停时读数让位给垃圾桶：行宽不变，时间也不会被挤到一行之外。
             RowDeleteButton(action: onDelete)
-                .padding(.trailing, 8)
+                .padding(.trailing, 4)
                 .opacity(hovering ? 1 : 0)
                 .allowsHitTesting(hovering)
         }
-        .onHover { value in withAnimation(Motion.quick) { hovering = value } }
+        .onHover { value in withAnimation(DS.Motion.snappy) { hovering = value } }
     }
 }
 
@@ -411,143 +464,121 @@ private struct GlassRecentRow: View {
 
 struct ConsoleTitlebar: View {
     @ObservedObject var state: AppState
-    /// 导航列占用的横向总宽（含两侧留白）。折叠按钮跟着它走，
-    /// 导航隐藏后回落到红绿灯右侧的最小安全位置。
-    var navReservedWidth: CGFloat = 0
+    @ObservedObject var chat: ChatStore
+    var openCommand: () -> Void = {}
     var openDownloads: () -> Void
     var openFeedback: () -> Void
+
+    @State private var titlebarWidth: CGFloat = 1000
+    @State private var hoveringCommand = false
 
     private var downloadCount: Int {
         state.downloadTasks.count + (state.downloadingModel == nil ? 0 : 1)
     }
 
+    private var currentThreadTitle: String? {
+        guard state.section == .chat else { return nil }
+        return chat.threads.first(where: { $0.id == state.currentThreadID })?.title
+    }
+
+    private var isCompact: Bool { titlebarWidth < 740 }
+
     var body: some View {
-        ZStack {
-            HStack(spacing: 8) {
-                // 按钮跟着悬浮导航列的右缘走；导航隐藏时退到红绿灯右侧，
-                // 避免和窗口控制按钮重叠。
-                sidebarToggle
-                    .padding(.leading, max(84, navReservedWidth - 8))
-                Spacer(minLength: 8)
-
-                IconAction(systemName: state.theme.mode.resolvedIsDark ? "sun.max" : "moon",
-                           help: "切换外观") {
-                    state.theme.set(state.theme.mode.resolvedIsDark ? .light : .dark)
-                }
-
-                Button(action: openDownloads) {
-                    ZStack(alignment: .topTrailing) {
-                        Image(systemName: "arrow.down.circle")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Console.text.opacity(0.8))
-                            .frame(width: 32, height: 32)
-                            .background {
-                                LiquidGlassSurface(shape: Circle(), interactive: true)
-                            }
-                        if downloadCount > 0 {
-                            Text(verbatim: "\(downloadCount)")
-                                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(Console.accent))
-                                .offset(x: 3, y: -2)
-                        }
-                    }
-                }
-                .buttonStyle(.plainHit)
-                .help("下载中心")
-
-                // 下载与反馈之间只留一道细线：两个按钮同一排，
-                // 但反馈是独立入口，不该读成下载旁边的小挂件。
-                Rectangle()
-                    .fill(Console.tertiary.opacity(0.3))
-                    .frame(width: 1, height: 15)
-                    .accessibilityHidden(true)
-
-                feedbackButton
+        HStack(spacing: DS.Space.sm) {
+            DSIconButton(
+                systemName: "sidebar.left",
+                help: state.showsSidebar ? "隐藏边栏" : "显示边栏"
+            ) {
+                state.toggleSidebar()
             }
-            .padding(.horizontal, 16)
+            .padding(.leading, state.showsSidebar ? 12 : 78)
+
+            if !isCompact {
+                breadcrumb
+            }
+
+            Spacer(minLength: DS.Space.sm)
+
+            if isCompact {
+                DSIconButton(systemName: "magnifyingglass", help: "命令面板", action: openCommand)
+            } else {
+                commandButton
+            }
+
+            downloadButton
+
+            DSDivider(vertical: true)
+                .frame(height: 14)
+
+            DSIconButton(
+                systemName: "bubble.left.and.bubble.right",
+                help: "反馈与交流",
+                action: openFeedback
+            )
+            .padding(.trailing, 12)
         }
-        // 红绿灯整体下移 6pt 后，标题栏行也下移 6pt，二者仍然同轴，
-        // 同时离窗口上沿留出一点距离。
-        .frame(height: 32)
-        .padding(.top, 6)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(WindowDragArea())
-    }
-
-    /// 反馈入口：和下载中心同排同尺寸，放在标题栏最右，
-    /// 侧栏不再重复挂一个「反馈」按钮。
-    private var feedbackButton: some View {
-        Button(action: openFeedback) {
-            Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Console.text.opacity(0.8))
-                .frame(width: 32, height: 32)
-                .background {
-                    LiquidGlassSurface(shape: Circle(), interactive: true)
-                }
-                .contentShape(Circle())
+        .onGeometryChange(for: CGFloat.self) { proxy in proxy.size.width } action: { width in
+            titlebarWidth = width
         }
-        .buttonStyle(.plainHit)
-        .help(L10n.t("反馈与交流"))
-        .accessibilityLabel(L10n.t("反馈与交流"))
     }
 
-    /// macOS 26 原生玻璃按钮：贴在侧栏右缘，和红绿灯同一水平线。
-    private var sidebarToggle: some View {
-        Button {
-            // 动画统一由 AppState.toggleSidebar() 里的 withAnimation 驱动，
-            // 菜单栏、命令面板和这个按钮走同一条路径。
-            state.toggleSidebar()
-        } label: {
-            Image(systemName: "sidebar.left")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Console.text.opacity(0.8))
-                .frame(width: 30, height: 30)
-                .background {
-                    LiquidGlassSurface(shape: Circle(), interactive: true)
-                }
-                .contentShape(Circle())
+    private var breadcrumb: some View {
+        HStack(spacing: 6) {
+            let hasThread = currentThreadTitle != nil
+            Text(L10n.t(state.section.rawValue))
+                .font(DS.Font.md.weight(hasThread ? .regular : .medium))
+                .foregroundStyle(hasThread ? DS.text2 : DS.text)
+                .lineLimit(1)
+            if let title = currentThreadTitle {
+                Text("/")
+                    .font(DS.Font.sm)
+                    .foregroundStyle(DS.text4)
+                Text(title)
+                    .font(DS.Font.md.weight(.medium))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 160, alignment: .leading)
+            }
         }
-        .buttonStyle(.plainHit)
-        .help(L10n.t(state.showsSidebar ? "隐藏边栏" : "显示边栏"))
-        .accessibilityLabel(L10n.t(state.showsSidebar ? "隐藏边栏" : "显示边栏"))
     }
 
-}
-
-// MARK: - Titlebar backdrop
-
-/// 标题栏的安全背景层。用一层柔和材质把标题栏和下面的页面内容隔开，
-/// 下缘渐变淡出，避免出现一条硬边；所有悬浮控件都复用它，不再各自叠玻璃。
-private struct TitlebarBackdrop: View {
-    @Environment(\.colorScheme) private var scheme
-
-    var body: some View {
-        Rectangle()
-            .fill(.ultraThinMaterial)
-            .overlay {
-                // 材质本身会偏灰，补一层画布色让标题栏和页面保持在同一个色阶。
-                LinearGradient(
-                    colors: [Console.backgroundTop.opacity(scheme == .dark ? 0.55 : 0.45), .clear],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+    private var commandButton: some View {
+        let shape = DS.rect(DS.Radius.md)
+        return Button(action: openCommand) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(DS.text3)
+                Text(L10n.t("命令面板"))
+                    .font(DS.Font.sm)
+                    .foregroundStyle(DS.text3)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                DSKbd(text: "⌘K")
             }
-            .mask {
-                // 顶部完全覆盖，靠近下缘再收干净，不切出一条分隔线。
-                LinearGradient(
-                    stops: [
-                        .init(color: .black, location: 0),
-                        .init(color: .black, location: 0.65),
-                        .init(color: .clear, location: 1),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+            .padding(.horizontal, 8)
+            .frame(width: 156, height: DS.Layout.controlHeight)
+            .background(shape.fill(hoveringCommand ? DS.raised : DS.surface))
+            .overlay(shape.strokeBorder(hoveringCommand ? DS.line3 : DS.line2, lineWidth: 1))
+            .contentShape(shape)
+        }
+        .buttonStyle(DSPressStyle(scale: 0.98))
+        .onHover { value in withAnimation(DS.Motion.snappy) { hoveringCommand = value } }
+        .help(L10n.t("命令面板"))
+    }
+
+    private var downloadButton: some View {
+        ZStack(alignment: .topTrailing) {
+            DSIconButton(systemName: "arrow.down.circle", help: "下载中心", action: openDownloads)
+            if downloadCount > 0 {
+                DSBadge(count: downloadCount)
+                    .offset(x: 3, y: -2)
+                    .allowsHitTesting(false)
             }
+        }
     }
 }
 

@@ -25,8 +25,6 @@ struct ModelPickerPopover: View {
     @ObservedObject var state: AppState
     var onPick: () -> Void
 
-    @State private var hoveredID: String?
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 2) {
@@ -35,20 +33,14 @@ struct ModelPickerPopover: View {
                         .filter { !$0.hidden && !$0.helper && !ModelLibraryEntry.isDraftModel($0.id) }
                     if !models.isEmpty {
                         Text(id.displayName)
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .tracking(0.6)
-                            .foregroundStyle(Console.tertiary)
+                            .font(DS.Font.xs.weight(.medium))
+                            .tracking(0.4)
+                            .foregroundStyle(DS.text3)
                             .padding(.horizontal, 10)
                             .padding(.top, 8)
                             .padding(.bottom, 2)
                         ForEach(models) { model in
-                            row(model, engine: id, hovered: hoveredID == model.id) { inside in
-                                if inside {
-                                    hoveredID = model.id
-                                } else if hoveredID == model.id {
-                                    hoveredID = nil
-                                }
-                            }
+                            row(model, engine: id)
                         }
                     }
                 }
@@ -57,18 +49,16 @@ struct ModelPickerPopover: View {
         }
         .frame(width: 300)
         .frame(maxHeight: 380)
+        .dsPopoverSurface()
     }
 
-    private func row(_ model: EngineModel,
-                     engine: EngineID,
-                     hovered: Bool,
-                     onHover: @escaping (Bool) -> Void) -> some View {
+    private func row(_ model: EngineModel, engine: EngineID) -> some View {
         let selected = model.id == state.selectedModel && engine == state.activeEngine
         let switching = state.switchingModel == model.id && engine == state.activeEngine
-        return Button {
+        return DSMenuRow(selected: selected) {
             state.applyModelFromAnyEngine(model.id, engine: engine)
             onPick()
-        } label: {
+        } content: {
             HStack(spacing: 8) {
                 if switching {
                     ProgressView()
@@ -78,34 +68,20 @@ struct ModelPickerPopover: View {
                 } else {
                     Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(selected ? Console.accent : Console.tertiary.opacity(0.5))
+                        .foregroundStyle(selected ? DS.accent : DS.text4)
                 }
                 Text(state.shortModelName(model.id))
-                    .font(.system(size: 12))
-                    .foregroundStyle(Console.text)
+                    .font(DS.Font.sm.weight(selected ? .medium : .regular))
+                    .foregroundStyle(selected ? DS.text : DS.text2)
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 if switching {
                     Text(L10n.t(state.switchStage.isEmpty ? "加载中" : state.switchStage))
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Console.warn)
+                        .font(DS.Font.xs)
+                        .foregroundStyle(DS.warn)
                         .lineLimit(1)
                 }
             }
-            .padding(.horizontal, 10)
-            .frame(height: 30)
-            .background {
-                LiquidGlassSurface(
-                    shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
-                    tint: selected ? Console.accent.opacity(0.12) : nil,
-                    interactive: true
-                )
-                .opacity(selected || hovered ? 1 : 0)
-            }
-            .animation(Motion.quick, value: selected || hovered)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plainHit)
-        .onHover(perform: onHover)
     }
 }

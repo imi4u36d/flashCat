@@ -477,4 +477,58 @@ final class StatusParserTests: XCTestCase {
         XCTAssertTrue(inventory.models.first?.supportsVision == true)
     }
 
+    func testOverviewNormalizationAcrossEngines() {
+        // oMLX: 不再用 uptimeSeconds 反推 startedAt（避免轮询毫秒抖动误触发 resetLifetime），
+        // 且保留 lifetimeDecodeTokensPerSecond。
+        let omlx = EngineStatusParser.omlx(status: [
+            "avg_generation_tps": 62.5,
+            "uptime_seconds": 120.0,
+        ])
+        XCTAssertNil(omlx.startedAt)
+        XCTAssertEqual(omlx.uptimeSeconds, 120.0)
+        XCTAssertEqual(omlx.lifetimeDecodeTokensPerSecond, 62.5)
+
+        // MTPLX: rolling.mean 缺失时回落到 latest.decode_tok_s，粒度应为 .lastRequest 而非 .live；
+        // TTFT 粒度应为 .lastRequest。
+        let mtplx = EngineStatusParser.mtplx(snapshot: [
+            "latest": ["decode_tok_s": 55.0, "ttft_s": 0.42],
+        ])
+        XCTAssertEqual(mtplx.decodeTokensPerSecond, 55.0)
+        XCTAssertEqual(mtplx.decodeRateKind, .lastRequest)
+        XCTAssertEqual(mtplx.ttftMilliseconds ?? 0, 420, accuracy: 0.001)
+        XCTAssertEqual(mtplx.ttftKind, .lastRequest)
+
+        // Splash: 即使有 current_decode_batch，也保留 metrics.decode_tokens_per_second 作为 lifetime 均值；
+        // TTFT 粒度为 .p50。
+        let splash = EngineStatusParser.splash(status: [
+            "active_requests": [["id": 1, "phase": "decode"]],
+            "metrics": [
+                "decode_tokens_per_second": 48.0,
+                "current_decode_batch": ["tokens_per_second": 72.0, "valid": true],
+                "ttft_ms": ["p50": 180.0],
+            ],
+        ])
+        XCTAssertEqual(splash.decodeTokensPerSecond, 72.0)
+        XCTAssertEqual(splash.decodeRateKind, .live)
+        XCTAssertEqual(splash.lifetimeDecodeTokensPerSecond, 48.0)
+        XCTAssertEqual(splash.ttftKind, .p50)
+
+        // mlx-serve: 直方图 TTFT 标为 .lifetimeMean，进程均值保留在 lifetimeDecodeTokensPerSecond。
+        let mlx = EngineStatusParser.prometheusJSON([
+            "counters": ["generation_tokens_total": 1000],
+            "histograms": [
+                "decode_time_seconds": ["count": 10, "sum": 20.0],
+                "time_to_first_token_seconds": ["count": 4, "sum": 1.2],
+            ],
+        ])
+        XCTAssertEqual(mlx.ttftKind, .lifetimeMean)
+        XCTAssertEqual(mlx.lifetimeDecodeTokensPerSecond ?? 0, 50.0, accuracy: 0.001)
+
+        // Strata: totals.output_tokens / totals.decode_ms 暴露为 lifetimeDecodeTokensPerSecond。
+        let strata = EngineStatusParser.strataMetrics([
+            "totals": ["prompt_ms": 100, "output_tokens": 500, "decode_ms": 10_000],
+        ])
+        XCTAssertEqual(strata.lifetimeDecodeTokensPerSecond ?? 0, 50.0, accuracy: 0.001)
+    }
+
 }

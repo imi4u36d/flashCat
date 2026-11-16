@@ -3,9 +3,6 @@ import AppKit
 import FlashCatKit
 
 /// 下载中心：正在跑的任务、暂停/失败的行，以及断点续传入口。
-///
-/// 视觉沿用控制台的 Liquid Glass 语言：标题栏图标与按钮用玻璃材质，
-/// 任务行是内容卡片，只靠层级底色区分，不再使用旧的暖色 Native 调色板。
 struct DownloadCenterSheet: View {
     @ObservedObject var state: AppState
     @Environment(\.dismiss) private var dismiss
@@ -13,7 +10,7 @@ struct DownloadCenterSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Hairline()
+            DSDivider()
             ScrollView {
                 VStack(spacing: 10) {
                     if let model = state.downloadingModel {
@@ -34,10 +31,11 @@ struct DownloadCenterSheet: View {
                 .padding(.vertical, 14)
             }
             .scrollIndicators(.never)
-            Hairline()
+            DSDivider()
             footer
         }
         .frame(width: 620, height: 460)
+        .sheetCanvas()
     }
 
     /// 正在跑的任务由上面的 `activeRow` 负责，列表里不再重复一份：
@@ -50,25 +48,19 @@ struct DownloadCenterSheet: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Image(systemName: "arrow.down.circle")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Console.accent)
-                .frame(width: 34, height: 34)
-                .background {
-                    LiquidGlassSurface(shape: Circle())
-                }
+            IconTile(symbol: "arrow.down.circle", color: DS.accent, size: 30)
             VStack(alignment: .leading, spacing: 2) {
                 Text("下载中心")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Console.text)
+                    .font(DS.Font.lg.weight(.semibold))
+                    .foregroundStyle(DS.text)
                 Text("进度按已下载字节计算；暂停后继续会从断点接着走")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Console.tertiary)
+                    .font(DS.Font.xs)
+                    .foregroundStyle(DS.text3)
             }
             Spacer(minLength: 8)
-            IconAction(systemName: "xmark", help: "关闭") { dismiss() }
+            DSIconButton(systemName: "xmark", help: "关闭") { dismiss() }
         }
-        .padding(.horizontal, Native.pagePadding)
+        .padding(.horizontal, 18)
         .padding(.vertical, 14)
     }
 
@@ -77,25 +69,27 @@ struct DownloadCenterSheet: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text(model)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Console.text)
+                    .font(DS.Font.sm.weight(.semibold))
+                    .foregroundStyle(DS.text)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Tag(text: "下载中", tone: .accent)
                 Spacer(minLength: 4)
                 Text(Format.rate(state.downloadSpeed))
-                    .font(Native.monoSmall)
-                    .foregroundStyle(Console.tertiary)
+                    .font(DS.Font.mono(10.5))
+                    .foregroundStyle(DS.text3)
+                    .monospacedDigit()
                 Button("暂停") { state.pauseDownload() }
-                    .buttonStyle(ConsolePillStyle(tone: .secondary, compact: true))
+                    .buttonStyle(.ds(.secondary, size: .small))
             }
-            Meter(fraction: fraction, tint: Console.accent)
+            Meter(fraction: fraction, tint: DS.accent)
             Text(verbatim: fraction.formatted(.percent.precision(.fractionLength(0))))
-                .font(Native.monoSmall)
-                .foregroundStyle(Console.tertiary)
+                .font(DS.Font.mono(10.5))
+                .foregroundStyle(DS.text3)
+                .monospacedDigit()
         }
         .padding(12)
-        .consoleCardSurface(tint: Console.accent.opacity(0.10))
+        .dsSurface(radius: DS.Radius.md, fill: DS.surface, stroke: DS.accent.opacity(0.35))
     }
 
     private func taskRow(_ task: ModelDownloadTask) -> some View {
@@ -103,8 +97,8 @@ struct DownloadCenterSheet: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(task.model)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Console.text)
+                        .font(DS.Font.sm.weight(.semibold))
+                        .foregroundStyle(DS.text)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Tag(text: statusLabel(task), tone: statusTone(task))
@@ -113,23 +107,24 @@ struct DownloadCenterSheet: View {
                     }
                 }
                 Text(detailText(task))
-                    .font(Native.monoSmall)
-                    .foregroundStyle(Console.tertiary)
+                    .font(DS.Font.mono(10.5))
+                    .foregroundStyle(DS.text3)
+                    .monospacedDigit()
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
             Button("继续") { state.resumeDownload(task) }
-                .buttonStyle(ConsolePillStyle(tone: .secondary, compact: true))
+                .buttonStyle(.ds(.secondary, size: .small))
             Button {
                 state.removeTask(task)
             } label: {
                 Image(systemName: "trash")
             }
-            .buttonStyle(ConsolePillStyle(tone: .danger, compact: true))
+            .buttonStyle(.ds(.danger, size: .small))
             .help("移除任务并清理半成品")
         }
         .padding(12)
-        .consoleCardSurface()
+        .dsSurface(radius: DS.Radius.md)
     }
 
     private func statusLabel(_ task: ModelDownloadTask) -> String {
@@ -158,18 +153,18 @@ struct DownloadCenterSheet: View {
     private var footer: some View {
         HStack(spacing: 10) {
             Text("半成品目录带 .flashcat-incomplete 标记，不会混进模型库")
-                .font(.system(size: 10))
-                .foregroundStyle(Console.tertiary)
+                .font(DS.Font.xs)
+                .foregroundStyle(DS.text3)
             Spacer(minLength: 0)
             Button("打开模型总目录") {
                 Paths.ensureDirectory(EnginePaths.modelsRoot)
                 NSWorkspace.shared.open(URL(fileURLWithPath: EnginePaths.modelsRoot))
             }
-            .buttonStyle(.consoleSecondary)
+            .buttonStyle(.ds(.secondary, size: .regular))
             Button("完成") { dismiss() }
-                .buttonStyle(.consolePrimary)
+                .buttonStyle(.ds(.primary, size: .regular))
         }
-        .padding(.horizontal, Native.pagePadding)
+        .padding(.horizontal, 18)
         .padding(.vertical, 12)
     }
 }

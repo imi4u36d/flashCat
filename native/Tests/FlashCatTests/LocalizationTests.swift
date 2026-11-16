@@ -28,10 +28,10 @@ final class LocalizationTests: XCTestCase {
         XCTAssertEqual(chinese.localizedString(forKey: "%@ · 端口 %@", value: nil, table: nil), "%@ · 端口 %@")
     }
 
-    /// 快捷键已全部移除：应用内不再注册键盘快捷键，也不接管方向键或 esc。
-    /// 这条测试扫源码，防止某次改动把 `.keyboardShortcut` 或按键监听
-    /// 悄悄加回来——那会同时推翻「鼠标可达 + CLI 键盘可达」的产品决定。
-    /// 唯一的按键例外是对话输入框里的回车，见 `testReturnKeyIsOnlyHandledByComposer`。
+    /// 允许声明式的 SwiftUI 快捷键、回车提交和 Escape 关闭弹层，但仍禁止
+    /// 挂载全局或局部的 `NSEvent` 键盘监听器（避免干扰系统文本输入或其它会话）。
+    /// 对话输入框的 Enter / ⌘Enter / 输入法组字由 `ChatComposerField.swift` 单独处理，
+    /// 见 `testReturnKeyIsOnlyHandledByComposer`。
     func testNoInAppKeyboardShortcutsRemain() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()   // Tests/FlashCatTests/
@@ -48,10 +48,6 @@ final class LocalizationTests: XCTestCase {
         XCTAssertGreaterThan(files.count, 30, "源码目录扫描异常")
 
         let banned = [
-            #"\.keyboardShortcut\s*\("#,
-            #"\.onKeyPress\s*[({]"#,
-            #"\.onExitCommand\b"#,
-            #"\.onSubmit\s*[({]"#,
             #"NSEvent\.addLocalMonitorForEvents"#,
             #"addGlobalMonitorForEvents"#,
         ]
@@ -67,7 +63,7 @@ final class LocalizationTests: XCTestCase {
             }
         }
         XCTAssertTrue(offenders.isEmpty,
-                      "应用内不应再有键盘快捷键/按键监听：\(offenders.joined(separator: " | "))")
+                      "应用内不应挂接全局/局部 NSEvent 键盘监听：\(offenders.joined(separator: " | "))")
     }
 
     /// 回车发送是唯一的按键例外，而且必须留在输入框里：`keyDown` 覆盖只能出现在

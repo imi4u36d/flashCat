@@ -24,26 +24,9 @@ struct ChatModelThinkingControl: View {
         Button {
             open.toggle()
         } label: {
-            HStack(spacing: 6) {
-                Text(modelName)
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(Console.text)
-                    .lineLimit(1)
-                Text(thinkingGlyph)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Console.secondary)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 7.5, weight: .bold))
-                    .foregroundStyle(Console.tertiary)
-            }
-            .padding(.horizontal, 11)
-            .frame(height: 30)
-            .background {
-                LiquidGlassSurface(shape: Capsule(), interactive: true)
-            }
-            .contentShape(Capsule())
+            DSMenuTriggerLabel(title: modelName, badge: thinkingGlyph, size: .regular)
         }
-        .buttonStyle(.plainHit)
+        .buttonStyle(DSPressStyle())
         .disabled(chat.generating)
         .popover(isPresented: $open, arrowEdge: .bottom) {
             ChatModelThinkingPopover(state: state, chat: chat)
@@ -72,7 +55,7 @@ private struct ChatModelThinkingPopover: View {
     @AppStorage("thinkingMode") private var storedThinkingMode = ThinkingMode.automatic.rawValue
     @AppStorage("reasoningEffort") private var storedEffort = ReasoningEffort.medium.rawValue
 
-    private var tint: Color { Console.accent }
+    private var tint: Color { DS.accent }
 
     private var thinkingMode: ThinkingMode {
         ThinkingMode(rawValue: storedThinkingMode) ?? .automatic
@@ -91,13 +74,8 @@ private struct ChatModelThinkingPopover: View {
             }
         }
         .frame(width: 300)
-        // 浮层自己铺一层不透明卡片底色：popover 的系统材质会和页面渐变叠加，
-        // 两种材质混在一起会让文字发灰、强调色偏色。用控制台的卡片色在
-        // 浅色/深色下都保持稳定的对比度。
-        .background {
-            Rectangle().fill(Console.cardStrong)
-        }
-        .animation(.smooth(duration: 0.18), value: showsModels)
+        .dsPopoverSurface()
+        .animation(DS.Motion.smooth, value: showsModels)
     }
 
     // MARK: Thinking panel
@@ -110,11 +88,11 @@ private struct ChatModelThinkingPopover: View {
                 HStack(spacing: 4) {
                     Text(modelName)
                         .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(Console.secondary)
+                        .foregroundStyle(DS.text2)
                         .lineLimit(1)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 8.5, weight: .bold))
-                        .foregroundStyle(Console.tertiary)
+                        .foregroundStyle(DS.text3)
                 }
                 .contentShape(Rectangle())
             }
@@ -123,10 +101,8 @@ private struct ChatModelThinkingPopover: View {
 
             ThinkingLevelSlider(effort: effortBinding, efforts: availableEfforts, tint: tint)
 
-            // 和设置页「思考模式」用同一个原生分段控件：按住拖动时由 AppKit
-            // 绘制整块 Liquid Glass 选中态，不再自绘一小组胶囊按钮。
-            NativeSegmented(selection: modeBinding,
-                            options: ThinkingMode.allCases.map { ($0, $0.label) })
+            DSSegmented(selection: modeBinding,
+                        options: ThinkingMode.allCases.map { ($0, $0.label) })
         }
         .padding(14)
     }
@@ -178,19 +154,21 @@ private struct ChatModelThinkingPopover: View {
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Console.secondary)
+                        .foregroundStyle(DS.text2)
                         .frame(width: 24, height: 24)
-                        .contentShape(Circle())
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plainHit)
                 Text("选择模型")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Console.text)
+                    .font(DS.Font.sm.weight(.medium))
+                    .foregroundStyle(DS.text)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 10)
             .padding(.top, 8)
             .padding(.bottom, 4)
+
+            DSDivider()
 
             ModelPickerPopover(state: state) { showsModels = false }
         }
@@ -198,7 +176,6 @@ private struct ChatModelThinkingPopover: View {
 }
 
 /// 思考级别滑杆：等级文字直接排在轨道上，选中的一档连同整格被强调色填满。
-/// 不再画没有信息量的白色圆球，整个控件只有一条 30pt 高的胶囊。
 private struct ThinkingLevelSlider: View {
     @Binding var effort: ReasoningEffort
     var efforts: [ReasoningEffort]
@@ -220,38 +197,40 @@ private struct ThinkingLevelSlider: View {
             let cell = proxy.size.width / CGFloat(count)
 
             ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Console.inset)
+                DS.rect(DS.Radius.md)
+                    .fill(DS.bg)
 
-                Capsule()
+                DS.rect(DS.Radius.md)
                     .fill(tint)
                     .frame(width: cell * CGFloat(activeIndex + 1))
 
                 HStack(spacing: 0) {
-                    ForEach(items, id: \.self) { item in
+                    ForEach(Array(items.enumerated()), id: \.element) { index, item in
                         let active = item == effort
+                        let filled = index <= activeIndex
                         Text(L10n.t(item.label))
-                            .font(.system(size: 10.5, weight: active ? .semibold : .regular))
-                            .foregroundStyle(active ? Color.white : Console.secondary)
+                            .font(.system(size: 10.5, weight: active ? .semibold : (filled ? .medium : .regular)))
+                            .foregroundStyle(filled ? Color.white : DS.text2)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .contentShape(Rectangle())
                             .onTapGesture {
-                                withAnimation(.smooth(duration: 0.18)) { effort = item }
+                                withAnimation(DS.Motion.smooth) { effort = item }
                             }
                             .accessibilityLabel(item.label)
                     }
                 }
             }
-            .clipShape(Capsule())
+            .clipShape(DS.rect(DS.Radius.md))
+            .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line, lineWidth: 1))
             .frame(height: trackHeight)
-            .contentShape(Capsule())
+            .contentShape(DS.rect(DS.Radius.md))
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
                         select(at: value.location.x, cell: cell)
                     }
             )
-            .animation(.smooth(duration: 0.18), value: effort)
+            .animation(DS.Motion.smooth, value: effort)
         }
         .frame(height: trackHeight)
     }

@@ -107,8 +107,15 @@ struct TTFTReading: Equatable {
 
     let milliseconds: Double?
     let source: Source
+    let kind: EngineTTFTKind
 
-    static let none = TTFTReading(milliseconds: nil, source: .none)
+    init(milliseconds: Double?, source: Source, kind: EngineTTFTKind = .none) {
+        self.milliseconds = milliseconds
+        self.source = source
+        self.kind = kind
+    }
+
+    static let none = TTFTReading(milliseconds: nil, source: .none, kind: .none)
 }
 
 /// How a download ended, for the callers that wait on one instead of
@@ -313,6 +320,9 @@ final class AppState: ObservableObject {
     /// 曲线回答「此刻多快」，大数字回答「这台模型平均吐字多快」。0 = 还没有
     /// 可算的样本，界面画「—」。
     @Published private(set) var averageDecodeRate: Double = 0
+    /// 网关侧最近/在跑会话的上下文占用 tokens（含外部客户端与网关流量）。
+    @Published private(set) var gatewayContextTokens: Int = 0
+    @Published private(set) var gatewayContextIsLive: Bool = false
     /// 60 秒曲线冻结的时刻。请求收尾后设为收尾时刻，`overviewThroughput`
     /// 与横轴都以它为右缘——曲线停住，不再随挂钟把终点挤出窗口。
     /// 新请求开始时清空，曲线恢复滚动。
@@ -322,6 +332,8 @@ final class AppState: ObservableObject {
     /// 累计均值的身份（引擎 + 进程 + 模型）。换代时清空 `GatewayMeter`
     /// 的累计量，避免把上一台模型的成绩算进这一台。
     private var lifetimeIdentity: String?
+    /// 上一次观察到的引擎运行秒数，用于在没有 pid/startedAt 时检测重启。
+    private var previousUptimeSeconds: Double?
     /// 预填充**没有**网关侧聚合：网关的「(整段提示词 − 缓存命中) / 首字耗时」
     /// 口径已废弃（分母混着排队与缓存恢复，分子要等末帧 usage），概览只显示
     /// 引擎自报的速率。`GatewayMeter` 仍为「最近请求」逐行保留各自的预填充读数。
@@ -336,6 +348,7 @@ final class AppState: ObservableObject {
     /// 概览速度读数的上一拍。`syncController` 会被引擎的多次状态变化触发，
     /// 不加闸就会在一秒内发布好几次——概览的刻钟是 1 秒，不是事件驱动。
     private var lastSpeedPublishAt: Date?
+    private var lastLiveRatePublishAt: Date?
     @Published var downloadingModel: String?
     /// Which engine the running download is for: two engines can hold models
     /// with the same id, and only the one being written shows the progress bar.
@@ -643,6 +656,20 @@ final class AppState: ObservableObject {
         return usage.promptTokens + usage.completionTokens
     }
 
+    /// 概览页「当前上下文」的统一口径：应用内实时生成优先，否则取网关侧
+    /// 最近/在跑会话（覆盖外部客户端、网关流量与本轮启动后已完成的对话）。
+    /// 不退回磁盘持久化的旧对话历史，以免刚打开应用或刚换模型时遗留上次数值。
+    var overviewContextUsedTokens: Int {
+        if generating, livePromptTokens > 0 {
+            return contextUsedTokens
+        }
+        return gatewayContextTokens
+    }
+
+    var overviewContextIsEstimating: Bool {
+        (generating && livePromptTokens > 0) || gatewayContextIsLive
+    }
+
     var isSwitchingModel: Bool { switchingModel != nil }
     /// The process exists. It says nothing about whether the weights are
     /// resident — a starting/switching engine answers no chats yet.
@@ -792,6 +819,9 @@ final class AppState: ObservableObject {
         if averageDecodeRate > 0 {
             return MetricReading(value: averageDecodeRate, origin: .gatewayMean)
         }
+        if let lifetime = stats?.lifetimeDecodeTokensPerSecond, lifetime > 0 {
+            return MetricReading(value: lifetime, origin: .engineMean)
+        }
         if stats?.decodeRateKind == .lifetimeMean,
            let engine = stats?.decodeTokensPerSecond, engine > 0 {
             return MetricReading(value: engine, origin: .engineMean)
@@ -863,18 +893,20 @@ final class AppState: ObservableObject {
     var ttftReading: TTFTReading {
         guard isRunning else { return .none }
         return Self.ttftReading(engine: stats?.ttftMilliseconds,
+                                engineKind: stats?.ttftKind ?? .none,
                                 gateway: gatewayTTFTMilliseconds)
     }
 
     /// 首字格的 owner 顺序，抽成纯函数给测试钉住。引擎值必须 > 0 才算样本；
     /// 网关值是「最近一次真的量到首字」的请求，同样 > 0 才可用。
     nonisolated static func ttftReading(engine: Double?,
+                                        engineKind: EngineTTFTKind = .none,
                                         gateway: Double) -> TTFTReading {
         if let engine, engine > 0 {
-            return TTFTReading(milliseconds: engine, source: .engine)
+            return TTFTReading(milliseconds: engine, source: .engine, kind: engineKind)
         }
         if gateway > 0 {
-            return TTFTReading(milliseconds: gateway, source: .gateway)
+            return TTFTReading(milliseconds: gateway, source: .gateway, kind: .lastRequest)
         }
         return .none
     }
@@ -1111,7 +1143,10 @@ final class AppState: ObservableObject {
         // 一批回调会被挤在一起处理，若在此时取 `Date()`，估计器会以为几十个
         // token 是「瞬间」吐出来的，读数被抬出一个尖峰。
         decodeMeter.add(tokens: tokens, at: event)
-        let chatRate = decodeMeter.rate(at: Date())
+        let now = Date()
+        if let last = lastLiveRatePublishAt, now.timeIntervalSince(last) < 0.25 { return }
+        lastLiveRatePublishAt = now
+        let chatRate = decodeMeter.rate(at: now)
         liveDecodeRate = chatRate > 0 ? chatRate : nil
     }
 
@@ -1137,6 +1172,7 @@ final class AppState: ObservableObject {
         publishGatewayPrefill()
         publishGatewayTTFT()
         publishGatewayCacheHit()
+        publishGatewayContext()
         publishAverageDecodeRate()
         // 直连引擎端口的请求网关看不见：引擎自己报的 activeRequests 也算
         // 「还有东西在跑」，Chart 不该在它跑完之前冻结。
@@ -1199,6 +1235,14 @@ final class AppState: ObservableObject {
         averageDecodeRate = next
     }
 
+    private func publishGatewayContext() {
+        let next = isRunning ? GatewayMeter.shared.latestContext() : nil
+        let tokens = next?.tokens ?? 0
+        let isLive = next?.isLive ?? false
+        if gatewayContextTokens != tokens { gatewayContextTokens = tokens }
+        if gatewayContextIsLive != isLive { gatewayContextIsLive = isLive }
+    }
+
     /// 把一次网关读数落到 60 秒曲线上。只有「在跑」且读数 > 0 时落点：
     /// 静默段不拿 0 去填谷，曲线保留最后一段真实形状；请求收尾由
     /// `updateChartFreeze` 冻结整张图。一拍一个点由调用方的 1 秒闸保证。
@@ -1238,16 +1282,30 @@ final class AppState: ObservableObject {
     /// 换了一台「模型启动以来」，上一台的累计量不该再算进来。
     private func syncLifetimeIdentity() {
         guard let stats else { return }
+        let uptimeRestarted: Bool
+        if let prev = previousUptimeSeconds, let current = stats.uptimeSeconds, current + 1.0 < prev {
+            uptimeRestarted = true
+        } else {
+            uptimeRestarted = false
+        }
+        previousUptimeSeconds = stats.uptimeSeconds
+
         let key = [
             activeEngine.rawValue,
             stats.instancePid.map(String.init) ?? "-",
             stats.startedAt.map { String(format: "%.3f", $0) } ?? "-",
             stats.model ?? "-"
         ].joined(separator: "|")
-        guard key != lifetimeIdentity else { return }
+        guard uptimeRestarted || key != lifetimeIdentity else { return }
         lifetimeIdentity = key
         GatewayMeter.shared.resetLifetime()
         if averageDecodeRate != 0 { averageDecodeRate = 0 }
+        if gatewayPrefillRate != 0 { gatewayPrefillRate = 0 }
+        if gatewayTTFTMilliseconds != 0 { gatewayTTFTMilliseconds = 0 }
+        if gatewayCacheHitRate != 0 { gatewayCacheHitRate = 0 }
+        if gatewayCacheHitRequests != 0 { gatewayCacheHitRequests = 0 }
+        if gatewayContextTokens != 0 { gatewayContextTokens = 0 }
+        if gatewayContextIsLive { gatewayContextIsLive = false }
     }
 
     func bootstrap() {
@@ -2391,9 +2449,19 @@ final class AppState: ObservableObject {
 
     func refreshLogs() { logs = controller?.logs.snapshot(limit: 4000) ?? [] }
 
+    func logs(for engine: EngineID) -> [LogLine] {
+        if engine == activeEngine { return logs }
+        return engines?.controller(engine)?.logs.snapshot(limit: 4000) ?? []
+    }
+
     func clearLogs() {
         controller?.logs.clear()
         refreshLogs()
+    }
+
+    func clearLogs(for engine: EngineID) {
+        engines?.controller(engine)?.logs.clear()
+        if engine == activeEngine { refreshLogs() }
     }
 
     // MARK: chat
@@ -2517,6 +2585,7 @@ final class AppState: ObservableObject {
         let generation = sendGeneration
         chatStartupStage = needsStartup ? "模型正在启动中…" : nil
         liveDecodeRate = nil
+        lastLiveRatePublishAt = nil
         generationEndedAt = nil
         decodeMeter.reset()
 
@@ -2933,6 +3002,7 @@ final class AppState: ObservableObject {
         let generation = sendGeneration
         chatStartupStage = needsStartup ? "模型正在启动中…" : nil
         liveDecodeRate = nil
+        lastLiveRatePublishAt = nil
         generationEndedAt = nil
         decodeMeter.reset()
 
@@ -3896,12 +3966,13 @@ final class AppState: ObservableObject {
             section = .chat
             return
         }
-        detachGenerationForThreadSwitch()
         guard thread.id != threadID else {
-            // 点的就是当前这段：别用历史里的旧快照把正在流的回答盖掉。
+            // 点的就是当前这段：别用历史里的旧快照把正在流的回答盖掉，
+            // 也绝对不能先 detach 到 background（否则前台 messages 不再收到流式分片）。
             section = .chat
             return
         }
+        detachGenerationForThreadSwitch()
         messages = thread.messages.map {
             ChatMessage(role: $0.role, content: $0.content, model: $0.model,
                         createdAt: $0.createdAt, usage: $0.usage,

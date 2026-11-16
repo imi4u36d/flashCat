@@ -10,6 +10,8 @@ struct SettingsPage: View {
     @State private var gatewayPort = ""
     @State private var controlPort = ""
     @State private var cachePath = ""
+    @State private var showsChatParameters = false
+    @FocusState private var focusedPortEngine: EngineID?
     /// 思考设置走 `@AppStorage` 而不是本地镜像：`AppSettings` 不是
     /// ObservableObject，只写 UserDefaults 不会触发 SwiftUI 重新求值。
     /// 观察这两个键之后，聊天浮层滑杆与这里的分段控件才能互相同步。
@@ -30,14 +32,14 @@ struct SettingsPage: View {
             ScrollView {
                 // 窄窗口下两列会互相挤压，改为单列依次排布并交给滚动承载。
                 if !wide {
-                    VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 16) {
                         leftColumn(wide: false)
                         rightColumn(wide: false)
                     }
                     .padding(.horizontal, Console.contentPadding)
                     .padding(.top, Console.contentTopInset)
                 } else {
-                    HStack(alignment: .top, spacing: 18) {
+                    HStack(alignment: .top, spacing: 16) {
                         leftColumn(wide: true)
                         rightColumn(wide: true)
                     }
@@ -51,10 +53,16 @@ struct SettingsPage: View {
         .padding(.bottom, Console.contentBottomInset)
         .onAppear(perform: load)
         .onChange(of: state.activeEngine) { _, _ in load() }
+        .onChange(of: focusedPortEngine) { previous, _ in
+            if let previous { applyPort(previous) }
+        }
+        .sheet(isPresented: $showsChatParameters) {
+            ChatParametersSheet(state: state)
+        }
     }
 
     private func leftColumn(wide: Bool) -> some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 16) {
             appearanceCard(wide: wide)
             backgroundCard
             launchCard
@@ -64,7 +72,7 @@ struct SettingsPage: View {
     }
 
     private func rightColumn(wide: Bool) -> some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 16) {
             gatewayCard
             cliCard
             thinkingCard(wide: wide)
@@ -112,26 +120,26 @@ struct SettingsPage: View {
                                 .resizable()
                                 .scaledToFill()
                                 .frame(width: 32, height: 32)
-                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .clipShape(DS.rect(DS.Radius.md))
                                 .overlay {
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .strokeBorder(Console.insetStroke, lineWidth: 0.8)
+                                    DS.rect(DS.Radius.md)
+                                        .strokeBorder(DS.line, lineWidth: 1)
                                 }
                         }
                         Button("更换") { background.chooseImage() }
-                            .buttonStyle(.consoleSoft)
+                            .buttonStyle(.ds(.secondary, size: .small))
                             .fixedSize()
                         Button("移除") { background.clear() }
-                            .buttonStyle(.consoleDanger)
+                            .buttonStyle(.ds(.danger, size: .small))
                             .fixedSize()
                     } else {
                         Button("选择图片") { background.chooseImage() }
-                            .buttonStyle(.consoleSecondary)
+                            .buttonStyle(.ds(.secondary, size: .small))
                             .fixedSize()
                     }
                 }
             }
-            Divider().overlay(Console.insetStroke)
+            DSDivider()
             SettingsRow(title: "界面透明度",
                         detail: background.isEnabled
                             ? "数值越高图片越清晰；会自动柔化以保证可读性"
@@ -139,23 +147,25 @@ struct SettingsPage: View {
                 HStack(spacing: 10) {
                     Slider(value: $background.opacity, in: 0...1)
                         .frame(width: 150)
-                        .tint(Console.accent)
+                        .tint(DS.accent)
                     Text(verbatim: background.opacity.formatted(.percent.precision(.fractionLength(0))))
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Console.tertiary)
+                        .font(DS.Font.mono(11, weight: .medium))
+                        .foregroundStyle(DS.text3)
+                        .monospacedDigit()
                         .frame(width: 36, alignment: .trailing)
                 }
             }
-            Divider().overlay(Console.insetStroke)
+            DSDivider()
             SettingsRow(title: "背景模糊",
                         detail: blurDetail) {
                 HStack(spacing: 10) {
                     Slider(value: $background.blur, in: 0...40)
                         .frame(width: 150)
-                        .tint(Console.accent)
+                        .tint(DS.accent)
                     Text(background.blur < 0.5 ? "关闭" : "\(Int(background.blur.rounded())) pt")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Console.tertiary)
+                        .font(DS.Font.mono(11, weight: .medium))
+                        .foregroundStyle(DS.text3)
+                        .monospacedDigit()
                         .frame(width: 36, alignment: .trailing)
                 }
                 // 没有图片、透明度又是 0 时整窗不透明，模糊确实没有任何可见效果。
@@ -191,9 +201,9 @@ struct SettingsPage: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .labelsHidden()
-                    .tint(Console.accent)
+                    .tint(DS.accent)
             }
-            Divider().overlay(Console.insetStroke)
+            DSDivider()
             SettingsRow(title: "随应用启动引擎", detail: "打开应用时拉起默认引擎") {
                 Toggle("", isOn: Binding(
                     get: { state.settings.autoStart },
@@ -201,7 +211,7 @@ struct SettingsPage: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .labelsHidden()
-                    .tint(Console.accent)
+                    .tint(DS.accent)
             }
         }
     }
@@ -216,16 +226,16 @@ struct SettingsPage: View {
                     LetterTile(letter: String(id.displayName.prefix(1)).uppercased(),
                                color: engineAccent(id), size: 26)
                     Text(id.displayName)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(Console.text)
+                        .font(DS.Font.md)
+                        .foregroundStyle(DS.text)
                         .frame(width: 84, alignment: .leading)
                     Spacer(minLength: 0)
                     portField(id)
                 }
-                .padding(.horizontal, 20)
-                .frame(height: 48)
+                .padding(.horizontal, 16)
+                .frame(height: 44)
                 if id != EngineCatalog.allIDs.last {
-                    Divider().overlay(Console.insetStroke).padding(.leading, 56)
+                    DSDivider().padding(.leading, 52)
                 }
             }
         }
@@ -234,14 +244,16 @@ struct SettingsPage: View {
     private func portField(_ id: EngineID) -> some View {
         HStack(spacing: 4) {
             Text(":")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(Console.tertiary)
+                .font(DS.Font.mono(11))
+                .foregroundStyle(DS.text3)
             TextField("端口", text: Binding(
                 get: { ports[id.rawValue] ?? "" },
                 set: { ports[id.rawValue] = $0 }))
                 .textFieldStyle(.plain)
-                .font(.system(size: 11.5, design: .monospaced))
+                .font(DS.Font.mono(11.5))
                 .frame(width: 54)
+                .focused($focusedPortEngine, equals: id)
+                .onSubmit { applyPort(id) }
             VStack(spacing: 0) {
                 Button { stepPort(id, by: 1) } label: {
                     Image(systemName: "chevron.up").font(.system(size: 7, weight: .bold))
@@ -252,23 +264,12 @@ struct SettingsPage: View {
                 }
                 .buttonStyle(.plainHit)
             }
-            .foregroundStyle(Console.tertiary)
-            // 输入框没有回车提交：改完端口点这个按钮才生效。
-            Button { applyPort(id) } label: {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(Console.secondary)
-                    .frame(width: 20, height: 20)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plainHit)
-            .help(L10n.t("应用"))
-            .accessibilityLabel(L10n.t("应用"))
+            .foregroundStyle(DS.text3)
         }
-        .padding(.horizontal, 9)
+        .padding(.horizontal, 8)
         .frame(height: 28)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Console.inset))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Console.insetStroke, lineWidth: 0.8))
+        .background(DS.rect(DS.Radius.md).fill(DS.bg))
+        .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line2, lineWidth: 1))
     }
 
     private func stepPort(_ id: EngineID, by delta: Int) {
@@ -282,25 +283,44 @@ struct SettingsPage: View {
         state.switchEnginePort(id, port: port)
     }
 
-    /// 网关 / 控制端口的输入胶囊。应用按钮放在胶囊外面：它是 32 pt 高的
-    /// 玻璃胶囊，塞进 28 pt 的输入框会上下溢出，还会在右端留下一圈
-    /// 「胶囊套胶囊」的毛边。缓存那一行也是「输入框 + 按钮」的排法。
-    private func portInput(_ text: Binding<String>, placeholder: String) -> some View {
+    /// 网关 / 控制端口的输入框。应用按钮放在输入框外面，和缓存行一样用「输入框 + 按钮」排布。
+    private func portInput(_ text: Binding<String>, placeholder: String,
+                           onSubmit: @escaping () -> Void = {}) -> some View {
         HStack(spacing: 4) {
             Text(":")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(Console.tertiary)
+                .font(DS.Font.mono(11))
+                .foregroundStyle(DS.text3)
             TextField(placeholder, text: text)
                 .textFieldStyle(.plain)
-                .font(.system(size: 11.5, design: .monospaced))
+                .font(DS.Font.mono(11.5))
                 .frame(width: 54)
+                .onSubmit(onSubmit)
         }
-        .padding(.horizontal, 9)
+        .padding(.horizontal, 8)
         .frame(height: 28)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Console.inset))
+        .background(DS.rect(DS.Radius.md).fill(DS.bg))
         .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(Console.insetStroke, lineWidth: 0.8)
+            DS.rect(DS.Radius.md)
+                .strokeBorder(DS.line2, lineWidth: 1)
+        }
+    }
+
+    private func applyCachePath() {
+        state.settings.setHfCache(cachePath.trimmingCharacters(in: .whitespaces))
+        state.toast("缓存目录已保存")
+    }
+
+    private func applyGatewayPort() {
+        if let port = Int(gatewayPort), (1024...65535).contains(port) {
+            state.settings.setGatewayPort(port)
+            state.applyGatewaySettings()
+        }
+    }
+
+    private func applyControlPort() {
+        if let port = Int(controlPort), (1024...65535).contains(port) {
+            state.settings.setControlPort(port)
+            state.applyControlSettings()
         }
     }
 
@@ -310,17 +330,19 @@ struct SettingsPage: View {
                 HStack(spacing: 8) {
                     TextField("默认使用 HF_HUB_CACHE", text: $cachePath)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(DS.Font.mono(11))
                         .frame(minWidth: 120, idealWidth: 200, maxWidth: 220)
-                        .padding(.horizontal, 9)
+                        .padding(.horizontal, 8)
                         .frame(height: 28)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Console.inset))
-                    Button("应用") {
-                        state.settings.setHfCache(cachePath.trimmingCharacters(in: .whitespaces))
-                        state.toast("缓存目录已保存")
-                    }
-                    .buttonStyle(.consoleSoft)
-                    .fixedSize()
+                        .background(DS.rect(DS.Radius.md).fill(DS.bg))
+                        .overlay {
+                            DS.rect(DS.Radius.md)
+                                .strokeBorder(DS.line2, lineWidth: 1)
+                        }
+                        .onSubmit { applyCachePath() }
+                    Button("应用") { applyCachePath() }
+                        .buttonStyle(.ds(.secondary, size: .small))
+                        .fixedSize()
                 }
             }
         }
@@ -333,11 +355,11 @@ struct SettingsPage: View {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("API 网关")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Console.text)
+                        .font(DS.Font.lg.weight(.semibold))
+                        .foregroundStyle(DS.text)
                     Text("OpenAI 与 Claude 双协议")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Console.tertiary)
+                        .font(DS.Font.xs)
+                        .foregroundStyle(DS.text3)
                 }
                 Spacer(minLength: 0)
                 Toggle("", isOn: Binding(
@@ -347,26 +369,21 @@ struct SettingsPage: View {
                         state.applyGatewaySettings()
                     }))
                     .toggleStyle(.switch)
-                    .controlSize(.regular)
+                    .controlSize(.small)
                     .labelsHidden()
-                    .tint(Console.accent)
+                    .tint(DS.accent)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
 
-            Divider().overlay(Console.insetStroke)
+            DSDivider()
 
             SettingsRow(title: "网关端口", detail: "固定入口，客户端不用改") {
                 HStack(spacing: 8) {
-                    portInput($gatewayPort, placeholder: "9000")
-                    Button("应用") {
-                        if let port = Int(gatewayPort), (1024...65535).contains(port) {
-                            state.settings.setGatewayPort(port)
-                            state.applyGatewaySettings()
-                        }
-                    }
-                    .buttonStyle(.consoleSoft)
-                    .fixedSize()
+                    portInput($gatewayPort, placeholder: "9000", onSubmit: applyGatewayPort)
+                    Button("应用") { applyGatewayPort() }
+                        .buttonStyle(.ds(.secondary, size: .small))
+                        .fixedSize()
                 }
             }
         }
@@ -377,11 +394,11 @@ struct SettingsPage: View {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(L10n.t("命令行接口"))
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Console.text)
+                        .font(DS.Font.lg.weight(.semibold))
+                        .foregroundStyle(DS.text)
                     Text(L10n.t("本机 flashcat 命令的连接端口"))
-                        .font(.system(size: 11))
-                        .foregroundStyle(Console.tertiary)
+                        .font(DS.Font.xs)
+                        .foregroundStyle(DS.text3)
                 }
                 Spacer(minLength: 0)
                 Toggle("", isOn: Binding(
@@ -391,36 +408,31 @@ struct SettingsPage: View {
                         state.applyControlSettings()
                     }))
                     .toggleStyle(.switch)
-                    .controlSize(.regular)
+                    .controlSize(.small)
                     .labelsHidden()
-                    .tint(Console.accent)
+                    .tint(DS.accent)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
 
-            Divider().overlay(Console.insetStroke)
+            DSDivider()
 
             SettingsRow(title: "控制端口", detail: "被占用时会自动顺延，实际端口写在 control.json") {
                 HStack(spacing: 8) {
-                    portInput($controlPort, placeholder: "9100")
-                    Button("应用") {
-                        if let port = Int(controlPort), (1024...65535).contains(port) {
-                            state.settings.setControlPort(port)
-                            state.applyControlSettings()
-                        }
-                    }
-                    .buttonStyle(.consoleSoft)
-                    .fixedSize()
+                    portInput($controlPort, placeholder: "9100", onSubmit: applyControlPort)
+                    Button("应用") { applyControlPort() }
+                        .buttonStyle(.ds(.secondary, size: .small))
+                        .fixedSize()
                 }
             }
 
-            Divider().overlay(Console.insetStroke)
+            DSDivider()
 
             SettingsRow(title: "命令行工具", detail: "在终端运行 flashcat --help 查看全部命令") {
                 Button("复制") {
                     state.copy("flashcat --help", label: "命令行用法已复制")
                 }
-                .buttonStyle(.consoleSecondary)
+                .buttonStyle(.ds(.secondary, size: .small))
             }
         }
     }
@@ -447,9 +459,14 @@ struct SettingsPage: View {
                     options: ThinkingMode.allCases.map { ($0, $0.label) })
                     .fixedSizeWhen(wide)
             }
-            Divider().overlay(Console.insetStroke)
+            DSDivider()
             SettingsRow(title: "默认模型", detail: defaultModelDetail) {
-                Menu {
+                DSMenu {
+                    DSMenuTriggerLabel(title: "更改",
+                                       systemImage: "line.3.horizontal",
+                                       trailingChevron: false,
+                                       size: .small)
+                } content: {
                     ForEach(EngineCatalog.allIDs.filter { state.engineIsInstalled($0) }, id: \.self) { id in
                         let models = state.engineModels(for: id)
                             .filter { !$0.hidden && !$0.helper && !ModelLibraryEntry.isDraftModel($0.id) }
@@ -472,15 +489,9 @@ struct SettingsPage: View {
                             }
                         }
                     }
-                } label: {
-                    Label("更改", systemImage: "line.3.horizontal")
                 }
-                .buttonStyle(.consoleSecondary)
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
             }
-            Divider().overlay(Console.insetStroke)
+            DSDivider()
             SettingsRow(title: "思考等级", detail: "等级由当前引擎提供") {
                 NativeSegmented(selection: Binding(
                     get: { reasoningEffort },
@@ -505,7 +516,7 @@ struct SettingsPage: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .labelsHidden()
-                    .tint(Console.accent)
+                    .tint(DS.accent)
             }
         }
     }
@@ -513,20 +524,20 @@ struct SettingsPage: View {
     private var infoCard: some View {
         SettingsCard {
             infoRow("flashCat", detail: L10n.format("本地推理控制台 · v%@", appVersion), trailing: device.chipName)
-            Divider().overlay(Console.insetStroke)
+            DSDivider()
             infoRow("这台 Mac", detail: L10n.format("%@ · %lld GB 统一内存", device.chipName, device.memoryGB),
                     trailing: L10n.format("可用 %@", Format.size(Int(device.freeDiskBytes))))
-            Divider().overlay(Console.insetStroke)
+            DSDivider()
             SettingsRow(title: "对话参数", detail: L10n.format("温度 %.1f · Top P %.2f · 最大输出 %lld", state.settings.temperature, state.settings.topP, state.effectiveMaxTokens)) {
-                Button("调整") { state.section = .chat }
-                    .buttonStyle(.consoleSecondary)
+                Button("调整") { showsChatParameters = true }
+                    .buttonStyle(.ds(.secondary, size: .small))
             }
-            Divider().overlay(Console.insetStroke)
+            DSDivider()
             SettingsRow(title: "首次启动引导", detail: "重新打开引擎安装页") {
                 Button("打开") { state.showsLaunchPage = true }
-                    .buttonStyle(.consoleSecondary)
+                    .buttonStyle(.ds(.secondary, size: .small))
             }
-            Divider().overlay(Console.insetStroke)
+            DSDivider()
             SettingsRow(title: "恢复默认", detail: "外观、背景、启动与网关设置") {
                 Button("恢复") {
                     state.theme.set(.system)
@@ -535,14 +546,16 @@ struct SettingsPage: View {
                     background.blur = 18
                     state.settings.setAutoStart(false)
                     state.settings.setGatewayEnabled(true)
+                    state.settings.setGatewayPort(9000)
                     state.settings.setControlAPIEnabled(true)
                     state.settings.setControlPort(9100)
                     state.resetChatParameters()
                     state.applyGatewaySettings()
                     state.applyControlSettings()
+                    load()
                     state.toast("已恢复默认设置")
                 }
-                .buttonStyle(.consoleSoft)
+                .buttonStyle(.ds(.secondary, size: .small))
             }
         }
     }
@@ -551,19 +564,19 @@ struct SettingsPage: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(L10n.t(title))
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(Console.text)
+                    .font(DS.Font.md.weight(.medium))
+                    .foregroundStyle(DS.text)
                 Text(L10n.t(detail))
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Console.tertiary)
+                    .font(DS.Font.xs)
+                    .foregroundStyle(DS.text3)
             }
             Spacer(minLength: 8)
             Text(L10n.t(trailing))
-                .font(.system(size: 10.5))
-                .foregroundStyle(Console.tertiary)
+                .font(DS.Font.mono(11))
+                .foregroundStyle(DS.text3)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 13)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
     }
 
     /// 芯片/内存/磁盘在会话内基本不变，不必每次重绘都跑一遍 sysctl + statfs。
@@ -583,9 +596,9 @@ struct SettingsCard<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        GlassCard(padding: 0) {
-            VStack(spacing: 0) { content() }
-        }
+        VStack(spacing: 0) { content() }
+            .dsSurface(radius: DS.Radius.lg)
+            .clipShape(DS.rect(DS.Radius.lg))
     }
 }
 
@@ -599,21 +612,21 @@ struct SettingsRow<Trailing: View>: View {
         HStack(alignment: trailingTop ? .top : .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(L10n.t(title))
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Console.text)
+                    .font(DS.Font.md.weight(.medium))
+                    .foregroundStyle(DS.text)
                 if let detail {
                     Text(L10n.t(detail))
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Console.tertiary)
+                        .font(DS.Font.xs)
+                        .foregroundStyle(DS.text3)
                         .lineLimit(2)
                 }
             }
             Spacer(minLength: 8)
             trailing()
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 13)
-        .frame(minHeight: 58)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+        .frame(minHeight: 50)
     }
 }
 

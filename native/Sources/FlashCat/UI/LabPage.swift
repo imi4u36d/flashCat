@@ -1,12 +1,10 @@
 import SwiftUI
 import AppKit
 
-/// 「实验室」页：侧边栏设置之后的独立入口，顶部用玻璃分段在图片/视频之间切换。
+/// 「实验室」页：侧边栏设置之后的独立入口，顶部用分段控件在图片/视频之间切换。
 /// 两个库都只认 assistant 消息里落盘的结果，用户给的底图/首帧图不会混进来。
 ///
-/// 浏览方式是按页摆的：一屏正好一页，页面本身不滚动，翻页在左上角。
-/// 卡片封面依旧异步解码，翻页只换数据；翻到下一页前会先把下一页的缩略图
-/// 在后台解好，所以连续翻页看到的都是现成的图。
+/// 采用连续滚动的自适应网格呈现全部作品；卡片封面依旧异步解码并缓存。
 struct LabPage: View {
     @ObservedObject var state: AppState
 
@@ -30,13 +28,9 @@ struct LabPage: View {
     }
 
     @State private var tab: LabTab = .images
-    @State private var page = 0
     @State private var images: [GalleryImage] = []
     @State private var videos: [GalleryVideo] = []
     @State private var detail: GalleryDetailItem?
-
-    private static let pagerHeight: CGFloat = 26
-    private static let pagerGap: CGFloat = 10
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -45,42 +39,28 @@ struct LabPage: View {
                 .padding(.top, Console.contentTopInset)
                 .padding(.bottom, 14)
 
-            GeometryReader { proxy in
-                let layout = LabGridLayout.make(
-                    size: CGSize(width: proxy.size.width - Console.contentPadding * 2,
-                                 height: proxy.size.height - Self.pagerHeight
-                                         - Self.pagerGap - Console.contentBottomInset),
-                    kind: tab.kind
-                )
-                let count = itemCount
-                let pages = max(1, (count + layout.pageSize - 1) / layout.pageSize)
-                let index = min(max(0, page), pages - 1)
-
-                VStack(spacing: 0) {
-                    if count > 0 {
-                        pager(pageCount: pages, pageIndex: index, pageSize: layout.pageSize)
-                            .frame(height: Self.pagerHeight)
-                            .padding(.bottom, Self.pagerGap)
+            if itemCount == 0 {
+                emptyState
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.horizontal, Console.contentPadding)
+                    .padding(.bottom, Console.contentBottomInset)
+            } else {
+                ScrollView {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: tab == .images ? 220 : 300),
+                                           spacing: 16, alignment: .top)],
+                        spacing: 16
+                    ) {
+                        gridItems
                     }
-                    if count == 0 {
-                        emptyState
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        Spacer(minLength: 0)
-                        tiles(layout: layout, pageIndex: index)
-                        Spacer(minLength: 0)
-                    }
+                    .padding(.horizontal, Console.contentPadding)
+                    .padding(.bottom, Console.contentBottomInset)
                 }
-                .padding(.horizontal, Console.contentPadding)
-                .padding(.bottom, Console.contentBottomInset)
-                .task(id: "\(tab.kind.rawValue)-\(index)") {
-                    prefetch(layout: layout, pageIndex: index)
-                }
+                .scrollIndicators(.never)
             }
         }
         .onAppear(perform: reload)
         .onChange(of: tab) { _, _ in
-            page = 0
             reload()
         }
         .sheet(item: $detail) { item in
@@ -91,36 +71,38 @@ struct LabPage: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
-                Image(systemName: "flask")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Console.accent)
-                    .frame(width: 34, height: 34)
-                    .background {
-                        LiquidGlassSurface(shape: RoundedRectangle(cornerRadius: 10, style: .continuous),
-                                           tint: Console.accent.opacity(0.12))
-                    }
+                IconTile(symbol: "flask", color: DS.accent, size: 30)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("实验室")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(Console.text)
+                        .font(DS.Font.title)
+                        .foregroundStyle(DS.text)
                     Text("对话中生成的图片和视频；只收模型产出的结果")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Console.tertiary)
+                        .font(DS.Font.xs)
+                        .foregroundStyle(DS.text3)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 8)
-                IconAction(systemName: "arrow.clockwise", help: "刷新") { reload() }
+                DSIconButton(systemName: "arrow.clockwise", help: "刷新") { reload() }
                 Button("打开文件夹") {
                     let folder = tab == .images ? ImageStore.directory : VideoStore.directory
                     Paths.ensureDirectory(folder)
                     NSWorkspace.shared.open(URL(fileURLWithPath: folder))
                 }
-                .buttonStyle(.consoleSecondary)
+                .buttonStyle(.ds(.secondary, size: .regular))
             }
 
-            GlassSegmented(selection: $tab,
-                           options: [(.images, "图片 \(images.count)"),
-                                     (.videos, "视频 \(videos.count)")])
+            HStack(spacing: 12) {
+                DSSegmented(selection: $tab,
+                            options: [(.images, "图片 \(images.count)"),
+                                      (.videos, "视频 \(videos.count)")])
+                if itemCount > 0 {
+                    Text("共 \(itemCount) \(tab.unit)")
+                        .font(DS.Font.xs)
+                        .foregroundStyle(DS.text3)
+                        .monospacedDigit()
+                }
+                Spacer(minLength: 0)
+            }
         }
     }
 
@@ -145,122 +127,26 @@ struct LabPage: View {
         }
     }
 
-    // MARK: - 分页
-
-    /// 左上角的翻页条：上一页 / 页码 / 下一页，后面跟一行数量说明。
-    private func pager(pageCount: Int, pageIndex: Int, pageSize: Int) -> some View {
-        HStack(spacing: 8) {
-            pageStep("chevron.left", enabled: pageIndex > 0) { page = max(0, pageIndex - 1) }
-            Text(verbatim: "\(pageIndex + 1) / \(pageCount)")
-                .font(.system(size: 11.5, weight: .medium, design: .monospaced))
-                .monospacedDigit()
-                .foregroundStyle(Console.secondary)
-                .frame(minWidth: 58)
-            pageStep("chevron.right", enabled: pageIndex < pageCount - 1) { page = pageIndex + 1 }
-            Text("共 \(itemCount) \(tab.unit) · 每页 \(pageSize) \(tab.unit)")
-                .font(.system(size: 10.5))
-                .foregroundStyle(Console.tertiary)
-                .padding(.leading, 2)
-            Spacer(minLength: 0)
-        }
-    }
-
-    private func pageStep(_ systemName: String, enabled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 9.5, weight: .semibold))
-                .foregroundStyle(enabled ? Console.secondary : Console.tertiary)
-                .frame(width: 24, height: 24)
-                .background { LiquidGlassSurface(shape: Circle()) }
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.5)
-        .help(systemName == "chevron.left" ? "上一页" : "下一页")
-    }
-
     // MARK: - 网格
 
-    private func tiles(layout: LabGridLayout, pageIndex: Int) -> some View {
-        let start = pageIndex * layout.pageSize
-        return VStack(spacing: LabGridLayout.spacing) {
-            ForEach(0..<layout.rows, id: \.self) { row in
-                HStack(spacing: LabGridLayout.spacing) {
-                    ForEach(0..<layout.columns, id: \.self) { column in
-                        cell(layout: layout, index: start + row * layout.columns + column)
-                            .frame(width: layout.cellWidth,
-                                   height: layout.cellHeight,
-                                   alignment: .topLeading)
-                    }
-                }
-            }
-        }
-        .id("\(tab.kind.rawValue)-\(pageIndex)")
-        .transition(.opacity)
-        .animation(Motion.quick, value: pageIndex)
-    }
-
-    /// 越界的位置留成空白格，最后一页也保持和前面一样的行高。
     @ViewBuilder
-    private func cell(layout: LabGridLayout, index: Int) -> some View {
+    private var gridItems: some View {
         switch tab {
         case .images:
-            if index < images.count {
-                let image = images[index]
+            ForEach(images) { image in
                 GalleryImageTile(image: image,
                                  modelName: modelLabel(image.model),
-                                 coverHeight: layout.coverHeight,
-                                 maxPixel: coverMaxPixel(layout),
+                                 coverHeight: 210,
+                                 maxPixel: 640,
                                  openDetail: { detail = .image(image) })
-            } else {
-                Color.clear
             }
         case .videos:
-            if index < videos.count {
-                let video = videos[index]
+            ForEach(videos) { video in
                 GalleryVideoTile(video: video,
                                  modelName: modelLabel(video.model),
-                                 coverHeight: layout.coverHeight,
-                                 maxPixel: coverMaxPixel(layout),
+                                 coverHeight: 175,
+                                 maxPixel: 800,
                                  openDetail: { detail = .video(video) })
-            } else {
-                Color.clear
-            }
-        }
-    }
-
-    /// 封面按屏幕的物理解析度取档：普通窗口 520/640，窗口再大就换更清楚的档位。
-    private func coverMaxPixel(_ layout: LabGridLayout) -> CGFloat {
-        let coverWidth = layout.cellWidth - LabGridLayout.cardInset * 2
-        switch tab {
-        case .images: return coverWidth <= 260 ? 520 : 780
-        case .videos: return coverWidth <= 340 ? 640 : 960
-        }
-    }
-
-    /// 翻到这一页时顺带把下一页解好，连续翻页就不用等封面。
-    /// 只在后台跑，解码结果直接落在缩略图缓存里；同一个 key 不会被解两遍。
-    private func prefetch(layout: LabGridLayout, pageIndex: Int) {
-        guard layout.pageSize > 0 else { return }
-        let start = (pageIndex + 1) * layout.pageSize
-        let maxPixel = coverMaxPixel(layout)
-        switch tab {
-        case .images:
-            let slice = Array(images.dropFirst(start).prefix(layout.pageSize))
-            guard !slice.isEmpty else { return }
-            Task.detached(priority: .utility) {
-                for image in slice {
-                    _ = await ImageStore.thumbnailAsync(atPath: image.path, maxPixel: maxPixel)
-                }
-            }
-        case .videos:
-            let slice = Array(videos.dropFirst(start).prefix(layout.pageSize))
-            guard !slice.isEmpty else { return }
-            Task.detached(priority: .utility) {
-                for video in slice {
-                    _ = await VideoThumbnailStore.thumbnail(atPath: video.path, maxPixel: maxPixel)
-                }
             }
         }
     }
@@ -376,20 +262,18 @@ private struct LabEmptyState: View {
     let detail: String
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 24, weight: .light))
-                .foregroundStyle(Console.tertiary)
-                .frame(width: 64, height: 64)
-                .background {
-                    LiquidGlassSurface(shape: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                }
+                .font(.system(size: 20, weight: .regular))
+                .foregroundStyle(DS.text3)
+                .frame(width: 48, height: 48)
+                .dsSurface(radius: DS.Radius.lg, fill: DS.raised, stroke: DS.line)
             Text(title)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Console.secondary)
+                .font(DS.Font.md.weight(.medium))
+                .foregroundStyle(DS.text2)
             Text(detail)
-                .font(.system(size: 11))
-                .foregroundStyle(Console.tertiary)
+                .font(DS.Font.xs)
+                .foregroundStyle(DS.text3)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -412,15 +296,15 @@ private struct GalleryImageTile: View {
                     .frame(maxWidth: .infinity)
                     .frame(height: coverHeight)
                     .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .clipShape(DS.rect(DS.Radius.md))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .strokeBorder(Console.cardStroke, lineWidth: 1)
+                        DS.rect(DS.Radius.md)
+                            .strokeBorder(DS.line, lineWidth: 1)
                     }
 
                 Text(image.prompt.isEmpty ? "（无提示词）" : image.prompt)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Console.text)
+                    .font(DS.Font.sm)
+                    .foregroundStyle(DS.text)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -435,8 +319,8 @@ private struct GalleryImageTile: View {
                             .monospacedDigit()
                     }
                 }
-                .font(.system(size: 9.5))
-                .foregroundStyle(Console.tertiary)
+                .font(DS.Font.mono(10))
+                .foregroundStyle(DS.text3)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(LabGridLayout.cardInset)
@@ -444,7 +328,7 @@ private struct GalleryImageTile: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .consoleCardSurface(radius: 14, interactive: true)
+        .dsSurface(radius: DS.Radius.lg, hoverable: true)
         .help(image.prompt.isEmpty ? "查看详情" : image.prompt)
         .contextMenu {
             Button("查看详情", action: openDetail)
@@ -491,13 +375,13 @@ private struct GalleryImageCover: View {
                 } else if missing {
                     Image(systemName: "questionmark.square.dashed")
                         .font(.system(size: 22, weight: .light))
-                        .foregroundStyle(Console.tertiary)
+                        .foregroundStyle(DS.text3)
                 } else {
-                    Console.inset
+                    DS.bg
                 }
             }
             .clipped()
-            .animation(Motion.quick, value: image == nil)
+            .animation(DS.Motion.snappy, value: image == nil)
             .task(id: path) { await load() }
     }
 
@@ -536,30 +420,30 @@ private struct GalleryVideoTile: View {
                         } else {
                             Image(systemName: "film")
                                 .font(.system(size: 22, weight: .light))
-                                .foregroundStyle(Console.tertiary)
+                                .foregroundStyle(DS.text3)
                         }
                     }
                     .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .clipShape(DS.rect(DS.Radius.md))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .strokeBorder(Console.cardStroke, lineWidth: 1)
+                        DS.rect(DS.Radius.md)
+                            .strokeBorder(DS.line, lineWidth: 1)
                     }
                     .overlay {
                         Image(systemName: "play.fill")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.white)
                             .frame(width: 34, height: 34)
-                            .background(.black.opacity(0.4), in: Circle())
-                            .overlay(Circle().strokeBorder(.white.opacity(0.3), lineWidth: 1))
+                            .background(.black.opacity(0.45), in: Circle())
+                            .overlay(Circle().strokeBorder(.white.opacity(0.25), lineWidth: 1))
                     }
                     .task(id: video.path) {
                         cover = await VideoThumbnailStore.thumbnail(atPath: video.path, maxPixel: maxPixel)
                     }
 
                 Text(video.prompt.isEmpty ? "（无提示词）" : video.prompt)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Console.text)
+                    .font(DS.Font.sm)
+                    .foregroundStyle(DS.text)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -574,8 +458,8 @@ private struct GalleryVideoTile: View {
                             .monospacedDigit()
                     }
                 }
-                .font(.system(size: 9.5))
-                .foregroundStyle(Console.tertiary)
+                .font(DS.Font.mono(10))
+                .foregroundStyle(DS.text3)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(LabGridLayout.cardInset)
@@ -583,7 +467,7 @@ private struct GalleryVideoTile: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .consoleCardSurface(radius: 14, interactive: true)
+        .dsSurface(radius: DS.Radius.lg, hoverable: true)
         .help(video.prompt.isEmpty ? "查看详情" : video.prompt)
         .contextMenu {
             Button("查看详情", action: openDetail)

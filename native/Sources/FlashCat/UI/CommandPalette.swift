@@ -7,10 +7,6 @@ extension Notification.Name {
 }
 
 /// 命令面板：页面跳转与常用动作，一个输入框全都能到。
-///
-/// 面板刻意只支持鼠标：应用不注册任何键盘快捷键，也不接管方向键、
-/// 回车或 esc。搜索框仍然可以输入（那是文本编辑，不是快捷键），
-/// 运行命令则点一行或点底部的按钮。
 struct CommandPalette: View {
     @ObservedObject var state: AppState
     var openDownloads: () -> Void
@@ -19,6 +15,8 @@ struct CommandPalette: View {
 
     @State private var query = ""
     @State private var hovered: String?
+    @State private var selectedIndex = 0
+    @State private var presented = false
     @FocusState private var focused: Bool
 
     private var items: [CommandItem] {
@@ -28,138 +26,180 @@ struct CommandPalette: View {
         return all.filter { "\($0.title) \($0.detail)".lowercased().contains(text) }
     }
 
+    private var clampedSelection: Int {
+        guard !items.isEmpty else { return -1 }
+        return min(max(0, selectedIndex), items.count - 1)
+    }
+
     var body: some View {
         ZStack {
-            Color.black.opacity(0.22)
+            DS.scrim
                 .ignoresSafeArea()
                 .onTapGesture { dismiss() }
 
             VStack(spacing: 0) {
                 searchRow
-                Hairline()
+                DSDivider()
                 results
-                Hairline()
+                DSDivider()
                 footer
             }
             .frame(width: 560)
-            .background {
-                LiquidGlassSurface(
-                    shape: RoundedRectangle(cornerRadius: 14, style: .continuous)
-                )
-            }
-            .padding(.top, 120)
+            .dsFloating(radius: DS.Radius.lg)
+            .scaleEffect(presented ? 1 : 0.97)
+            .opacity(presented ? 1 : 0)
+            .padding(.top, 108)
             .frame(maxHeight: .infinity, alignment: .top)
         }
-        .onAppear { focused = true }
+        .onAppear {
+            selectedIndex = 0
+            focused = true
+            withAnimation(DS.Motion.bouncy) { presented = true }
+        }
+        .onChange(of: query) { _, _ in selectedIndex = 0 }
+        .onExitCommand { dismiss() }
     }
 
     private var searchRow: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Native.tertiary)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(DS.text3)
             TextField("跳转到页面或执行命令…", text: $query)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13))
+                .font(DS.Font.lg)
+                .foregroundStyle(DS.text)
                 .focused($focused)
-            Button {
+                .onSubmit { runSelected() }
+                .onKeyPress(.upArrow) {
+                    moveSelection(-1)
+                    return .handled
+                }
+                .onKeyPress(.downArrow) {
+                    moveSelection(1)
+                    return .handled
+                }
+                .onKeyPress(.escape) {
+                    dismiss()
+                    return .handled
+                }
+            DSKbd(text: "ESC")
+            DSIconButton(systemName: "xmark", help: "关闭命令面板", size: 24) {
                 dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Native.secondary)
-                    .frame(width: 22, height: 22)
-                    .background {
-                        LiquidGlassSurface(shape: Circle(), interactive: true)
-                    }
-                    .contentShape(Circle())
             }
-            .buttonStyle(.plainHit)
-            .help("关闭命令面板")
         }
         .padding(.horizontal, 14)
         .frame(height: 46)
     }
 
     private var results: some View {
-        ScrollView {
-            LazyVStack(spacing: 1) {
-                if items.isEmpty {
-                    Text("没有匹配的命令")
-                        .font(Native.captionFont)
-                        .foregroundStyle(Native.tertiary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 24)
-                } else {
-                    ForEach(items) { item in
-                        row(item, selected: hovered == item.id)
-                            .id(item.id)
-                            .onTapGesture { run(item) }
-                            .onHover { inside in
-                                if inside {
-                                    hovered = item.id
-                                } else if hovered == item.id {
-                                    hovered = nil
+        ScrollViewReader { scroll in
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    if items.isEmpty {
+                        Text("没有匹配的命令")
+                            .font(DS.Font.sm)
+                            .foregroundStyle(DS.text3)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 28)
+                    } else {
+                        let activeIndex = clampedSelection
+                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                            row(item, selected: index == activeIndex || hovered == item.id)
+                                .id(item.id)
+                                .onTapGesture { run(item) }
+                                .onHover { inside in
+                                    if inside {
+                                        hovered = item.id
+                                        selectedIndex = index
+                                    } else if hovered == item.id {
+                                        hovered = nil
+                                    }
                                 }
-                            }
+                        }
                     }
                 }
+                .padding(6)
             }
-            .padding(6)
+            .frame(maxHeight: 340)
+            .onChange(of: selectedIndex) { _, newValue in
+                guard newValue >= 0, newValue < items.count else { return }
+                withAnimation(DS.Motion.snappy) {
+                    scroll.scrollTo(items[newValue].id, anchor: .center)
+                }
+            }
         }
-        .frame(maxHeight: 340)
+    }
+
+    private func moveSelection(_ delta: Int) {
+        let count = items.count
+        guard count > 0 else { return }
+        hovered = nil
+        selectedIndex = (clampedSelection + delta + count) % count
+    }
+
+    private func runSelected() {
+        let idx = clampedSelection
+        guard idx >= 0, idx < items.count else { return }
+        run(items[idx])
     }
 
     private func row(_ item: CommandItem, selected: Bool) -> some View {
-        HStack(spacing: 10) {
+        let shape = DS.rect(DS.Radius.sm)
+        return HStack(spacing: 10) {
             Image(systemName: item.icon)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(selected ? Native.accent : Native.secondary)
-                .frame(width: 22, height: 22)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(selected ? DS.accent : DS.text3)
+                .frame(width: 20, height: 20)
             VStack(alignment: .leading, spacing: 1) {
                 Text(L10n.t(item.title))
-                    .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
-                    .foregroundStyle(Native.label)
+                    .font(DS.Font.md.weight(selected ? .medium : .regular))
+                    .foregroundStyle(selected ? DS.text : DS.text2)
                 if !item.detail.isEmpty {
                     Text(L10n.t(item.detail))
-                        .font(.system(size: 10))
-                        .foregroundStyle(Native.tertiary)
+                        .font(DS.Font.xs)
+                        .foregroundStyle(DS.text3)
                         .lineLimit(1)
                 }
             }
             Spacer(minLength: 8)
+            if let shortcut = item.shortcut {
+                DSKbd(text: shortcut)
+            }
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 7)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
         .background {
-            LiquidGlassSurface(
-                shape: RoundedRectangle(cornerRadius: 7, style: .continuous),
-                tint: selected ? Native.accent.opacity(0.10) : nil,
-                interactive: true
-            )
-            .opacity(selected ? 1 : 0)
+            if selected {
+                shape.fill(DS.hover)
+                    .overlay(alignment: .leading) {
+                        Capsule()
+                            .fill(DS.accent)
+                            .frame(width: 2, height: 14)
+                            .padding(.leading, 1)
+                    }
+            }
         }
-        .animation(Motion.quick, value: selected)
-        .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .animation(DS.Motion.snappy, value: selected)
+        .contentShape(shape)
     }
 
     private var footer: some View {
         HStack(spacing: 12) {
             Text("点击一行运行命令")
-                .font(.system(size: 9.5))
-                .foregroundStyle(Native.tertiary)
+                .font(DS.Font.xs)
+                .foregroundStyle(DS.text3)
             Spacer(minLength: 0)
             Text("\(items.count) 个命令")
-                .font(.system(size: 9.5, design: .monospaced))
-                .foregroundStyle(Native.tertiary)
+                .font(DS.Font.mono(10))
+                .foregroundStyle(DS.text3)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 9)
+        .padding(.vertical, 8)
     }
 
     // MARK: Commands
 
-    /// 换权重的空窗里阶段行会短暂为空，那时只留引擎名，别留一个「 · 」的尾巴。
     private var engineToggleDetail: String {
         let stage = state.engineStageText
         guard !stage.isEmpty else { return state.activeEngine.displayName }
@@ -167,11 +207,12 @@ struct CommandPalette: View {
     }
 
     private var commands: [CommandItem] {
-        var list: [CommandItem] = Page.allCases.map { page in
+        var list: [CommandItem] = Page.allCases.enumerated().map { index, page in
             CommandItem(id: "nav.\(page.rawValue)",
                         title: L10n.format("打开%@", L10n.t(page.rawValue)),
                         detail: page.detail,
-                        icon: page.symbol) {
+                        icon: page.symbol,
+                        shortcut: index < 6 ? "⌘\(index + 1)" : nil) {
                 state.section = page
             }
         }
@@ -182,7 +223,7 @@ struct CommandPalette: View {
             state.toggleService()
         })
         list.append(CommandItem(id: "chat.new", title: "新对话", detail: "开一段新的本地会话",
-                                icon: "square.and.pencil") {
+                                icon: "square.and.pencil", shortcut: "⌘N") {
             state.newConversation()
             state.section = .chat
         })
@@ -197,7 +238,7 @@ struct CommandPalette: View {
         })
         list.append(CommandItem(id: "sidebar", title: state.showsSidebar ? "折叠边栏" : "展开边栏",
                                 detail: "显示 / 隐藏玻璃导航列",
-                                icon: "sidebar.left") {
+                                icon: "sidebar.left", shortcut: "⌃⌘S") {
             state.toggleSidebar()
         })
         return list
@@ -219,6 +260,7 @@ struct CommandItem: Identifiable {
     let title: String
     let detail: String
     let icon: String
+    var shortcut: String? = nil
     let run: () -> Void
 }
 

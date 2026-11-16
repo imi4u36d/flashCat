@@ -15,8 +15,10 @@ extension ServerStats {
         prefillTokensPerSecond = status.prefillTokensPerSecond
         decodeRateKind = status.decodeRateKind
         prefillRateKind = status.prefillRateKind
+        lifetimeDecodeTokensPerSecond = status.lifetimeDecodeTokensPerSecond
         draftAcceptance = status.draftAcceptance
         ttftMilliseconds = status.ttftMilliseconds
+        ttftKind = status.ttftKind
         activeRequests = status.activeRequests
         queuedRequests = status.queuedRequests
         memoryBytes = status.memoryBytes
@@ -27,6 +29,7 @@ extension ServerStats {
         requestsCompleted = status.requestsCompleted
         requestsFailed = status.requestsFailed
         startedAt = status.startedAt
+        uptimeSeconds = status.uptimeSeconds
         instancePid = status.processIdentifier.map(Int.init)
         // Every engine runs on this machine, so device facts come straight
         // from the host. The old `previous?` hand-down could never be filled

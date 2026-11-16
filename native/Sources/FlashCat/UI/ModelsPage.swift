@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 import FlashCatKit
 
-/// 模型页：按 WebUI 版式——顶部引擎分段 + 搜索，下面是两列大模型卡。
+/// 模型页：顶部平面分段 + 常驻搜索 + 操作带，下方自适应两列模型卡网格。
 struct ModelsPage: View {
     @ObservedObject var state: AppState
     let engine: EngineID
@@ -44,8 +44,7 @@ struct ModelsPage: View {
     }
 
     private var columns: [GridItem] {
-        // 单列也能在窄内容区完整显示，宽窗口再自动并排。
-        [GridItem(.adaptive(minimum: 300, maximum: 720), spacing: 18, alignment: .top)]
+        [GridItem(.adaptive(minimum: 320, maximum: 720), spacing: 14, alignment: .top)]
     }
 
     var body: some View {
@@ -53,16 +52,16 @@ struct ModelsPage: View {
             topBar
                 .padding(.horizontal, Console.contentPadding)
                 .padding(.top, Console.contentTopInset)
-                .padding(.bottom, 18)
+                .padding(.bottom, 16)
 
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 14) {
                         Color.clear
                             .frame(height: 0)
                             .id(Self.scrollTopAnchor)
 
-                        LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
+                        LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
                             ForEach(entries, id: \.identity) { entry in
                                 ModelCard(state: state,
                                           entry: entry,
@@ -72,9 +71,9 @@ struct ModelsPage: View {
                             }
                         }
                         if entries.isEmpty {
-                            Text("没有匹配的模型")
-                                .font(.system(size: 12))
-                                .foregroundStyle(Console.tertiary)
+                            Text(L10n.t("没有匹配的模型"))
+                                .font(DS.Font.sm)
+                                .foregroundStyle(DS.text3)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 60)
                         }
@@ -83,9 +82,6 @@ struct ModelsPage: View {
                     .padding(.top, 2)
                 }
                 .scrollIndicators(.never)
-                // 切换引擎后内容高度会骤减；不回到顶部时滚动位置可能落在
-                // 新内容之外，整页看起来是空白的。必须等这一帧布局完成再定位：
-                // 同步 scrollTo 用的还是旧内容的高度，滚完仍然停在空白区。
                 .onChange(of: scope) { _, _ in
                     DispatchQueue.main.async {
                         proxy.scrollTo(Self.scrollTopAnchor, anchor: .top)
@@ -93,8 +89,6 @@ struct ModelsPage: View {
                 }
             }
         }
-        // 网格的滚动视口止于这条线：和侧栏玻璃的底边同高，
-        // 滚到底时最后一行卡片也不会糊在窗口边缘上。
         .padding(.bottom, Console.contentBottomInset)
         .sheet(isPresented: $showingHub) { HubSheet(state: state, engine: scope.engine ?? engine) }
         .sheet(isPresented: $showingDownloads) { DownloadCenterSheet(state: state) }
@@ -114,25 +108,58 @@ struct ModelsPage: View {
     }
 
     private var topBar: some View {
-        HStack(spacing: 14) {
-            GlassFilterBar(selection: $scope,
-                           options: [(ModelScope.all, "全部")]
-                               + EngineCatalog.allIDs.map { (ModelScope.engine($0), $0.displayName) },
-                           query: $query,
-                           placeholder: "搜索模型")
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                filterControl
+                Spacer(minLength: 0)
+                actionControls
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                filterControl
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    actionControls
+                }
+            }
+        }
+    }
 
-            Spacer(minLength: 0)
+    private var filterControl: some View {
+        DSFilterBar(selection: $scope,
+                    options: [(ModelScope.all, "全部")]
+                        + EngineCatalog.allIDs.map { (ModelScope.engine($0), $0.displayName) },
+                    query: $query,
+                    placeholder: "搜索模型")
+    }
+
+    @ViewBuilder
+    private var actionControls: some View {
+        HStack(spacing: 8) {
+            Button {
+                showingDownloads = true
+            } label: {
+                let count = state.downloadTasks.count + (state.downloadingModel == nil ? 0 : 1)
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.down.circle")
+                        .font(.system(size: 11, weight: .medium))
+                    Text(L10n.t("下载中心"))
+                    if count > 0 {
+                        DSBadge(count: count)
+                    }
+                }
+            }
+            .buttonStyle(.dsSecondary)
 
             Button {
                 showingHub = true
                 state.searchHub(state.hubQuery, sort: state.hubSort.rawValue,
                                 filter: state.hubFilter.rawValue, page: 0)
             } label: {
-                Text("模型广场")
+                Label(L10n.t("模型广场"), systemImage: "sparkle.magnifyingglass")
             }
-            .buttonStyle(.consoleSecondary)
+            .buttonStyle(.dsSecondary)
 
-            Button {
+            DSIconButton(systemName: "arrow.clockwise", help: "重新扫描") {
                 let target = scope.engine ?? engine
                 _ = EngineModelStore.adoptExistingWeights(target)
                 state.reloadModels()
@@ -140,17 +167,7 @@ struct ModelsPage: View {
                     await state.engines?.controller(target)?.rescanModels()
                     state.reloadModels()
                 }
-            } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Console.secondary)
-                    .frame(width: 34, height: 34)
-                    .background {
-                        LiquidGlassSurface(shape: Circle(), interactive: true)
-                    }
             }
-            .buttonStyle(.plainHit)
-            .help("重新扫描")
         }
     }
 
@@ -192,15 +209,28 @@ private struct ModelCard: View {
         VStack(alignment: .leading, spacing: 12) {
             header
             VStack(alignment: .leading, spacing: 5) {
-                Text(displayTitle)
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(Console.text)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Text(titleParts.name)
+                        .font(DS.Font.lg.weight(.semibold))
+                        .tracking(-0.2)
+                        .foregroundStyle(DS.text)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if let variant = titleParts.variant {
+                        Text(variant)
+                            .font(DS.Font.mono(10, weight: .medium))
+                            .foregroundStyle(DS.text2)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(DS.rect(DS.Radius.sm).fill(DS.raised))
+                            .overlay(DS.rect(DS.Radius.sm).strokeBorder(DS.line2, lineWidth: 1))
+                            .fixedSize()
+                    }
+                }
                 if let subtitle {
                     Text(subtitle)
-                        .font(.system(size: 11, design: monoSubtitle ? .monospaced : .default))
-                        .foregroundStyle(Console.secondary)
+                        .font(monoSubtitle ? DS.Font.mono(11) : DS.Font.xs)
+                        .foregroundStyle(DS.text2)
                         .lineLimit(monoSubtitle ? 1 : 2)
                         .truncationMode(monoSubtitle ? .middle : .tail)
                         .fixedSize(horizontal: false, vertical: !monoSubtitle)
@@ -214,19 +244,23 @@ private struct ModelCard: View {
                 ("SIZE", model.bytes > 0 ? model.sizeText : "—"),
             ])
             tags
+            DSDivider()
             HStack(spacing: 8) {
                 Image(systemName: "memorychip")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Console.tertiary)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(exceedsMemory ? DS.warn : DS.text3)
                 Text(memoryText)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Console.secondary)
+                    .font(DS.Font.xs)
+                    .foregroundStyle(exceedsMemory ? DS.warn : DS.text2)
                 Spacer(minLength: 0)
                 action
             }
         }
-        .padding(18)
-        .consoleCardSurface(tint: cardTint, interactive: true)
+        .padding(16)
+        .dsSurface(radius: DS.Radius.lg,
+                   fill: DS.surface,
+                   stroke: selected ? DS.accent.opacity(0.45) : DS.line,
+                   hoverable: true)
         .contextMenu {
             if !model.path.isEmpty {
                 Button("在 Finder 中显示") {
@@ -245,8 +279,15 @@ private struct ModelCard: View {
         model.shortName
     }
 
-    /// 卡片副标题。仓库 id 经常和标题逐字相同（"owner/Repo" → "Repo"），
-    /// 那样印两遍只是占位；改用目录里的说明，完整 id 留在悬停提示里。
+    private var titleParts: (name: String, variant: String?) {
+        let title = displayTitle
+        guard let colon = title.lastIndex(of: ":") else { return (title, nil) }
+        let name = String(title[title.startIndex..<colon])
+        let variant = String(title[title.index(after: colon)...])
+        guard !name.isEmpty, !variant.isEmpty, variant.count <= 16 else { return (title, nil) }
+        return (name, variant)
+    }
+
     private var subtitlePair: (text: String, mono: Bool) {
         if let summary = entry.recommendation?.summary, !summary.isEmpty {
             return (summary, false)
@@ -262,9 +303,6 @@ private struct ModelCard: View {
 
     private var monoSubtitle: Bool { subtitlePair.mono }
 
-    /// Quantization for the spec row. Scanned weights carry their own label;
-    /// a suggestion falls back to the catalog's chosen variant or tag, then to
-    /// whatever the repository id happens to spell out.
     private var quantizationLabel: String? {
         if let quant = model.quantization, !quant.isEmpty { return quant }
         if let variant = entry.recommendation?.variant,
@@ -284,14 +322,6 @@ private struct ModelCard: View {
         return "GGUF"
     }
 
-    /// 卡面只在下载中铺一层暖色底。使用中的卡不再整块染色——「正在用哪个模型」
-    /// 由卡片右下角的「使用中」标识说明，卡面本身和普通卡保持同一种玻璃。
-    private var cardTint: Color? {
-        if selected { return nil }
-        if activeFraction != nil || task != nil { return Console.warn.opacity(0.10) }
-        return nil
-    }
-
     private var family: ModelFamily {
         ModelFamily.resolve(id: model.id,
                             hint: model.family,
@@ -300,17 +330,19 @@ private struct ModelCard: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            ModelFamilyIcon(family: family, size: 30)
+            ModelFamilyIcon(family: family, size: 28)
             VStack(alignment: .leading, spacing: 1) {
                 Text(entry.engine.displayName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Console.text)
+                    .font(DS.Font.md.weight(.medium))
+                    .foregroundStyle(DS.text)
                 Text(familyName)
-                    .font(.system(size: 10))
-                    .foregroundStyle(Console.tertiary)
+                    .font(DS.Font.xs)
+                    .foregroundStyle(DS.text3)
             }
             Spacer(minLength: 0)
-            Menu {
+            DSMenu {
+                DSMenuTriggerLabel(systemImage: "ellipsis", kind: .icon, size: .small)
+            } content: {
                 if !model.path.isEmpty {
                     Button("在 Finder 中显示") {
                         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: model.path)])
@@ -321,21 +353,7 @@ private struct ModelCard: View {
                     Divider()
                     Button("删除权重…", role: .destructive, action: remove)
                 }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Console.secondary)
             }
-            // 无边框 Menu 把标签当模板压平：标签里的 frame / background 会被丢掉，
-            // 图标颜色也得靠 .tint 而不是 foregroundStyle。所以 28pt 的玻璃圆底
-            // 挂在外层的 frame 上，Menu 本身只负责那三个点。
-            .tint(Console.secondary)
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .frame(width: 28, height: 28)
-            .contentShape(Circle())
-            .background { LiquidGlassSurface(shape: Circle(), interactive: true) }
         }
     }
 
@@ -355,8 +373,6 @@ private struct ModelCard: View {
 
     private var tagTexts: [String] {
         var values: [String] = []
-        // Quantization already has its own spec row; keeping it here too would
-        // print the same label twice.
         if let tags = entry.recommendation?.tags {
             values.append(contentsOf: tags.filter {
                 ModelQuantization.detect(in: $0) == nil && !values.contains($0)
@@ -368,13 +384,24 @@ private struct ModelCard: View {
         return values.isEmpty ? ["本地"] : values
     }
 
-    private var memoryText: String {
+    private var requiredMemoryGB: Int {
         let catalog = entry.recommendation?.minimumMemory ?? 0
-        // SIZE 格是实测、内存是目录里的估算。估算值不可能低于权重本身，
-        // 否则同一张卡片自相矛盾（68.5 GB 的权重配"64 GB 内存起"）。
         let weightsGB = model.bytes > 0 ? Int((Double(model.bytes) / 1_000_000_000).rounded(.up)) : 0
-        let memory = max(catalog, weightsGB)
-        if memory > 0 { return L10n.format("%lld GB 内存起", memory) }
+        return max(catalog, weightsGB)
+    }
+
+    private var exceedsMemory: Bool {
+        device.memoryGB > 0 && requiredMemoryGB > device.memoryGB
+    }
+
+    private var memoryText: String {
+        let memory = requiredMemoryGB
+        if memory > 0 {
+            if exceedsMemory {
+                return L10n.format("%lld GB 内存起 · 超出本机", memory)
+            }
+            return L10n.format("%lld GB 内存起", memory)
+        }
         return L10n.t("内存需求未标注")
     }
 
@@ -383,91 +410,41 @@ private struct ModelCard: View {
             Button {
                 state.pauseDownload()
             } label: {
-                Label(L10n.format("下载 %@", fraction.formatted(.percent.precision(.fractionLength(0)))), systemImage: "pause.fill")
+                Label(L10n.format("下载 %@", fraction.formatted(.percent.precision(.fractionLength(0)))),
+                      systemImage: "pause.fill")
             }
-            .buttonStyle(CardActionStyle(tone: .neutral))
+            .buttonStyle(.ds(.secondary, size: .small))
         } else if let task {
             Button {
                 state.resumeDownload(task)
             } label: {
-                Label(task.status == .paused ? L10n.format("继续 %@", (task.fraction ?? 0).formatted(.percent.precision(.fractionLength(0)))) : L10n.t("重试"),
+                Label(task.status == .paused
+                      ? L10n.format("继续 %@", (task.fraction ?? 0).formatted(.percent.precision(.fractionLength(0))))
+                      : L10n.t("重试"),
                       systemImage: "play.fill")
             }
-            .buttonStyle(CardActionStyle(tone: .neutral))
+            .buttonStyle(.ds(.secondary, size: .small))
         } else if entry.installed {
             if selected {
-                HStack(spacing: 6) {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 10.5, weight: .semibold))
-                    Text("使用中")
-                        .font(.system(size: 11.5, weight: .semibold))
-                }
-                .foregroundStyle(Console.accent)
-                .padding(.horizontal, 12)
-                .frame(height: 32)
-                .background(Capsule().fill(Console.accent.opacity(0.12)))
-                .overlay(Capsule().strokeBorder(Console.accent.opacity(0.25), lineWidth: 0.8))
+                DSChip(text: "使用中", dot: DS.ok, live: true, tint: DS.ok)
             } else {
                 Button {
                     state.useModel(model.id, engine: entry.engine)
                 } label: {
-                    Label("使用", systemImage: "play.fill")
+                    Label(L10n.t("使用"), systemImage: "play.fill")
                 }
-                .buttonStyle(CardActionStyle(tone: .accent))
+                .buttonStyle(.ds(.primary, size: .small))
             }
         } else {
             Button {
                 state.downloadModel(model.id, engine: entry.engine)
             } label: {
-                Label("下载", systemImage: "arrow.down.circle.fill")
+                Label(L10n.t("下载"), systemImage: "arrow.down.circle.fill")
             }
-            .buttonStyle(CardActionStyle(tone: .neutral))
+            .buttonStyle(.ds(.secondary, size: .small))
             .disabled(state.downloadingModel != nil)
+            .help(state.downloadingModel != nil ? L10n.t("已有下载任务进行中，请稍候") : L10n.t("下载模型"))
         }
-    }
-}
-
-
-/// 模型卡上的按钮不铺底色。卡片本身就是一层玻璃，按钮再叠一个玻璃胶囊会在
-/// 卡面上多出一块更亮的椭圆；现在按钮只留文字和图标，悬停时提亮、按下时轻微
-/// 收缩，命中区仍覆盖整块内边距。
-private struct CardActionStyle: ButtonStyle {
-    enum Tone { case accent, neutral }
-
-    var tone: Tone = .neutral
-
-    func makeBody(configuration: Configuration) -> some View {
-        CardActionBody(configuration: configuration, tone: tone)
-    }
-}
-
-private struct CardActionBody: View {
-    let configuration: ButtonStyleConfiguration
-    let tone: CardActionStyle.Tone
-
-    @Environment(\.isEnabled) private var isEnabled
-    @State private var hovering = false
-
-    private var tint: Color {
-        switch tone {
-        case .accent: return Console.accent
-        case .neutral: return Console.text
-        }
-    }
-
-    var body: some View {
-        configuration.label
-            .font(.system(size: 12.5, weight: .semibold))
-            .foregroundStyle(isEnabled ? tint.opacity(hovering ? 1 : 0.82)
-                                       : Console.tertiary.opacity(0.6))
-            .padding(.horizontal, 8)
-            .frame(height: 32)
-            .contentShape(Rectangle())
-            .opacity(configuration.isPressed ? 0.55 : 1)
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .animation(Motion.quick, value: configuration.isPressed)
-            .animation(Motion.quick, value: hovering)
-            .onHover { hovering = $0 }
     }
 }
 

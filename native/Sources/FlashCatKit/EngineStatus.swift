@@ -64,6 +64,28 @@ public struct EngineRateSample: Sendable, Equatable {
     public var isActive: Bool { (value ?? 0) > 0 }
 }
 
+/// 首字延迟（TTFT）读数的粒度。不同引擎上报的首字统计语义不同，
+/// 界面据此打 `P50` / `AVG` / `LAST` 角标，而不是一律写 `P50`。
+public enum EngineTTFTKind: String, Codable, Sendable {
+    /// 引擎上报的 p50 分位数（splash `metrics.ttft_ms.p50`）。
+    case p50
+    /// 进程累计均值（mlx-serve `time_to_first_token_seconds.sum / count`）。
+    case lifetimeMean
+    /// 上一个已完成请求的实测值（MTPLX `latest.ttft_s`）。
+    case lastRequest
+    /// 引擎未上报首字延迟。
+    case none
+
+    public var rank: Int {
+        switch self {
+        case .none: return 0
+        case .lifetimeMean: return 1
+        case .lastRequest: return 2
+        case .p50: return 3
+        }
+    }
+}
+
 // MARK: - Status
 
 /// Engine-neutral snapshot. Every adapter folds its own `/status` payload into
@@ -81,8 +103,12 @@ public struct EngineStatus: Sendable, Equatable {
     /// 正是概览页把几千 tok/s 当当前速度的根因。
     public var decodeRateKind: EngineRateKind
     public var prefillRateKind: EngineRateKind
+    /// 进程级累计平均解码速度（tok/s）。与 `decodeTokensPerSecond`（可被瞬时/最近
+    /// 速率覆盖）分开，直连引擎端口时 `averageDecodeReading` 靠它兜底。
+    public var lifetimeDecodeTokensPerSecond: Double?
     public var draftAcceptance: Double?
     public var ttftMilliseconds: Double?
+    public var ttftKind: EngineTTFTKind
     public var activeRequests: Int
     public var queuedRequests: Int
     public var requestsCompleted: Int
@@ -110,8 +136,10 @@ public struct EngineStatus: Sendable, Equatable {
                 prefillTokensPerSecond: Double? = nil,
                 decodeRateKind: EngineRateKind = .none,
                 prefillRateKind: EngineRateKind = .none,
+                lifetimeDecodeTokensPerSecond: Double? = nil,
                 draftAcceptance: Double? = nil,
                 ttftMilliseconds: Double? = nil,
+                ttftKind: EngineTTFTKind = .none,
                 activeRequests: Int = 0,
                 queuedRequests: Int = 0,
                 requestsCompleted: Int = 0,
@@ -132,8 +160,10 @@ public struct EngineStatus: Sendable, Equatable {
         self.prefillTokensPerSecond = prefillTokensPerSecond
         self.decodeRateKind = decodeRateKind
         self.prefillRateKind = prefillRateKind
+        self.lifetimeDecodeTokensPerSecond = lifetimeDecodeTokensPerSecond
         self.draftAcceptance = draftAcceptance
         self.ttftMilliseconds = ttftMilliseconds
+        self.ttftKind = ttftMilliseconds == nil ? .none : ttftKind
         self.activeRequests = activeRequests
         self.queuedRequests = queuedRequests
         self.requestsCompleted = requestsCompleted

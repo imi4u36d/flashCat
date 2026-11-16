@@ -6,10 +6,6 @@ import FlashCatKit
 ///
 /// 两条路径共用一页：硬件推荐（`showsRecommendationPage`）与引擎安装
 /// （没有可用运行时时）。安装完成由 `adoptEngine` 接管，页面自动让位给控制台。
-///
-/// 视觉上跟随控制台的 Liquid Glass 语言：画布取 `ConsoleBackdrop`，每一行是
-/// 玻璃胶囊卡片，已安装用玻璃徽标表达，主按钮也是玻璃胶囊。进场与安装进度
-/// 都走统一的 `Motion` 节奏，尊重「减少动态效果」。
 struct LaunchPage: View {
     @ObservedObject var state: AppState
 
@@ -24,7 +20,7 @@ struct LaunchPage: View {
 
     var body: some View {
         ZStack {
-            ConsoleBackdrop(accent: Console.accent)
+            DS.canvas.ignoresSafeArea()
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     brand
@@ -60,14 +56,14 @@ struct LaunchPage: View {
 
     private var brand: some View {
         HStack(spacing: 10) {
-            BrandMark(size: 38)
+            BrandMark(size: 32)
             VStack(alignment: .leading, spacing: 2) {
                 Text("flashCat")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Console.text)
+                    .font(DS.Font.lg.weight(.semibold))
+                    .foregroundStyle(DS.text)
                 Text("本地推理控制台")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Console.tertiary)
+                    .font(DS.Font.xs)
+                    .foregroundStyle(DS.text3)
             }
             Spacer(minLength: 0)
         }
@@ -76,13 +72,13 @@ struct LaunchPage: View {
     private var intro: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(L10n.t(isRecommendation ? "先装一台引擎" : "选择一台引擎"))
-                .font(.system(size: 30, weight: .bold))
-                .foregroundStyle(Console.text)
+                .font(DS.Font.display)
+                .foregroundStyle(DS.text)
             Text(isRecommendation
                  ? "引擎运行时按 pack 分发，第一次打开需要下载（80 MB ~ 600 MB）。装好后控制台会自动接管。"
                  : "没有可用的引擎运行时。装一台就能开始；之后可以在引擎页随时加装其他引擎。")
-                .font(.system(size: 12.5))
-                .foregroundStyle(Console.secondary)
+                .font(DS.Font.md)
+                .foregroundStyle(DS.text2)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -91,16 +87,16 @@ struct LaunchPage: View {
         Card("这台 Mac", subtitle: "推荐结果按统一内存与可用磁盘计算") {
             HStack(spacing: 16) {
                 Label(recommendation.chipName, systemImage: "cpu")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.Font.sm.weight(.medium))
                 Label("\(recommendation.memoryGB) GB 内存", systemImage: "memorychip")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DS.Font.sm.weight(.medium))
                 if recommendation.freeDiskBytes > 0 {
                     Label("可用 \(Format.size(Int(recommendation.freeDiskBytes)))", systemImage: "internaldrive")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(DS.Font.sm.weight(.medium))
                 }
                 Spacer(minLength: 0)
             }
-            .foregroundStyle(Console.secondary)
+            .foregroundStyle(DS.text2)
         }
     }
 
@@ -119,26 +115,25 @@ struct LaunchPage: View {
 
     private func pickRow(_ pick: HardwareRecommendation.Pick) -> some View {
         let id = pick.engineID
+        let installed = id.map { state.engineIsInstalled($0) } ?? false
         return HStack(spacing: 14) {
-            ArcadeIcon(symbol: id.map(engineSymbol) ?? "cpu",
-                       colors: id.map { [engineAccent($0), engineAccent($0).opacity(0.6)] } ?? [Native.blue],
-                       size: 36,
-                       glyphScale: 0.44,
-                       glow: false)
+            IconTile(symbol: id.map(engineSymbol) ?? "cpu",
+                     color: id.map(engineAccent) ?? DS.info,
+                     size: 34)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(id?.displayName ?? pick.engine)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Console.text)
+                        .font(DS.Font.md.weight(.semibold))
+                        .foregroundStyle(DS.text)
                     Tag(text: fitLabel(pick.verdict), tone: fitTone(pick.verdict))
                 }
                 Text(pick.shortName)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Console.secondary)
+                    .font(DS.Font.sm)
+                    .foregroundStyle(DS.text2)
                     .lineLimit(1)
                 Text(pick.reason)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Console.tertiary)
+                    .font(DS.Font.xs)
+                    .foregroundStyle(DS.text3)
                     .lineLimit(2)
             }
             Spacer(minLength: 8)
@@ -146,8 +141,12 @@ struct LaunchPage: View {
                 installButton(id, recommended: pick)
             }
         }
-        .padding(Native.cardPadding)
-        .consoleCardSurface()
+        .padding(14)
+        .dsSurface(
+            radius: DS.Radius.lg,
+            fill: DS.surface,
+            stroke: installed ? DS.ok.opacity(0.35) : DS.line
+        )
     }
 
     private var engineList: some View {
@@ -165,25 +164,25 @@ struct LaunchPage: View {
         let accent = engineAccent(id)
         let installed = state.engineIsInstalled(id)
         return HStack(spacing: 14) {
-            ArcadeIcon(symbol: engineSymbol(id),
-                       colors: [accent, accent.opacity(0.6)],
-                       size: 36,
-                       glyphScale: 0.44,
-                       glow: false)
+            IconTile(symbol: engineSymbol(id), color: accent, size: 34)
             VStack(alignment: .leading, spacing: 3) {
                 Text(id.displayName)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Console.text)
+                    .font(DS.Font.md.weight(.semibold))
+                    .foregroundStyle(DS.text)
                 Text(id.descriptor.summary)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Console.tertiary)
+                    .font(DS.Font.xs)
+                    .foregroundStyle(DS.text3)
                     .lineLimit(2)
             }
             Spacer(minLength: 8)
             installButton(id, recommended: nil)
         }
-        .padding(Native.cardPadding)
-        .consoleCardSurface(tint: installed ? Console.ok.opacity(0.06) : nil)
+        .padding(14)
+        .dsSurface(
+            radius: DS.Radius.lg,
+            fill: DS.surface,
+            stroke: installed ? DS.ok.opacity(0.35) : DS.line
+        )
     }
 
     @ViewBuilder
@@ -209,14 +208,14 @@ struct LaunchPage: View {
                 } label: {
                     Text(L10n.t(recommended == nil ? "安装" : "安装并开始"))
                 }
-                .buttonStyle(.consolePrimary)
+                .buttonStyle(.ds(.primary, size: .regular))
                 .disabled(installs.building != nil || busy != nil)
                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
-        .animation(Motion.standard, value: installed)
-        .animation(Motion.standard, value: phase.isBusy)
-        .animation(Motion.standard, value: busy)
+        .animation(DS.Motion.smooth, value: installed)
+        .animation(DS.Motion.smooth, value: phase.isBusy)
+        .animation(DS.Motion.smooth, value: busy)
     }
 
     private var footer: some View {
@@ -225,14 +224,14 @@ struct LaunchPage: View {
                 Button("先跳过推荐") {
                     state.dismissRecommendation(engine: nil)
                 }
-                .buttonStyle(.consoleSecondary)
+                .buttonStyle(.ds(.secondary, size: .regular))
             } else {
                 Button {
                     startUsing()
                 } label: {
                     Text("开始使用")
                 }
-                .buttonStyle(LaunchActionStyle())
+                .buttonStyle(.ds(.primary, size: .large))
                 .help(installedCandidate == nil
                       ? "直接进入控制台，稍后再装引擎"
                       : "以 \(installedCandidate?.displayName ?? "") 进入控制台")
@@ -240,8 +239,8 @@ struct LaunchPage: View {
 
             if let error = installs.indexError, !error.isEmpty {
                 Text(error)
-                    .font(.system(size: 10))
-                    .foregroundStyle(Console.warn)
+                    .font(DS.Font.xs)
+                    .foregroundStyle(DS.warn)
                     .lineLimit(1)
             }
         }
@@ -326,7 +325,7 @@ private struct LaunchEntrance: ViewModifier {
         content
             .opacity(active ? 1 : 0)
             .offset(y: active ? 0 : 12)
-            .animation(reduceMotion ? nil : Motion.entrance.delay(delay), value: active)
+            .animation(reduceMotion ? nil : DS.Motion.smooth.delay(delay), value: active)
     }
 }
 
@@ -336,29 +335,29 @@ private extension View {
     }
 }
 
-/// 已安装徽标：玻璃胶囊 + 勾选，替掉原来的「完成」按钮。
+/// 已安装徽标：勾选状态标签，替掉原来的「完成」按钮。
 private struct InstalledBadge: View {
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: "checkmark")
                 .font(.system(size: 10, weight: .bold))
             Text("已安装")
-                .font(.system(size: 11.5, weight: .semibold))
+                .font(DS.Font.xs.weight(.semibold))
         }
-        .foregroundStyle(Console.ok)
-        .padding(.horizontal, 11)
-        .frame(height: 30)
+        .foregroundStyle(DS.ok)
+        .padding(.horizontal, 10)
+        .frame(height: 28)
         .background {
-            LiquidGlassSurface(shape: Capsule(), tint: Console.ok.opacity(0.34))
+            DS.rect(DS.Radius.md).fill(DS.ok.opacity(0.12))
         }
-        .overlay(Capsule().strokeBorder(Console.ok.opacity(0.20), lineWidth: 0.8))
+        .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.ok.opacity(0.25), lineWidth: 1))
         .fixedSize()
         .accessibilityLabel("已安装")
     }
 }
 
 /// 安装中的连续动画：进度弧平滑补齐，外圈一道细弧缓慢旋转，
-/// 步骤文字交叉淡入淡出，整体坐在一层玻璃胶囊上。
+/// 步骤文字交叉淡入淡出。
 private struct LaunchProgressBadge: View {
     let fraction: Double
     let label: String
@@ -370,7 +369,7 @@ private struct LaunchProgressBadge: View {
     private var clamped: Double { min(max(fraction, 0), 1) }
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 8) {
             ZStack {
                 Circle()
                     .stroke(tint.opacity(0.16), lineWidth: 2.5)
@@ -378,7 +377,7 @@ private struct LaunchProgressBadge: View {
                     .trim(from: 0, to: CGFloat(max(clamped, 0.06)))
                     .stroke(tint, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
-                    .animation(.easeInOut(duration: 0.45), value: clamped)
+                    .animation(DS.Motion.smooth, value: clamped)
                 if !reduceMotion {
                     Circle()
                         .trim(from: 0, to: 0.18)
@@ -388,43 +387,26 @@ private struct LaunchProgressBadge: View {
                                    value: spinning)
                 }
             }
-            .frame(width: 22, height: 22)
+            .frame(width: 20, height: 20)
 
             Text(L10n.t(label))
-                .font(.system(size: 11))
-                .foregroundStyle(Console.secondary)
+                .font(DS.Font.xs)
+                .foregroundStyle(DS.text2)
                 .lineLimit(1)
                 .frame(width: 96, alignment: .leading)
                 .contentTransition(.opacity)
-                .animation(Motion.standard, value: label)
+                .animation(DS.Motion.smooth, value: label)
         }
-        .padding(.horizontal, 11)
-        .frame(height: 30)
+        .padding(.horizontal, 10)
+        .frame(height: 28)
         .background {
-            LiquidGlassSurface(shape: Capsule(), tint: tint.opacity(0.16))
+            DS.rect(DS.Radius.md).fill(DS.raised)
+        }
+        .overlay {
+            DS.rect(DS.Radius.md).strokeBorder(DS.line, lineWidth: 1)
         }
         .onAppear { spinning = true }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(label)
-    }
-}
-
-/// 引导页主按钮：比普通胶囊更大、居中，玻璃底 + 墨色 tint。
-private struct LaunchActionStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(Console.inkForeground)
-            .padding(.horizontal, 42)
-            .frame(height: 44)
-            .background {
-                LiquidGlassSurface(shape: Capsule(), tint: Console.ink, interactive: true)
-            }
-            .opacity(isEnabled ? (configuration.isPressed ? 0.86 : 1) : 0.42)
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-            .animation(Motion.quick, value: configuration.isPressed)
-            .contentShape(Capsule())
     }
 }

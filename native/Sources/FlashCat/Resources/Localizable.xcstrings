@@ -1741,6 +1741,46 @@
         }
       }
     },
+    "命令面板": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Command Palette"
+          }
+        }
+      }
+    },
+    "协议": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Protocol"
+          }
+        }
+      }
+    },
+    "按请求": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Per-request"
+          }
+        }
+      }
+    },
+    "模型启动以来平均": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Average since model start"
+          }
+        }
+      }
+    },
     "命令行工具": {
       "localizations": {
         "en": {
@@ -2947,6 +2987,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Endpoint copied"
+          }
+        }
+      }
+    },
+    "控制台": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Console"
           }
         }
       }
@@ -5027,6 +5077,36 @@
           "stringUnit": {
             "state": "translated",
             "value": "\"%@\" has %lld messages. They are deleted with it and cannot be recovered."
+          }
+        }
+      }
+    },
+    "等待样本": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for samples"
+          }
+        }
+      }
+    },
+    "暂无请求": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No requests"
+          }
+        }
+      }
+    },
+    "非流式请求无逐秒曲线": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No per-second curve for non-streaming requests"
           }
         }
       }

@@ -583,4 +583,36 @@ final class GatewayMeterTests: XCTestCase {
 
         XCTAssertEqual(meter.recentPrefill() ?? 0, 2_400.0, accuracy: 1)
     }
+
+    /// 跨代（resetLifetime）后，旧一代仍在跑的请求即使稍后收尾，也不应污染新一代均值与缓存命中率。
+    func testResetLifetimeIsolatesInFlightOldEpochSessions() {
+        let meter = GatewayMeter()
+        let start = Date()
+        let old = meter.begin(model: "old-model", dialect: "openai", promptTokens: 1_000, at: start)
+        meter.addTokens(old, 100, at: start.addingTimeInterval(0.5))
+        meter.addTokens(old, 100, at: start.addingTimeInterval(1.5))
+        meter.noteUsage(old, promptTokens: 1_000, completionTokens: 200, cachedPromptTokens: 900)
+
+        meter.resetLifetime()
+        XCTAssertNil(meter.lifetimeAverage())
+        XCTAssertNil(meter.cacheHit())
+        XCTAssertNil(meter.latestContext())
+
+        meter.finish(old, at: start.addingTimeInterval(2.0))
+        XCTAssertNil(meter.lifetimeAverage())
+        XCTAssertNil(meter.cacheHit())
+        XCTAssertNil(meter.latestContext())
+
+        let current = meter.begin(model: "new-model", dialect: "openai", promptTokens: 500,
+                                  at: start.addingTimeInterval(3.0))
+        meter.addTokens(current, 40, at: start.addingTimeInterval(3.2))
+        XCTAssertEqual(meter.latestContext()?.tokens, 540)
+        XCTAssertEqual(meter.latestContext()?.isLive, true)
+
+        meter.noteUsage(current, promptTokens: 500, completionTokens: 50, cachedPromptTokens: 100)
+        meter.finish(current, at: start.addingTimeInterval(4.2))
+        XCTAssertEqual(meter.latestContext()?.tokens, 550)
+        XCTAssertEqual(meter.latestContext()?.isLive, false)
+        XCTAssertEqual(meter.cacheHit()?.rate ?? 0, 0.2, accuracy: 0.0001)
+    }
 }

@@ -29,11 +29,17 @@ struct FlashCatApp: App {
             CommandGroup(replacing: .appInfo) {
                 Button("关于 flashCat") { delegate.showAbout() }
             }
-            // 应用不注册任何键盘快捷键：每个动作都有可点击的菜单项或按钮，
-            // 键盘用户通过随应用安装的 `flashcat` 命令行完成同样的事。
+            CommandGroup(replacing: .appSettings) {
+                Button("设置") { state.section = .settings }
+                    .keyboardShortcut(",", modifiers: .command)
+            }
             CommandGroup(after: .newItem) {
                 Button("打开对话") { state.section = .chat }
-                Button("新建对话") { state.newConversation() }
+                Button("新建对话") {
+                    state.newConversation()
+                    state.section = .chat
+                }
+                .keyboardShortcut("n", modifiers: .command)
             }
             CommandMenu("服务") {
                 Button("启动服务") { state.startService() }
@@ -48,11 +54,11 @@ struct FlashCatApp: App {
                     NSWorkspace.shared.open(URL(fileURLWithPath: Paths.logFile))
                 }
             }
-            // 标准「显示 / 隐藏边栏」菜单位置；不带按键，点击即执行。
             CommandGroup(after: .sidebar) {
                 Button(L10n.t(state.showsSidebar ? "隐藏边栏" : "显示边栏")) {
                     state.toggleSidebar()
                 }
+                .keyboardShortcut("s", modifiers: [.command, .control])
                 Button("切换浅色 / 深色") {
                     state.theme.set(state.theme.mode.resolvedIsDark ? .light : .dark)
                 }
@@ -61,14 +67,21 @@ struct FlashCatApp: App {
                 Button("命令面板") {
                     NotificationCenter.default.post(name: .flashCatOpenCommandPalette, object: nil)
                 }
+                .keyboardShortcut("k", modifiers: .command)
                 Divider()
-                Button("概览") { state.section = .overview }
                 Button("对话") { state.section = .chat }
-                Button("模型") { state.section = .models }
-                Button("引擎") { state.section = .engines }
-                Button("日志") { state.section = .logs }
-                Button("设置") { state.section = .settings }
+                    .keyboardShortcut("1", modifiers: .command)
                 Button("实验室") { state.section = .lab }
+                    .keyboardShortcut("2", modifiers: .command)
+                Button("概览") { state.section = .overview }
+                    .keyboardShortcut("3", modifiers: .command)
+                Button("模型") { state.section = .models }
+                    .keyboardShortcut("4", modifiers: .command)
+                Button("引擎") { state.section = .engines }
+                    .keyboardShortcut("5", modifiers: .command)
+                Button("日志") { state.section = .logs }
+                    .keyboardShortcut("6", modifiers: .command)
+                Button("设置") { state.section = .settings }
             }
         }
 

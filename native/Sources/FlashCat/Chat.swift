@@ -203,15 +203,15 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         var finished = false
 
         /// 流式回调合并缓冲：SSE 分片可能每秒上百个，逐片回调会让上层为每个
-        /// 分片创建一次主线程任务并触发整页重绘。这里按固定节奏合并成一批，
-        /// 既保留实时感，又把主线程唤醒次数压到约 30 次/秒。
+        /// 分片创建一次主线程任务并触发整页重绘。按 60fps 节拍合并成批，
+        /// 低于 60 tok/s 时每片即时透传，高于 60 tok/s 时平滑对齐刷新率。
         var pendingDelta = ""
         var pendingReasoning = ""
         /// 工具调用参数的分片也要按节奏回调：`GatewayMeter` 靠它把「模型真正
         /// 生成的字」算进 tok/s，否则一次纯工具调用的流会显示 0 tok/s。
         var pendingToolArguments = ""
         var lastDeltaFlush = Date.distantPast
-        static let deltaFlushInterval: TimeInterval = 1.0 / 30.0
+        static let deltaFlushInterval: TimeInterval = 1.0 / 60.0
 
         /// 回调都带上分片到达的时刻：解码测速只该相信网络侧的时钟，不能等主线程
         /// 排到这条任务时才取时间（UI 忙时会把一批分片挤成「瞬间到达」）。

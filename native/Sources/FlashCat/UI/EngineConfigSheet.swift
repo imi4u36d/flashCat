@@ -19,18 +19,18 @@ struct EngineConfigSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Hairline()
+            DSDivider()
             ScrollView {
-                VStack(alignment: .leading, spacing: Native.gap) {
+                VStack(alignment: .leading, spacing: 12) {
                     portCard
                     switchesCard
                     prefixCacheCard
                     advancedCard
                 }
-                .padding(Native.pagePadding)
+                .padding(18)
             }
             .scrollIndicators(.never)
-            Hairline()
+            DSDivider()
             footer
         }
         .frame(width: 580, height: 640)
@@ -40,26 +40,22 @@ struct EngineConfigSheet: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            ArcadeIcon(symbol: engineSymbol(engine),
-                       colors: [engineAccent(engine), engineAccent(engine).opacity(0.62)],
-                       size: 30,
-                       glyphScale: 0.44,
-                       glow: false)
+            IconTile(symbol: engineSymbol(engine), color: engineAccent(engine), size: 30)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
                     Text(engine.displayName)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Native.label)
+                        .font(DS.Font.lg.weight(.semibold))
+                        .foregroundStyle(DS.text)
                     if isActive { Tag(text: "当前引擎", tone: .success) }
                 }
                 Text("\(installedVersion ?? L10n.t("未安装")) · 端口 \(portText.isEmpty ? "—" : portText)")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Native.tertiary)
+                    .font(DS.Font.xs)
+                    .foregroundStyle(DS.text3)
             }
             Spacer(minLength: 8)
-            IconAction(systemName: "xmark", help: "关闭") { dismiss() }
+            DSIconButton(systemName: "xmark", help: "关闭") { dismiss() }
         }
-        .padding(.horizontal, Native.pagePadding)
+        .padding(.horizontal, 18)
         .padding(.vertical, 14)
     }
 
@@ -67,12 +63,15 @@ struct EngineConfigSheet: View {
         Card("端口", subtitle: "只监听 127.0.0.1；同一段内会跳过被占领的端口") {
             HStack(spacing: 10) {
                 TextField("端口", text: $portText)
-                    .textFieldStyle(.roundedBorder)
-                    .font(Native.monoFont)
-                    .frame(width: 110)
+                    .textFieldStyle(.plain)
+                    .font(DS.Font.mono(11.5))
+                    .padding(.horizontal, 8)
+                    .frame(width: 110, height: 28)
+                    .background(DS.rect(DS.Radius.md).fill(DS.bg))
+                    .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line2, lineWidth: 1))
                 Text("默认 \(engine.defaultPort) · 允许 \(engine.portRange.lowerBound)–\(engine.portRange.upperBound)")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Native.tertiary)
+                    .font(DS.Font.xs)
+                    .foregroundStyle(DS.text3)
                 Spacer(minLength: 0)
             }
         }
@@ -118,21 +117,22 @@ struct EngineConfigSheet: View {
                     Toggle(isOn: prefixCacheEnabled) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(L10n.t("落盘"))
-                                .font(Native.bodyFont)
-                                .foregroundStyle(Native.label)
+                                .font(DS.Font.md)
+                                .foregroundStyle(DS.text)
                             Text(L10n.t("关闭后每次重启都要从零重算整段历史"))
-                                .font(.system(size: 10))
-                                .foregroundStyle(Native.tertiary)
+                                .font(DS.Font.xs)
+                                .foregroundStyle(DS.text3)
                         }
                     }
                     .toggleStyle(.switch)
                     .controlSize(.small)
+                    .tint(DS.accent)
 
                     if prefixCacheEnabled.wrappedValue {
                         intField("磁盘预算 (GB)", value: $tuning.prefixCacheDiskGB, placeholder: "20")
                         Text(FlashCatPaths.prefixCacheDirectory(engine))
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(Native.tertiary)
+                            .font(DS.Font.mono(10))
+                            .foregroundStyle(DS.text3)
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
@@ -160,14 +160,18 @@ struct EngineConfigSheet: View {
         Card("高级", subtitle: "思考预算与额外命令行参数") {
             VStack(alignment: .leading, spacing: 8) {
                 intField("思考 token 预算", value: $tuning.thinkingBudget, placeholder: "不限制")
-                HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .center, spacing: 8) {
                     Text("额外参数")
-                        .font(Native.bodyFont)
-                        .foregroundStyle(Native.secondary)
+                        .font(DS.Font.md)
+                        .foregroundStyle(DS.text2)
                         .frame(width: 96, alignment: .leading)
                     TextField("--flag value", text: optionalText(\.extraArguments))
-                        .textFieldStyle(.roundedBorder)
-                        .font(Native.monoFont)
+                        .textFieldStyle(.plain)
+                        .font(DS.Font.mono(11.5))
+                        .padding(.horizontal, 8)
+                        .frame(height: 28)
+                        .background(DS.rect(DS.Radius.md).fill(DS.bg))
+                        .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line2, lineWidth: 1))
                 }
             }
         }
@@ -178,14 +182,14 @@ struct EngineConfigSheet: View {
             Button("恢复默认") {
                 tuning = EngineTuning.defaults(for: engine)
             }
-            .buttonStyle(.arcadeGlass)
+            .buttonStyle(.ds(.secondary, size: .regular))
             Spacer(minLength: 0)
             Button("取消") { dismiss() }
-                .buttonStyle(.arcadeGlass)
+                .buttonStyle(.ds(.secondary, size: .regular))
             Button("保存") { save() }
-                .buttonStyle(.arcadePill)
+                .buttonStyle(.ds(.primary, size: .regular))
         }
-        .padding(.horizontal, Native.pagePadding)
+        .padding(.horizontal, 18)
         .padding(.vertical, 12)
     }
 
@@ -196,12 +200,12 @@ struct EngineConfigSheet: View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(L10n.t(title))
-                    .font(Native.bodyFont)
-                    .foregroundStyle(Native.label)
+                    .font(DS.Font.md)
+                    .foregroundStyle(DS.text)
                 if let detail {
                     Text(L10n.t(detail))
-                        .font(.system(size: 10))
-                        .foregroundStyle(Native.tertiary)
+                        .font(DS.Font.xs)
+                        .foregroundStyle(DS.text3)
                 }
             }
             Spacer(minLength: 8)
@@ -211,6 +215,7 @@ struct EngineConfigSheet: View {
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .labelsHidden()
+                .tint(DS.accent)
         }
         .padding(.vertical, 5)
     }
@@ -218,12 +223,16 @@ struct EngineConfigSheet: View {
     private func textField(_ title: String, text: Binding<String>, placeholder: String) -> some View {
         HStack(spacing: 10) {
             Text(L10n.t(title))
-                .font(Native.bodyFont)
-                .foregroundStyle(Native.label)
+                .font(DS.Font.md)
+                .foregroundStyle(DS.text)
                 .frame(width: 110, alignment: .leading)
             TextField(placeholder, text: text)
-                .textFieldStyle(.roundedBorder)
-                .font(Native.monoFont)
+                .textFieldStyle(.plain)
+                .font(DS.Font.mono(11.5))
+                .padding(.horizontal, 8)
+                .frame(height: 28)
+                .background(DS.rect(DS.Radius.md).fill(DS.bg))
+                .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line2, lineWidth: 1))
         }
         .padding(.vertical, 3)
     }
@@ -231,15 +240,18 @@ struct EngineConfigSheet: View {
     private func intField(_ title: String, value: Binding<Int?>, placeholder: String) -> some View {
         HStack(spacing: 10) {
             Text(L10n.t(title))
-                .font(Native.bodyFont)
-                .foregroundStyle(Native.label)
+                .font(DS.Font.md)
+                .foregroundStyle(DS.text)
                 .frame(width: 110, alignment: .leading)
             TextField(placeholder, text: Binding(
                 get: { value.wrappedValue.map(String.init) ?? "" },
                 set: { value.wrappedValue = Int($0.trimmingCharacters(in: .whitespaces)) }))
-                .textFieldStyle(.roundedBorder)
-                .font(Native.monoFont)
-                .frame(width: 140)
+                .textFieldStyle(.plain)
+                .font(DS.Font.mono(11.5))
+                .padding(.horizontal, 8)
+                .frame(width: 140, height: 28)
+                .background(DS.rect(DS.Radius.md).fill(DS.bg))
+                .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line2, lineWidth: 1))
             Spacer(minLength: 0)
         }
         .padding(.vertical, 3)

@@ -89,8 +89,15 @@ public enum EngineStatusParser {
             result.prefillTokensPerSecond = value
             result.prefillRateKind = next.prefillRateKind
         }
+        if let value = next.lifetimeDecodeTokensPerSecond, value > 0 {
+            result.lifetimeDecodeTokensPerSecond = value
+        }
         if let value = next.draftAcceptance { result.draftAcceptance = value }
-        if let value = next.ttftMilliseconds { result.ttftMilliseconds = value }
+        if let value = next.ttftMilliseconds, value > 0,
+           next.ttftKind.rank >= result.ttftKind.rank {
+            result.ttftMilliseconds = value
+            result.ttftKind = next.ttftKind
+        }
         if next.activeRequests > 0 || result.activeRequests == 0 { result.activeRequests = next.activeRequests }
         if next.queuedRequests > 0 { result.queuedRequests = next.queuedRequests }
         if next.requestsCompleted > 0 { result.requestsCompleted = next.requestsCompleted }
@@ -194,8 +201,10 @@ public enum EngineStatusParser {
         result.prefillRateKind = prefillBatch == nil ? .lifetimeMean : (prefillingNow ? .live : .lastRequest)
         result.decodeTokensPerSecond = decodeBatch ?? JSONValue.digNumber(json, "metrics.decode_tokens_per_second")
         result.decodeRateKind = decodeBatch == nil ? .lifetimeMean : (decodingNow ? .live : .lastRequest)
+        result.lifetimeDecodeTokensPerSecond = JSONValue.digNumber(json, "metrics.decode_tokens_per_second")
         result.draftAcceptance = JSONValue.digNumber(json, "metrics.draft_acceptance_rate")
         result.ttftMilliseconds = JSONValue.digNumber(json, "metrics.ttft_ms.p50")
+        result.ttftKind = (result.ttftMilliseconds ?? 0) > 0 ? .p50 : .none
         if let array = JSONValue.dig(json, "active_requests") as? [Any] {
             result.activeRequests = array.count
         } else {
@@ -239,6 +248,7 @@ public enum EngineStatusParser {
         // 均值，由上层按需要回落到网关的逐请求读数。
         result.decodeTokensPerSecond = JSONValue.digNumber(json, "avg_generation_tps")
         result.decodeRateKind = (result.decodeTokensPerSecond ?? 0) > 0 ? .lifetimeMean : .none
+        result.lifetimeDecodeTokensPerSecond = result.decodeTokensPerSecond
         result.prefillTokensPerSecond = JSONValue.digNumber(json, "avg_prefill_tps")
         result.prefillRateKind = (result.prefillTokensPerSecond ?? 0) > 0 ? .lifetimeMean : .none
         result.activeRequests = JSONValue.digInt(json, "active_requests") ?? 0
@@ -247,7 +257,8 @@ public enum EngineStatusParser {
         result.memoryBytes = JSONValue.digInt(json, "model_memory_used")
         result.peakMemoryBytes = JSONValue.digInt(json, "model_memory_max")
         result.uptimeSeconds = JSONValue.digNumber(json, "uptime_seconds")
-        result.startedAt = result.uptimeSeconds.map { Date().timeIntervalSince1970 - $0 }
+        // 不再用 `Date().timeIntervalSince1970 - uptimeSeconds` 反推 `startedAt`：
+        // 每次轮询的毫秒级延迟会让它每拍抖动，触发上层误判进程重启并清空统计。
 
         let loaded = (JSONValue.dig(json, "loaded_models") as? [String]) ?? []
         result.loadedModels = loaded
@@ -333,9 +344,13 @@ public enum EngineStatusParser {
 
         // Decode rate: the rolling window is the honest sustained number; the
         // per-request `latest.decode_tok_s` only describes the last answer.
-        result.decodeTokensPerSecond = JSONValue.digNumber(json, "rolling.mean")
-            ?? JSONValue.digNumber(json, "latest.decode_tok_s")
-        result.decodeRateKind = (result.decodeTokensPerSecond ?? 0) > 0 ? .live : .none
+        if let rolling = JSONValue.digNumber(json, "rolling.mean"), rolling > 0 {
+            result.decodeTokensPerSecond = rolling
+            result.decodeRateKind = .live
+        } else if let latest = JSONValue.digNumber(json, "latest.decode_tok_s"), latest > 0 {
+            result.decodeTokensPerSecond = latest
+            result.decodeRateKind = .lastRequest
+        }
         // 预填充取数按「越接近此刻越优先」排三档：
         //   1. `in_flight[].prefill_state` —— 正在跑的那一路，服务端每完成一个
         //      chunk 就刷新（openai.py `_dashboard_publish_prefill`）。
@@ -365,8 +380,9 @@ public enum EngineStatusParser {
             result.prefillTokensPerSecond = windowedPrefill
             result.prefillRateKind = .lifetimeMean
         }
-        if let ttft = JSONValue.digNumber(json, "latest.ttft_s") {
+        if let ttft = JSONValue.digNumber(json, "latest.ttft_s"), ttft > 0 {
             result.ttftMilliseconds = ttft * 1000
+            result.ttftKind = .lastRequest
         }
         let accepted = JSONValue.digNumber(json, "latest.accepted_drafts")
         let drafted = JSONValue.digNumber(json, "latest.drafted_tokens")
@@ -579,8 +595,10 @@ public enum EngineStatusParser {
         }
         if let count = JSONValue.digInt(json, "histograms.time_to_first_token_seconds.count"),
            count > 0,
-           let sum = JSONValue.digNumber(json, "histograms.time_to_first_token_seconds.sum") {
+           let sum = JSONValue.digNumber(json, "histograms.time_to_first_token_seconds.sum"),
+           sum > 0 {
             result.ttftMilliseconds = sum / Double(count) * 1000
+            result.ttftKind = .lifetimeMean
         }
         // 进程级累计吞吐：分子分母都是同一个进程里真正算过/生成过的量。
         // 这不是「此刻多快」（那要等 `EngineLiveRates` 用相邻两拍差分），
@@ -590,8 +608,10 @@ public enum EngineStatusParser {
         if let generated = JSONValue.digNumber(json, "counters.generation_tokens_total"),
            let decodeSeconds = JSONValue.digNumber(json, "histograms.decode_time_seconds.sum"),
            generated > 0, decodeSeconds > 0 {
-            result.decodeTokensPerSecond = generated / decodeSeconds
+            let mean = generated / decodeSeconds
+            result.decodeTokensPerSecond = mean
             result.decodeRateKind = .lifetimeMean
+            result.lifetimeDecodeTokensPerSecond = mean
         }
         if let prefilled = JSONValue.digNumber(json, "counters.prefill_tokens_total"),
            let prefillSeconds = JSONValue.digNumber(json, "histograms.prefill_time_seconds.sum"),
@@ -695,7 +715,9 @@ public enum EngineStatusParser {
            let output = JSONValue.digNumber(json, "totals.output_tokens"),
            let decodeMs = JSONValue.digNumber(json, "totals.decode_ms"),
            decodeMs > 0 {
-            result.detail = String(format: "%.1f tok/s", output / (decodeMs / 1000))
+            let mean = output / (decodeMs / 1000)
+            result.detail = String(format: "%.1f tok/s", mean)
+            if mean > 0 { result.lifetimeDecodeTokensPerSecond = mean }
             _ = promptMs
         }
         if let requests = json["requests"] as? [[String: Any]], let latest = requests.first {

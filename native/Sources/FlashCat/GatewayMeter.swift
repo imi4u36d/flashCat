@@ -123,6 +123,9 @@ final class GatewayMeter: @unchecked Sendable {
     /// 再加在跑会话的部分，读数在请求进行中也能动。
     private var lifetimeTokens: Double = 0
     private var lifetimeSeconds: TimeInterval = 0
+    private var lifetimePromptTokens: Int = 0
+    private var lifetimeCachedTokens: Int = 0
+    private var lifetimeCacheRequests: Int = 0
 
     /// 测试可以建独立实例；生产只用 `shared`，避免两份会话表。
     init() {}
@@ -134,6 +137,9 @@ final class GatewayMeter: @unchecked Sendable {
         defer { lock.unlock() }
         lifetimeTokens = 0
         lifetimeSeconds = 0
+        lifetimePromptTokens = 0
+        lifetimeCachedTokens = 0
+        lifetimeCacheRequests = 0
         epoch += 1
     }
 
@@ -206,12 +212,19 @@ final class GatewayMeter: @unchecked Sendable {
             // 引擎没给 timings 时退回流式分片的到达窗口；**只有一个到达点**
             // 的会话不入账——它的跨度是 0，除以窗口下限 0.35 秒得到的是虚构
             // 的速度，混进来会把整台模型的均值抬到几万。
-            if let timings = sessions[index].timings, timings.decodeRate != nil {
-                lifetimeTokens += Double(timings.predictedTokens)
-                lifetimeSeconds += timings.predictedMilliseconds / 1000
-            } else if sessions[index].streamed, sessions[index].meter.observedDecodeSpan >= 0.2 {
-                lifetimeTokens += sessions[index].completionTokens
-                lifetimeSeconds += sessions[index].meter.decodingSeconds
+            if sessions[index].epoch == epoch {
+                if let timings = sessions[index].timings, timings.decodeRate != nil {
+                    lifetimeTokens += Double(timings.predictedTokens)
+                    lifetimeSeconds += timings.predictedMilliseconds / 1000
+                } else if sessions[index].streamed, sessions[index].meter.observedDecodeSpan >= 0.2 {
+                    lifetimeTokens += sessions[index].completionTokens
+                    lifetimeSeconds += sessions[index].meter.decodingSeconds
+                }
+                if sessions[index].usageKnown, sessions[index].promptTokens > 0 {
+                    lifetimeCachedTokens += min(sessions[index].cachedPromptTokens, sessions[index].promptTokens)
+                    lifetimePromptTokens += sessions[index].promptTokens
+                    lifetimeCacheRequests += 1
+                }
             }
         }
         if failed { sessions[index].failed = true }
@@ -504,10 +517,10 @@ final class GatewayMeter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         let current = epoch
-        var cached = 0
-        var prompt = 0
-        var requests = 0
-        for session in sessions where session.epoch == current {
+        var cached = lifetimeCachedTokens
+        var prompt = lifetimePromptTokens
+        var requests = lifetimeCacheRequests
+        for session in sessions where session.epoch == current && session.finishedAt == nil {
             guard session.usageKnown, session.promptTokens > 0 else { continue }
             cached += min(session.cachedPromptTokens, session.promptTokens)
             prompt += session.promptTokens
@@ -515,6 +528,25 @@ final class GatewayMeter: @unchecked Sendable {
         }
         guard requests > 0, prompt > 0 else { return nil }
         return CacheHitSample(rate: Double(cached) / Double(prompt), requests: requests)
+    }
+
+    /// 概览页「当前上下文」的网关侧读数：优先取当代正在跑的请求，没有时取
+    /// 最近一条已结束且已知上下文量的当代请求。
+    func latestContext() -> (tokens: Int, isLive: Bool)? {
+        lock.lock()
+        defer { lock.unlock() }
+        let current = epoch
+        if let active = sessions.last(where: {
+            $0.epoch == current && $0.finishedAt == nil && ($0.promptTokens > 0 || $0.completionTokens > 0)
+        }) {
+            return (active.promptTokens + Int(active.completionTokens.rounded()), true)
+        }
+        if let finished = sessions.last(where: {
+            $0.epoch == current && $0.finishedAt != nil && $0.usageKnown && $0.promptTokens > 0
+        }) {
+            return (finished.promptTokens + Int(finished.completionTokens.rounded()), false)
+        }
+        return nil
     }
 
     /// 在跑会话的合计解码速率——各路窗口估计器读数之和。
@@ -546,7 +578,8 @@ final class GatewayMeter: @unchecked Sendable {
         defer { lock.unlock() }
         var tokens = lifetimeTokens
         var seconds = lifetimeSeconds
-        for session in sessions where session.finishedAt == nil {
+        let current = epoch
+        for session in sessions where session.epoch == current && session.finishedAt == nil {
             // 与 `finish` 同一把尺：只有真的观测到解码跨度的在跑会话才摊进
             // 分母，单点（刚吐了第一片）会话不参与。
             if let timings = session.timings, timings.decodeRate != nil {

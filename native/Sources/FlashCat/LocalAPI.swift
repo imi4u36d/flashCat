@@ -7,8 +7,11 @@ struct ServerStats: Equatable {
     /// 上面两个速率的粒度（见 `EngineRateKind`）。
     var decodeRateKind: EngineRateKind = .none
     var prefillRateKind: EngineRateKind = .none
+    /// 进程级累计平均解码速度（tok/s），不被瞬时速率覆盖。
+    var lifetimeDecodeTokensPerSecond: Double?
     var draftAcceptance: Double?
     var ttftMilliseconds: Double?
+    var ttftKind: EngineTTFTKind = .none
     var activeRequests: Int = 0
     var queuedRequests: Int = 0
     var thermal: String?
@@ -26,6 +29,7 @@ struct ServerStats: Equatable {
     var physicalMemoryBytes: Int?
     var gpuCores: Int?
     var startedAt: Double?
+    var uptimeSeconds: Double?
     var vision: Bool?
     var kvFormat: String?
     var weightsReleased: Bool?

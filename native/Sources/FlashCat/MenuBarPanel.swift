@@ -170,6 +170,56 @@ enum MenuBarIcon {
     }
 }
 
+// MARK: - 菜单栏浮层容器
+
+/// 承载菜单栏卡片的浮层容器：负责圆角、1px 描边、投影与进出场弹簧动画，
+/// 并将卡片实际高度同步回 `StatusBarController` 以便锁定顶部锚点。
+struct MenuBarPanelContainer: View {
+    @ObservedObject var state: AppState
+    @ObservedObject var presenter: MenuBarPanelPresenter
+    let cardWidth: CGFloat
+    let shadowInsets: EdgeInsets
+    var onOpenMainWindow: (Page?) -> Void
+    var onDismiss: () -> Void
+    var onCardHeightChange: (CGFloat) -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var cardShape: RoundedRectangle { DS.rect(14) }
+
+    var body: some View {
+        MenuBarPanel(
+            state: state,
+            onOpenMainWindow: { page in onOpenMainWindow(page) },
+            onDismiss: onDismiss
+        )
+        .frame(width: cardWidth)
+        .background(cardShape.fill(DS.canvas))
+        .overlay(
+            cardShape
+                .strokeBorder(DS.line2, lineWidth: 1)
+        )
+        .clipShape(cardShape)
+        .shadow(color: DS.shadow, radius: 18, x: 0, y: 10)
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.height
+        } action: { _, newHeight in
+            onCardHeightChange(newHeight)
+        }
+        .scaleEffect(reduceMotion ? 1 : (presenter.isPresented ? 1 : 0.95), anchor: .top)
+        .offset(y: reduceMotion ? 0 : (presenter.isPresented ? 0 : -6))
+        .opacity(presenter.isPresented ? 1 : 0)
+        .animation(
+            reduceMotion
+                ? DS.Motion.fade
+                : .spring(response: 0.24, dampingFraction: 0.86),
+            value: presenter.isPresented
+        )
+        .padding(shadowInsets)
+        .onExitCommand { onDismiss() }
+    }
+}
+
 // MARK: - 菜单栏面板
 
 /// 点击菜单栏图标弹出的面板：状态、当前模型、接口地址、实时指标与高频操作。
@@ -178,29 +228,29 @@ enum MenuBarIcon {
 /// 发丝线分区，指标放在唯一一块凹槽面上，状态色只出现在状态胶囊和读数上。
 struct MenuBarPanel: View {
     @ObservedObject var state: AppState
-    /// 打开主窗口的出口。面板既可能挂在 SwiftUI 场景里，也可能被 NSPopover
-    /// 承载，所以不依赖 `\.openWindow` 环境值。
-    var onOpenMainWindow: () -> Void = { MainWindow.show() }
+    /// 打开主窗口的出口（可选指定跳转页面）。面板由独立 `NSPanel` 承载，
+    /// 不依赖 `\.openWindow` 环境值。
+    var onOpenMainWindow: (Page?) -> Void = { page in
+        if let page { AppState.shared.section = page }
+        MainWindow.show()
+    }
+    var onDismiss: () -> Void = {}
 
-    /// 取自应用图标的粉橙渐变，只出现在品牌光晕、接口图标和主按钮上。
-    private static let brandPink = Console.accent
-    private static let brandOrange = Color(console: 0xFF8A4F)
-    private static let brandGradient = LinearGradient(
-        colors: [brandPink, brandOrange],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
+    @State private var copiedEndpoint = false
+    @State private var copyResetTask: Task<Void, Never>?
+    @State private var hoveringModel = false
+    @State private var hoveringEndpoint = false
 
     private var running: Bool { state.isRunning }
     private var busy: Bool { state.serverState == .starting || state.serverState == .stopping }
 
-    /// 状态色使用控制台调色板，和主界面的状态胶囊保持一致。
+    /// 状态色使用控制台调色板，和主界面的状态标签保持一致。
     private var statusTint: Color {
         switch state.serverState {
-        case .ready: return Console.ok
-        case .starting, .stopping: return Console.warn
-        case .failed: return Console.danger
-        case .stopped: return Console.tertiary
+        case .ready: return DS.ok
+        case .starting, .stopping: return DS.warn
+        case .failed: return DS.err
+        case .stopped: return DS.text3
         }
     }
 
@@ -225,23 +275,18 @@ struct MenuBarPanel: View {
         .padding(.horizontal, 14)
         .padding(.top, 14)
         .padding(.bottom, 12)
-        .frame(width: 348)
-        .background(alignment: .topLeading) {
-            // 顶部一层极淡的粉橙光晕，呼应 app icon；不改变 popover 的系统材质。
-            RadialGradient(colors: [Self.brandPink.opacity(0.14), .clear],
-                           center: .topLeading,
-                           startRadius: 0,
-                           endRadius: 190)
-                .frame(height: 150)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .allowsHitTesting(false)
+        .animation(DS.Motion.smooth, value: state.serverState)
+        .animation(DS.Motion.smooth, value: state.isModelBusy)
+        .animation(DS.Motion.smooth, value: state.isSwitchingModel)
+        .animation(DS.Motion.smooth, value: sparklinePeak != nil)
+        .onDisappear {
+            copyResetTask?.cancel()
+            copyResetTask = nil
         }
     }
 
     private var divider: some View {
-        Rectangle()
-            .fill(Console.insetStroke)
-            .frame(height: 1)
+        DSDivider()
     }
 
     // MARK: 顶部状态行
@@ -249,31 +294,38 @@ struct MenuBarPanel: View {
     private var header: some View {
         HStack(spacing: 10) {
             ZStack {
-                Circle()
-                    .fill(LinearGradient(colors: [Self.brandPink.opacity(0.18),
-                                                  Self.brandOrange.opacity(0.10)],
-                                         startPoint: .topLeading,
-                                         endPoint: .bottomTrailing))
-                    .frame(width: 38, height: 38)
-                BrandMark(size: 29, glow: false)
+                DS.rect(DS.Radius.md)
+                    .fill(DS.raised)
+                    .overlay(
+                        DS.rect(DS.Radius.md)
+                            .strokeBorder(DS.line, lineWidth: 1)
+                    )
+                BrandMark(size: 24, glow: false)
             }
+            .frame(width: 34, height: 34)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("flashCat")
-                    .font(.system(size: 14.5, weight: .semibold))
-                    .foregroundStyle(Console.text)
+                    .font(DS.Font.md.weight(.semibold))
+                    .foregroundStyle(DS.text)
                 HStack(spacing: 4) {
                     Text(state.activeEngine.displayName)
                     Text("·")
                     Text(state.engineVersion)
                 }
-                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                .foregroundStyle(Console.tertiary)
+                .font(DS.Font.mono(10, weight: .medium))
+                .foregroundStyle(DS.text3)
                 .lineLimit(1)
             }
 
             Spacer(minLength: 6)
-            StatusPill(text: state.serverState.rawValue, tint: statusTint, pulsing: busy)
+            DSChip(
+                text: state.serverState.rawValue,
+                dot: statusTint,
+                live: running || busy,
+                tint: statusTint
+            )
+            .contentTransition(.opacity)
         }
     }
 
@@ -283,30 +335,56 @@ struct MenuBarPanel: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Text("当前模型")
-                    .font(.system(size: 9.5, weight: .bold))
-                    .tracking(1.5)
-                    .foregroundStyle(Console.tertiary)
+                    .font(DS.Font.xs.weight(.medium))
+                    .foregroundStyle(DS.text3)
                 Spacer(minLength: 4)
                 if let info = state.selectedModelInfo {
                     Text(verbatim: info.sizeText)
-                        .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Console.tertiary)
+                        .font(DS.Font.mono(10, weight: .medium))
+                        .foregroundStyle(DS.text3)
+                        .monospacedDigit()
                         .lineLimit(1)
                 }
+                Button {
+                    onOpenMainWindow(.models)
+                } label: {
+                    HStack(spacing: 3) {
+                        Text(L10n.t("模型"))
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 8.5, weight: .semibold))
+                    }
+                    .font(DS.Font.xs.weight(.medium))
+                    .foregroundStyle(hoveringModel ? DS.text : DS.text3)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        DS.rect(DS.Radius.sm)
+                            .fill(hoveringModel ? DS.hover : DS.bg)
+                    )
+                    .overlay(
+                        DS.rect(DS.Radius.sm)
+                            .strokeBorder(hoveringModel ? DS.line2 : DS.line, lineWidth: 1)
+                    )
+                }
+                .buttonStyle(DSPressStyle())
+                .onHover { value in
+                    withAnimation(DS.Motion.snappy) { hoveringModel = value }
+                }
+                .help(L10n.t("模型"))
             }
 
             Text(modelTitle)
-                .font(.system(size: 16.5, weight: .semibold))
-                .tracking(-0.2)
-                .foregroundStyle(state.selectedModel.isEmpty ? Console.tertiary : Console.text)
+                .font(DS.Font.lg.weight(.semibold))
+                .foregroundStyle(state.selectedModel.isEmpty ? DS.text3 : DS.text)
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .contentTransition(.opacity)
                 .help(modelTitle)
 
             endpointRow
         }
         .padding(12)
-        .consoleCardSurface()
+        .dsSurface(radius: DS.Radius.lg)
     }
 
     private var modelTitle: String {
@@ -327,37 +405,74 @@ struct MenuBarPanel: View {
 
     private var endpointRow: some View {
         Button {
-            state.copy(state.endpointURL, label: "接口地址已复制")
+            triggerCopyEndpoint()
         } label: {
             HStack(spacing: 7) {
                 Image(systemName: "link")
                     .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(Self.brandPink.opacity(state.isRunning ? 0.95 : 0.5))
+                    .foregroundStyle(
+                        copiedEndpoint
+                            ? DS.ok
+                            : DS.accent.opacity(state.isRunning ? 0.95 : 0.45)
+                    )
                 Text(state.endpointURL)
-                    .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(Console.secondary)
+                    .font(DS.Font.mono(10.5))
+                    .foregroundStyle(hoveringEndpoint ? DS.text : DS.text2)
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                Image(systemName: "doc.on.doc")
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(Console.tertiary)
+                if copiedEndpoint {
+                    HStack(spacing: 3) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .bold))
+                        Text(L10n.t("已复制"))
+                            .font(DS.Font.xs.weight(.medium))
+                    }
+                    .foregroundStyle(DS.ok)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                } else {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(hoveringEndpoint ? DS.text2 : DS.text3)
+                        .transition(.opacity)
+                }
             }
             .padding(.horizontal, 9)
             .frame(height: 28)
             .background {
-                LiquidGlassSurface(
-                    shape: RoundedRectangle(cornerRadius: 8, style: .continuous),
-                    interactive: true
-                )
+                DS.rect(DS.Radius.md)
+                    .fill(hoveringEndpoint ? DS.hover : DS.bg)
             }
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Console.glassStroke, lineWidth: 0.8)
+                DS.rect(DS.Radius.md)
+                    .strokeBorder(
+                        copiedEndpoint
+                            ? DS.ok.opacity(0.45)
+                            : (hoveringEndpoint ? DS.line3 : DS.line),
+                        lineWidth: 1
+                    )
             )
-            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(DS.rect(DS.Radius.md))
         }
-        .buttonStyle(.plainHit)
-        .help("点击复制接口地址")
+        .buttonStyle(DSPressStyle(scale: 0.985))
+        .onHover { value in
+            withAnimation(DS.Motion.snappy) { hoveringEndpoint = value }
+        }
+        .help(L10n.t("复制接口地址"))
+    }
+
+    private func triggerCopyEndpoint() {
+        state.copy(state.endpointURL, label: "接口地址已复制")
+        copyResetTask?.cancel()
+        withAnimation(DS.Motion.snappy) {
+            copiedEndpoint = true
+        }
+        copyResetTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.6))
+            guard !Task.isCancelled else { return }
+            withAnimation(DS.Motion.snappy) {
+                copiedEndpoint = false
+            }
+        }
     }
 
     // MARK: 运行区
@@ -368,12 +483,12 @@ struct MenuBarPanel: View {
             if state.isModelBusy {
                 // 进程在跑但权重还没就位（启动、切换、加载权重、预热）：给一条
                 // 带转圈的生命周期行；下面的读数条保留，只是暂时没有数据。
-                // 换权重的空窗里没有话可说——不编一句「切换中」，直接不占这一行。
                 if !stageText.isEmpty {
                     NoticeRow(symbol: nil,
                               text: stageText,
-                              tint: Console.warn,
+                              tint: DS.warn,
                               showsSpinner: true)
+                        .transition(.dsRowInsert)
                 }
             } else {
                 switch state.serverState {
@@ -382,41 +497,44 @@ struct MenuBarPanel: View {
                 case .starting, .stopping:
                     NoticeRow(symbol: nil,
                               text: stageText,
-                              tint: Console.warn,
+                              tint: DS.warn,
                               showsSpinner: true)
+                        .transition(.dsRowInsert)
                 case .failed:
                     NoticeRow(symbol: "exclamationmark.triangle.fill",
                               text: state.failureMessage ?? "引擎异常，打开日志查看原因",
-                              tint: Console.danger,
-                              showsSpinner: false)
+                              tint: DS.err,
+                              showsSpinner: false,
+                              actionLabel: "日志",
+                              action: { onOpenMainWindow(.logs) })
+                        .transition(.dsRowInsert)
                 case .stopped:
                     // 已停止且没选模型时才提示；正常停止态不再占一行横幅。
                     if state.selectedModel.isEmpty {
                         NoticeRow(symbol: "pause.circle",
                                   text: "还没有选择模型，在模型页选一个即可启动",
-                                  tint: Console.secondary,
+                                  tint: DS.text2,
                                   showsSpinner: false)
+                            .transition(.dsRowInsert)
                     }
                 }
             }
 
             // 读数条常驻：没有实时数据时显示「—」，面板不会因为停止或加载而少一截。
-            // 面板没有概览那样的说明文案，所以 LIVE / LAST / AVG 角标直接标在格子里。
             MetricStrip(decode: state.serverState == .ready ? state.menuBarDecodeReading : .none,
                         ttft: state.serverState == .ready ? state.ttftReading : .none,
                         prefill: state.serverState == .ready ? state.prefillReading : .none)
+
             if state.serverState == .ready, let peak = sparklinePeak {
                 Sparkline(values: state.recentThroughput(window: 300).map(\.value),
                           peak: peak,
-                          tint: Self.brandPink)
+                          tint: DS.accent)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
     }
 
-    /// "启动中 · 预热 · 已等待 3:20". 和灵动岛、概览、命令面板共用
-    /// `engineStageText`：几个地方的措辞和秒数以前是几份拷贝，改一处就漏两处
-    /// （灵动岛的计时停下时，菜单栏还在按另一套规则算），而且换模型时都忍不住
-    /// 各自复述一遍「切换中 / 加载新模型」。现在只有一句：引擎真实所处的阶段。
+    /// "启动中 · 预热 · 已等待 3:20". 和灵动岛、概览、命令面板共用 `engineStageText`。
     private var stageText: String { state.engineStageText }
 
     private var sparklinePeak: Double? {
@@ -434,43 +552,34 @@ struct MenuBarPanel: View {
                 Button {
                     state.abortModelSwitch()
                 } label: {
-                    Label("取消等待", systemImage: "xmark.circle")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Console.text)
+                    Label(L10n.t("取消等待"), systemImage: "xmark.circle")
                         .frame(maxWidth: .infinity)
-                        .frame(height: 36)
-                        .background(Capsule().fill(Console.inset))
-                        .overlay(Capsule().strokeBorder(Console.insetStroke, lineWidth: 0.8))
-                        .contentShape(Capsule())
                 }
-                .buttonStyle(.plainHit)
+                .buttonStyle(.ds(.secondary, size: .regular))
+            } else if running {
+                Button {
+                    state.stopService()
+                } label: {
+                    Label(L10n.t("停止服务"), systemImage: "stop.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.ds(.danger, size: .regular))
+
+                Button {
+                    state.restartService()
+                } label: {
+                    Label(L10n.t("重启服务"), systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.ds(.secondary, size: .regular))
+                .fixedSize()
             } else {
                 Button {
-                    running ? state.stopService() : state.startService()
+                    state.startService()
                 } label: {
-                    Label(L10n.t(running ? "停止服务" : "启动服务"),
-                          systemImage: running ? "stop.fill" : "play.fill")
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .foregroundStyle(running ? Console.danger : .white)
+                    Label(L10n.t("启动服务"), systemImage: "play.fill")
                         .frame(maxWidth: .infinity)
-                        .frame(height: 36)
-                        .background {
-                            if running {
-                                Capsule()
-                                    .fill(Console.danger.opacity(0.10))
-                                    .overlay(Capsule().strokeBorder(Console.danger.opacity(0.24),
-                                                                   lineWidth: 0.8))
-                            } else {
-                                Capsule()
-                                    .fill(Self.brandGradient)
-                                    .overlay(Capsule().strokeBorder(.white.opacity(0.18),
-                                                                   lineWidth: 0.8))
-                                    .shadow(color: Self.brandPink.opacity(0.30), radius: 8, y: 3)
-                            }
-                        }
-                        .contentShape(Capsule())
                 }
-                .buttonStyle(.plainHit)
+                .buttonStyle(.ds(.primary, size: .regular))
             }
         }
     }
@@ -479,15 +588,20 @@ struct MenuBarPanel: View {
         HStack(spacing: 8) {
             if let stats = state.stats {
                 Text(Self.countersText(stats))
-                    .font(.system(size: 9.5, design: .monospaced))
-                    .foregroundStyle(Console.tertiary)
+                    .font(DS.Font.mono(10))
+                    .foregroundStyle(DS.text3)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
-            footerButton("主窗口", symbol: "macwindow") { onOpenMainWindow() }
+            footerButton("主窗口", symbol: "macwindow") { onOpenMainWindow(nil) }
                 .help("打开主窗口")
-            footerButton("退出", symbol: "power") { NSApp.terminate(nil) }
-                .help("退出 flashCat")
+            footerButton("退出", symbol: "power") {
+                onDismiss()
+                NSApp.terminate(nil)
+            }
+            .help(L10n.t("退出 flashCat"))
         }
     }
 
@@ -496,15 +610,8 @@ struct MenuBarPanel: View {
                               action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(L10n.t(title), systemImage: symbol)
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(Console.secondary)
-                .padding(.horizontal, 9)
-                .frame(height: 24)
-                .background(Capsule().fill(Console.inset))
-                .overlay(Capsule().strokeBorder(Console.insetStroke, lineWidth: 0.8))
-                .contentShape(Capsule())
         }
-        .buttonStyle(.plainHit)
+        .buttonStyle(.ds(.secondary, size: .small))
     }
 
     private static func countersText(_ stats: ServerStats) -> String {
@@ -515,40 +622,9 @@ struct MenuBarPanel: View {
     }
 }
 
-// MARK: - 状态胶囊
-
-private struct StatusPill: View {
-    let text: String
-    let tint: Color
-    var pulsing: Bool = false
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Circle()
-                .fill(tint)
-                .frame(width: 6, height: 6)
-                .shadow(color: tint.opacity(pulsing ? 0.9 : 0.45),
-                        radius: pulsing ? 4 : 0)
-            Text(L10n.t(text))
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(tint)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(tint.opacity(0.10), in: Capsule())
-        .overlay(Capsule().strokeBorder(tint.opacity(0.18), lineWidth: 0.8))
-        .fixedSize()
-    }
-}
-
 // MARK: - 指标条
 
 /// 三列读数：解码速度 / 首字延迟 / 预填充速度。值用等宽数字，列间发丝线分隔。
-///
-/// 每格的值与角标都来自 `AppState` 的 owner 表，面板只负责排版：解码有实时
-/// 读数时标 `LIVE`，空闲时退回模型启动以来平均、标 `AVG`；首字优先引擎
-/// status，没有就退回网关实测（两侧都没有画「—」）；预填充做完标 `LAST`，
-/// 真的在预填充时才标 `LIVE`。
 private struct MetricStrip: View {
     let decode: MetricReading
     let ttft: TTFTReading
@@ -558,56 +634,53 @@ private struct MetricStrip: View {
         HStack(spacing: 0) {
             cell("解码", value: number(decode.value), unit: "tok/s",
                  tag: decodeTag, tagTint: decodeTagTint)
-            divider
+            DSDivider(vertical: true)
             cell("首字", value: milliseconds(ttft.milliseconds), unit: "ms")
-            divider
+            DSDivider(vertical: true)
             cell("预填充", value: number(prefill.value), unit: "tok/s",
                  tag: prefillTag, tagTint: prefillTagTint)
         }
-        .background(Console.inset, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(DS.bg, in: DS.rect(DS.Radius.md))
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Console.insetStroke, lineWidth: 0.8)
+            DS.rect(DS.Radius.md)
+                .strokeBorder(DS.line, lineWidth: 1)
         )
         // 读数条高度锁死：窗口高度被撑开时它也不跟着变高。
         .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private var divider: some View {
-        Rectangle()
-            .fill(Console.insetStroke)
-            .frame(width: 1)
     }
 
     private func cell(_ label: String,
                       value: String,
                       unit: String?,
                       tag: String? = nil,
-                      tagTint: Color = Console.tertiary) -> some View {
+                      tagTint: Color = DS.text3) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text(L10n.t(label))
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(Console.tertiary)
+                    .font(DS.Font.xs.weight(.medium))
+                    .foregroundStyle(DS.text3)
                 if let tag, value != "—" {
                     Text(tag)
-                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                        .font(DS.Font.mono(8.5, weight: .semibold))
                         .tracking(0.4)
                         .foregroundStyle(tagTint)
                         .lineLimit(1)
+                        .transition(.opacity)
                 }
             }
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(value)
-                    .font(.system(size: 14.5, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Console.text)
+                    .font(DS.Font.mono(14.5, weight: .semibold))
+                    .foregroundStyle(value == "—" ? DS.text3 : DS.text)
                     .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .animation(DS.Motion.snappy, value: value)
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
                 if let unit {
                     Text(unit)
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Console.tertiary)
+                        .font(DS.Font.mono(9, weight: .medium))
+                        .foregroundStyle(DS.text3)
                 }
             }
         }
@@ -627,8 +700,8 @@ private struct MetricStrip: View {
 
     private var decodeTagTint: Color {
         switch decode.origin {
-        case .gatewayLive, .engineLive: return Console.accent
-        default: return Console.tertiary
+        case .gatewayLive, .engineLive: return DS.accent
+        default: return DS.text3
         }
     }
 
@@ -643,7 +716,7 @@ private struct MetricStrip: View {
     }
 
     private var prefillTagTint: Color {
-        prefill.origin == .engineLive ? Console.accent : Console.tertiary
+        prefill.origin == .engineLive ? DS.accent : DS.text3
     }
 
     private func number(_ value: Double?) -> String {
@@ -669,12 +742,14 @@ private struct Sparkline: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 5) {
                 Text("近 5 分钟吞吐")
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(Console.tertiary)
+                    .font(DS.Font.xs.weight(.medium))
+                    .foregroundStyle(DS.text3)
                 Spacer(minLength: 4)
                 Text(L10n.format("峰值 %@ tok/s", Format.compact(peak)))
-                    .font(.system(size: 9.5, design: .monospaced))
-                    .foregroundStyle(Console.tertiary)
+                    .font(DS.Font.mono(10))
+                    .foregroundStyle(DS.text3)
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
             }
             GeometryReader { proxy in
                 let size = proxy.size
@@ -724,11 +799,13 @@ private struct Sparkline: View {
 private struct NoticeRow: View {
     var symbol: String?
     let text: String
-    var tint: Color = Console.secondary
+    var tint: Color = DS.text2
     var showsSpinner: Bool = false
+    var actionLabel: String? = nil
+    var action: (() -> Void)? = nil
 
     var body: some View {
-        HStack(alignment: .top, spacing: 7) {
+        HStack(alignment: .center, spacing: 7) {
             if showsSpinner {
                 ProgressView()
                     .controlSize(.small)
@@ -739,21 +816,27 @@ private struct NoticeRow: View {
                 Image(systemName: symbol)
                     .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(tint)
-                    .padding(.top, 1)
             }
             Text(L10n.t(text))
-                .font(.system(size: 11.5))
+                .font(DS.Font.xs)
                 .foregroundStyle(tint)
                 .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
+            Spacer(minLength: 4)
+            if let actionLabel, let action {
+                Button(action: action) {
+                    Text(L10n.t(actionLabel))
+                        .font(DS.Font.xs.weight(.medium))
+                }
+                .buttonStyle(.ds(.secondary, size: .small))
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
-        .padding(.vertical, 9)
-        .background(Console.inset, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(.vertical, 8)
+        .background(DS.bg, in: DS.rect(DS.Radius.md))
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Console.insetStroke, lineWidth: 0.8)
+            DS.rect(DS.Radius.md)
+                .strokeBorder(DS.line, lineWidth: 1)
         )
     }
 }

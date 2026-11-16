@@ -80,13 +80,13 @@ struct GalleryDetailSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Hairline()
+            DSDivider()
             HStack(alignment: .top, spacing: 20) {
                 preview
                 details
             }
             .padding(20)
-            Hairline()
+            DSDivider()
             footer
         }
         .frame(width: 720, height: 540)
@@ -95,28 +95,21 @@ struct GalleryDetailSheet: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Image(systemName: item.isVideo ? "film" : "photo.on.rectangle.angled")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Console.accent)
-                .frame(width: 34, height: 34)
-                .background {
-                    LiquidGlassSurface(shape: RoundedRectangle(cornerRadius: 10, style: .continuous),
-                                       tint: Console.accent.opacity(0.12))
-                }
+            IconTile(symbol: item.isVideo ? "film" : "photo.on.rectangle.angled", color: DS.accent, size: 30)
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(item.kindName)详情")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(Console.text)
+                    .font(DS.Font.lg.weight(.semibold))
+                    .foregroundStyle(DS.text)
                 Text("对话中生成 · \(item.model.isEmpty ? "未知模型" : item.model)")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Console.tertiary)
+                    .font(DS.Font.xs)
+                    .foregroundStyle(DS.text3)
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
-            IconAction(systemName: "xmark", help: "关闭") { dismiss() }
+            DSIconButton(systemName: "xmark", help: "关闭") { dismiss() }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
     }
 
     @ViewBuilder
@@ -133,17 +126,17 @@ struct GalleryDetailSheet: View {
             NSWorkspace.shared.open(URL(fileURLWithPath: item.path))
         } label: {
             ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.black.opacity(0.16))
+                DS.rect(DS.Radius.lg)
+                    .fill(DS.bg)
                 thumbnail
             }
             .frame(width: 320, height: 320)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .clipShape(DS.rect(DS.Radius.lg))
             .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Console.cardStroke, lineWidth: 1)
+                DS.rect(DS.Radius.lg)
+                    .strokeBorder(DS.line, lineWidth: 1)
             }
-            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(DS.rect(DS.Radius.lg))
         }
         .buttonStyle(.plain)
         .help("在预览中打开原图")
@@ -154,7 +147,7 @@ struct GalleryDetailSheet: View {
     /// 不再交给 .mp4 的默认应用（有些机器上会误开音频软件）。
     private var videoPreview: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            DS.rect(DS.Radius.lg)
                 .fill(Color.black)
             if let player {
                 VideoPlayer(player: player)
@@ -164,10 +157,10 @@ struct GalleryDetailSheet: View {
             }
         }
         .frame(width: 320, height: 320)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .clipShape(DS.rect(DS.Radius.lg))
         .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Console.cardStroke, lineWidth: 1)
+            DS.rect(DS.Radius.lg)
+                .strokeBorder(DS.line, lineWidth: 1)
         }
         .task(id: item.id) {
             guard item.isVideo, player == nil else { return }
@@ -195,7 +188,7 @@ struct GalleryDetailSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 promptSection
-                Divider().overlay(Console.insetStroke)
+                DSDivider()
                 infoRow("模型", item.model.isEmpty ? "未知" : item.model)
                 infoRow("尺寸", resolution)
                 infoRow("Seed", item.seed.map(String.init) ?? "随机（未记录）", mono: true)
@@ -216,18 +209,18 @@ struct GalleryDetailSheet: View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
                 Text("提示词")
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(Console.tertiary)
+                    .font(DS.Font.xs.weight(.medium))
+                    .foregroundStyle(DS.text3)
                 Spacer(minLength: 4)
                 Button("复制") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(item.prompt, forType: .string)
                 }
-                .buttonStyle(.consoleSoft)
+                .buttonStyle(.ds(.secondary, size: .small))
             }
             Text(item.prompt.isEmpty ? "（没有记录提示词）" : item.prompt)
-                .font(.system(size: 12.5))
-                .foregroundStyle(Console.text)
+                .font(DS.Font.md)
+                .foregroundStyle(DS.text)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -239,34 +232,34 @@ struct GalleryDetailSheet: View {
             Button("在访达中显示") {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.path)])
             }
-            .buttonStyle(.consoleSoft)
+            .buttonStyle(.ds(.secondary, size: .regular))
             if item.isVideo {
                 Button("用 QuickTime 打开") {
                     VideoPlayback.openInQuickTime(item.path)
                 }
-                .buttonStyle(.consoleSoft)
+                .buttonStyle(.ds(.secondary, size: .regular))
             } else {
                 Button("用预览打开") {
                     NSWorkspace.shared.open(URL(fileURLWithPath: item.path))
                 }
-                .buttonStyle(.consoleSoft)
+                .buttonStyle(.ds(.secondary, size: .regular))
             }
             Spacer()
             Button("完成") { dismiss() }
-                .buttonStyle(.consolePrimary)
+                .buttonStyle(.ds(.primary, size: .regular))
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
     }
 
     private func infoRow(_ title: String, _ value: String, mono: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
-                .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(Console.tertiary)
+                .font(DS.Font.xs.weight(.medium))
+                .foregroundStyle(DS.text3)
             Text(value)
-                .font(.system(size: 11.5, design: mono ? .monospaced : .default))
-                .foregroundStyle(Console.text)
+                .font(mono ? DS.Font.mono(11.5) : DS.Font.sm)
+                .foregroundStyle(DS.text)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -313,7 +306,7 @@ private struct VideoCover: View {
             } else {
                 Image(systemName: "film")
                     .font(.system(size: 24, weight: .light))
-                    .foregroundStyle(Console.tertiary)
+                    .foregroundStyle(DS.text3)
             }
         }
         .task(id: path) {
@@ -373,8 +366,8 @@ private struct MissingPreview: View {
             Image(systemName: "questionmark.square.dashed")
                 .font(.system(size: 26, weight: .light))
             Text("原文件已不在")
-                .font(.system(size: 11))
+                .font(DS.Font.xs)
         }
-        .foregroundStyle(Console.tertiary)
+        .foregroundStyle(DS.text3)
     }
 }

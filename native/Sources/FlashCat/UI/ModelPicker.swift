@@ -29,30 +29,55 @@ struct ModelPickerPopover: View {
     @ObservedObject var state: AppState
     var onPick: () -> Void
 
+    /// `ScrollView` 在 SwiftUI 里最小高度为 0：挂在从短菜单切换过来的 `NSPopover`
+    /// 里时，只写 `maxHeight` 会把列表压进旧高度里而不撑开弹层。量出内容实际高度
+    /// 再夹到 380pt 上限，既能贴合少数模型，也能撑开 `NSPopover` 并正常滚动。
+    @State private var contentHeight: CGFloat = 120
+
+    private var groups: [(engine: EngineID, models: [EngineModel])] {
+        EngineCatalog.allIDs
+            .filter { state.engineIsInstalled($0) }
+            .compactMap { id in
+                let models = state.engineModels(for: id)
+                    .filter { !$0.hidden && !$0.helper && !ModelLibraryEntry.isDraftModel($0.id) }
+                return models.isEmpty ? nil : (id, models)
+            }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 2) {
-                ForEach(EngineCatalog.allIDs.filter { state.engineIsInstalled($0) }, id: \.self) { id in
-                    let models = state.engineModels(for: id)
-                        .filter { !$0.hidden && !$0.helper && !ModelLibraryEntry.isDraftModel($0.id) }
-                    if !models.isEmpty {
-                        Text(id.displayName)
+                if groups.isEmpty {
+                    Text(L10n.t("暂无可用模型"))
+                        .font(DS.Font.sm)
+                        .foregroundStyle(DS.text3)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 16)
+                } else {
+                    ForEach(groups, id: \.engine) { group in
+                        Text(group.engine.displayName)
                             .font(DS.Font.xs.weight(.medium))
                             .tracking(0.4)
                             .foregroundStyle(DS.text3)
                             .padding(.horizontal, 10)
                             .padding(.top, 8)
                             .padding(.bottom, 2)
-                        ForEach(models) { model in
-                            row(model, engine: id)
+                        ForEach(group.models) { model in
+                            row(model, engine: group.engine)
                         }
                     }
                 }
             }
             .padding(6)
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.height
+            } action: { height in
+                if height > 0, abs(height - contentHeight) > 0.5 {
+                    contentHeight = height
+                }
+            }
         }
-        .frame(width: 300)
-        .frame(maxHeight: 380)
+        .frame(width: 300, height: min(max(contentHeight, 44), 380))
         .dsPopoverSurface()
     }
 

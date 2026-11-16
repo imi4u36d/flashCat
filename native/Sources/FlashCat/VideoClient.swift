@@ -122,8 +122,48 @@ struct VideoGenerationResult {
     var duration: Double { Double(frames) / Double(max(1, fps)) }
 }
 
-struct VideoClientError: Error {
+/// 视频生成的失败原因。三个客户端（对话 / 图像 / 视频）同构：`kind` 给控制流看，
+/// `message` 给人看。取消以前只能从文案里找「取消」：引擎自己在错误事件里写一句
+/// 「已取消」，任务面板就分不清该标成「已停止」还是「失败」。
+struct VideoClientError: Error, Equatable, Sendable {
+    /// 失败的情形。带参的两种把端口与状态码留下，调用方不必再解析文案。
+    enum Kind: Equatable, Sendable {
+        /// 唯一的「取消」：任务被取消，或封装阶段被叫停。
+        case cancelled
+        /// 本地视频端点地址拼不出来。
+        case invalidEndpoint(port: Int)
+        /// 帧数 / 尺寸不合法：用户填的参数，提示得说清楚是哪一项。
+        case invalidParameter
+        /// 载荷超过上限：估算体积、扫描结果或上传体，都是「调小一点」能解决的那类。
+        case payloadTooLarge
+        /// 请求体编不成 JSON。
+        case encoding
+        /// 传输层失败：连接被拒、超时之类的 URLError。
+        case transport
+        /// 引擎回了非 2xx。
+        case badStatus(Int)
+        /// 流走完了却没有视频数据。
+        case emptyBody
+        /// 引擎在流里自报的错误（SSE 的 `{"type":"error"}` 或响应体里的 message）。
+        case engine
+    }
+
+    let kind: Kind
+    /// 给人看的文案：任务面板与气泡直接显示这一句。
     let message: String
+
+    init(kind: Kind, message: String) {
+        self.kind = kind
+        self.message = message
+    }
+
+    /// 兼容只知道文案的调用点：一律按 `.transport` 收，绝不按文案猜成取消。
+    init(message: String) {
+        self.init(kind: .transport, message: message)
+    }
+
+    /// 调用方唯一该问的取消判据。
+    var isCancellation: Bool { kind == .cancelled }
 }
 
 /// 解码后的视频载荷。`rgb` 是紧密排列的 RGB888 帧，长度严格等于
@@ -203,19 +243,23 @@ final class VideoClient: Sendable {
         // 几十分钟，不能等生成完了才发现载荷超过客户端上限。
         let dimensions = request.dimensions
         guard request.frames > 0, dimensions.width > 0, dimensions.height > 0 else {
-            return .failure(VideoClientError(message: "视频参数无效：尺寸和帧数必须大于 0"))
+            return .failure(VideoClientError(kind: .invalidParameter,
+                                             message: "视频参数无效：尺寸和帧数必须大于 0"))
         }
         guard let estimated = Self.estimatedFrameBytes(width: dimensions.width,
                                                        height: dimensions.height,
                                                        frames: request.frames) else {
-            return .failure(VideoClientError(message: "视频参数过大，请调小尺寸或帧数"))
+            return .failure(VideoClientError(kind: .payloadTooLarge,
+                                             message: "视频参数过大，请调小尺寸或帧数"))
         }
         guard estimated <= VideoPayloadScanner.maxFrameBytes else {
-            return .failure(VideoClientError(message: Self.tooLargeMessage(requiredBytes: estimated)))
+            return .failure(VideoClientError(kind: .payloadTooLarge,
+                                             message: Self.tooLargeMessage(requiredBytes: estimated)))
         }
 
         guard let url = URL(string: "http://127.0.0.1:\(port)/v1/video/generations") else {
-            return .failure(VideoClientError(message: "视频端点地址无效"))
+            return .failure(VideoClientError(kind: .invalidEndpoint(port: port),
+                                             message: "视频端点地址无效"))
         }
         let body = Self.requestBody(for: request)
 
@@ -232,11 +276,13 @@ final class VideoClient: Sendable {
                 let size = ByteCountFormatter.string(fromByteCount: Int64(encoded.count),
                                                      countStyle: .memory)
                 return .failure(VideoClientError(
+                    kind: .payloadTooLarge,
                     message: "参考素材太大：请求约 \(size)，超过 60 MB 上限。请减少参考图/参考视频，或把参考细节改为「匹配画布」。"))
             }
             urlRequest.httpBody = encoded
         } catch {
-            return .failure(VideoClientError(message: "请求体编码失败：\(error.localizedDescription)"))
+            return .failure(VideoClientError(kind: .encoding,
+                                             message: "请求体编码失败：\(error.localizedDescription)"))
         }
 
         let started = Date()
@@ -249,7 +295,7 @@ final class VideoClient: Sendable {
                     if raw.count > 64 * 1024 { break }
                 }
                 let message = Self.errorMessage(in: raw) ?? "服务返回 HTTP \(http.statusCode)"
-                return .failure(VideoClientError(message: message))
+                return .failure(VideoClientError(kind: .badStatus(http.statusCode), message: message))
             }
 
             // 旧版本或中间代理可能忽略 stream，直接回整段 JSON；把没有
@@ -267,6 +313,7 @@ final class VideoClient: Sendable {
                         return await mux(frames, started: started, onProgress: onProgress)
                     case .tooLarge(let requiredBytes):
                         return .failure(VideoClientError(
+                            kind: .payloadTooLarge,
                             message: Self.tooLargeMessage(requiredBytes: requiredBytes)))
                     case .invalid:
                         break
@@ -290,13 +337,14 @@ final class VideoClient: Sendable {
                     onProgress(VideoPayload.progressText(json))
                 case "error":
                     let message = (json["message"] as? String) ?? "视频生成失败"
-                    return .failure(VideoClientError(message: message))
+                    return .failure(VideoClientError(kind: .engine, message: message))
                 default:
                     switch VideoPayload.parse(json) {
                     case .frames(let frames):
                         return await mux(frames, started: started, onProgress: onProgress)
                     case .tooLarge(let requiredBytes):
                         return .failure(VideoClientError(
+                            kind: .payloadTooLarge,
                             message: Self.tooLargeMessage(requiredBytes: requiredBytes)))
                     case .invalid:
                         continue
@@ -308,27 +356,28 @@ final class VideoClient: Sendable {
                let data = rawLines.joined(separator: "\n").data(using: .utf8),
                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 if let message = Self.errorMessage(in: data) {
-                    return .failure(VideoClientError(message: message))
+                    return .failure(VideoClientError(kind: .engine, message: message))
                 }
                 switch VideoPayload.parse(json) {
                 case .frames(let frames):
                     return await mux(frames, started: started, onProgress: onProgress)
                 case .tooLarge(let requiredBytes):
                     return .failure(VideoClientError(
+                        kind: .payloadTooLarge,
                         message: Self.tooLargeMessage(requiredBytes: requiredBytes)))
                 case .invalid:
                     break
                 }
             }
-            return .failure(VideoClientError(message: "引擎没有返回视频数据"))
+            return .failure(VideoClientError(kind: .emptyBody, message: "引擎没有返回视频数据"))
         } catch is CancellationError {
-            return .failure(VideoClientError(message: "已取消"))
+            return .failure(VideoClientError(kind: .cancelled, message: "已取消"))
         } catch {
             let ns = error as NSError
             if ns.code == NSURLErrorCancelled {
-                return .failure(VideoClientError(message: "已取消"))
+                return .failure(VideoClientError(kind: .cancelled, message: "已取消"))
             }
-            return .failure(VideoClientError(message: error.localizedDescription))
+            return .failure(VideoClientError(kind: .transport, message: error.localizedDescription))
         }
     }
 
@@ -358,9 +407,9 @@ final class VideoClient: Sendable {
                                                   frames: frames.frames,
                                                   fps: frames.fps))
         } catch is CancellationError {
-            return .failure(VideoClientError(message: "已取消"))
+            return .failure(VideoClientError(kind: .cancelled, message: "已取消"))
         } catch {
-            return .failure(VideoClientError(message: error.localizedDescription))
+            return .failure(VideoClientError(kind: .transport, message: error.localizedDescription))
         }
     }
 

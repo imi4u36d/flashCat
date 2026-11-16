@@ -311,8 +311,45 @@ struct ImageGenerationResult {
     let steps: Int?
 }
 
-struct ImageClientError: Error {
+/// 图像生成的失败原因。与 `ChatError` 同构：`kind` 给控制流看，`message` 给人看。
+///
+/// 取消以前只能靠文案判：引擎把「已取消」写进流里的错误事件时，它跟真正的取消
+/// 长得一模一样，任务面板分不出该把这一格标成「已停止」还是「失败」。
+struct ImageClientError: Error, Equatable, Sendable {
+    /// 失败的情形。带参的一种把端口留下，调用方不必再解析文案。
+    enum Kind: Equatable, Sendable {
+        /// 唯一的「取消」：任务被取消，或连接被主动掐断。
+        case cancelled
+        /// 本地图像端点地址拼不出来。
+        case invalidEndpoint(port: Int)
+        /// 请求体编不成 JSON。
+        case encoding
+        /// 传输层失败：连接被拒、超时之类的 URLError。
+        case transport
+        /// 引擎回了非 2xx。
+        case badStatus(Int)
+        /// 流走完了却没有图像数据。
+        case emptyBody
+        /// 引擎在流里自报的错误（SSE 的 `{"type":"error"}` 或响应体里的 message）。
+        case engine
+    }
+
+    let kind: Kind
+    /// 给人看的文案：任务面板与气泡直接显示这一句。
     let message: String
+
+    init(kind: Kind, message: String) {
+        self.kind = kind
+        self.message = message
+    }
+
+    /// 兼容只知道文案的调用点：一律按 `.transport` 收，绝不按文案猜成取消。
+    init(message: String) {
+        self.init(kind: .transport, message: message)
+    }
+
+    /// 调用方唯一该问的取消判据。
+    var isCancellation: Bool { kind == .cancelled }
 }
 
 /// 图像端点的流式客户端。走 `stream: true` 是为了把去噪步数实时放进气泡，
@@ -338,7 +375,8 @@ final class ImageClient: Sendable {
                   onProgress: @escaping @Sendable (String) -> Void)
         async -> Result<ImageGenerationResult, ImageClientError> {
         guard let url = URL(string: "http://127.0.0.1:\(port)/v1/images/generations") else {
-            return .failure(ImageClientError(message: "图像端点地址无效"))
+            return .failure(ImageClientError(kind: .invalidEndpoint(port: port),
+                                             message: "图像端点地址无效"))
         }
         var body: [String: Any] = [
             "model": request.model,
@@ -364,7 +402,8 @@ final class ImageClient: Sendable {
         do {
             urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
         } catch {
-            return .failure(ImageClientError(message: "请求体编码失败：\(error.localizedDescription)"))
+            return .failure(ImageClientError(kind: .encoding,
+                                             message: "请求体编码失败：\(error.localizedDescription)"))
         }
 
         let started = Date()
@@ -378,7 +417,7 @@ final class ImageClient: Sendable {
                 }
                 let message = Self.errorMessage(in: raw)
                     ?? "服务返回 HTTP \(http.statusCode)"
-                return .failure(ImageClientError(message: message))
+                return .failure(ImageClientError(kind: .badStatus(http.statusCode), message: message))
             }
 
             // 引擎在 stream:true 时回 SSE，每行 `data: {...}`；万一回的是整段
@@ -409,7 +448,7 @@ final class ImageClient: Sendable {
                     onProgress(Self.progressText(json))
                 case "error":
                     let message = (json["message"] as? String) ?? "图像生成失败"
-                    return .failure(ImageClientError(message: message))
+                    return .failure(ImageClientError(kind: .engine, message: message))
                 default:
                     if let png = Self.imageData(in: json) {
                         return .success(ImageGenerationResult(png: png,
@@ -423,7 +462,7 @@ final class ImageClient: Sendable {
                let data = rawLines.joined(separator: "\n").data(using: .utf8),
                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 if let message = Self.errorMessage(in: data) {
-                    return .failure(ImageClientError(message: message))
+                    return .failure(ImageClientError(kind: .engine, message: message))
                 }
                 if let png = Self.imageData(in: json) {
                     return .success(ImageGenerationResult(png: png,
@@ -431,15 +470,15 @@ final class ImageClient: Sendable {
                                                          steps: observedSteps))
                 }
             }
-            return .failure(ImageClientError(message: "引擎没有返回图像数据"))
+            return .failure(ImageClientError(kind: .emptyBody, message: "引擎没有返回图像数据"))
         } catch is CancellationError {
-            return .failure(ImageClientError(message: "已取消"))
+            return .failure(ImageClientError(kind: .cancelled, message: "已取消"))
         } catch {
             let ns = error as NSError
             if ns.code == NSURLErrorCancelled {
-                return .failure(ImageClientError(message: "已取消"))
+                return .failure(ImageClientError(kind: .cancelled, message: "已取消"))
             }
-            return .failure(ImageClientError(message: error.localizedDescription))
+            return .failure(ImageClientError(kind: .transport, message: error.localizedDescription))
         }
     }
 

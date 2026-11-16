@@ -167,8 +167,46 @@ struct ChatToolSchema: Equatable, Sendable {
     }
 }
 
-struct ChatError: Error {
+/// 对话失败的原因。`kind` 给控制流看（尤其「这一轮是不是用户取消」），
+/// `message` 给人看（气泡、notice、日志都直接显示这一句）。
+///
+/// 以前只有一个 `message`，取消只能去文案里找「取消」/「cancel」：引擎自己的
+/// 报错原文里出现这两个词时，一次真实的失败会被当成用户取消静默吞掉，界面还
+/// 停在「已停止」。取消是行为，不该从文案里猜。
+struct ChatError: Error, Equatable, Sendable {
+    /// 失败的情形。带参的两种把端口与状态码留下，调用方不必再解析文案。
+    enum Kind: Equatable, Sendable {
+        /// 唯一的「取消」：用户点了停止，或被新请求顶掉。只能由显式的取消路径产生。
+        case cancelled
+        /// 本地网关地址拼不出来。只可能是端口离谱，带上端口方便定位。
+        case invalidEndpoint(port: Int)
+        /// 请求体编不成 JSON。
+        case encoding
+        /// 传输层失败：连接被拒、超时之类的 URLError。
+        case transport
+        /// 网关回了非 2xx。
+        case badStatus(Int)
+        /// 流走完了却一个字都没有。
+        case emptyBody
+    }
+
+    let kind: Kind
+    /// 给人看的文案：界面直接显示这一句，不翻译不改写。
     let message: String
+
+    init(kind: Kind, message: String) {
+        self.kind = kind
+        self.message = message
+    }
+
+    /// 兼容只知道文案的调用点：一律按 `.transport` 收，绝不按文案猜成取消。
+    init(message: String) {
+        self.init(kind: .transport, message: message)
+    }
+
+    /// 调用方唯一该问的取消判据。删掉文案匹配之后，「取消」两个字只出现在
+    /// message 里，不再影响控制流。
+    var isCancellation: Bool { kind == .cancelled }
 }
 
 /// Streaming client for /v1/chat/completions. Delegate based so a generation
@@ -552,7 +590,8 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 
         guard let url = URL(string: "http://127.0.0.1:\(port)/v1/chat/completions") else {
             onStatus("失败")
-            return .failure(ChatError(message: "本地网关地址无效：端口 \(port)"))
+            return .failure(ChatError(kind: .invalidEndpoint(port: port),
+                                      message: "本地网关地址无效：端口 \(port)"))
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -563,7 +602,8 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         } catch {
             onStatus("失败")
-            return .failure(ChatError(message: "请求体编码失败：\(error.localizedDescription)"))
+            return .failure(ChatError(kind: .encoding,
+                                      message: "请求体编码失败：\(error.localizedDescription)"))
         }
 
         let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
@@ -587,16 +627,18 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 
         if stream.cancelled {
             onStatus("已取消")
-            return .failure(ChatError(message: "已取消"))
+            return .failure(ChatError(kind: .cancelled, message: "已取消"))
         }
         if let error = stream.transportError ?? dataTask.error {
             let cancelled = (error as? URLError)?.code == .cancelled
             onStatus(cancelled ? "已取消" : "失败")
-            return .failure(ChatError(message: cancelled ? "已取消" : error.localizedDescription))
+            return .failure(ChatError(kind: cancelled ? .cancelled : .transport,
+                                      message: cancelled ? "已取消" : error.localizedDescription))
         }
         if stream.status < 200 || stream.status >= 300 {
             onStatus("失败")
-            return .failure(ChatError(message: stream.readableError(status: stream.status)))
+            return .failure(ChatError(kind: .badStatus(stream.status),
+                                      message: stream.readableError(status: stream.status)))
         }
         if stream.text.isEmpty && !stream.raw.isEmpty {
             // Some builds answer with a single JSON document instead of SSE.
@@ -615,7 +657,7 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         // 只发工具调用的一轮正文是空的，这是正常收尾而不是「没返回内容」。
         if stream.text.isEmpty && !stream.reasoned && stream.toolCalls.isEmpty {
             onStatus("失败")
-            return .failure(ChatError(message: "服务没有返回内容"))
+            return .failure(ChatError(kind: .emptyBody, message: "服务没有返回内容"))
         }
         onUsage(stream.usage)
         onStatus("完成")

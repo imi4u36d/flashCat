@@ -11,6 +11,15 @@ struct ChatThread: Identifiable {
 final class ChatHistory {
     private let limit = 6
 
+    /// 写盘失败必须能被看见：历史是用户找回上一轮回答的唯一途径，静默失败
+    /// 等于「保存成功」的假象。这里注入闭包而不是直接持有 LogStore，是因为
+    /// 写盘发生在后台串行队列上，而 LogStore 归 AppState 所有，两者不该互相耦合。
+    private let onWriteFailure: (@Sendable (String) -> Void)?
+
+    init(onWriteFailure: (@Sendable (String) -> Void)? = nil) {
+        self.onWriteFailure = onWriteFailure
+    }
+
     private struct StoredThread: Codable {
         let id: String
         let title: String
@@ -238,10 +247,14 @@ final class ChatHistory {
                          updatedAt: thread.updatedAt.timeIntervalSince1970,
                          messages: thread.messages.map(Self.stored))
         }
+        let sink = onWriteFailure
         writeQueue.async {
             Paths.ensureDirectory(Paths.supportDirectory)
-            if let data = try? JSONEncoder().encode(stored) {
-                try? data.write(to: URL(fileURLWithPath: Paths.historyFile))
+            do {
+                let data = try JSONEncoder().encode(stored)
+                try data.write(to: URL(fileURLWithPath: Paths.historyFile))
+            } catch {
+                sink?("讨论列表保存失败（\(Paths.historyFile)）：\(error.localizedDescription)")
             }
         }
     }
@@ -289,6 +302,13 @@ final class ChatHistory {
 /// The conversation currently open in the chat pane. Kept separate from the
 /// history list so a restart of the app resumes the same context.
 final class ConversationStore {
+    /// 与 `ChatHistory` 同理：对话记录是整个会话的唯一持久副本，写失败必须能被看见。
+    private let onWriteFailure: (@Sendable (String) -> Void)?
+
+    init(onWriteFailure: (@Sendable (String) -> Void)? = nil) {
+        self.onWriteFailure = onWriteFailure
+    }
+
     private struct StoredMessage: Codable {
         let role: String
         let content: String
@@ -409,18 +429,30 @@ final class ConversationStore {
                           videoReferenceClipPaths: message.videoReferenceClipPaths)
         }
         guard !stored.isEmpty else { return }
+        let sink = onWriteFailure
         writeQueue.async {
             Paths.ensureDirectory(Paths.supportDirectory)
-            if let data = try? JSONEncoder().encode(stored) {
-                try? data.write(to: URL(fileURLWithPath: Paths.conversationFile))
+            do {
+                let data = try JSONEncoder().encode(stored)
+                try data.write(to: URL(fileURLWithPath: Paths.conversationFile))
+            } catch {
+                sink?("对话记录保存失败（\(Paths.conversationFile)）：\(error.localizedDescription)")
             }
         }
     }
 
     func clear() {
         // 走同一条队列：先前的 save 必须先落盘，再删文件，顺序不能反。
+        let sink = onWriteFailure
         writeQueue.async {
-            try? FileManager.default.removeItem(atPath: Paths.conversationFile)
+            do {
+                try FileManager.default.removeItem(atPath: Paths.conversationFile)
+            } catch let error as NSError
+                        where error.domain == NSCocoaErrorDomain && error.code == NSFileNoSuchFileError {
+                // 文件本来就不存在时删除会报错，这种失败等价于成功。
+            } catch {
+                sink?("清空对话记录失败：\(error.localizedDescription)")
+            }
         }
     }
 

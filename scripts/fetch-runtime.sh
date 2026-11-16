@@ -20,6 +20,10 @@ fi
 ARCHIVE="splash-$VERSION-arm64-macos26.tar.gz"
 URL="https://github.com/incoai/splash/releases/download/$VERSION/$ARCHIVE"
 
+# vendor/ is gitignored and therefore absent in a fresh checkout; without this
+# the first `curl -o` fails with "No such file or directory".
+mkdir -p "$ROOT/vendor"
+
 echo "==> Downloading $URL"
 curl -fsSL -o "$ROOT/vendor/$ARCHIVE" "$URL"
 curl -fsSL -o "$ROOT/vendor/$ARCHIVE.sha256" "$URL.sha256"
@@ -33,10 +37,21 @@ if [ "$EXPECTED" != "$ACTUAL" ]; then
     exit 1
 fi
 
-EMBEDDED="$(tar -xzf "$ROOT/vendor/$ARCHIVE" -O "$ARCHIVE/release.json" 2>/dev/null \
-    | sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' | head -1)"
+# The archive wraps everything in a single top-level directory, and bsdtar
+# matches the member name *before* stripping components, so the pattern needs
+# the leading `*/`. Extract into a scratch directory instead of piping `tar -O`:
+# that way a missing or unreadable release.json is a real, visible error instead
+# of an empty variable that quietly makes the comparison below fail.
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/splash-release.XXXXXX")"
+trap 'rm -rf "$TMP"' EXIT
+tar -xzf "$ROOT/vendor/$ARCHIVE" -C "$TMP" --strip-components=1 '*/release.json'
+EMBEDDED="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$TMP/release.json" | head -1)"
+[ -n "$EMBEDDED" ] || {
+    echo "error: release.json inside $ARCHIVE has no \"version\" field" >&2
+    exit 1
+}
 echo "==> vendor/$ARCHIVE ($ACTUAL), release.json version: $EMBEDDED"
 if [ "$EMBEDDED" != "$VERSION" ]; then
-    echo "warning: release.json reports $EMBEDDED, not $VERSION" >&2
+    echo "error: release.json reports $EMBEDDED, not $VERSION (refusing a mismatched archive)" >&2
     exit 1
 fi

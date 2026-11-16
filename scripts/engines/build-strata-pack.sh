@@ -7,12 +7,11 @@
 #     flashcat_strata.py      (foreground lifecycle adapter)
 #
 # Usage:
-#   scripts/engines/build-strata-pack.sh [--version 0.2.10] [--out DIR] [--force]
+#   scripts/engines/build-strata-pack.sh [--version 0.2.10] [--out DIR] [--force] [--dry-run]
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib-pack.sh"
 
 ENGINE_ID="strata"
 ENGINE_NAME="Strata"
@@ -36,28 +35,25 @@ Usage: build-strata-pack.sh [options]
   --version VER   Strata app/Terminal version (default: 0.2.10)
   --out DIR       output root (default: vendor/engines)
   --force         replace an existing pack
+  --dry-run       print the resolved target and exit without writing anything
   -h, --help      show this help
 EOF
 }
 
-die() { printf 'error: %s\n' "$*" >&2; exit 1; }
-step() { printf '\n==> %s\n' "$*"; }
+pack_parse_common_args "$@"
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --version) VERSION="${2:?--version needs a value}"; shift 2 ;;
-    --out) OUT="${2:?--out needs a value}"; shift 2 ;;
-    --force) FORCE=1; shift ;;
-    -h|--help) usage; exit 0 ;;
-    *) die "unknown argument: $1 (try --help)" ;;
-  esac
-done
 [[ "$VERSION" != v* ]] || VERSION="${VERSION#v}"
 [[ -f "$WRAPPER" ]] || die "wrapper missing: $WRAPPER"
 
+pack_require_tools curl tar shasum /usr/bin/python3
+pack_begin "pass --force"
+
+# Two assets, one release: the control archive carries the bundled interpreter
+# and the CLI, the Metal archive carries the compiled engine. Which asset is
+# which is only encoded in the asset names, so the release API is the authority.
 mkdir -p "$ROOT/vendor"
 API_JSON="$(mktemp "${TMPDIR:-/tmp}/strata-release.XXXXXX.json")"
-trap 'rm -f "$API_JSON"' EXIT
+pack_cleanup_add "$API_JSON"
 step "Resolving Strata $VERSION release assets"
 curl -fsSL --retry 2 -o "$API_JSON" \
   "https://api.github.com/repos/$UPSTREAM_REPO/releases/tags/v$VERSION"
@@ -81,7 +77,6 @@ print("\t".join(engine))
 PY
 )" || die "could not resolve release assets"
 rm -f "$API_JSON"
-trap - EXIT
 
 CONTROL_NAME="$(printf '%s\n' "$ASSETS" | sed -n '1p' | cut -f1)"
 CONTROL_URL="$(printf '%s\n' "$ASSETS" | sed -n '1p' | cut -f2)"
@@ -107,41 +102,32 @@ step "Downloading release components"
 download "$CONTROL_URL" "$CONTROL_TGZ" "$CONTROL_SHA"
 download "$ENGINE_URL" "$ENGINE_TGZ" "$ENGINE_SHA"
 
-mkdir -p "$OUT"
-OUT="$(cd -- "$OUT" && pwd -P)"
-PACK_DIR="$OUT/$ENGINE_ID/$VERSION"
-if [[ -e "$PACK_DIR" ]]; then
-  [[ $FORCE -eq 1 ]] || die "$PACK_DIR already exists (pass --force)"
-  rm -rf "$PACK_DIR"
-fi
-mkdir -p "$PACK_DIR"
+pack_stage
 
 step "Extracting Strata control and Metal engine"
-tar -xzf "$CONTROL_TGZ" -C "$PACK_DIR"
-mkdir -p "$PACK_DIR/engine"
-tar -xzf "$ENGINE_TGZ" -C "$PACK_DIR/engine"
-chmod -R u+w "$PACK_DIR"
-cp -a "$WRAPPER" "$PACK_DIR/flashcat_strata.py"
+pack_extract "$CONTROL_TGZ" "$PACK_STAGING"
+pack_extract "$ENGINE_TGZ" "$PACK_STAGING/engine"
+cp -a "$WRAPPER" "$PACK_STAGING/flashcat_strata.py"
 
 for required in python/bin/python3 bin/strata setup.py flashcat_strata.py \
                 engine/strata engine/strata-vision engine/engine-component.json; do
-  [[ -e "$PACK_DIR/$required" ]] || die "pack incomplete: missing $required"
+  [[ -e "$PACK_STAGING/$required" ]] || die "pack incomplete: missing $required"
 done
 
 step "Verifying bundled Python and Strata CLI"
-PY="$PACK_DIR/python/bin/python3"
+PY="$PACK_STAGING/python/bin/python3"
 "$PY" -B -VV
-PYTHONPATH="$PACK_DIR" STRATA_INSTALL_DIR="$PACK_DIR/.runtime-check" \
-  "$PACK_DIR/bin/strata" --version
-rm -rf "$PACK_DIR/.runtime-check"
-"$PY" -B - "$PACK_DIR/flashcat_strata.py" <<'PY'
+PYTHONPATH="$PACK_STAGING" STRATA_INSTALL_DIR="$PACK_STAGING/.runtime-check" \
+  "$PACK_STAGING/bin/strata" --version
+rm -rf "$PACK_STAGING/.runtime-check"
+"$PY" -B - "$PACK_STAGING/flashcat_strata.py" <<'PY'
 import ast, sys
 ast.parse(open(sys.argv[1], "rb").read(), filename=sys.argv[1])
 print("    flashcat_strata.py parses")
 PY
 
 step "Writing manifest.json"
-cat > "$PACK_DIR/manifest.json" <<EOF
+cat > "$PACK_STAGING/manifest.json" <<EOF
 {
   "schemaVersion": 1,
   "id": "$ENGINE_ID",
@@ -194,19 +180,14 @@ cat > "$PACK_DIR/manifest.json" <<EOF
   "license": "MIT"
 }
 EOF
-/usr/bin/python3 -m json.tool "$PACK_DIR/manifest.json" >/dev/null
+pack_validate_manifest /usr/bin/python3
 
-find "$PACK_DIR" -type d -name '__pycache__' -prune -exec rm -rf {} +
-find "$PACK_DIR" -name '.DS_Store' -delete
+pack_clean_artifacts
 
-step "Pack summary"
-printf '    path: %s\n' "$PACK_DIR"
-printf '    size: %s\n' "$(du -sh "$PACK_DIR" | awk '{print $1}')"
-printf '    control: %s\n' "$CONTROL_NAME"
-printf '    engine: %s\n' "$ENGINE_NAME_ASSET"
+pack_swap
 
-cat <<EOF
+pack_print_summary
+printf '    control   : %s\n' "$CONTROL_NAME"
+printf '    engine    : %s\n' "$ENGINE_NAME_ASSET"
 
-Next:
-  scripts/engines/make-pack-release.sh --engine $ENGINE_ID --version $VERSION --min-macos $MIN_MACOS
-EOF
+pack_next_release_cmd "$MIN_MACOS"

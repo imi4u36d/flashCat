@@ -10,7 +10,7 @@
 # compiler at all.
 #
 # Usage:
-#   scripts/engines/build-mtplx-pack.sh [--version 2.12.2] [--out DIR] [--force]
+#   scripts/engines/build-mtplx-pack.sh [--version 2.12.2] [--out DIR] [--force] [--dry-run]
 #
 # Notes:
 #   * No model weights are downloaded by this script.
@@ -22,13 +22,12 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib-pack.sh"
 
 ENGINE_ID="mtplx"
 ENGINE_NAME="MTPLX"
 DEFAULT_VERSION="2.12.2"
-DEFAULT_OUT="$REPO_ROOT/vendor/engines"
+DEFAULT_OUT="$ROOT/vendor/engines"
 DEFAULT_PORT=8200
 # ABI-critical: `_paged_ops` is built as .cpython-313-darwin.so
 PYTHON_SERIES="3.13"
@@ -53,67 +52,29 @@ Usage: build-mtplx-pack.sh [options]
   --version VER   mtplx version to bundle (default: 2.12.2)
   --out DIR       output root; pack lands in DIR/mtplx/VER (default: vendor/engines)
   --force         replace an existing pack directory
+  --dry-run       print the resolved target and exit without writing anything
   -h, --help      show this help
 EOF
 }
 
-die() { printf 'error: %s\n' "$*" >&2; exit 1; }
-step() { printf '\n==> %s\n' "$*"; }
-elapsed() { printf '    (%.1fs)\n' "$(( $(date +%s) - $1 ))"; }
+pack_parse_common_args "$@"
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --version) VERSION="${2:?--version needs a value}"; shift 2 ;;
-    --out)     OUT="${2:?--out needs a value}"; shift 2 ;;
-    --force)   FORCE=1; shift ;;
-    -h|--help) usage; exit 0 ;;
-    *) die "unknown argument: $1 (try --help)" ;;
-  esac
-done
-
-# ------------------------------------------------------------- bootstrap uv
-# The pack build needs uv (python-build-standalone management + installs), but
-# requiring it to be preinstalled would tie the build to the local machine's
-# tooling. Instead, cache a standalone uv binary inside the repo and download
-# it on first use.
-ensure_uv() {
-  local uv_bin="$REPO_ROOT/.tools/uv"
-  if [[ -x "$uv_bin" ]]; then
-    printf '%s\n' "$uv_bin"
-    return 0
-  fi
-  step "Downloading standalone uv (one-time bootstrap into .tools/)"
-  local url="https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-apple-darwin.tar.gz"
-  local tmp
-  tmp="$(mktemp -d "${TMPDIR:-/tmp}/uv-bootstrap.XXXXXX")"
-  curl -fL --retry 2 -o "$tmp/uv.tar.gz" "$url"
-  mkdir -p "$REPO_ROOT/.tools"
-  tar -xzf "$tmp/uv.tar.gz" -C "$tmp"
-  mv "$tmp/uv-aarch64-apple-darwin/uv" "$uv_bin"
-  rm -rf "$tmp"
-  chmod +x "$uv_bin"
-  printf '    uv -> %s\n' "$uv_bin"
-  printf '%s\n' "$uv_bin"
-}
-
-UV="$(ensure_uv)"
-mkdir -p "$OUT"
-OUT="$(cd -- "$OUT" && pwd -P)"
-PACK_DIR="$OUT/$ENGINE_ID/$VERSION"
-
-if [[ -e "$PACK_DIR" ]]; then
-  [[ $FORCE -eq 1 ]] || die "$PACK_DIR already exists (use --force to replace)"
-  step "Removing existing pack $PACK_DIR"
-  rm -rf "$PACK_DIR"
-fi
+pack_require_tools curl tar shasum
+pack_begin "use --force to replace"
 
 TMP_BASE="${TMPDIR:-/tmp}"
 TMP_BASE="${TMP_BASE%/}"   # a trailing slash would double up once Python normalises paths
 WORK="$(mktemp -d "${TMP_BASE}/mtplx-pack.XXXXXX")"
-trap 'rm -rf "$WORK"' EXIT
+pack_cleanup_add "$WORK"
+
+# uv is bootstrapped after the target-path gate: a --dry-run or a refused
+# --force must not write .tools/ or touch the network.
+UV="$(pack_ensure_uv)"
 
 BUILD_START=$(date +%s)
 printf 'Pack target: %s\n' "$PACK_DIR"
+
+pack_stage
 
 # ---------------------------------------------------------------- 1. CPython 3.13
 step "Locating uv-managed CPython $PYTHON_SERIES"
@@ -130,12 +91,11 @@ elapsed "$T"
 
 step "Copying CPython into the pack"
 T=$(date +%s)
-mkdir -p "$PACK_DIR"
-cp -a "$PY_ROOT" "$PACK_DIR/python"
-chmod -R u+w "$PACK_DIR/python"
+cp -a "$PY_ROOT" "$PACK_STAGING/python"
+chmod -R u+w "$PACK_STAGING/python"
 # The uv marker would block `uv pip install` into the pack interpreter.
-rm -f "$PACK_DIR/python/lib/python${PYTHON_SERIES}/EXTERNALLY-MANAGED"
-PY="$PACK_DIR/python/bin/python3"
+rm -f "$PACK_STAGING/python/lib/python${PYTHON_SERIES}/EXTERNALLY-MANAGED"
+PY="$PACK_STAGING/python/bin/python3"
 [[ -x "$PY" ]] || die "pack interpreter missing: $PY"
 printf '    %s\n' "$("$PY" -VV)"
 elapsed "$T"
@@ -169,9 +129,9 @@ PYEOF
 SO_BUILT="$(printf '%s' "$SO_BUILT" | tail -n 1)"
 [[ -f "$SO_BUILT" ]] || die "native extension build failed (no file at '$SO_BUILT')"
 SO_NAME="$(basename "$SO_BUILT")"
-mkdir -p "$PACK_DIR/cache"
-cp -p "$SO_BUILT" "$PACK_DIR/cache/$SO_NAME"
-printf '    %s (%s bytes)\n' "$SO_NAME" "$(wc -c < "$PACK_DIR/cache/$SO_NAME" | tr -d ' ')"
+mkdir -p "$PACK_STAGING/cache"
+cp -p "$SO_BUILT" "$PACK_STAGING/cache/$SO_NAME"
+printf '    %s (%s bytes)\n' "$SO_NAME" "$(wc -c < "$PACK_STAGING/cache/$SO_NAME" | tr -d ' ')"
 FINGERPRINT="$(printf '%s' "$SO_NAME" | sed -n 's/^_paged_ops-\([0-9a-f]\{16\}\)\..*$/\1/p')"
 [[ -n "$FINGERPRINT" ]] || die "unexpected native extension name: $SO_NAME"
 printf '    mlx libmlx.dylib fingerprint: %s\n' "$FINGERPRINT"
@@ -181,7 +141,7 @@ step "Verifying get_ops() loads the packed cache in a clean HOME"
 T=$(date +%s)
 VERIFY_HOME="$WORK/verifyhome"
 mkdir -p "$VERIFY_HOME/.cache/vllm-metal"
-cp -p "$PACK_DIR/cache/$SO_NAME" "$VERIFY_HOME/.cache/vllm-metal/$SO_NAME"
+cp -p "$PACK_STAGING/cache/$SO_NAME" "$VERIFY_HOME/.cache/vllm-metal/$SO_NAME"
 OPS_FILE="$(HOME="$VERIFY_HOME" "$PY" - <<'PYEOF' | tail -n 1
 from vllm_metal.metal import get_ops
 print(get_ops().__file__)
@@ -192,10 +152,10 @@ printf '    get_ops() -> %s\n' "$OPS_FILE"
 [[ "$(basename "$OPS_FILE")" == "$SO_NAME" ]] || die "get_ops() loaded an unexpected artefact: $OPS_FILE"
 elapsed "$T"
 
-# ----------------------------------------------------------------- 4. manifest.json
+# --------------------------------------------------------------- 4. manifest.json
 step "Writing manifest.json"
-mkdir -p "$PACK_DIR/bin" "$PACK_DIR/models"   # bin/ = PATH prefix dir the app may prepend
-cat > "$PACK_DIR/manifest.json" <<EOF
+mkdir -p "$PACK_STAGING/bin" "$PACK_STAGING/models"   # bin/ = PATH prefix dir the app may prepend
+cat > "$PACK_STAGING/manifest.json" <<EOF
 {
   "schemaVersion": 1,
   "id": "$ENGINE_ID",
@@ -238,7 +198,7 @@ cat > "$PACK_DIR/manifest.json" <<EOF
   "license": "Apache-2.0"
 }
 EOF
-"$PY" - "$PACK_DIR/manifest.json" <<'PYEOF'
+"$PY" - "$PACK_STAGING/manifest.json" <<'PYEOF'
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as fh:
     data = json.load(fh)
@@ -247,17 +207,17 @@ assert data["warmup"]["precompiled"], "warmup.precompiled must not be empty"
 print("    manifest.json parsed OK")
 PYEOF
 
-step "Make the pack relocatable"
 # The precompiled _paged_ops inherits the build machine's absolute LC_RPATH,
 # which would make an installed copy (Application Support) fail to load mlx.
-"$REPO_ROOT/scripts/engines/fix-pack-rpaths.sh" "$PACK_DIR"
+pack_fix_rpaths
+
+pack_swap
+# The staging path is gone after the swap, so re-point the interpreter at the
+# published pack before reporting on it.
+PY="$PACK_DIR/python/bin/python3"
 
 # --------------------------------------------------------------------- 5. summary
-step "Pack summary"
-PACK_SIZE="$(du -sh "$PACK_DIR" | awk '{print $1}')"
-FILE_COUNT="$(find "$PACK_DIR" -type f | wc -l | tr -d ' ')"
-printf '    path      : %s\n' "$PACK_DIR"
-printf '    size      : %s (%s files)\n' "$PACK_SIZE" "$FILE_COUNT"
+pack_print_summary
 printf '    python    : %s\n' "$("$PY" -VV)"
 printf '    mtplx     : %s\n' "$VERSION_LINE"
 printf '    elapsed   : %ss total\n' "$(( $(date +%s) - BUILD_START ))"

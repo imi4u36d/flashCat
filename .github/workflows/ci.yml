@@ -23,6 +23,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Fail fast: script syntax, Python syntax and the pack scaffolding's stub
+      # tests run here, before the ten-minute Swift build. bash -n uses the
+      # runner's /bin/bash (3.2 on macOS), which is the runtime the scripts
+      # actually see, so anything bash-4-only shows up now instead of on release
+      # day.
+      - name: Script syntax and pack self-test
+        working-directory: .
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          total=0
+          for script in scripts/*.sh scripts/engines/*.sh; do
+            bash -n "$script"
+            total=$((total + 1))
+          done
+          echo "bash -n: $total scripts OK"
+          # py_compile writes __pycache__ next to the sources (it is
+          # gitignored); remove it so later steps see a clean tree.
+          python3 -m py_compile runtime/*.py
+          rm -rf runtime/__pycache__
+          # The five build-*-pack.sh scripts share lib-pack.sh; the stub tests
+          # cover staging + swap, --dry-run, and "a failed rebuild keeps the
+          # installed pack". No network, no engine toolchain required.
+          bash scripts/engines/lib-pack-selftest.sh
+
       - name: Toolchain
         run: swift --version
 
@@ -32,10 +57,16 @@ jobs:
       # 基线已经收到 0：11 条历史告警在这轮里逐条修掉了（TailReader 的缓冲区
       # 变成加锁的引用类型、ChatClient 改为每请求一份状态、滑杆读数改用本地
       # @State），所以这一项现在是零点检查——再多出一条就是新债。
+      # 刻意保留成单独一步，不和上面那次构建合并：合并就要加 -warnings-as-errors，
+      # 那样 strict-concurrency 的告警会以 `error:` 输出，下面的 grep 永远数到 0
+      # 条，基线常绿、棘轮静默失效。改用独立 scratch path：既不动 swift test 要
+      # 复用的 .build（少两轮全量编译），又是干净的全量构建，不会靠复用旧目标
+      # 文件漏报新告警（.build-sc/ 已在 .gitignore 里）。
       - name: Strict concurrency must not regress
         run: |
           set -o pipefail
-          swift build -Xswiftc -strict-concurrency=complete 2>&1 \
+          swift build -Xswiftc -strict-concurrency=complete \
+            --scratch-path .build-sc/strict-concurrency 2>&1 \
             | sed -E 's/\x1b\[[0-9;]*m//g' | tee /tmp/concurrency.log
           baseline="$(cat .strict-concurrency-baseline)"
           # 基线已经收到 0，所以「一条都没匹配到」是正常且期望的结果。但 grep

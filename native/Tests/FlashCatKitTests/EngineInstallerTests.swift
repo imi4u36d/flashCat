@@ -222,7 +222,7 @@ final class EngineInstallerTests: XCTestCase {
 
         let installer = EngineInstaller(environment: makeEnvironment())
         let phases = PhaseBox()
-        await XCTAssertThrowsErrorAsync {
+        await assertThrowsErrorAsync {
             _ = try await installer.install(release, for: .omlx) { phases.append($0) }
         } verify: { error in
             guard case EngineInstallError.checksumMismatch(let expected, let actual) = error else {
@@ -249,7 +249,7 @@ final class EngineInstallerTests: XCTestCase {
         let release = EnginePackRelease(version: "0.7.2",
                                         url: "file:///tmp/omlx-0.7.2.zip",
                                         sha256: String(repeating: "a", count: 64))
-        await XCTAssertThrowsErrorAsync {
+        await assertThrowsErrorAsync {
             _ = try await installer.install(release, for: .omlx) { _ in }
         } verify: { error in
             guard case EngineInstallError.unsupportedArchive(let url) = error else {
@@ -261,7 +261,7 @@ final class EngineInstallerTests: XCTestCase {
         let tgz = EnginePackRelease(version: "0.7.2",
                                     url: "file:///tmp/omlx-0.7.2.tgz",
                                     sha256: String(repeating: "a", count: 64))
-        await XCTAssertThrowsErrorAsync {
+        await assertThrowsErrorAsync {
             _ = try await installer.install(tgz, for: .omlx) { _ in }
         } verify: { error in
             // .tgz is accepted as a format; it only fails because the file is absent.
@@ -283,6 +283,94 @@ final class EngineInstallerTests: XCTestCase {
         XCTAssertEqual(installation.manifest.version, "0.7.4")
         XCTAssertTrue(FileManager.default.fileExists(
             atPath: installation.root.appendingPathComponent("manifest.json").path))
+    }
+
+    /// 回归：版本名来自索引（外部输入），会被拼进 `.downloads`、`.staging` 与
+    /// `packs/<id>/<version>` 三处路径。`../..` 能在校验和/清单都还没验之前就把
+    /// 文件写到 packs 之外，所以必须在算出任何落盘路径之前拒掉。
+    func testInstallRejectsAVersionThatEscapesThePacksDirectory() async throws {
+        let escapeTarget = workDirectory.appendingPathComponent("escape-target", isDirectory: true)
+        try FileManager.default.createDirectory(at: escapeTarget, withIntermediateDirectories: true)
+        let archive = try makeArchive(version: "0.7.2", topLevelDirectory: "omlx-0.7.2")
+        let hostile = EnginePackRelease(version: "../../escape-target/omlx-0.7.2",
+                                        url: archive.absoluteString,
+                                        sha256: try sha256Hex(of: archive))
+
+        let installer = EngineInstaller(environment: makeEnvironment())
+        let phases = PhaseBox()
+        await assertThrowsErrorAsync {
+            _ = try await installer.install(hostile, for: .omlx) { phases.append($0) }
+        } verify: { error in
+            guard case EngineInstallError.versionInvalid(let version) = error else {
+                return XCTFail("期望 versionInvalid，实际 \(error)")
+            }
+            XCTAssertEqual(version, "../../escape-target/omlx-0.7.2")
+        }
+
+        // 一个字节都不许落到 packs 之外，也不许在 packs 里留下半成品。
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: escapeTarget.path), [])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: packsDirectory.appendingPathComponent("omlx").path))
+        XCTAssertTrue(residue(in: downloadsDirectory).isEmpty, "\(residue(in: downloadsDirectory))")
+        XCTAssertTrue(residue(in: stagingDirectory).isEmpty, "\(residue(in: stagingDirectory))")
+        if case .failed(let message)? = phases.phases.last {
+            XCTAssertTrue(message.contains("版本名不安全"), message)
+        } else {
+            XCTFail("最后一个阶段应是 failed")
+        }
+    }
+
+    /// 回归：单条目平铺归档（tar 列表只有 `["manifest.json"]`）曾被判成「一个顶层
+    /// 目录」而 strip 1，根上的清单被整条扔掉，解包目录空着，用户看到的是
+    /// 「无法解码 manifest.json」而不是真正的问题（缺入口）。
+    func testFlatArchiveWithOneRootFileNeedsNoStripping() async throws {
+        XCTAssertEqual(EngineInstaller.stripComponents(for: ["manifest.json"]), 0)
+        XCTAssertEqual(EngineInstaller.stripComponents(for: ["./manifest.json"]), 0)
+        XCTAssertEqual(EngineInstaller.stripComponents(for: ["manifest.json", "python/bin/python3"]), 0)
+        // tar 给目录条目补 "/"：单条目录条目仍然是「一个顶层目录」，照旧 strip。
+        XCTAssertEqual(EngineInstaller.stripComponents(for: ["omlx-0.7.2/"]), 1)
+        XCTAssertEqual(EngineInstaller.stripComponents(for: ["omlx-0.7.2/", "omlx-0.7.2/manifest.json"]), 1)
+
+        let manifest = """
+        {
+          "schemaVersion": 1,
+          "id": "omlx",
+          "name": "oMLX",
+          "version": "0.7.2",
+          "kind": "bundled",
+          "arch": "arm64",
+          "minMacOS": "14.0",
+          "entrypoint": "python/bin/python3",
+          "workingDirectory": ".",
+          "modelsSubdirectory": "models",
+          "launchProfiles": {
+            "default": { "args": ["-m", "omlx.cli", "serve", "--port", "{port}"] }
+          },
+          "health": { "path": "/health", "readyStatus": 200, "loadingStatus": 503 },
+          "defaultPort": 8100,
+          "modelSwitch": "hot",
+          "capabilities": ["chat", "streaming"],
+          "license": "Apache-2.0"
+        }
+        """
+        let buildRoot = workDirectory.appendingPathComponent("single-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: buildRoot, withIntermediateDirectories: true)
+        try Data(manifest.utf8).write(to: buildRoot.appendingPathComponent("manifest.json"), options: .atomic)
+        let archive = workDirectory.appendingPathComponent("single-\(UUID().uuidString).tar.gz")
+        let result = try runProcess("/usr/bin/tar", ["-czf", archive.path, "-C", buildRoot.path, "manifest.json"])
+        XCTAssertEqual(result.status, 0, "tar 打包失败：\(result.stderrText)")
+
+        let release = EnginePackRelease(version: "0.7.2",
+                                        url: archive.absoluteString,
+                                        sha256: try sha256Hex(of: archive))
+        await assertThrowsErrorAsync {
+            _ = try await EngineInstaller(environment: self.makeEnvironment())
+                .install(release, for: .omlx) { _ in }
+        } verify: { error in
+            guard case EngineInstallError.missingEntrypoint(let path) = error else {
+                return XCTFail("期望 missingEntrypoint，实际 \(error)")
+            }
+            XCTAssertEqual(path, "python/bin/python3")
+        }
     }
 
     /// 回归：1.5.6 把软链一律拒了，splash 的 Python 发行包装不上。同包内的相对
@@ -325,7 +413,7 @@ final class EngineInstallerTests: XCTestCase {
 
         let installer = EngineInstaller(environment: makeEnvironment())
         let phases = PhaseBox()
-        await XCTAssertThrowsErrorAsync {
+        await assertThrowsErrorAsync {
             _ = try await installer.install(release, for: .splash) { phases.append($0) }
         } verify: { error in
             guard case EngineInstallError.unsafeArchiveLink(let link) = error else {
@@ -423,7 +511,7 @@ final class EngineInstallerTests: XCTestCase {
         let release = EnginePackRelease(version: "0.7.2", url: "omlx-0.7.2.tar.gz", sha256: "aa")
         let installer = EngineInstaller(environment: makeEnvironment())
 
-        await XCTAssertThrowsErrorAsync {
+        await assertThrowsErrorAsync {
             _ = try await installer.install(release, for: .omlx) { _ in }
         } verify: { error in
             guard case EngineInstallError.downloadFailed(let message) = error else {
@@ -481,11 +569,95 @@ final class EngineInstallerTests: XCTestCase {
         environment.indexURL = nil
         environment.bundledIndexPath = nil
         let installer = EngineInstaller(environment: environment)
-        await XCTAssertThrowsErrorAsync {
+        await assertThrowsErrorAsync {
             _ = try await installer.loadIndex()
         } verify: { error in
-            XCTAssertEqual(error as? EngineInstallError, .indexUnavailable)
+            XCTAssertEqual(error as? EngineInstallError, .indexUnavailable(reason: "没有可用的索引来源"))
         }
+    }
+
+    /// 回归：远程索引解码失败曾直接抛错，随包索引的回退永远走不到——离线安装
+    /// （索引被墙、被写坏、返回限流页面）全靠那份索引。
+    func testCorruptRemoteIndexFallsBackToTheBundledIndex() async throws {
+        let remote = workDirectory.appendingPathComponent("remote-pack-index.json")
+        try Data("{ 这不是 JSON".utf8).write(to: remote, options: .atomic)
+        let bundled = workDirectory.appendingPathComponent("bundled-pack-index.json")
+        let json = """
+        {
+          "schemaVersion": 1,
+          "engines": {
+            "omlx": [
+              { "version": "0.7.2", "url": "https://example.invalid/omlx-0.7.2.tar.gz", "sha256": "aa" }
+            ]
+          }
+        }
+        """
+        try Data(json.utf8).write(to: bundled, options: .atomic)
+
+        var environment = makeEnvironment()
+        environment.indexURL = URL(fileURLWithPath: remote.path)
+        environment.bundledIndexPath = bundled.path
+        let index = try await EngineInstaller(environment: environment).loadIndex()
+
+        XCTAssertEqual(index.latest(for: .omlx)?.version, "0.7.2")
+        XCTAssertEqual(index.latest(for: .omlx)?.url, "https://example.invalid/omlx-0.7.2.tar.gz")
+    }
+
+    /// 全部候选都失败时，消息里要说明是哪一份、坏在哪一步：统一报「无法获取
+    /// 索引」等于让用户没有任何排查线索。
+    func testIndexFailureReportsWhyEveryCandidateFailed() async throws {
+        let remote = workDirectory.appendingPathComponent("remote-pack-index.json")
+        try Data("{ 这不是 JSON".utf8).write(to: remote, options: .atomic)
+        var environment = makeEnvironment()
+        environment.indexURL = URL(fileURLWithPath: remote.path)
+        environment.bundledIndexPath = nil
+
+        await assertThrowsErrorAsync {
+            _ = try await EngineInstaller(environment: environment).loadIndex()
+        } verify: { error in
+            guard case EngineInstallError.indexUnavailable(let reason) = error else {
+                return XCTFail("期望 indexUnavailable，实际 \(error)")
+            }
+            XCTAssertTrue(reason.contains("remote-pack-index.json"), reason)
+            XCTAssertTrue(reason.contains("无法解析"), reason)
+            XCTAssertEqual(error.localizedDescription,
+                           "无法获取引擎包索引：\(reason)")
+        }
+    }
+
+    /// 被劫持的索引会在解码这一层作废（install 之前）：内存里都不该留有不安全
+    /// 版本，`loadIndex` 随即回落到下一份候选。
+    func testIndexDecodingRejectsVersionsThatEscapeThePacksDirectory() throws {
+        let hostile = """
+        {
+          "schemaVersion": 1,
+          "engines": {
+            "omlx": [
+              { "version": "../../../../tmp/x", "url": "https://example.invalid/x.tar.gz", "sha256": "aa" }
+            ]
+          }
+        }
+        """
+        XCTAssertThrowsError(try JSONDecoder().decode(EnginePackIndex.self, from: Data(hostile.utf8))) { error in
+            guard let decodingError = error as? DecodingError,
+                  case .dataCorrupted = decodingError else {
+                return XCTFail("期望 DecodingError.dataCorrupted，实际 \(error)")
+            }
+        }
+
+        // 正常的版本名（含预发布标记）不受影响。
+        let safe = """
+        {
+          "schemaVersion": 1,
+          "engines": {
+            "omlx": [
+              { "version": "1.4.1-dev.2", "url": "https://example.invalid/x.tar.gz", "sha256": "aa" }
+            ]
+          }
+        }
+        """
+        let index = try JSONDecoder().decode(EnginePackIndex.self, from: Data(safe.utf8))
+        XCTAssertEqual(index.latest(for: .omlx)?.version, "1.4.1-dev.2")
     }
 
     // MARK: - Uninstall
@@ -519,7 +691,7 @@ final class EngineInstallerTests: XCTestCase {
         let broken = EnginePackRelease(version: "0.7.3",
                                        url: archive.absoluteString,
                                        sha256: String(repeating: "f", count: 64))
-        await XCTAssertThrowsErrorAsync {
+        await assertThrowsErrorAsync {
             _ = try await installer.install(broken, for: .omlx) { _ in }
         } verify: { error in
             guard case EngineInstallError.checksumMismatch = error else {
@@ -724,7 +896,7 @@ private final class PhaseBox: @unchecked Sendable {
 }
 
 /// `XCTAssertThrowsError` has no async variant.
-private func XCTAssertThrowsErrorAsync(_ expression: () async throws -> Void,
+private func assertThrowsErrorAsync(_ expression: () async throws -> Void,
                                        verify: (Error) -> Void = { _ in },
                                        file: StaticString = #filePath,
                                        line: UInt = #line) async {

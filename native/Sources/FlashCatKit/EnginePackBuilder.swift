@@ -169,9 +169,18 @@ public enum EnginePackBuildRunner {
             buffer.consume(data)
         }
 
-        try process.run()
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+        // 必须先装 terminationHandler 再 run()：这两步之间子进程完全可能已经退出
+        // （`exit 0` 这种命令毫秒级结束），而 Process 不会为已结束的进程补发通知，
+        // continuation 就永远不 resume，整个构建无声挂死（无超时、不响应取消）。
+        // 启动失败走 throwing 版本，否则同样会挂在这里。
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             process.terminationHandler = { _ in continuation.resume() }
+            do {
+                try process.run()
+            } catch {
+                process.terminationHandler = nil
+                continuation.resume(throwing: error)
+            }
         }
         handle.readabilityHandler = nil
         if let rest = try? handle.readToEnd(), !rest.isEmpty {
@@ -212,7 +221,7 @@ public enum EnginePackBuildRunner {
 /// handler can forward them as they arrive instead of after the run.
 private final class _LineBuffer: @unchecked Sendable {
     private let lock = NSLock()
-    private var pending = ""
+    private var pending = Data()
     private let onLine: @Sendable (String) -> Void
 
     init(onLine: @escaping @Sendable (String) -> Void) {
@@ -220,13 +229,19 @@ private final class _LineBuffer: @unchecked Sendable {
     }
 
     func consume(_ data: Data) {
-        guard let text = String(data: data, encoding: .utf8) else { return }
         lock.lock()
-        pending += text
+        pending.append(data)
         var lines: [String] = []
-        while let index = pending.firstIndex(of: "\n") {
-            lines.append(String(pending[..<index]))
-            pending = String(pending[pending.index(after: index)...])
+        // 不能拿整块去 String(data:encoding:)：一次 read 可能正好把一个中文字符
+        // 的 UTF-8 字节劈成两半，那种解码返回 nil，整块（可能是好几行）就被静默
+        // 丢弃了。先累积字节，只在 "\n" 处切行——\n 不可能出现在多字节字符内部
+        // ——这样每一行都是完整的 UTF-8。
+        while let index = pending.firstIndex(of: UInt8(ascii: "\n")) {
+            let line = pending[pending.startIndex..<index]
+            // 用 lossy 解码而不是 String(data:encoding:)：真出现坏字节时留下 U+FFFD，
+            // 让它在构建日志里可见，而不是把这一行连同原因一起吞掉。
+            lines.append(String(decoding: line, as: UTF8.self))
+            pending = pending[pending.index(after: index)...]
         }
         lock.unlock()
         for line in lines where !line.isEmpty { onLine(line) }
@@ -235,8 +250,9 @@ private final class _LineBuffer: @unchecked Sendable {
     func flush() {
         lock.lock()
         let rest = pending
-        pending = ""
+        pending = Data()
         lock.unlock()
-        if !rest.isEmpty { onLine(rest) }
+        let text = String(decoding: rest, as: UTF8.self)
+        if !text.isEmpty { onLine(text) }
     }
 }

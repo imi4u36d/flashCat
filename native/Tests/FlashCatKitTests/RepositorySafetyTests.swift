@@ -44,4 +44,19 @@ final class RepositorySafetyTests: XCTestCase {
         XCTAssertFalse(hostile.contains(";"))
         XCTAssertFalse(hostile.contains(" "))
     }
+
+    /// 版本名不只进 shell，还会被拼成 `packs/<id>/<version>`。索引是远端可控的，
+    /// 一个 `..` 就意味着「在归档校验之前写到 packs 之外」，所以字符集要在进入
+    /// 任何路径之前收紧。白名单必须与 `EngineUpstream.normalizedVersion` 一致，
+    /// 否则同一个版本号在两处会得到不同判定。
+    func testVersionNamesCannotEscapeThePacksDirectory() {
+        for version in ["1.4.1", "0.7.3.dev2", "26.11.1", "1.0.0+build.5", "1.2.3-rc1", "v1"] {
+            XCTAssertTrue(FlashCatPaths.isSafeVersion(version), version)
+        }
+        for version in ["", "..", "../1.0", "1.0/../x", "1.0..2", "../../../../tmp/x",
+                        "/tmp/x", "1.0 0", "1.0;rm -rf ~", "1.0\n", "۱.۰",
+                        String(repeating: "9", count: 65)] {
+            XCTAssertFalse(FlashCatPaths.isSafeVersion(version), version)
+        }
+    }
 }

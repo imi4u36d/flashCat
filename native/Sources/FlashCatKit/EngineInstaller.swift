@@ -64,6 +64,28 @@ public struct EnginePackIndex: Codable, Sendable, Equatable {
         self.engines = engines
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case engines
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        let engines = try container.decode([String: [EnginePackRelease]].self, forKey: .engines)
+        // 版本名会变成 `packs/<id>/<version>`：一份被劫持的索引若带 `../..`，
+        // 就能在归档校验之前把文件写到 packs 之外。索引是外部输入，所以在解码
+        // 这一层就整份作废，loadIndex 随即回落到下一份候选索引。
+        for (key, releases) in engines {
+            for release in releases where !FlashCatPaths.isSafeVersion(release.version) {
+                throw DecodingError.dataCorruptedError(forKey: .engines,
+                                                       in: container,
+                                                       debugDescription: "\(key) 的版本名不安全：\(release.version)")
+            }
+        }
+        self.engines = engines
+    }
+
     /// Newest first. Sorting happens here so every caller sees the same order
     /// as `installedVersions(_:)` and never has to re-derive it.
     public func releases(for id: EngineID) -> [EnginePackRelease] {
@@ -81,8 +103,9 @@ public struct EnginePackIndex: Codable, Sendable, Equatable {
 // MARK: - Errors
 
 public enum EngineInstallError: Error, LocalizedError, Equatable {
-    case indexUnavailable
+    case indexUnavailable(reason: String)
     case releaseNotFound(String)
+    case versionInvalid(String)
     case unsupportedArchive(String)
     case checksumMismatch(expected: String, actual: String)
     case unsafeArchiveEntry(String)
@@ -94,10 +117,12 @@ public enum EngineInstallError: Error, LocalizedError, Equatable {
 
     public var errorDescription: String? {
         switch self {
-        case .indexUnavailable:
-            return "无法获取引擎包索引"
+        case .indexUnavailable(let reason):
+            return reason.isEmpty ? "无法获取引擎包索引" : "无法获取引擎包索引：\(reason)"
         case .releaseNotFound(let version):
             return "索引中没有该引擎版本：\(version)"
+        case .versionInvalid(let version):
+            return "版本名不安全：\(version)（只允许字母、数字与 . _ + -）"
         case .unsupportedArchive(let url):
             return "不支持的归档格式：\(url)（仅支持 .tar.gz 或 .tgz）"
         case .checksumMismatch(let expected, let actual):
@@ -227,27 +252,6 @@ public struct EngineInstallEnvironment: Sendable {
     }
 }
 
-// MARK: - Archive links
-
-/// A `tar -tvzf` entry whose type is a link.
-///
-/// pack 可以带链接——Python 发行包本来就有一批同目录的软链——但目标不能出包：
-/// `pack/link -> ~/.ssh/id_rsa` 能把包外文件拉进来，`validate` 再给它 `chmod 755`
-/// 并启动，就成了在包外执行东西。
-struct ArchiveLink: Equatable, Sendable {
-    enum Kind: Equatable, Sendable {
-        /// `l` 开头：目标相对链接自己所在的目录。
-        case symbolic
-        /// `h` 开头：目标相对归档根。
-        case hard
-    }
-
-    var kind: Kind
-    /// 归档里的条目名（解包前的位置）。
-    var path: String
-    var target: String
-}
-
 // MARK: - Installer
 
 public actor EngineInstaller {
@@ -263,23 +267,42 @@ public actor EngineInstaller {
     // MARK: Index
 
     public func loadIndex() async throws -> EnginePackIndex {
-        for candidate in indexCandidates() {
-            guard let fetched = try? await fetch(candidate) else { continue }
-            guard let decoded = try? JSONDecoder().decode(EnginePackIndex.self, from: fetched.data) else {
-                throw EngineInstallError.indexUnavailable
-            }
-            var index = decoded
-            index.engines = decoded.engines
-                .filter { raw, _ in
-                    guard let id = EngineID(rawValue: raw) else { return false }
-                    return EngineCatalog.allIDs.contains(id)
-                }
-                .mapValues { releases in
-                    releases.map { $0.resolvedAgainst(index: fetched.url) }
-                }
-            return index
+        let candidates = indexCandidates()
+        guard !candidates.isEmpty else {
+            throw EngineInstallError.indexUnavailable(reason: "没有可用的索引来源")
         }
-        throw EngineInstallError.indexUnavailable
+        // 单个候选失败不能让整轮解析失败：远程索引坏了或被墙掉时，随包索引
+        // 是离线安装的唯一来源。失败原因逐个记下——统一报「无法获取索引」等于
+        // 让用户没有任何排查线索。
+        var failures: [String] = []
+        for candidate in candidates {
+            do {
+                let fetched = try await fetch(candidate)
+                let decoded = try JSONDecoder().decode(EnginePackIndex.self, from: fetched.data)
+                var index = decoded
+                index.engines = decoded.engines
+                    .filter { raw, _ in
+                        guard let id = EngineID(rawValue: raw) else { return false }
+                        return EngineCatalog.allIDs.contains(id)
+                    }
+                    .mapValues { releases in
+                        releases.map { $0.resolvedAgainst(index: fetched.url) }
+                    }
+                return index
+            } catch {
+                failures.append("\(candidate.absoluteString)：\(Self.reason(for: error))")
+            }
+        }
+        throw EngineInstallError.indexUnavailable(reason: failures.joined(separator: "；"))
+    }
+
+    /// 一条候选失败的原因，给用户看的。`DecodingError` 自带的描述只是一句
+    /// 泛化英文，拼进消息里没有排查价值，所以单独换成中文前缀。
+    private static func reason(for error: Error) -> String {
+        if let installError = error as? EngineInstallError {
+            return installError.errorDescription ?? "\(installError)"
+        }
+        return "索引内容无法解析（\(error)）"
     }
 
     private func indexCandidates() -> [URL] {
@@ -301,7 +324,7 @@ public actor EngineInstaller {
         // 索引决定了「下哪个包、校验和是多少」，走明文 http 等于让对方直接
         // 换掉权重。远程索引只接受 https；回环地址留给测试和本机镜像。
         guard url.scheme?.lowercased() == "https" || Self.isLoopback(url) else {
-            throw EngineInstallError.indexUnavailable
+            throw EngineInstallError.indexUnavailable(reason: "索引地址必须是 https：\(url.absoluteString)")
         }
         let (data, response) = try await URLSession.shared.data(from: url)
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
@@ -363,6 +386,14 @@ public actor EngineInstaller {
                         for id: EngineID,
                         progress: @Sendable (EngineInstallPhase) -> Void) async throws -> EngineInstallation {
         progress(.resolving)
+        // 版本名会被拼成 `.downloads`、`.staging` 与 `packs/<id>/<version>` 下的
+        // 路径，而它来自索引（外部输入）。必须在算出任何落盘路径之前挡住 `../..`：
+        // 否则归档里的校验和、清单都还没验，文件已经写到 packs 目录之外了。
+        guard FlashCatPaths.isSafeVersion(release.version) else {
+            let failure = EngineInstallError.versionInvalid(release.version)
+            progress(.failed(message: failure.errorDescription ?? "版本名不安全"))
+            throw failure
+        }
 
         let fm = FileManager.default
         let downloads = downloadsRoot
@@ -403,15 +434,14 @@ public actor EngineInstaller {
             try fm.moveItem(at: partial, to: archive)
 
             progress(.unpacking)
-            let entries = try listArchive(archive)
-            try Self.validate(entries: entries)
-            let strip = Self.stripComponents(for: entries)
-            let links = try Self.links(inListing: try listArchiveDetails(archive), names: entries)
-            try Self.validate(links: links, stripComponents: strip)
+            // 归档先过一遍安全检查，再让 tar 落盘：绝对路径、`..`、指向包外的
+            // 链接都在这里整包拒绝。
+            let plan = try EngineArchiveValidator.inspect(entries: try listArchive(archive),
+                                                          listing: try listArchiveDetails(archive))
             let unpacked = staging.appendingPathComponent("\(id.rawValue)-\(release.version)-\(UUID().uuidString)")
             try fm.createDirectory(at: unpacked, withIntermediateDirectories: true)
             stagingDirectory = unpacked
-            try extract(archive, into: unpacked, stripComponents: strip)
+            try extract(archive, into: unpacked, stripComponents: plan.stripComponents)
 
             progress(.validating)
             try Self.validateExtractedLinks(in: unpacked)
@@ -522,7 +552,7 @@ public actor EngineInstaller {
         let fm = FileManager.default
         let relative = installation.manifest.entrypoint
         guard !relative.hasPrefix("/"), !relative.hasPrefix("~"),
-              !Self.pathComponents(relative).contains("..") else {
+              !EngineArchiveValidator.pathComponents(relative).contains("..") else {
             throw EngineInstallError.unsafeArchiveEntry(relative)
         }
         let entrypoint = root.appendingPathComponent(relative)
@@ -572,170 +602,24 @@ public actor EngineInstaller {
             .map(String.init)
     }
 
-    /// A tar entry that is absolute or climbs out with `..` would land outside
-    /// the staging directory, so the whole archive is rejected.
-    static func validate(entries: [String]) throws {
-        for entry in entries {
-            if entry.hasPrefix("/") || entry.hasPrefix("~/") {
-                throw EngineInstallError.unsafeArchiveEntry(entry)
-            }
-            if pathComponents(entry).contains("..") {
-                throw EngineInstallError.unsafeArchiveEntry(entry)
-            }
-        }
-    }
+    // MARK: Archive rules
 
-    /// 从带类型的列表里挑出链接。看不懂的一行按失败处理：那可能正是被塞进来的
-    /// 一条链接。
+    // 归档规则本身在 `EngineArchiveValidator`；这四个转发保留，既有测试与解包
+    // 流程仍从这里进，规则却只有一份实现。
     static func links(inListing listing: [String], names: [String]) throws -> [ArchiveLink] {
-        let known = names.sorted { $0.count > $1.count }
-        var links: [ArchiveLink] = []
-        for line in listing {
-            guard let first = line.first, first == "l" || first == "h" else { continue }
-            let kind: ArchiveLink.Kind = first == "l" ? .symbolic : .hard
-            let separator = kind == .symbolic ? " -> " : " link to "
-            guard let (path, target) = splitName(line, at: separator, known: known),
-                  !target.isEmpty else {
-                throw EngineInstallError.unsafeArchiveLink(line)
-            }
-            links.append(ArchiveLink(kind: kind, path: path, target: target))
-        }
-        return links
+        try EngineArchiveValidator.links(inListing: listing, names: names)
     }
 
-    /// 切出「条目名 + 目标」。名字里可以有空格，甚至可以带 ` -> ` 这串字面量，
-    /// 所以既不按列数、也不按第一个分隔符切：在归档的名字表里找正好停在这里的
-    /// 最长后缀——tar 打印的一定是归档里的原名。GNU tar 与 bsdtar 的列数不同，
-    /// 这样也不受影响。
-    private static func splitName(_ line: String,
-                                  at separator: String,
-                                  known: [String]) -> (path: String, target: String)? {
-        var start = line.startIndex
-        while let range = line.range(of: separator, range: start..<line.endIndex) {
-            let head = line[..<range.lowerBound]
-            if let name = known.first(where: { nameStops(head: head, name: $0) }) {
-                return (name, String(line[range.upperBound...]))
-            }
-            start = range.upperBound
-        }
-        return nil
-    }
-
-    /// `head` 是「元数据 + 名字」，元数据以空白收尾；名字里也可能有空格，所以
-    /// 只要求名字前面是空白，不假设有多少列。
-    private static func nameStops(head: Substring, name: String) -> Bool {
-        guard head.hasSuffix(name) else { return false }
-        let before = head.dropLast(name.count)
-        return before.isEmpty || before.last == " " || before.last == "\t"
-    }
-
-    /// 链接本身可以留，它去哪才是问题。软链的目标相对链接自己所在的目录、硬链
-    /// 的目标相对归档根；两者都按 `--strip-components` 之后的坐标解析，任何一步
-    /// 越出 pack 根都整包拒绝。
     static func validate(links: [ArchiveLink], stripComponents: Int) throws {
-        for link in links where !staysInsideRoot(link, stripComponents: stripComponents) {
-            let arrow = link.kind == .symbolic ? "->" : "link to"
-            throw EngineInstallError.unsafeArchiveLink("\(link.path) \(arrow) \(link.target)")
-        }
+        try EngineArchiveValidator.validate(links: links, stripComponents: stripComponents)
     }
 
-    /// 解析链接目标，看它是否还留在解包目录里：绝对路径与 `~` 直接拒绝，`..`
-    /// 从根往上爬也拒绝。
-    static func staysInsideRoot(_ link: ArchiveLink, stripComponents: Int) -> Bool {
-        let target = link.target
-        guard !target.hasPrefix("/"), !target.hasPrefix("~") else { return false }
-
-        // 软链从链接所在的目录出发，硬链从归档根出发。
-        var stack: [String]
-        switch link.kind {
-        case .symbolic:
-            let components = strippedComponents(link.path, stripComponents: stripComponents)
-            guard !components.isEmpty else { return false }
-            stack = Array(components.dropLast())
-        case .hard:
-            stack = []
-        }
-
-        for component in pathComponents(target) {
-            if component == ".." {
-                guard !stack.isEmpty else { return false }
-                stack.removeLast()
-            } else {
-                stack.append(component)
-            }
-        }
-
-        // 硬链要指向一个真条目：`--strip-components` 之后什么都不剩也就不算。
-        if link.kind == .hard {
-            let strip = min(max(stripComponents, 0), stack.count)
-            return !stack.dropFirst(strip).isEmpty
-        }
-        return true
-    }
-
-    /// 条目在解包后的位置：tar 会先去掉最前面的 N 段。
-    private static func strippedComponents(_ entry: String, stripComponents: Int) -> [String] {
-        var components = pathComponents(entry)
-        components.removeFirst(min(max(stripComponents, 0), components.count))
-        return components
-    }
-
-    /// 解包后的兜底审计。列表解析依赖 tar 的文本格式，这里直接看落盘的每一个
-    /// 软链，层级按真实目录算，且不跟随链接（链接目录不再进去逐层展开）：链套链
-    /// 时，越界的那一条自己会被抓到。硬链由上面那轮解析负责——tar 造不出指向
-    /// 包外的硬链。
     static func validateExtractedLinks(in root: URL) throws {
-        try auditLinks(inDirectory: root.path, relative: "", fm: FileManager.default)
+        try EngineArchiveValidator.validateExtractedLinks(in: root)
     }
 
-    private static func auditLinks(inDirectory path: String,
-                                   relative: String,
-                                   fm: FileManager) throws {
-        let names: [String]
-        do {
-            names = try fm.contentsOfDirectory(atPath: path)
-        } catch {
-            throw EngineInstallError.commandFailed("无法检查归档中的链接：\(error.localizedDescription)")
-        }
-        for name in names {
-            let childPath = path + "/" + name
-            let childRelative = relative.isEmpty ? name : relative + "/" + name
-            if let target = try? fm.destinationOfSymbolicLink(atPath: childPath) {
-                let link = ArchiveLink(kind: .symbolic, path: childRelative, target: target)
-                guard staysInsideRoot(link, stripComponents: 0) else {
-                    throw EngineInstallError.unsafeArchiveLink("\(childRelative) -> \(target)")
-                }
-                continue
-            }
-            var isDirectory: ObjCBool = false
-            if fm.fileExists(atPath: childPath, isDirectory: &isDirectory), isDirectory.boolValue {
-                try auditLinks(inDirectory: childPath, relative: childRelative, fm: fm)
-            }
-        }
-    }
-
-    /// Whether the archive wraps everything in one top-level directory. That
-    /// decides `--strip-components 1`; a flat archive must not get it or the
-    /// manifest would be stripped away with the folder name.
     static func stripComponents(for entries: [String]) -> Int {
-        var head: String?
-        for entry in entries {
-            guard let first = pathComponents(entry).first else { continue }
-            if let head {
-                if head != first { return 0 }
-            } else {
-                head = first
-            }
-        }
-        return head == nil ? 0 : 1
-    }
-
-    /// Splits an archive entry into meaningful components, dropping the `./`
-    /// prefix tar sometimes writes.
-    static func pathComponents(_ entry: String) -> [String] {
-        entry.split(separator: "/", omittingEmptySubsequences: true)
-            .map(String.init)
-            .filter { $0 != "." }
+        EngineArchiveValidator.stripComponents(for: entries)
     }
 
     private func extract(_ archive: URL, into destination: URL, stripComponents: Int) throws {

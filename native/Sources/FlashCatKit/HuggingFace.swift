@@ -401,7 +401,7 @@ public actor HubSearchClient {
     private var cache: [String: HubModel] = [:]
 
     public init(session: URLSession = .shared,
-                baseURL: URL = URL(string: "https://huggingface.co")!) {
+                baseURL: URL = ConstantURL.make("https://huggingface.co")) {
         self.session = session
         self.baseURL = baseURL
     }

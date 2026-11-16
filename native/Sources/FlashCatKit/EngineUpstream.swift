@@ -63,7 +63,7 @@ public enum EngineUpstream {
     }
 
     public static func releasesPage(for id: EngineID) -> URL {
-        URL(string: "https://github.com/\(repository(for: id))/releases")!
+        ConstantURL.make("https://github.com/\(repository(for: id))/releases")
     }
 
     /// Release tags are `v1.4.1` for two of the three engines and `1.4.1` for the
@@ -106,7 +106,7 @@ public actor EngineUpstreamChecker {
     private let apiBase: URL
 
     public init(session: URLSession = .shared,
-                apiBase: URL = URL(string: "https://api.github.com")!) {
+                apiBase: URL = ConstantURL.make("https://api.github.com")) {
         self.session = session
         self.apiBase = apiBase
     }

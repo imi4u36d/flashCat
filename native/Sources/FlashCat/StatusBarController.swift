@@ -172,7 +172,9 @@ final class StatusBarController: NSObject, NSWindowDelegate {
 
     private func observeState() {
         // 状态变化时换图标：运行中实心、过渡态压暗、停止描边、异常带告警点。
-        state.$serverState
+        // 服务状态已经搬进 `EngineSessionStore`；这里和下面 `theme.$mode` 一样，
+        // 直接取 store 的发布者，避免为一个发布者在 AppState 上再开一条转发。
+        state.engineSession.$serverState
             .removeDuplicates()
             .receive(on: RunLoop.main)
             .sink { [weak self] newState in

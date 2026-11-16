@@ -297,7 +297,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.messageText = "flashCat"
         alert.informativeText = L10n.format(
             "本地推理控制台 · v%@\n当前引擎：%@\n已安装：%@\n模型目录：%@",
-            SPLASH_VERSION,
+            splashVersion,
             engine.map { "\($0.id.displayName) \($0.installation.version)" } ?? L10n.t("未选择"),
             installed.isEmpty ? L10n.t("无") : installed,
             EnginePaths.modelsRoot

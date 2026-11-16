@@ -77,7 +77,7 @@ struct ModelCatalog {
 
     var machine: [ModelInfo] {
         var seen = Set<String>()
-        var result = [ModelInfo]()
+        var result: [ModelInfo] = []
         for model in local + installed where seen.insert(model.id).inserted {
             result.append(model)
         }

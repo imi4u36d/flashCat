@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
 import FlashCatKit
+import Foundation
 
 /// Hugging Face 的只读浏览器：搜索/推荐列表，加上单个仓库的详情（文件清单、
 /// 参数量、README 模型卡）。
@@ -14,7 +14,7 @@ enum HubClientError: LocalizedError {
     case message(String)
 
     var errorDescription: String? {
-        if case let .message(text) = self { return text }
+        if case .message(let text) = self { return text }
         return nil
     }
 }
@@ -93,9 +93,10 @@ struct HubModel: Identifiable, Hashable {
 
     var layoutKind: HubModelKind {
         if isMTPLPack { return .mtplx }
-        return HubModelLayout.kind(libraryName: libraryName,
-                                   tags: tags,
-                                   paths: files.map(\.name))
+        return HubModelLayout.kind(
+            libraryName: libraryName,
+            tags: tags,
+            paths: files.map(\.name))
     }
 
     var ioTypes: HubIOTypes? {
@@ -188,9 +189,10 @@ struct HubModel: Identifiable, Hashable {
     }
 
     private var normalizedSizes: [String: Int64] {
-        Dictionary(uniqueKeysWithValues: files.compactMap { file in
-            file.size.map { (file.name, $0) }
-        })
+        Dictionary(
+            uniqueKeysWithValues: files.compactMap { file in
+                file.size.map { (file.name, $0) }
+            })
     }
 
     private var ggufVariantNames: [String] {
@@ -207,7 +209,8 @@ struct HubModel: Identifiable, Hashable {
         for file in files where file.name.lowercased().hasSuffix(".gguf") {
             let range = NSRange(file.name.startIndex..., in: file.name)
             if let match = regex.firstMatch(in: file.name, range: range),
-               let matchRange = Range(match.range, in: file.name) {
+                let matchRange = Range(match.range, in: file.name)
+            {
                 return String(file.name[matchRange]).uppercased()
             }
         }
@@ -240,7 +243,8 @@ struct HubModel: Identifiable, Hashable {
             )
             return Int64(bytes)
         }
-        return files
+        return
+            files
             .filter { $0.name.lowercased().hasSuffix(".safetensors") }
             .compactMap(\.size)
             .reduce(0, +)
@@ -268,7 +272,8 @@ enum HubClient {
     /// 端点可被 `hfEndpoint` 覆盖（镜像站/内网代理）。host 之后的部分全是
     /// 标准 HF 的 REST 路径，镜像站（hf-mirror 这类）都兼容。
     static var endpoint: String {
-        let raw = UserDefaults.standard.string(forKey: "hfEndpoint")?
+        let raw =
+            UserDefaults.standard.string(forKey: "hfEndpoint")?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let base = raw.isEmpty ? "https://huggingface.co" : raw
         return base.hasSuffix("/") ? String(base.dropLast()) : base
@@ -334,14 +339,17 @@ enum HubClient {
         items.append(URLQueryItem(name: "limit", value: String(limit)))
         if page > 0 { items.append(URLQueryItem(name: "skip", value: String(page * limit))) }
         items.append(URLQueryItem(name: "direction", value: "-1"))
-        items.append(URLQueryItem(
-            name: "sort",
-            value: sort == .trending ? "trendingScore" : "downloads"
-        ))
+        items.append(
+            URLQueryItem(
+                name: "sort",
+                value: sort == .trending ? "trendingScore" : "downloads"
+            ))
         if let value = filter.apiValue { items.append(URLQueryItem(name: "filter", value: value)) }
         // 不带 expand 的话列表里没有参数量和下载量；gated 与体积只有详情才有。
-        for key in ["safetensors", "downloads", "likes", "library_name",
-                    "pipeline_tag", "tags", "lastModified"] {
+        for key in [
+            "safetensors", "downloads", "likes", "library_name",
+            "pipeline_tag", "tags", "lastModified",
+        ] {
             items.append(URLQueryItem(name: "expand[]", value: key))
         }
         components.queryItems = items
@@ -414,7 +422,8 @@ enum HubClient {
         }
         let data = try await get(url)
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              var model = model(from: object) else {
+            var model = model(from: object)
+        else {
             throw HubClientError.message("找不到这个仓库：\(key)")
         }
         if let siblings = object["siblings"] as? [[String: Any]] {
@@ -452,9 +461,11 @@ enum HubClient {
         guard let first = lines.first, first.trimmingCharacters(in: .whitespaces) == "---" else {
             return text
         }
-        guard let end = lines.dropFirst().firstIndex(where: {
-            $0.trimmingCharacters(in: .whitespaces) == "---"
-        }) else { return text }
+        guard
+            let end = lines.dropFirst().firstIndex(where: {
+                $0.trimmingCharacters(in: .whitespaces) == "---"
+            })
+        else { return text }
         return lines[(end + 1)...].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
 import Darwin
 import FlashCatKit
+import Foundation
 
 public enum DoctorCommand {
     public static func run(_ context: CLIContext) async throws -> Int32 {
         let report: ControlDoctorReport
         do {
             let location = try context.control
-            let online: ControlDoctorReport = try await location.client.get("/v1/doctor",
-                                                                             timeout: context.timeout)
+            let online: ControlDoctorReport = try await location.client.get(
+                "/v1/doctor",
+                timeout: context.timeout)
             report = online
         } catch let error as CLIError where ControlFallback.shouldFallBack(error) {
             // 应用没运行才做本地体检；应用在跑却答不上来（401 令牌过期、504）时
@@ -44,85 +45,110 @@ public enum DoctorCommand {
 
         let os = ProcessInfo.processInfo.operatingSystemVersion
         let osVersion = "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)"
-        checks.append(ControlDoctorCheck(status: os.majorVersion >= 26 ? "ok" : "fail",
-                                         id: "macos",
-                                         title: "macOS",
-                                         detail: "\(osVersion)（最低 26.0）"))
+        checks.append(
+            ControlDoctorCheck(
+                status: os.majorVersion >= 26 ? "ok" : "fail",
+                id: "macos",
+                title: "macOS",
+                detail: "\(osVersion)（最低 26.0）"))
 
         if let app = AppLocator.resolve(environment: environment) {
-            checks.append(ControlDoctorCheck(status: AppCommand.isRunning(app) ? "ok" : "warn",
-                                             id: "app",
-                                             title: "应用",
-                                             detail: app.path))
+            checks.append(
+                ControlDoctorCheck(
+                    status: AppCommand.isRunning(app) ? "ok" : "warn",
+                    id: "app",
+                    title: "应用",
+                    detail: app.path))
         } else {
-            checks.append(ControlDoctorCheck(status: "fail", id: "app",
-                                             title: "应用", detail: "没有找到 flashCat.app"))
+            checks.append(
+                ControlDoctorCheck(
+                    status: "fail", id: "app",
+                    title: "应用", detail: "没有找到 flashCat.app"))
         }
 
         let runtime = ControlRuntime.load()
         let running = runtime?.processIsAlive == true && portOpen(Int(runtime?.port ?? 0))
-        checks.append(ControlDoctorCheck(status: running ? "ok" : "warn",
-                                         id: "control",
-                                         title: "命令行接口",
-                                         detail: runtime.map { "127.0.0.1:\($0.port)" } ?? "没有 control.json"))
+        checks.append(
+            ControlDoctorCheck(
+                status: running ? "ok" : "warn",
+                id: "control",
+                title: "命令行接口",
+                detail: runtime.map { "127.0.0.1:\($0.port)" } ?? "没有 control.json"))
         if !local.controlEnabled {
-            checks.append(ControlDoctorCheck(status: "warn", id: "control-enabled",
-                                             title: "命令行接口开关", detail: "已在设置中关闭"))
+            checks.append(
+                ControlDoctorCheck(
+                    status: "warn", id: "control-enabled",
+                    title: "命令行接口开关", detail: "已在设置中关闭"))
         }
 
-        checks.append(ControlDoctorCheck(status: local.gatewayEnabled && portOpen(local.gatewayPort) ? "ok" : "warn",
-                                         id: "gateway",
-                                         title: "API 网关",
-                                         detail: "http://127.0.0.1:\(local.gatewayPort)/v1"))
+        checks.append(
+            ControlDoctorCheck(
+                status: local.gatewayEnabled && portOpen(local.gatewayPort) ? "ok" : "warn",
+                id: "gateway",
+                title: "API 网关",
+                detail: "http://127.0.0.1:\(local.gatewayPort)/v1"))
 
         let installed = local.installedIDs
-        checks.append(ControlDoctorCheck(status: installed.isEmpty ? "warn" : "ok",
-                                         id: "engines",
-                                         title: "推理引擎",
-                                         detail: installed.isEmpty
-                                             ? "还没有安装引擎"
-                                             : installed.map { "\($0.displayName) \(local.newest($0)?.version ?? "")" }
-                                                 .joined(separator: "、")))
+        checks.append(
+            ControlDoctorCheck(
+                status: installed.isEmpty ? "warn" : "ok",
+                id: "engines",
+                title: "推理引擎",
+                detail: installed.isEmpty
+                    ? "还没有安装引擎"
+                    : installed.map { "\($0.displayName) \(local.newest($0)?.version ?? "")" }
+                        .joined(separator: "、")))
 
         let modelCount = EngineCatalog.allIDs.reduce(0) { total, id in
             total + local.localModels(engine: id).count
         }
-        checks.append(ControlDoctorCheck(status: modelCount == 0 ? "warn" : "ok",
-                                         id: "models",
-                                         title: "模型",
-                                         detail: modelCount == 0 ? "磁盘上没有模型" : "\(modelCount) 个模型目录"))
+        checks.append(
+            ControlDoctorCheck(
+                status: modelCount == 0 ? "warn" : "ok",
+                id: "models",
+                title: "模型",
+                detail: modelCount == 0 ? "磁盘上没有模型" : "\(modelCount) 个模型目录"))
 
         let support = FlashCatPaths.supportDirectory
-        let writable = FileManager.default.isWritableFile(atPath: support)
+        let writable =
+            FileManager.default.isWritableFile(atPath: support)
             || !FileManager.default.fileExists(atPath: support)
-        checks.append(ControlDoctorCheck(status: writable ? "ok" : "warn",
-                                         id: "paths",
-                                         title: "数据目录",
-                                         detail: "\(support)\(writable ? "" : "（不可写）")"))
+        checks.append(
+            ControlDoctorCheck(
+                status: writable ? "ok" : "warn",
+                id: "paths",
+                title: "数据目录",
+                detail: "\(support)\(writable ? "" : "（不可写）")"))
 
         let free = freeDiskBytes()
         let gigabytes = Double(free) / 1_000_000_000
-        checks.append(ControlDoctorCheck(status: gigabytes > 5 ? "ok" : "warn",
-                                         id: "disk",
-                                         title: "磁盘",
-                                         detail: String(format: "可用 %.1f GB", gigabytes)))
+        checks.append(
+            ControlDoctorCheck(
+                status: gigabytes > 5 ? "ok" : "warn",
+                id: "disk",
+                title: "磁盘",
+                detail: String(format: "可用 %.1f GB", gigabytes)))
 
         let pathLink = (environment["PATH"] ?? "").split(separator: ":").map(String.init)
             .first { FileManager.default.isExecutableFile(atPath: $0 + "/flashcat") }
-        checks.append(ControlDoctorCheck(status: pathLink == nil ? "warn" : "ok",
-                                         id: "cli",
-                                         title: "flashcat 命令",
-                                         detail: pathLink.map { $0 + "/flashcat" }
-                                             ?? "不在 PATH；运行 flashcat cli install"))
+        checks.append(
+            ControlDoctorCheck(
+                status: pathLink == nil ? "warn" : "ok",
+                id: "cli",
+                title: "flashcat 命令",
+                detail: pathLink.map { $0 + "/flashcat" }
+                    ?? "不在 PATH；运行 flashcat cli install"))
 
         let index = AppLocator.resolve(environment: environment)
             .flatMap { AppLocator.resourceRoot($0) }
             .map { $0.appendingPathComponent("pack-index.json").path }
         let indexExists = index.map { FileManager.default.fileExists(atPath: $0) } ?? false
-        checks.append(ControlDoctorCheck(status: indexExists ? "ok" : "warn",
-                                         id: "index",
-                                         title: "引擎包索引",
-                                         detail: indexExists ? (index ?? "") : "应用 bundle 里没有 pack-index.json"))
+        checks.append(
+            ControlDoctorCheck(
+                status: indexExists ? "ok" : "warn",
+                id: "index",
+                title: "引擎包索引",
+                detail: indexExists ? (index ?? "") : "应用 bundle 里没有 pack-index.json"))
 
         return ControlDoctorReport(checks: checks)
     }
@@ -130,7 +156,8 @@ public enum DoctorCommand {
     private static func freeDiskBytes() -> Int64 {
         let url = URL(fileURLWithPath: NSHomeDirectory())
         if let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
-           let capacity = values.volumeAvailableCapacityForImportantUsage {
+            let capacity = values.volumeAvailableCapacityForImportantUsage
+        {
             return capacity
         }
         var stat = statfs()
@@ -144,7 +171,8 @@ public enum DoctorCommand {
 public enum CompletionCommand {
     public static func run(_ context: CLIContext) throws -> Int32 {
         let shellPath = context.environment["SHELL"]
-        let shell = context.invocation.subcommand
+        let shell =
+            context.invocation.subcommand
             ?? (shellPath.map { ($0 as NSString).lastPathComponent } ?? "zsh")
         let script: String
         switch shell {
@@ -152,8 +180,9 @@ public enum CompletionCommand {
         case "bash": script = bash
         case "fish": script = fish
         default:
-            throw CLIError("不支持的 shell：\(shell)", exit: .usage,
-                           hint: "可用：zsh / bash / fish")
+            throw CLIError(
+                "不支持的 shell：\(shell)", exit: .usage,
+                hint: "可用：zsh / bash / fish")
         }
         context.output.write(script.hasSuffix("\n") ? script : script + "\n")
         return CLIExit.success.rawValue
@@ -213,14 +242,14 @@ public enum CompletionCommand {
         words.append(contentsOf: engines)
         words.append(contentsOf: CLICommandTable.listedOptions.map(\.dashedName))
         return """
-        # 由 `flashcat completion bash` 生成。
-        _flashcat() {
-            local cur
-            cur="${COMP_WORDS[COMP_CWORD]}"
-            COMPREPLY=( $(compgen -W "\(words.joined(separator: " "))" -- "$cur") )
-        }
-        complete -F _flashcat flashcat
-        """
+            # 由 `flashcat completion bash` 生成。
+            _flashcat() {
+                local cur
+                cur="${COMP_WORDS[COMP_CWORD]}"
+                COMPREPLY=( $(compgen -W "\(words.joined(separator: " "))" -- "$cur") )
+            }
+            complete -F _flashcat flashcat
+            """
     }
 
     private static var fish: String {
@@ -241,7 +270,9 @@ public enum CompletionCommand {
         // 只能靠用户背下来。全局选项对每个命令都成立，命令专属选项只在自己名下补。
         for command in CLICommandTable.commands {
             for option in CLICommandTable.options(for: command) {
-                lines.append("complete -c flashcat -f -n '__fish_seen_subcommand_from \(command.name)' -a '\(option.dashedName)'")
+                lines.append(
+                    "complete -c flashcat -f -n '__fish_seen_subcommand_from \(command.name)' -a '\(option.dashedName)'"
+                )
             }
         }
         return lines.joined(separator: "\n") + "\n"

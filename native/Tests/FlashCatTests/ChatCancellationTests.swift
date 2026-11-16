@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import XCTest
+
 @testable import FlashCat
 
 /// 「取消」只能来自类型，不能来自文案。
@@ -32,12 +33,15 @@ final class ChatCancellationTests: XCTestCase {
     }
 
     func testChatErrorEquatableComparesKindAndMessage() {
-        XCTAssertEqual(ChatError(kind: .badStatus(500), message: "500"),
-                       ChatError(kind: .badStatus(500), message: "500"))
-        XCTAssertNotEqual(ChatError(kind: .badStatus(500), message: "500"),
-                          ChatError(kind: .badStatus(502), message: "500"))
-        XCTAssertNotEqual(ChatError(kind: .badStatus(500), message: "500"),
-                          ChatError(kind: .badStatus(500), message: "502"))
+        XCTAssertEqual(
+            ChatError(kind: .badStatus(500), message: "500"),
+            ChatError(kind: .badStatus(500), message: "500"))
+        XCTAssertNotEqual(
+            ChatError(kind: .badStatus(500), message: "500"),
+            ChatError(kind: .badStatus(502), message: "500"))
+        XCTAssertNotEqual(
+            ChatError(kind: .badStatus(500), message: "500"),
+            ChatError(kind: .badStatus(500), message: "502"))
     }
 
     /// 图像与视频客户端同构：同一个判据、同一套「文案不算数」的规则。

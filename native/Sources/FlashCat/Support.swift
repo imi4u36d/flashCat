@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
-import Darwin
 import CryptoKit
+import Darwin
 import FlashCatKit
+import Foundation
 
 /// Thin NSRegularExpression wrappers. Swift regex literals are not available in
 /// the Swift 5 language mode this target is built with.

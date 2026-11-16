@@ -75,18 +75,21 @@ final class ImageGalleryStore: Sendable {
         for thread in threads {
             for (index, message) in thread.messages.enumerated() {
                 guard message.role == "assistant",
-                      let path = message.imagePath, !path.isEmpty,
-                      !known.contains(path),
-                      FileManager.default.fileExists(atPath: path)
+                    let path = message.imagePath, !path.isEmpty,
+                    !known.contains(path),
+                    FileManager.default.fileExists(atPath: path)
                 else { continue }
-                let prompt = thread.messages[..<index]
+                let prompt =
+                    thread.messages[..<index]
                     .last(where: { $0.role == "user" })?.content ?? ""
-                values.append(GalleryImage(path: path,
-                                           prompt: prompt,
-                                           model: message.model ?? "",
-                                           createdAt: message.createdAt ?? thread.updatedAt,
-                                           note: message.imageNote,
-                                           seed: message.imageSeed))
+                values.append(
+                    GalleryImage(
+                        path: path,
+                        prompt: prompt,
+                        model: message.model ?? "",
+                        createdAt: message.createdAt ?? thread.updatedAt,
+                        note: message.imageNote,
+                        seed: message.imageSeed))
                 known.insert(path)
                 added = true
             }
@@ -105,15 +108,16 @@ final class ImageGalleryStore: Sendable {
 
     private static func read(_ url: URL) -> [GalleryImage] {
         guard let data = try? Data(contentsOf: url),
-              let stored = try? JSONDecoder().decode([StoredImage].self, from: data)
+            let stored = try? JSONDecoder().decode([StoredImage].self, from: data)
         else { return [] }
         return stored.map { item in
-            GalleryImage(path: item.path,
-                         prompt: item.prompt,
-                         model: item.model,
-                         createdAt: Date(timeIntervalSince1970: item.createdAt),
-                         note: item.note,
-                         seed: item.seed)
+            GalleryImage(
+                path: item.path,
+                prompt: item.prompt,
+                model: item.model,
+                createdAt: Date(timeIntervalSince1970: item.createdAt),
+                note: item.note,
+                seed: item.seed)
         }
     }
 
@@ -121,12 +125,13 @@ final class ImageGalleryStore: Sendable {
         let directory = fileURL.deletingLastPathComponent().path
         Paths.ensureDirectory(directory)
         let stored = values.map { item in
-            StoredImage(path: item.path,
-                        prompt: item.prompt,
-                        model: item.model,
-                        createdAt: item.createdAt.timeIntervalSince1970,
-                        note: item.note,
-                        seed: item.seed)
+            StoredImage(
+                path: item.path,
+                prompt: item.prompt,
+                model: item.model,
+                createdAt: item.createdAt.timeIntervalSince1970,
+                note: item.note,
+                seed: item.seed)
         }
         guard let data = try? JSONEncoder().encode(stored) else { return }
         try? data.write(to: fileURL, options: .atomic)

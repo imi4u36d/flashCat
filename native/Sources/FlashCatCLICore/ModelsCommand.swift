@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
 import FlashCatKit
+import Foundation
 
 public enum ModelsCommand {
     public static func run(_ context: CLIContext) async throws -> Int32 {
@@ -13,8 +13,9 @@ public enum ModelsCommand {
         case "delete": return try await delete(context)
         case "path": return try await path(context)
         default:
-            throw CLIError("未知 models 子命令：\(context.invocation.subcommand ?? "")", exit: .usage,
-                           hint: "可用：list / use / download / delete / path")
+            throw CLIError(
+                "未知 models 子命令：\(context.invocation.subcommand ?? "")", exit: .usage,
+                hint: "可用：list / use / download / delete / path")
         }
     }
 
@@ -41,15 +42,18 @@ public enum ModelsCommand {
             context.output.json(models)
         } else {
             let rows = models.map { model in
-                [model.engine,
-                 model.id,
-                 CLIFormat.bytes(model.bytes),
-                 model.loaded ? "yes" : "",
-                 model.installed ? "installed" : "recommended"]
+                [
+                    model.engine,
+                    model.id,
+                    CLIFormat.bytes(model.bytes),
+                    model.loaded ? "yes" : "",
+                    model.installed ? "installed" : "recommended",
+                ]
             }
-            context.output.table(headers: ["ENGINE", "MODEL", "SIZE", "LOADED", "STATE"],
-                                 rows: rows,
-                                 empty: "没有模型；先运行 flashcat models list --all 看推荐档位")
+            context.output.table(
+                headers: ["ENGINE", "MODEL", "SIZE", "LOADED", "STATE"],
+                rows: rows,
+                empty: "没有模型；先运行 flashcat models list --all 看推荐档位")
             if isOffline, !context.local.installedIDs.isEmpty {
                 context.output.note("离线视图只列出磁盘目录；完整目录与共享授权需要应用在运行。")
             }
@@ -57,21 +61,25 @@ public enum ModelsCommand {
         return CLIExit.success.rawValue
     }
 
-    private static func offlineModels(_ context: CLIContext,
-                                      engine: EngineID?,
-                                      all: Bool) -> [ControlModelSummary] {
+    private static func offlineModels(
+        _ context: CLIContext,
+        engine: EngineID?,
+        all: Bool
+    ) -> [ControlModelSummary] {
         let ids = engine.map { [$0] } ?? EngineCatalog.allIDs
         var rows: [ControlModelSummary] = []
         for id in ids {
             for model in context.local.localModels(engine: id) {
                 if !all, model.id.lowercased().contains("dflash") { continue }
-                rows.append(ControlModelSummary(id: model.id,
-                                                engine: model.engine,
-                                                path: model.path,
-                                                bytes: model.bytes,
-                                                installed: true,
-                                                source: model.path.hasPrefix(FlashCatPaths.sharedModelsDirectory)
-                                                    ? "shared" : "local"))
+                rows.append(
+                    ControlModelSummary(
+                        id: model.id,
+                        engine: model.engine,
+                        path: model.path,
+                        bytes: model.bytes,
+                        installed: true,
+                        source: model.path.hasPrefix(FlashCatPaths.sharedModelsDirectory)
+                            ? "shared" : "local"))
             }
             // The built-in recommendation catalog lives in the app target
             // (it is a product list, not core logic). Offline `--all` therefore
@@ -84,14 +92,16 @@ public enum ModelsCommand {
 
     private static func use(_ context: CLIContext) async throws -> Int32 {
         guard let model = context.invocation.arguments.first, !model.isEmpty else {
-            throw CLIError("需要模型 id", exit: .usage,
-                           hint: "先用 flashcat models list 找一个模型")
+            throw CLIError(
+                "需要模型 id", exit: .usage,
+                hint: "先用 flashcat models list 找一个模型")
         }
         let engine = try engineOption(context)
         let location = try context.control
         let body = ControlModelUse(model: model, engine: engine?.rawValue)
-        let status: ControlStatus = try await location.client.post("/v1/models/use", body: body,
-                                                                  timeout: context.longTimeout)
+        let status: ControlStatus = try await location.client.post(
+            "/v1/models/use", body: body,
+            timeout: context.longTimeout)
         if context.output.json {
             context.output.json(status)
         } else if let active = status.engine {
@@ -106,8 +116,9 @@ public enum ModelsCommand {
 
     private static func download(_ context: CLIContext) async throws -> Int32 {
         guard let model = context.invocation.arguments.first, !model.isEmpty else {
-            throw CLIError("需要仓库 id 或模型 id", exit: .usage,
-                           hint: "例如 flashcat models download mlx-community/Qwen3-8B-4bit")
+            throw CLIError(
+                "需要仓库 id 或模型 id", exit: .usage,
+                hint: "例如 flashcat models download mlx-community/Qwen3-8B-4bit")
         }
         let explicitEngine = try engineOption(context)
         let targets = context.invocation.listOption("for").compactMap { EngineID(rawValue: $0) }
@@ -116,13 +127,15 @@ public enum ModelsCommand {
         }
         let shared = context.invocation.flag("shared") || !targets.isEmpty
         let location = try context.control
-        let body = ControlModelDownload(model: model,
-                                        engine: explicitEngine?.rawValue,
-                                        mode: shared ? "shared" : "engine",
-                                        engines: targets.isEmpty ? nil : targets.map(\.rawValue))
-        let data = try await location.client.postData("/v1/models/download",
-                                                      body: try ControlJSON.encoder(pretty: false).encode(body),
-                                                      timeout: context.longTimeout)
+        let body = ControlModelDownload(
+            model: model,
+            engine: explicitEngine?.rawValue,
+            mode: shared ? "shared" : "engine",
+            engines: targets.isEmpty ? nil : targets.map(\.rawValue))
+        let data = try await location.client.postData(
+            "/v1/models/download",
+            body: try ControlJSON.encoder(pretty: false).encode(body),
+            timeout: context.longTimeout)
         var accepted = decodeDownload(data)
         if accepted.model.isEmpty {
             // A simple `{ok,message}` answer (or a server that did not find the
@@ -152,8 +165,9 @@ public enum ModelsCommand {
         }
         guard context.invocation.flag("wait") else { return CLIExit.success.rawValue }
         guard !accepted.model.isEmpty else {
-            throw CLIError("下载已请求，但控制接口没有返回任务", exit: .failure,
-                           hint: "运行 flashcat status 查看下载中心")
+            throw CLIError(
+                "下载已请求，但控制接口没有返回任务", exit: .failure,
+                hint: "运行 flashcat status 查看下载中心")
         }
 
         let result = try await waitForDownload(context, task: accepted, location: location)
@@ -165,9 +179,11 @@ public enum ModelsCommand {
         return CLIExit.success.rawValue
     }
 
-    private static func waitForDownload(_ context: CLIContext,
-                                        task: ControlDownloadSummary,
-                                        location: ControlLocation) async throws -> ControlModelSummary {
+    private static func waitForDownload(
+        _ context: CLIContext,
+        task: ControlDownloadSummary,
+        location: ControlLocation
+    ) async throws -> ControlModelSummary {
         let deadline: Date
         if let raw = context.invocation.option("timeout"), let value = Double(raw), value > 0 {
             deadline = Date().addingTimeInterval(value)
@@ -177,21 +193,26 @@ public enum ModelsCommand {
         var lastLine = ""
         var missingSince: Date?
         while Date() < deadline {
-            let downloads: [ControlDownloadSummary] = try await location.client.get("/v1/downloads",
-                                                                                    timeout: context.timeout)
+            let downloads: [ControlDownloadSummary] = try await location.client.get(
+                "/v1/downloads",
+                timeout: context.timeout)
             if let current = downloads.first(where: { $0.engine == task.engine && $0.model == task.model })
-                ?? downloads.first(where: { matches($0.model, task.model) }) {
+                ?? downloads.first(where: { matches($0.model, task.model) })
+            {
                 if current.status == "failed" {
-                    throw CLIError("下载失败：\(current.model)", exit: .failure,
-                                   hint: "运行 flashcat logs --engine \(current.engine) 查看下载器输出")
+                    throw CLIError(
+                        "下载失败：\(current.model)", exit: .failure,
+                        hint: "运行 flashcat logs --engine \(current.engine) 查看下载器输出")
                 }
                 if current.status == "paused" {
-                    throw CLIError("下载已暂停：\(current.model)", exit: .conflict,
-                                   hint: "运行 flashcat models download \(current.model) --wait 可续传")
+                    throw CLIError(
+                        "下载已暂停：\(current.model)", exit: .conflict,
+                        hint: "运行 flashcat models download \(current.model) --wait 可续传")
                 }
                 missingSince = nil
                 if !context.output.json {
-                    let line = "\(current.model)  \(CLIFormat.percent(current.fraction))"
+                    let line =
+                        "\(current.model)  \(CLIFormat.percent(current.fraction))"
                         + "  \(CLIFormat.bytes(current.downloadedBytes)) / \(CLIFormat.bytes(current.totalBytes))"
                         + (current.speed.map { "  " + CLIFormat.rate($0) } ?? "")
                     if line != lastLine {
@@ -211,21 +232,26 @@ public enum ModelsCommand {
             }
             if missingSince == nil { missingSince = Date() }
             if let missingSince, Date().timeIntervalSince(missingSince) > 15 {
-                throw CLIError("下载已结束，但模型没有出现在模型库里：\(task.model)", exit: .conflict,
-                               hint: "运行 flashcat logs --engine \(task.engine) 查看下载器输出")
+                throw CLIError(
+                    "下载已结束，但模型没有出现在模型库里：\(task.model)", exit: .conflict,
+                    hint: "运行 flashcat logs --engine \(task.engine) 查看下载器输出")
             }
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
-        throw CLIError("等待下载超时：\(task.model)", exit: .timeout,
-                       hint: "下载仍在后台继续；用 flashcat status 或 flashcat models list 查看")
+        throw CLIError(
+            "等待下载超时：\(task.model)", exit: .timeout,
+            hint: "下载仍在后台继续；用 flashcat status 或 flashcat models list 查看")
     }
 
-    private static func installedModel(_ context: CLIContext,
-                                       location: ControlLocation,
-                                       model: String) async throws -> ControlModelSummary? {
-        let models: [ControlModelSummary] = try await location.client.get("/v1/models",
-                                                                           query: [URLQueryItem(name: "all", value: "false")],
-                                                                           timeout: context.timeout)
+    private static func installedModel(
+        _ context: CLIContext,
+        location: ControlLocation,
+        model: String
+    ) async throws -> ControlModelSummary? {
+        let models: [ControlModelSummary] = try await location.client.get(
+            "/v1/models",
+            query: [URLQueryItem(name: "all", value: "false")],
+            timeout: context.timeout)
         return models.first { $0.installed && matches($0.id, model) }
     }
 
@@ -235,7 +261,8 @@ public enum ModelsCommand {
         guard let model = context.invocation.arguments.first, !model.isEmpty else {
             throw CLIError("需要模型 id", exit: .usage)
         }
-        let shared = context.invocation.flag("shared")
+        let shared =
+            context.invocation.flag("shared")
             || model.hasPrefix(FlashCatPaths.sharedModelsDirectory + "/")
         guard try context.confirm("删除模型 \(model) 及其权重文件？") else {
             context.output.note("已取消")
@@ -247,8 +274,9 @@ public enum ModelsCommand {
         }
         let location = try context.control
         let body = ControlModelDelete(model: model, engine: explicitEngine, shared: shared)
-        let result: ControlSimpleResult = try await location.client.post("/v1/models/delete", body: body,
-                                                                        timeout: context.longTimeout)
+        let result: ControlSimpleResult = try await location.client.post(
+            "/v1/models/delete", body: body,
+            timeout: context.longTimeout)
         if context.output.json {
             context.output.json(result)
         } else {
@@ -267,9 +295,10 @@ public enum ModelsCommand {
         var resolved: String?
         do {
             let location = try context.control
-            let models: [ControlModelSummary] = try await location.client.get("/v1/models",
-                                                                              query: [URLQueryItem(name: "all", value: "true")],
-                                                                              timeout: context.timeout)
+            let models: [ControlModelSummary] = try await location.client.get(
+                "/v1/models",
+                query: [URLQueryItem(name: "all", value: "true")],
+                timeout: context.timeout)
             resolved = models.first { matches($0.id, model) && ($0.path?.isEmpty == false) }?.path
         } catch let error as CLIError where ControlFallback.shouldFallBack(error) {
             // 应用没运行：按磁盘布局推算路径。其他错误（令牌、超时）继续往上抛，
@@ -284,8 +313,10 @@ public enum ModelsCommand {
                 let path: String
                 let exists: Bool
             }
-            context.output.json(Body(model: model, engine: engine.rawValue, path: path,
-                                     exists: FileManager.default.fileExists(atPath: path)))
+            context.output.json(
+                Body(
+                    model: model, engine: engine.rawValue, path: path,
+                    exists: FileManager.default.fileExists(atPath: path)))
         } else {
             context.output.line(path)
         }
@@ -297,8 +328,9 @@ public enum ModelsCommand {
     private static func engineOption(_ context: CLIContext) throws -> EngineID? {
         guard let raw = context.invocation.option("engine") else { return nil }
         guard let id = EngineID(rawValue: raw) else {
-            throw CLIError("未知引擎：\(raw)", exit: .usage,
-                           hint: "可用：" + EngineCatalog.allIDs.map(\.rawValue).joined(separator: ", "))
+            throw CLIError(
+                "未知引擎：\(raw)", exit: .usage,
+                hint: "可用：" + EngineCatalog.allIDs.map(\.rawValue).joined(separator: ", "))
         }
         return id
     }
@@ -319,8 +351,9 @@ public enum ModelsCommand {
         // A bare `{ok,message}` answer carries no task identity. Keep the model
         // empty so the caller can look the real task up instead of treating the
         // human-readable message as a model id.
-        return ControlDownloadSummary(engine: "", model: "", status: "downloading",
-                                      downloadedBytes: 0, totalBytes: 0)
+        return ControlDownloadSummary(
+            engine: "", model: "", status: "downloading",
+            downloadedBytes: 0, totalBytes: 0)
     }
 
 }

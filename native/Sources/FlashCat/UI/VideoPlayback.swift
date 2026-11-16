@@ -11,8 +11,10 @@ enum VideoPlayback {
         let file = URL(fileURLWithPath: path)
         let quickTime = URL(fileURLWithPath: "/System/Applications/QuickTime Player.app")
         let configuration = NSWorkspace.OpenConfiguration()
-        NSWorkspace.shared.open([file], withApplicationAt: quickTime,
-                                configuration: configuration) { _, error in
+        NSWorkspace.shared.open(
+            [file], withApplicationAt: quickTime,
+            configuration: configuration
+        ) { _, error in
             if error != nil {
                 NSWorkspace.shared.open(file)
             }

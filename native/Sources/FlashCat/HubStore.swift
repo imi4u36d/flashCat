@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
 import FlashCatKit
+import Foundation
 
 /// Hugging Face 浏览器的状态与请求。
 ///

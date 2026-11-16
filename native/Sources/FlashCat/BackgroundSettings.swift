@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import SwiftUI
 import AppKit
+import SwiftUI
 import UniformTypeIdentifiers
 
 /// 背景参数的纯数学映射。
@@ -125,8 +125,10 @@ final class BackgroundSettings: ObservableObject {
         let ext = url.pathExtension.isEmpty ? "png" : url.pathExtension.lowercased()
         let destination = directory.appendingPathComponent("background." + ext)
 
-        if let contents = try? fileManager.contentsOfDirectory(at: directory,
-                                                               includingPropertiesForKeys: nil) {
+        if let contents = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil)
+        {
             for file in contents where file.lastPathComponent.hasPrefix("background.") {
                 try? fileManager.removeItem(at: file)
             }

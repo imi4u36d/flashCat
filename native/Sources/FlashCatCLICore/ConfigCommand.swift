@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
 import FlashCatKit
+import Foundation
 
 public enum ConfigCommand {
     public static func run(_ context: CLIContext) async throws -> Int32 {
@@ -13,8 +13,9 @@ public enum ConfigCommand {
         case "unset": return try await unset(context)
         case "path": return path(context)
         default:
-            throw CLIError("未知 config 子命令：\(context.invocation.subcommand ?? "")", exit: .usage,
-                           hint: "可用：list / get / set / unset / path")
+            throw CLIError(
+                "未知 config 子命令：\(context.invocation.subcommand ?? "")", exit: .usage,
+                hint: "可用：list / get / set / unset / path")
         }
     }
 
@@ -35,9 +36,10 @@ public enum ConfigCommand {
             for warning in readout.warnings {
                 context.output.warning(warning)
             }
-            context.output.table(headers: ["KEY", "VALUE", "TYPE", "TITLE"],
-                                 rows: entries.map { [$0.key, $0.value, $0.kind, $0.title] },
-                                 empty: "没有设置项")
+            context.output.table(
+                headers: ["KEY", "VALUE", "TYPE", "TITLE"],
+                rows: entries.map { [$0.key, $0.value, $0.kind, $0.title] },
+                empty: "没有设置项")
         }
         return CLIExit.success.rawValue
     }
@@ -53,8 +55,9 @@ public enum ConfigCommand {
             context.output.warning(warning)
         }
         guard let entry = entries.first(where: { $0.key == key }) else {
-            throw CLIError("未知设置项：\(key)", exit: .notFound,
-                           hint: "运行 flashcat config list 查看全部键")
+            throw CLIError(
+                "未知设置项：\(key)", exit: .notFound,
+                hint: "运行 flashcat config list 查看全部键")
         }
         if context.output.json {
             context.output.json(entry)
@@ -66,8 +69,9 @@ public enum ConfigCommand {
 
     private static func set(_ context: CLIContext) async throws -> Int32 {
         guard context.invocation.arguments.count >= 2 else {
-            throw CLIError("需要设置项与值", exit: .usage,
-                           hint: "例如 flashcat config set appearance dark")
+            throw CLIError(
+                "需要设置项与值", exit: .usage,
+                hint: "例如 flashcat config set appearance dark")
         }
         let key = context.invocation.arguments[0]
         let value = context.invocation.arguments[1]
@@ -89,10 +93,12 @@ public enum ConfigCommand {
         let entries = OfflineConfig.entries(context)
         let valueAfter = entries.first { $0.key == key }?.value ?? value
         if context.output.json {
-            context.output.json(ControlConfigEntry(kind: entries.first { $0.key == key }?.kind ?? "string",
-                                                    key: key,
-                                                    title: entries.first { $0.key == key }?.title ?? key,
-                                                    value: valueAfter))
+            context.output.json(
+                ControlConfigEntry(
+                    kind: entries.first { $0.key == key }?.kind ?? "string",
+                    key: key,
+                    title: entries.first { $0.key == key }?.title ?? key,
+                    value: valueAfter))
         } else {
             context.output.success("\(key) = \(valueAfter)")
             context.output.note("应用当前未运行；设置在下次启动时生效。")
@@ -152,8 +158,9 @@ public enum ConfigCommand {
         // 离线值全部从磁盘拼，读不动的理由必须一起带出去，否则一份读坏的
         // engines.json 只会表现成「所有引擎端口都是默认值」这种假事实。
         let readout = context.local.engineConfigurationReadout()
-        return Entries(entries: OfflineConfig.entries(context),
-                       warnings: readout.warning.map { [$0] } ?? [])
+        return Entries(
+            entries: OfflineConfig.entries(context),
+            warnings: readout.warning.map { [$0] } ?? [])
     }
 
     // MARK: Path
@@ -194,43 +201,56 @@ enum OfflineConfig {
 
         var rows: [ControlConfigEntry] = [
             entry("appearance", "外观", "enum", appearance),
-            entry("autoStart", "随应用启动引擎", "bool",
-                  ControlConfigGrammar.format(.bool(local.bool("autoStart", fallback: false)))),
+            entry(
+                "autoStart", "随应用启动引擎", "bool",
+                ControlConfigGrammar.format(.bool(local.bool("autoStart", fallback: false)))),
             // 这几项由应用持有（要同步 LaunchAgent / 启停监听），离线写不进去，
             // 所以如实报 mutable:false，而不是先答应再 exit 6。
-            entry("launchAtLogin", "登录时启动", "bool",
-                  ControlConfigGrammar.format(.bool(local.bool("launchAtLogin", fallback: false))),
-                  mutable: false),
-            entry("gatewayEnabled", "API 网关", "bool",
-                  ControlConfigGrammar.format(.bool(local.gatewayEnabled)), mutable: false),
-            entry("gatewayPort", "API 网关端口", "int",
-                  ControlConfigGrammar.format(.int(local.gatewayPort)), mutable: false),
-            entry("controlAPIEnabled", "命令行接口", "bool",
-                  ControlConfigGrammar.format(.bool(local.controlEnabled)), mutable: false),
-            entry("controlPort", "命令行接口端口", "int",
-                  ControlConfigGrammar.format(.int(local.controlPort)), mutable: false),
+            entry(
+                "launchAtLogin", "登录时启动", "bool",
+                ControlConfigGrammar.format(.bool(local.bool("launchAtLogin", fallback: false))),
+                mutable: false),
+            entry(
+                "gatewayEnabled", "API 网关", "bool",
+                ControlConfigGrammar.format(.bool(local.gatewayEnabled)), mutable: false),
+            entry(
+                "gatewayPort", "API 网关端口", "int",
+                ControlConfigGrammar.format(.int(local.gatewayPort)), mutable: false),
+            entry(
+                "controlAPIEnabled", "命令行接口", "bool",
+                ControlConfigGrammar.format(.bool(local.controlEnabled)), mutable: false),
+            entry(
+                "controlPort", "命令行接口端口", "int",
+                ControlConfigGrammar.format(.int(local.controlPort)), mutable: false),
             // 0 是「还没写过」，规则由 grammar 归一；离线与在线必须报同一个端口。
-            entry("port", "默认引擎端口", "int",
-                  ControlConfigGrammar.format(.int(
-                      ControlConfigGrammar.port(local.integer("port", fallback: 8000), fallback: 8000)))),
+            entry(
+                "port", "默认引擎端口", "int",
+                ControlConfigGrammar.format(
+                    .int(
+                        ControlConfigGrammar.port(local.integer("port", fallback: 8000), fallback: 8000)))),
             entry("model", "当前模型", "string", local.selectedModel, mutable: false),
             entry("thinkingMode", "思考模式", "enum", thinking),
             entry("reasoningEffort", "推理等级", "enum", reasoning),
-            entry("temperature", "温度", "double",
-                  ControlConfigGrammar.format(.double(local.double("chat.temperature", fallback: 0.7)))),
-            entry("topP", "Top P", "double",
-                  ControlConfigGrammar.format(.double(local.double("chat.topP", fallback: 0.95)))),
-            entry("maxTokens", "最大输出", "int",
-                  ControlConfigGrammar.format(.int(local.integer("chat.maxTokens", fallback: 0)))),
+            entry(
+                "temperature", "温度", "double",
+                ControlConfigGrammar.format(.double(local.double("chat.temperature", fallback: 0.7)))),
+            entry(
+                "topP", "Top P", "double",
+                ControlConfigGrammar.format(.double(local.double("chat.topP", fallback: 0.95)))),
+            entry(
+                "maxTokens", "最大输出", "int",
+                ControlConfigGrammar.format(.int(local.integer("chat.maxTokens", fallback: 0)))),
             entry("systemPrompt", "系统提示", "string", local.string("chat.system") ?? ""),
             entry("hfCache", "下载缓存目录", "string", local.string("hfCache") ?? ""),
             entry("maxMemory", "最大内存参数", "string", local.string("maxMemory") ?? ""),
             entry("maxContext", "最大上下文参数", "string", local.string("maxContext") ?? ""),
             entry("extraArgs", "额外启动参数", "string", local.string("extraArgs") ?? ""),
-            entry("idleReleaseOff", "常驻权重", "bool",
-                  ControlConfigGrammar.format(.bool(local.bool("idleReleaseOff", fallback: false)))),
-            entry("languageOnly", "纯文本", "bool",
-                  ControlConfigGrammar.format(.bool(local.bool("languageOnly", fallback: false)))),
+            entry(
+                "idleReleaseOff", "常驻权重", "bool",
+                ControlConfigGrammar.format(.bool(local.bool("idleReleaseOff", fallback: false)))),
+            entry(
+                "languageOnly", "纯文本", "bool",
+                ControlConfigGrammar.format(.bool(local.bool("languageOnly", fallback: false)))),
             entry("hfEndpoint", "Hugging Face 端点", "string", local.string("hfEndpoint") ?? ""),
             entry("hfToken", "Hugging Face Token", "string", local.string("hfToken") ?? ""),
         ]
@@ -239,11 +259,13 @@ enum OfflineConfig {
             // 没配置过引擎端口时 `engines.json` 里没有这一项，归一到该引擎自己的默认端口。
             // 以前统一写死 8000，omlx 会显示成 8000，和 App 里的 8100 不一致。
             let port = ControlConfigGrammar.port(configuration.port[id.rawValue], fallback: id.defaultPort)
-            rows.append(entry("engines.\(id.rawValue).port",
-                              "\(id.displayName) 端口",
-                              "int",
-                              ControlConfigGrammar.format(.int(port)),
-                              mutable: false))
+            rows.append(
+                entry(
+                    "engines.\(id.rawValue).port",
+                    "\(id.displayName) 端口",
+                    "int",
+                    ControlConfigGrammar.format(.int(port)),
+                    mutable: false))
         }
         return rows
     }
@@ -273,15 +295,19 @@ enum OfflineConfig {
         case "reasoningEffort":
             local.setPreference(try ControlConfigGrammar.reasoningEffort(value), forKey: "reasoningEffort")
         case "temperature":
-            local.setPreference(try ControlConfigGrammar.double(value, key: key, range: 0...2),
-                                forKey: "chat.temperature")
+            local.setPreference(
+                try ControlConfigGrammar.double(value, key: key, range: 0...2),
+                forKey: "chat.temperature")
         case "topP":
-            local.setPreference(try ControlConfigGrammar.double(value, key: key, range: 0...1),
-                                forKey: "chat.topP")
+            local.setPreference(
+                try ControlConfigGrammar.double(value, key: key, range: 0...1),
+                forKey: "chat.topP")
         case "maxTokens":
-            local.setPreference(try ControlConfigGrammar.int(value, key: key,
-                                                             range: ControlConfigGrammar.maxTokensRange),
-                                forKey: "chat.maxTokens")
+            local.setPreference(
+                try ControlConfigGrammar.int(
+                    value, key: key,
+                    range: ControlConfigGrammar.maxTokensRange),
+                forKey: "chat.maxTokens")
         case "systemPrompt": local.setPreference(value, forKey: "chat.system")
         case "hfCache": local.setPreference(value, forKey: "hfCache")
         case "maxMemory": local.setPreference(value, forKey: "maxMemory")
@@ -294,24 +320,30 @@ enum OfflineConfig {
         case "hfEndpoint": local.setPreference(value, forKey: "hfEndpoint")
         case "hfToken": local.setPreference(value, forKey: "hfToken")
         case "port":
-            local.setPreference(try ControlConfigGrammar.int(value, key: key,
-                                                             range: ControlConfigGrammar.portRange),
-                                forKey: "port")
+            local.setPreference(
+                try ControlConfigGrammar.int(
+                    value, key: key,
+                    range: ControlConfigGrammar.portRange),
+                forKey: "port")
         case "model":
             throw ControlConfigError("model 是只读项；用 flashcat models use <模型>", kind: .readOnly)
         case "launchAtLogin":
-            throw ControlConfigError("launchAtLogin 需要应用在运行（要同步 LaunchAgent）", kind: .conflict,
-                                     hint: "先 flashcat app open，再设置")
+            throw ControlConfigError(
+                "launchAtLogin 需要应用在运行（要同步 LaunchAgent）", kind: .conflict,
+                hint: "先 flashcat app open，再设置")
         case "gatewayEnabled", "gatewayPort", "controlAPIEnabled", "controlPort":
-            throw ControlConfigError("\(key) 需要应用在运行才能立即生效", kind: .conflict,
-                                     hint: "先 flashcat app open，再设置")
+            throw ControlConfigError(
+                "\(key) 需要应用在运行才能立即生效", kind: .conflict,
+                hint: "先 flashcat app open，再设置")
         default:
             if key.hasPrefix("engines."), key.hasSuffix(".port") {
-                throw ControlConfigError("引擎端口需要应用在运行", kind: .conflict,
-                                         hint: "先 flashcat app open；或直接改 \(local.engineConfigurationFile)")
+                throw ControlConfigError(
+                    "引擎端口需要应用在运行", kind: .conflict,
+                    hint: "先 flashcat app open；或直接改 \(local.engineConfigurationFile)")
             }
-            throw ControlConfigError("未知设置项：\(key)", kind: .notFound,
-                                     hint: "运行 flashcat config list 查看全部键")
+            throw ControlConfigError(
+                "未知设置项：\(key)", kind: .notFound,
+                hint: "运行 flashcat config list 查看全部键")
         }
     }
 
@@ -326,8 +358,10 @@ enum OfflineConfig {
         return CLIError(error.message, exit: exit, hint: error.hint)
     }
 
-    private static func entry(_ key: String, _ title: String, _ kind: String,
-                              _ value: String, mutable: Bool = true) -> ControlConfigEntry {
+    private static func entry(
+        _ key: String, _ title: String, _ kind: String,
+        _ value: String, mutable: Bool = true
+    ) -> ControlConfigEntry {
         ControlConfigEntry(kind: kind, key: key, title: title, value: value, mutable: mutable)
     }
 }

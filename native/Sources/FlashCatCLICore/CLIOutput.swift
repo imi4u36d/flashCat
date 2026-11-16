@@ -2,8 +2,8 @@
 // Copyright (c) 2026 wangzhuo
 
 import Darwin
-import Foundation
 import FlashCatKit
+import Foundation
 
 /// Process exit codes are part of the CLI contract: scripts can tell "app not
 /// running" from "bad usage" without parsing stderr.
@@ -76,16 +76,18 @@ public final class CLIOutput {
     private let stdoutWrite: (String) -> Bool
     private let stderrWrite: (String) -> Bool
 
-    public init(json: Bool = false,
-                quiet: Bool = false,
-                color: Bool = false,
-                verbose: Bool = false,
-                stdout: @escaping (String) -> Bool = {
-                    CLIStandardIO.write($0, to: FileHandle.standardOutput.fileDescriptor)
-                },
-                stderr: @escaping (String) -> Bool = {
-                    CLIStandardIO.write($0, to: FileHandle.standardError.fileDescriptor)
-                }) {
+    public init(
+        json: Bool = false,
+        quiet: Bool = false,
+        color: Bool = false,
+        verbose: Bool = false,
+        stdout: @escaping (String) -> Bool = {
+            CLIStandardIO.write($0, to: FileHandle.standardOutput.fileDescriptor)
+        },
+        stderr: @escaping (String) -> Bool = {
+            CLIStandardIO.write($0, to: FileHandle.standardError.fileDescriptor)
+        }
+    ) {
         self.json = json
         self.quiet = quiet
         self.color = color && !json
@@ -156,9 +158,12 @@ public final class CLIOutput {
         }
         // JSON errors go to stderr like every other failure; stdout stays a
         // clean data channel.
-        errorLine(encode(Body(ok: false,
-                              error: ControlErrorBody(code: "cli_error", message: error.message),
-                              hint: error.hint)))
+        errorLine(
+            encode(
+                Body(
+                    ok: false,
+                    error: ControlErrorBody(code: "cli_error", message: error.message),
+                    hint: error.hint)))
     }
 
     // MARK: Tables

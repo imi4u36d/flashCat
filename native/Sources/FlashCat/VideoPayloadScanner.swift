@@ -33,8 +33,10 @@ enum VideoPayloadScanner {
 
     /// 把 `data: {...}` 形式的整行解析成帧载荷；不是这个形状就返回 `.invalid`，
     /// 调用方会退回通用 JSON 路径。体积超限单独返回 `.tooLarge`。
-    static func parse(inLine line: String,
-                      limit: Int = maxFrameBytes) -> VideoPayloadParseResult {
+    static func parse(
+        inLine line: String,
+        limit: Int = maxFrameBytes
+    ) -> VideoPayloadParseResult {
         withBytes(line) { decode($0, limit: limit) } ?? .invalid
     }
 
@@ -53,8 +55,10 @@ enum VideoPayloadScanner {
 
     /// Swift 的 `String` 只有原生表示才有连续 UTF-8 存储；`JSONSerialization`
     /// 产出的字符串可能带一层桥接，这时才退化成一次拷贝。
-    private static func withBytes<R>(_ text: String,
-                                     _ body: (UnsafeBufferPointer<UInt8>) -> R) -> R? {
+    private static func withBytes<R>(
+        _ text: String,
+        _ body: (UnsafeBufferPointer<UInt8>) -> R
+    ) -> R? {
         if let value = text.utf8.withContiguousStorageIfAvailable({ body($0) }) {
             return value
         }
@@ -77,15 +81,17 @@ enum VideoPayloadScanner {
         var audioChannels: Int?
     }
 
-    private static func decode(_ bytes: UnsafeBufferPointer<UInt8>,
-                               limit: Int) -> VideoPayloadParseResult {
+    private static func decode(
+        _ bytes: UnsafeBufferPointer<UInt8>,
+        limit: Int
+    ) -> VideoPayloadParseResult {
         guard let start = objectStart(bytes),
-              let fields = scanFields(bytes, from: start),
-              (fields.format ?? "").lowercased() == "rgb8",
-              let frames = fields.frames, frames > 0, frames <= 10_000,
-              let width = fields.width, width > 0, width <= 4_096,
-              let height = fields.height, height > 0, height <= 4_096,
-              let range = fields.rgb
+            let fields = scanFields(bytes, from: start),
+            (fields.format ?? "").lowercased() == "rgb8",
+            let frames = fields.frames, frames > 0, frames <= 10_000,
+            let width = fields.width, width > 0, width <= 4_096,
+            let height = fields.height, height > 0, height <= 4_096,
+            let range = fields.rgb
         else { return .invalid }
 
         // 尺寸先算准，帧缓冲一次分配到位：解码时不再扩容、不再整块复制。
@@ -99,15 +105,18 @@ enum VideoPayloadScanner {
         var audio: VideoFrames.Audio?
         if let range = fields.audio, let pcm = decodeBase64(bytes, range, expecting: nil) {
             // 坏音轨不该拖垮整段视频：H3 的音频是附赠的，静音也能播。
-            audio = VideoPayload.makeAudio(pcm: pcm,
-                                           format: fields.audioFormat,
-                                           sampleRate: fields.audioRate,
-                                           channels: fields.audioChannels)
+            audio = VideoPayload.makeAudio(
+                pcm: pcm,
+                format: fields.audioFormat,
+                sampleRate: fields.audioRate,
+                channels: fields.audioChannels)
         }
 
         let fps = max(1, min(120, fields.fps ?? 24))
-        return .frames(VideoFrames(rgb: rgb, frames: frames, width: width, height: height,
-                                   fps: fps, audio: audio))
+        return .frames(
+            VideoFrames(
+                rgb: rgb, frames: frames, width: width, height: height,
+                fps: fps, audio: audio))
     }
 
     /// 跳过空白与 `data:` 前缀，返回 JSON 对象开头的位置。
@@ -116,9 +125,9 @@ enum VideoPayloadScanner {
         skipSpaces(bytes, &index)
         // SSE 的字段名区分大小写；这里和旧的 `hasPrefix("data:")` 保持一致。
         guard index + 5 <= bytes.count,
-              bytes[index] == 0x64, bytes[index + 1] == 0x61,
-              bytes[index + 2] == 0x74, bytes[index + 3] == 0x61,
-              bytes[index + 4] == 0x3A
+            bytes[index] == 0x64, bytes[index + 1] == 0x61,
+            bytes[index + 2] == 0x74, bytes[index + 3] == 0x61,
+            bytes[index + 4] == 0x3A
         else { return nil }
         index += 5
         skipSpaces(bytes, &index)
@@ -127,20 +136,22 @@ enum VideoPayloadScanner {
     }
 
     /// 只认扁平对象：认识的键就地取值，其它值整段跳过（含嵌套对象与数组）。
-    private static func scanFields(_ bytes: UnsafeBufferPointer<UInt8>,
-                                   from start: Int) -> Fields? {
+    private static func scanFields(
+        _ bytes: UnsafeBufferPointer<UInt8>,
+        from start: Int
+    ) -> Fields? {
         var fields = Fields()
         var index = start
         while index < bytes.count {
             skipSpaces(bytes, &index)
             guard index < bytes.count else { return nil }
             switch bytes[index] {
-            case 0x7D:                                   // '}'
+            case 0x7D:  // '}'
                 return fields
-            case 0x2C:                                   // ','
+            case 0x2C:  // ','
                 index += 1
                 continue
-            case 0x22:                                   // '"'
+            case 0x22:  // '"'
                 break
             default:
                 return nil
@@ -150,7 +161,7 @@ enum VideoPayloadScanner {
             let key = String(decoding: bytes[(index + 1)..<keyEnd], as: UTF8.self)
             index = keyEnd + 1
             skipSpaces(bytes, &index)
-            guard index < bytes.count, bytes[index] == 0x3A else { return nil }   // ':'
+            guard index < bytes.count, bytes[index] == 0x3A else { return nil }  // ':'
             index += 1
             skipSpaces(bytes, &index)
             guard index < bytes.count else { return nil }
@@ -160,7 +171,7 @@ enum VideoPayloadScanner {
                 guard let value = stringValue(bytes, &index) else { return nil }
                 fields.format = value
             case "frames", "width", "height", "fps",
-                 "audio_sample_rate", "audio_channels":
+                "audio_sample_rate", "audio_channels":
                 guard let value = intValue(bytes, &index) else { return nil }
                 switch key {
                 case "frames": fields.frames = value
@@ -205,7 +216,7 @@ enum VideoPayloadScanner {
         while index < bytes.count {
             guard let hit = memchr(base + index, 0x22, bytes.count - index) else { return nil }
             let found = UnsafeRawPointer(hit) - UnsafeRawPointer(base)
-            if found > start, bytes[found - 1] == 0x5C {   // '\\'
+            if found > start, bytes[found - 1] == 0x5C {  // '\\'
                 index = found + 1
                 continue
             }
@@ -214,23 +225,30 @@ enum VideoPayloadScanner {
         return nil
     }
 
-    private static func stringValue(_ bytes: UnsafeBufferPointer<UInt8>,
-                                    _ index: inout Int) -> String? {
+    private static func stringValue(
+        _ bytes: UnsafeBufferPointer<UInt8>,
+        _ index: inout Int
+    ) -> String? {
         guard let range = stringRange(bytes, &index) else { return nil }
         return String(decoding: bytes[range], as: UTF8.self)
     }
 
-    private static func stringRange(_ bytes: UnsafeBufferPointer<UInt8>,
-                                    _ index: inout Int) -> Range<Int>? {
+    private static func stringRange(
+        _ bytes: UnsafeBufferPointer<UInt8>,
+        _ index: inout Int
+    ) -> Range<Int>? {
         guard index < bytes.count, bytes[index] == 0x22,
-              let end = findQuote(bytes, from: index + 1) else { return nil }
+            let end = findQuote(bytes, from: index + 1)
+        else { return nil }
         let range = (index + 1)..<end
         index = end + 1
         return range
     }
 
-    private static func intValue(_ bytes: UnsafeBufferPointer<UInt8>,
-                                 _ index: inout Int) -> Int? {
+    private static func intValue(
+        _ bytes: UnsafeBufferPointer<UInt8>,
+        _ index: inout Int
+    ) -> Int? {
         var value = 0
         var digits = 0
         while index < bytes.count, bytes[index] >= 0x30, bytes[index] <= 0x39 {
@@ -242,19 +260,24 @@ enum VideoPayloadScanner {
         return digits > 0 ? value : nil
     }
 
-    private static func skipValue(_ bytes: UnsafeBufferPointer<UInt8>,
-                                  _ index: inout Int) -> Bool {
+    private static func skipValue(
+        _ bytes: UnsafeBufferPointer<UInt8>,
+        _ index: inout Int
+    ) -> Bool {
         guard index < bytes.count else { return false }
         switch bytes[index] {
-        case 0x22:                                       // '"'
+        case 0x22:  // '"'
             return stringRange(bytes, &index) != nil
-        case 0x7B, 0x5B:                                 // '{' '['
+        case 0x7B, 0x5B:  // '{' '['
             var depth = 0
             var insideString = false
             while index < bytes.count {
                 let byte = bytes[index]
                 if insideString {
-                    if byte == 0x5C { index += 2; continue }
+                    if byte == 0x5C {
+                        index += 2
+                        continue
+                    }
                     if byte == 0x22 { insideString = false }
                 } else if byte == 0x22 {
                     insideString = true
@@ -272,7 +295,8 @@ enum VideoPayloadScanner {
             return false
         default:
             while index < bytes.count, bytes[index] != 0x2C, bytes[index] != 0x7D,
-                  !isSpace(bytes[index]) {
+                !isSpace(bytes[index])
+            {
                 index += 1
             }
             return true
@@ -283,9 +307,11 @@ enum VideoPayloadScanner {
 
     /// 直接解进目标缓冲。空白、JSON 里的 `\n` 转义、`=` 补位都在扫描时跳过，
     /// 所以不需要先复制一份去掉换行的字符串。
-    private static func decodeBase64(_ bytes: UnsafeBufferPointer<UInt8>,
-                                     _ range: Range<Int>,
-                                     expecting expected: Int?) -> Data? {
+    private static func decodeBase64(
+        _ bytes: UnsafeBufferPointer<UInt8>,
+        _ range: Range<Int>,
+        expecting expected: Int?
+    ) -> Data? {
         guard range.lowerBound >= 0, range.upperBound <= bytes.count else { return nil }
         let slice = UnsafeBufferPointer(rebasing: bytes[range])
 
@@ -315,8 +341,10 @@ enum VideoPayloadScanner {
         return Data(data[0..<written])
     }
 
-    private static func decode(_ source: UnsafeBufferPointer<UInt8>,
-                               into destination: UnsafeMutableRawBufferPointer) -> Int? {
+    private static func decode(
+        _ source: UnsafeBufferPointer<UInt8>,
+        into destination: UnsafeMutableRawBufferPointer
+    ) -> Int? {
         var accumulator: UInt32 = 0
         var bits = 0
         var written = 0
@@ -332,13 +360,13 @@ enum VideoPayloadScanner {
                 let escaped = source[index]
                 index += 1
                 switch escaped {
-                case 0x2F: byte = 0x2F                  // `\/` 就是 `/`，还原后参与解码
-                case 0x6E, 0x72, 0x74: continue         // 折行留下的空白，直接跳过
+                case 0x2F: byte = 0x2F  // `\/` 就是 `/`，还原后参与解码
+                case 0x6E, 0x72, 0x74: continue  // 折行留下的空白，直接跳过
                 default: return nil
                 }
             }
             if isSpace(byte) { continue }
-            if byte == 0x3D { break }                    // '=' 补位之后不再有数据
+            if byte == 0x3D { break }  // '=' 补位之后不再有数据
             let sextet = sextet(of: byte)
             guard sextet != 0xFF else { return nil }
             accumulator = (accumulator << 6) | UInt32(sextet)
@@ -359,11 +387,11 @@ enum VideoPayloadScanner {
     @inline(__always)
     private static func sextet(of byte: UInt8) -> UInt8 {
         switch byte {
-        case 0x41...0x5A: return byte &- 0x41                       // A-Z
-        case 0x61...0x7A: return byte &- 0x61 &+ 26                 // a-z
-        case 0x30...0x39: return byte &- 0x30 &+ 52                 // 0-9
-        case 0x2B: return 62                                        // +
-        case 0x2F: return 63                                        // /
+        case 0x41...0x5A: return byte &- 0x41  // A-Z
+        case 0x61...0x7A: return byte &- 0x61 &+ 26  // a-z
+        case 0x30...0x39: return byte &- 0x30 &+ 52  // 0-9
+        case 0x2B: return 62  // +
+        case 0x2F: return 63  // /
         default: return 0xFF
         }
     }

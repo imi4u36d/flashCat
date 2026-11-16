@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import XCTest
+
 @testable import FlashCatKit
 
 final class StatusParserTests: XCTestCase {
@@ -37,9 +38,10 @@ final class StatusParserTests: XCTestCase {
     // MARK: oMLX
 
     func testOMLXStatusMapsCountersAndMemory() throws {
-        let status = EngineStatusParser.parse(engine: .omlx,
-                                              status: try load("api-status.json", "omlx"),
-                                              health: try load("health.txt", "omlx"))
+        let status = EngineStatusParser.parse(
+            engine: .omlx,
+            status: try load("api-status.json", "omlx"),
+            health: try load("health.txt", "omlx"))
         XCTAssertEqual(status.state, .ready)
         XCTAssertEqual(status.detail, "v0.7.2")
         XCTAssertEqual(status.uptimeSeconds.map { $0 > 0 }, true)
@@ -56,7 +58,7 @@ final class StatusParserTests: XCTestCase {
     /// 但同一份 payload 里本来就有两个计数器，界面统一用比值，少一套单位。
     func testEnginesExposePromptTotalsForCacheHitRate() {
         let mtplx = EngineStatusParser.mtplx(snapshot: [
-            "lifetime": ["prompt_tokens_total": 16_000, "cached_tokens_total": 12_800],
+            "lifetime": ["prompt_tokens_total": 16_000, "cached_tokens_total": 12_800]
         ])
         XCTAssertEqual(mtplx.extras["prompt_tokens_total"], 16_000)
         XCTAssertEqual(mtplx.extras["total_cached_tokens"], 12_800)
@@ -99,11 +101,13 @@ final class StatusParserTests: XCTestCase {
     }
 
     func testOMLXLoadingStateWhileModelIsWarmingUp() {
-        let status = EngineStatusParser.parse(engine: .omlx, status: [
-            "models_loading": 1,
-            "models_loaded": 0,
-            "loaded_models": [String](),
-        ], health: nil)
+        let status = EngineStatusParser.parse(
+            engine: .omlx,
+            status: [
+                "models_loading": 1,
+                "models_loaded": 0,
+                "loaded_models": [String](),
+            ], health: nil)
         XCTAssertEqual(status.state, .loading)
     }
 
@@ -146,20 +150,22 @@ final class StatusParserTests: XCTestCase {
     // MARK: splash
 
     func testSplashStatusKeepsNestedMetrics() {
-        let status = EngineStatusParser.parse(engine: .splash, status: [
-            "metrics": [
-                "decode_tokens_per_second": 63.5,
-                "prefill_tokens_per_second": 410.0,
-                "draft_acceptance_rate": 0.82,
-                "ttft_ms": ["p50": 120.0],
-            ],
-            "admission": ["waiting": 2],
-            "instance": ["model": "Qwen3.8-27B-DFlash2", "pid": 4711],
-            "requests": ["completed": 12, "failed": 1],
-            "memory_actual": ["current_bytes": 1_000, "peak_bytes": 2_000],
-            "maximum_context_tokens": 65536,
-            "kv": ["format": "q8"],
-        ], health: nil)
+        let status = EngineStatusParser.parse(
+            engine: .splash,
+            status: [
+                "metrics": [
+                    "decode_tokens_per_second": 63.5,
+                    "prefill_tokens_per_second": 410.0,
+                    "draft_acceptance_rate": 0.82,
+                    "ttft_ms": ["p50": 120.0],
+                ],
+                "admission": ["waiting": 2],
+                "instance": ["model": "Qwen3.8-27B-DFlash2", "pid": 4711],
+                "requests": ["completed": 12, "failed": 1],
+                "memory_actual": ["current_bytes": 1_000, "peak_bytes": 2_000],
+                "maximum_context_tokens": 65536,
+                "kv": ["format": "q8"],
+            ], health: nil)
 
         XCTAssertEqual(status.decodeTokensPerSecond, 63.5)
         XCTAssertEqual(status.prefillTokensPerSecond, 410)
@@ -184,18 +190,24 @@ final class StatusParserTests: XCTestCase {
     /// 一个快的首轮会把它长期抬高；真·瞬时值在同源的 `current_prefill_batch`。
     /// 有批次样本时必须走批次，且标成 `.live`。
     func testSplashPrefersTheCurrentBatchOverTheLifetimeRatio() {
-        let status = EngineStatusParser.parse(engine: .splash, status: [
-            "metrics": [
-                "prefill_tokens_per_second": 3_400.0,
-                "decode_tokens_per_second": 52.0,
-                "current_prefill_batch": ["valid": true, "input_tokens": 512,
-                                          "wall_ms": 150.0, "tokens_per_second": 512.0],
-                "current_decode_batch": ["valid": true, "output_tokens": 24,
-                                         "wall_ms": 400.0, "tokens_per_second": 60.0],
-            ],
-            "active_requests": [["id": 1, "phase": "prefill"], ["id": 2, "phase": "decode"]],
-            "instance": ["model": "Qwen3.8-27B-DFlash2"],
-        ], health: nil)
+        let status = EngineStatusParser.parse(
+            engine: .splash,
+            status: [
+                "metrics": [
+                    "prefill_tokens_per_second": 3_400.0,
+                    "decode_tokens_per_second": 52.0,
+                    "current_prefill_batch": [
+                        "valid": true, "input_tokens": 512,
+                        "wall_ms": 150.0, "tokens_per_second": 512.0,
+                    ],
+                    "current_decode_batch": [
+                        "valid": true, "output_tokens": 24,
+                        "wall_ms": 400.0, "tokens_per_second": 60.0,
+                    ],
+                ],
+                "active_requests": [["id": 1, "phase": "prefill"], ["id": 2, "phase": "decode"]],
+                "instance": ["model": "Qwen3.8-27B-DFlash2"],
+            ], health: nil)
 
         XCTAssertEqual(status.prefillTokensPerSecond, 512)
         XCTAssertEqual(status.prefillRateKind, .live)
@@ -206,13 +218,15 @@ final class StatusParserTests: XCTestCase {
     /// `current_*_batch` 是「最近一个完成的批次」，空闲时它一直停在那儿。
     /// 这时不能说它是当前速度——那是上一请求的终值，必须标 `LAST`。
     func testSplashIdleBatchIsMarkedAsLastRequest() {
-        let status = EngineStatusParser.parse(engine: .splash, status: [
-            "metrics": [
-                "current_prefill_batch": ["valid": true, "tokens_per_second": 512.0],
-                "current_decode_batch": ["valid": true, "tokens_per_second": 60.0],
-            ],
-            "active_requests": [],
-        ], health: nil)
+        let status = EngineStatusParser.parse(
+            engine: .splash,
+            status: [
+                "metrics": [
+                    "current_prefill_batch": ["valid": true, "tokens_per_second": 512.0],
+                    "current_decode_batch": ["valid": true, "tokens_per_second": 60.0],
+                ],
+                "active_requests": [],
+            ], health: nil)
 
         XCTAssertEqual(status.prefillTokensPerSecond, 512)
         XCTAssertEqual(status.prefillRateKind, .lastRequest)
@@ -222,21 +236,25 @@ final class StatusParserTests: XCTestCase {
     /// 引擎刚启动、还没跑过预填充时 `valid` 是 false：这时不能报 0 当成速度，
     /// 必须退回到均值口径（并如实标成均值）。
     func testSplashInvalidBatchFallsBackToTheLifetimeRatio() {
-        let status = EngineStatusParser.parse(engine: .splash, status: [
-            "metrics": [
-                "prefill_tokens_per_second": 410.0,
-                "current_prefill_batch": ["valid": false, "tokens_per_second": 0.0],
-            ],
-        ], health: nil)
+        let status = EngineStatusParser.parse(
+            engine: .splash,
+            status: [
+                "metrics": [
+                    "prefill_tokens_per_second": 410.0,
+                    "current_prefill_batch": ["valid": false, "tokens_per_second": 0.0],
+                ]
+            ], health: nil)
 
         XCTAssertEqual(status.prefillTokensPerSecond, 410)
         XCTAssertEqual(status.prefillRateKind, .lifetimeMean)
     }
 
     func testSplashActiveRequestsCountsBusySlots() {
-        let status = EngineStatusParser.parse(engine: .splash, status: [
-            "active_requests": [["id": 1], ["id": 2]],
-        ], health: nil)
+        let status = EngineStatusParser.parse(
+            engine: .splash,
+            status: [
+                "active_requests": [["id": 1], ["id": 2]]
+            ], health: nil)
         XCTAssertEqual(status.activeRequests, 2)
     }
 
@@ -247,23 +265,35 @@ final class StatusParserTests: XCTestCase {
         let metrics = EngineTelemetrySource(role: .metrics, path: "/metrics.json", format: .prometheusJSON)
         let props = EngineTelemetrySource(role: .props, path: "/props", format: .llamaProps)
         let status = EngineStatusParser.parse(documents: [
-            EngineTelemetryDocument(source: inventory, json: [
-                "data": [
-                    ["id": "org/chat", "loaded": true, "state": "ready",
-                     "capabilities": ["chat", "streaming"], "context_length": 131_072],
-                    ["id": "org/image", "loaded": false, "capabilities": ["image"]],
-                ],
-            ]),
-            EngineTelemetryDocument(source: metrics, json: [
-                "counters": ["requests_success_total": 7, "requests_failed_total": 2],
-                "gauges": ["requests_running": 1, "requests_waiting": 3,
-                           "mlx_active_bytes": 4_194_304],
-                "histograms": ["time_to_first_token_seconds": ["count": 2, "sum": 0.4]],
-            ]),
-            EngineTelemetryDocument(source: props, json: [
-                "memory": ["active_bytes": 8_388_608, "peak_bytes": 12_582_912,
-                           "max_safe_context": 65_536],
-            ]),
+            EngineTelemetryDocument(
+                source: inventory,
+                json: [
+                    "data": [
+                        [
+                            "id": "org/chat", "loaded": true, "state": "ready",
+                            "capabilities": ["chat", "streaming"], "context_length": 131_072,
+                        ],
+                        ["id": "org/image", "loaded": false, "capabilities": ["image"]],
+                    ]
+                ]),
+            EngineTelemetryDocument(
+                source: metrics,
+                json: [
+                    "counters": ["requests_success_total": 7, "requests_failed_total": 2],
+                    "gauges": [
+                        "requests_running": 1, "requests_waiting": 3,
+                        "mlx_active_bytes": 4_194_304,
+                    ],
+                    "histograms": ["time_to_first_token_seconds": ["count": 2, "sum": 0.4]],
+                ]),
+            EngineTelemetryDocument(
+                source: props,
+                json: [
+                    "memory": [
+                        "active_bytes": 8_388_608, "peak_bytes": 12_582_912,
+                        "max_safe_context": 65_536,
+                    ]
+                ]),
         ])
 
         XCTAssertEqual(status.model, "org/chat")
@@ -280,16 +310,22 @@ final class StatusParserTests: XCTestCase {
     func testMLXServeMetricsExposeCountersForLiveRates() {
         let metrics = EngineTelemetrySource(role: .metrics, path: "/metrics.json", format: .prometheusJSON)
         let status = EngineStatusParser.parse(documents: [
-            EngineTelemetryDocument(source: metrics, json: [
-                "counters": ["prefill_tokens_total": 88_000,
-                             "prompt_tokens_total": 16_100_000,
-                             "prefix_cache_tokens_total": 16_000_000],
-                "gauges": ["requests_running": 1,
-                           "generation_tokens_live": 36_000,
-                           "prefill_tokens_live": 0,
-                           "requests_prefilling": 0],
-                "histograms": ["prefill_time_seconds": ["count": 214, "sum": 66.5]],
-            ]),
+            EngineTelemetryDocument(
+                source: metrics,
+                json: [
+                    "counters": [
+                        "prefill_tokens_total": 88_000,
+                        "prompt_tokens_total": 16_100_000,
+                        "prefix_cache_tokens_total": 16_000_000,
+                    ],
+                    "gauges": [
+                        "requests_running": 1,
+                        "generation_tokens_live": 36_000,
+                        "prefill_tokens_live": 0,
+                        "requests_prefilling": 0,
+                    ],
+                    "histograms": ["prefill_time_seconds": ["count": 214, "sum": 66.5]],
+                ])
         ])
         XCTAssertEqual(status.extras[EngineRateCounters.decodeLive], 36_000)
         XCTAssertEqual(status.extras[EngineRateCounters.prefillLive], 0)
@@ -309,12 +345,18 @@ final class StatusParserTests: XCTestCase {
     func testMLXServeLifetimeRatiosFillDecodeAndPrefillMeans() {
         let metrics = EngineTelemetrySource(role: .metrics, path: "/metrics.json", format: .prometheusJSON)
         let status = EngineStatusParser.parse(documents: [
-            EngineTelemetryDocument(source: metrics, json: [
-                "counters": ["prefill_tokens_total": 3_318.0,
-                             "generation_tokens_total": 180.0],
-                "histograms": ["prefill_time_seconds": ["count": 6, "sum": 2.0],
-                               "decode_time_seconds": ["count": 6, "sum": 2.4]],
-            ]),
+            EngineTelemetryDocument(
+                source: metrics,
+                json: [
+                    "counters": [
+                        "prefill_tokens_total": 3_318.0,
+                        "generation_tokens_total": 180.0,
+                    ],
+                    "histograms": [
+                        "prefill_time_seconds": ["count": 6, "sum": 2.0],
+                        "decode_time_seconds": ["count": 6, "sum": 2.4],
+                    ],
+                ])
         ])
 
         XCTAssertEqual(status.decodeTokensPerSecond ?? 0, 75, accuracy: 0.001)
@@ -328,8 +370,10 @@ final class StatusParserTests: XCTestCase {
     func testMLXServeEmptyCountersReportNoRate() {
         let status = EngineStatusParser.prometheusJSON([
             "counters": ["prefill_tokens_total": 0, "generation_tokens_total": 0],
-            "histograms": ["prefill_time_seconds": ["count": 0, "sum": 0],
-                           "decode_time_seconds": ["count": 0, "sum": 0]],
+            "histograms": [
+                "prefill_time_seconds": ["count": 0, "sum": 0],
+                "decode_time_seconds": ["count": 0, "sum": 0],
+            ],
         ])
         XCTAssertNil(status.decodeTokensPerSecond)
         XCTAssertNil(status.prefillTokensPerSecond)
@@ -357,8 +401,10 @@ final class StatusParserTests: XCTestCase {
     /// 这个滚动均值，才是合理的兜底。
     func testMTPLXUsesWindowedRateNotPeak() {
         let status = EngineStatusParser.mtplx(snapshot: [
-            "prefill_rates": ["tokens": 96_000, "compute_time_s": 40.0,
-                              "peak_tok_s": 8_500.0, "samples": 12],
+            "prefill_rates": [
+                "tokens": 96_000, "compute_time_s": 40.0,
+                "peak_tok_s": 8_500.0, "samples": 12,
+            ]
         ])
         // 96000 / 40 = 2400，不是峰值 8500。
         XCTAssertEqual(status.prefillTokensPerSecond ?? 0, 2_400, accuracy: 0.001)
@@ -371,12 +417,16 @@ final class StatusParserTests: XCTestCase {
     func testMTPLXPrefersTheInFlightPrefillRate() {
         let status = EngineStatusParser.mtplx(snapshot: [
             "latest": ["prefill_tok_s": 3_400.0, "decode_tok_s": 40.0],
-            "in_flight": [[
-                "request_id": "r1",
-                "prefill_state": ["phase": "chunk", "tokens_done": 4_096,
-                                  "tokens_total": 32_768, "elapsed_s": 2.0,
-                                  "prefill_tok_s": 2_048.0],
-            ]],
+            "in_flight": [
+                [
+                    "request_id": "r1",
+                    "prefill_state": [
+                        "phase": "chunk", "tokens_done": 4_096,
+                        "tokens_total": 32_768, "elapsed_s": 2.0,
+                        "prefill_tok_s": 2_048.0,
+                    ],
+                ]
+            ],
         ])
         XCTAssertEqual(status.prefillTokensPerSecond, 2_048)
         XCTAssertEqual(status.prefillRateKind, .live)
@@ -387,13 +437,21 @@ final class StatusParserTests: XCTestCase {
     func testMTPLXPicksTheLongestRunningPrefill() {
         let status = EngineStatusParser.mtplx(snapshot: [
             "in_flight": [
-                ["request_id": "short",
-                 "prefill_state": ["phase": "chunk", "tokens_done": 100,
-                                   "elapsed_s": 0.2, "prefill_tok_s": 500.0]],
-                ["request_id": "long",
-                 "prefill_state": ["phase": "chunk", "tokens_done": 4_000,
-                                   "elapsed_s": 1.0, "prefill_tok_s": 4_000.0]],
-            ],
+                [
+                    "request_id": "short",
+                    "prefill_state": [
+                        "phase": "chunk", "tokens_done": 100,
+                        "elapsed_s": 0.2, "prefill_tok_s": 500.0,
+                    ],
+                ],
+                [
+                    "request_id": "long",
+                    "prefill_state": [
+                        "phase": "chunk", "tokens_done": 4_000,
+                        "elapsed_s": 1.0, "prefill_tok_s": 4_000.0,
+                    ],
+                ],
+            ]
         ])
         XCTAssertEqual(status.prefillTokensPerSecond, 4_000)
         XCTAssertEqual(status.prefillRateKind, .live)
@@ -406,12 +464,18 @@ final class StatusParserTests: XCTestCase {
         let metrics = EngineTelemetrySource(role: .metrics, path: "/live", format: .strataMetrics)
         let props = EngineTelemetrySource(role: .props, path: "/props", format: .llamaProps)
         let status = EngineStatusParser.parse(documents: [
-            EngineTelemetryDocument(source: metrics,
-                                    json: ["live": ["tok_s": 42.0, "prefill_tok_s_mean": 640.0]]),
+            EngineTelemetryDocument(
+                source: metrics,
+                json: ["live": ["tok_s": 42.0, "prefill_tok_s_mean": 640.0]]),
             // props 排在后（rank 3），带一个累计均值：数值更强但粒度更弱。
-            EngineTelemetryDocument(source: props,
-                                    json: ["timings": ["predicted_per_second": 31.0,
-                                                       "prompt_per_second": 200.0]]),
+            EngineTelemetryDocument(
+                source: props,
+                json: [
+                    "timings": [
+                        "predicted_per_second": 31.0,
+                        "prompt_per_second": 200.0,
+                    ]
+                ]),
         ])
         // .live(3) 不被 .lastRequest(2) 覆盖。
         XCTAssertEqual(status.decodeTokensPerSecond, 42.0)
@@ -435,8 +499,10 @@ final class StatusParserTests: XCTestCase {
     func testStrataMetricsMapLiveAndTotals() {
         let status = EngineStatusParser.strataMetrics([
             "engine": ["model": "strata-qwen", "max_context": 32_768],
-            "live": ["state": "generating", "tok_s": 41.5,
-                     "prefill_tok_s_mean": 640, "running": 1, "queued": 2, "waiting": 1],
+            "live": [
+                "state": "generating", "tok_s": 41.5,
+                "prefill_tok_s_mean": 640, "running": 1, "queued": 2, "waiting": 1,
+            ],
             "totals": ["requests": 9, "output_tokens": 500, "decode_ms": 10_000],
             "requests": [["decode_tok_s": 50]],
         ])
@@ -455,8 +521,10 @@ final class StatusParserTests: XCTestCase {
     func testModelCapabilitiesRecognizeVisionSpellings() {
         let entries: [[String: Any]] = [
             ["id": "splash-vlm", "vision": true, "input_modalities": ["text", "image"]],
-            ["id": "mtplx-vlm", "supports_vision": true,
-             "modalities": ["input": ["text", "image"], "output": ["text"]]],
+            [
+                "id": "mtplx-vlm", "supports_vision": true,
+                "modalities": ["input": ["text", "image"], "output": ["text"]],
+            ],
             ["id": "named-vl", "model_type": "qwen3_vl"],
             ["id": "arch-vl", "architecture": "Qwen2VLForConditionalGeneration"],
             ["id": "plain", "modalities": ["input": ["text"], "output": ["text"]]],
@@ -473,9 +541,11 @@ final class StatusParserTests: XCTestCase {
         XCTAssertEqual(plain?.capabilities, [])
         XCTAssertFalse(plain?.supportsVision == true)
 
-        let inventory = EngineStatusParser.omlxModels(["models": [
-            ["id": "omlx-vlm", "engine_type": "qwen3_vl"],
-        ]])
+        let inventory = EngineStatusParser.omlxModels([
+            "models": [
+                ["id": "omlx-vlm", "engine_type": "qwen3_vl"]
+            ]
+        ])
         XCTAssertEqual(inventory.models.first?.capabilities, ["chat", "vision"])
         XCTAssertTrue(inventory.models.first?.supportsVision == true)
     }
@@ -494,7 +564,7 @@ final class StatusParserTests: XCTestCase {
         // MTPLX: rolling.mean 缺失时回落到 latest.decode_tok_s，粒度应为 .lastRequest 而非 .live；
         // TTFT 粒度应为 .lastRequest。
         let mtplx = EngineStatusParser.mtplx(snapshot: [
-            "latest": ["decode_tok_s": 55.0, "ttft_s": 0.42],
+            "latest": ["decode_tok_s": 55.0, "ttft_s": 0.42]
         ])
         XCTAssertEqual(mtplx.decodeTokensPerSecond, 55.0)
         XCTAssertEqual(mtplx.decodeRateKind, .lastRequest)
@@ -529,7 +599,7 @@ final class StatusParserTests: XCTestCase {
 
         // Strata: totals.output_tokens / totals.decode_ms 暴露为 lifetimeDecodeTokensPerSecond。
         let strata = EngineStatusParser.strataMetrics([
-            "totals": ["prompt_ms": 100, "output_tokens": 500, "decode_ms": 10_000],
+            "totals": ["prompt_ms": 100, "output_tokens": 500, "decode_ms": 10_000]
         ])
         XCTAssertEqual(strata.lifetimeDecodeTokensPerSecond ?? 0, 50.0, accuracy: 0.001)
     }

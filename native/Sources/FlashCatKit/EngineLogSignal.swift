@@ -63,8 +63,10 @@ public enum EngineLogSignal: Equatable, Sendable {
 
     /// 行首前缀比较，ASCII 大小写无关。多字节 UTF-8 的字节都 ≥ 0x80，
     /// 折叠大小写不会碰到中文。
-    private static func prefixEnd(in bytes: String.UTF8View,
-                                  matching needle: [UInt8]) -> String.UTF8View.Index? {
+    private static func prefixEnd(
+        in bytes: String.UTF8View,
+        matching needle: [UInt8]
+    ) -> String.UTF8View.Index? {
         var index = bytes.startIndex
         for expected in needle {
             guard index < bytes.endIndex else { return nil }

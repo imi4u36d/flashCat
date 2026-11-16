@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
 import FlashCatKit
+import Foundation
 
 /// 本机模型库的状态：扫盘得到的清单、公共目录里已落盘的仓库、以及「看的是哪个
 /// 引擎的模型页」。

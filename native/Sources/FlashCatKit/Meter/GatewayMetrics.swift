@@ -26,11 +26,13 @@ public struct GatewayRequestTimings: Equatable, Sendable {
 
     /// 测试与 App 侧的 `noteTimings` 都直接构造它，所以初始化器必须是 public：
     /// 结构体的 memberwise init 默认是 internal，跨模块调不到。
-    public init(promptTokens: Int,
-                cachedTokens: Int,
-                promptMilliseconds: Double,
-                predictedTokens: Int,
-                predictedMilliseconds: Double) {
+    public init(
+        promptTokens: Int,
+        cachedTokens: Int,
+        promptMilliseconds: Double,
+        predictedTokens: Int,
+        predictedMilliseconds: Double
+    ) {
         self.promptTokens = promptTokens
         self.cachedTokens = cachedTokens
         self.promptMilliseconds = promptMilliseconds
@@ -56,7 +58,8 @@ public struct GatewayRequestTimings: Equatable, Sendable {
     /// 334 tok/s），那既不是这台机器算提示词的速度，也不是缓存的速度。
     public var prefillRate: Double? {
         guard forwardedTokens >= GatewayRequestTimings.prefillSampleTokens,
-              promptMilliseconds >= 25 else { return nil }
+            promptMilliseconds >= 25
+        else { return nil }
         let rate = Double(forwardedTokens) / (promptMilliseconds / 1000)
         guard rate.isFinite, rate > 0 else { return nil }
         return rate
@@ -125,17 +128,19 @@ public struct GatewaySessionSnapshot: Sendable {
     public let ctxTokens: Int
 
     /// 由 `snapshot(limit:now:)` 在同一个模块内构造，外部只读。
-    init(id: Int,
-         model: String,
-         dialect: String,
-         state: State,
-         elapsed: TimeInterval,
-         ttftMilliseconds: Double?,
-         promptTokens: Int,
-         completionTokens: Int,
-         decodeRate: Double,
-         prefillRate: Double,
-         ctxTokens: Int) {
+    init(
+        id: Int,
+        model: String,
+        dialect: String,
+        state: State,
+        elapsed: TimeInterval,
+        ttftMilliseconds: Double?,
+        promptTokens: Int,
+        completionTokens: Int,
+        decodeRate: Double,
+        prefillRate: Double,
+        ctxTokens: Int
+    ) {
         self.id = id
         self.model = model
         self.dialect = dialect

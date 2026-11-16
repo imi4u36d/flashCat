@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import XCTest
+
 @testable import FlashCatCLICore
 
 /// 降级判据是「静默降级」这条修复的核心：只有应用真的没在运行才允许回退到离线视图。

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import XCTest
+
 @testable import FlashCatKit
 
 final class ControlEngineDocumentsTests: XCTestCase {
@@ -33,21 +34,24 @@ final class ControlEngineDocumentsTests: XCTestCase {
     // MARK: model
 
     func testActiveEngineUsesSelectedModel() {
-        let input = ControlEngineDocumentInput(id: .omlx, isActive: true,
-                                               selectedModel: "qwen3-8b", lastModel: "llama3-7b")
+        let input = ControlEngineDocumentInput(
+            id: .omlx, isActive: true,
+            selectedModel: "qwen3-8b", lastModel: "llama3-7b")
         XCTAssertEqual(ControlEngineDocuments.model(input), "qwen3-8b")
     }
 
     func testActiveEngineFallsBackToLastModelWhenNothingSelected() {
-        let input = ControlEngineDocumentInput(id: .omlx, isActive: true,
-                                               selectedModel: "", lastModel: "llama3-7b")
+        let input = ControlEngineDocumentInput(
+            id: .omlx, isActive: true,
+            selectedModel: "", lastModel: "llama3-7b")
         XCTAssertEqual(ControlEngineDocuments.model(input), "llama3-7b")
     }
 
     func testInactiveEngineIgnoresSelectedModel() {
         // 非 active 引擎显示自己上次用的模型，而不是当前选中模型。
-        let input = ControlEngineDocumentInput(id: .omlx, isActive: false,
-                                               selectedModel: "qwen3-8b", lastModel: "llama3-7b")
+        let input = ControlEngineDocumentInput(
+            id: .omlx, isActive: false,
+            selectedModel: "qwen3-8b", lastModel: "llama3-7b")
         XCTAssertEqual(ControlEngineDocuments.model(input), "llama3-7b")
     }
 
@@ -97,11 +101,12 @@ final class ControlEngineDocumentsTests: XCTestCase {
     // MARK: document fields
 
     func testEngineDocumentCarriesInstallationAndDescriptorFacts() {
-        let input = ControlEngineDocumentInput(id: .omlx, installedVersion: "1.2.3",
-                                               installedVersions: ["1.2.3", "1.1.0"], isActive: true,
-                                               phase: .ready, configuredPort: 8123, boundPort: 8123,
-                                               selectedModel: "qwen3-8b", stage: "加载权重",
-                                               uptimeSeconds: 42, pid: 1234)
+        let input = ControlEngineDocumentInput(
+            id: .omlx, installedVersion: "1.2.3",
+            installedVersions: ["1.2.3", "1.1.0"], isActive: true,
+            phase: .ready, configuredPort: 8123, boundPort: 8123,
+            selectedModel: "qwen3-8b", stage: "加载权重",
+            uptimeSeconds: 42, pid: 1234)
         let engine = ControlEngineDocuments.engine(input)
         XCTAssertEqual(engine.id, "omlx")
         XCTAssertEqual(engine.name, EngineID.omlx.displayName)

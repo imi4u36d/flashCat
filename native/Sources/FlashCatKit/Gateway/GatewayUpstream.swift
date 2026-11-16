@@ -72,25 +72,31 @@ public enum GatewayUpstream {
 
     /// 带响应超时的 JSON POST。冷启动时引擎的首个 token 可能等很久，所以默认
     /// 超时给得很宽。
-    public static func postJSON(port: Int,
-                                path: String,
-                                body: Data,
-                                timeout: TimeInterval = 600) async -> Result<BufferedResponse, GatewayUpstreamError> {
+    public static func postJSON(
+        port: Int,
+        path: String,
+        body: Data,
+        timeout: TimeInterval = 600
+    ) async -> Result<BufferedResponse, GatewayUpstreamError> {
         await buffered(method: "POST", port: port, path: path, body: body, timeout: timeout)
     }
 
     /// JSON GET，用于向引擎读取 `/v1/models`。
-    public static func getJSON(port: Int,
-                               path: String,
-                               timeout: TimeInterval = 10) async -> Result<BufferedResponse, GatewayUpstreamError> {
+    public static func getJSON(
+        port: Int,
+        path: String,
+        timeout: TimeInterval = 10
+    ) async -> Result<BufferedResponse, GatewayUpstreamError> {
         await buffered(method: "GET", port: port, path: path, body: nil, timeout: timeout)
     }
 
     /// 响应头一到就返回的 POST；调用方按自己的节奏消费 `bytes`（SSE 流）。
-    public static func postStreaming(port: Int,
-                                     path: String,
-                                     body: Data,
-                                     timeout: TimeInterval = 600) async -> Result<StreamResponse, GatewayUpstreamError> {
+    public static func postStreaming(
+        port: Int,
+        path: String,
+        body: Data,
+        timeout: TimeInterval = 600
+    ) async -> Result<StreamResponse, GatewayUpstreamError> {
         guard let request = request(method: "POST", port: port, path: path, body: body, timeout: timeout) else {
             return .failure(.transport(port: port, reason: "无法构造上游 URL"))
         }
@@ -107,11 +113,13 @@ public enum GatewayUpstream {
 
     // MARK: plumbing（管道：构造请求、归类错误）
 
-    private static func buffered(method: String,
-                                 port: Int,
-                                 path: String,
-                                 body: Data?,
-                                 timeout: TimeInterval) async -> Result<BufferedResponse, GatewayUpstreamError> {
+    private static func buffered(
+        method: String,
+        port: Int,
+        path: String,
+        body: Data?,
+        timeout: TimeInterval
+    ) async -> Result<BufferedResponse, GatewayUpstreamError> {
         guard let request = request(method: method, port: port, path: path, body: body, timeout: timeout) else {
             return .failure(.transport(port: port, reason: "无法构造上游 URL"))
         }
@@ -152,11 +160,13 @@ public enum GatewayUpstream {
         return URLSession(configuration: configuration)
     }()
 
-    private static func request(method: String,
-                                port: Int,
-                                path: String,
-                                body: Data?,
-                                timeout: TimeInterval) -> URLRequest? {
+    private static func request(
+        method: String,
+        port: Int,
+        path: String,
+        body: Data?,
+        timeout: TimeInterval
+    ) -> URLRequest? {
         guard let url = URL(string: "http://127.0.0.1:\(port)\(path)") else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = method

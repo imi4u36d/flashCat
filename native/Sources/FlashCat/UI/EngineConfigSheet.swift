@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import SwiftUI
 import AppKit
 import FlashCatKit
+import SwiftUI
 
 /// 单台引擎的配置面板：端口 + 该引擎真正认识的调优开关。
 struct EngineConfigSheet: View {
@@ -89,10 +89,12 @@ struct EngineConfigSheet: View {
                     textField("最大内存", text: optionalText(\.maxMemory), placeholder: "24G")
                     textField("最大上下文", text: optionalText(\.maxContext), placeholder: "256K")
                     textField("PLE 内存", text: optionalText(\.pleMemory), placeholder: "2G / off")
-                    toggle("关闭视觉预处理", binding: $tuning.languageOnly, default: false,
-                           detail: "language-only：跳过视觉侧准备，纯文本更快")
-                    toggle("常驻权重", binding: $tuning.idleReleaseOff, default: false,
-                           detail: "idle-release off：空闲时不卸下权重")
+                    toggle(
+                        "关闭视觉预处理", binding: $tuning.languageOnly, default: false,
+                        detail: "language-only：跳过视觉侧准备，纯文本更快")
+                    toggle(
+                        "常驻权重", binding: $tuning.idleReleaseOff, default: false,
+                        detail: "idle-release off：空闲时不卸下权重")
                     toggle("PLE 表常驻 SSD", binding: $tuning.pleSSDOffload, default: true)
                 case .omlx:
                     toggle("MTP 预测", binding: $tuning.mtp, default: true)
@@ -198,8 +200,10 @@ struct EngineConfigSheet: View {
 
     // MARK: Helpers
 
-    private func toggle(_ title: String, binding: Binding<Bool?>, default fallback: Bool? = nil,
-                        detail: String? = nil) -> some View {
+    private func toggle(
+        _ title: String, binding: Binding<Bool?>, default fallback: Bool? = nil,
+        detail: String? = nil
+    ) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(L10n.t(title))
@@ -212,13 +216,16 @@ struct EngineConfigSheet: View {
                 }
             }
             Spacer(minLength: 8)
-            Toggle("", isOn: Binding(
-                get: { binding.wrappedValue ?? fallback ?? false },
-                set: { binding.wrappedValue = $0 }))
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .labelsHidden()
-                .tint(DS.accent)
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { binding.wrappedValue ?? fallback ?? false },
+                    set: { binding.wrappedValue = $0 })
+            )
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .labelsHidden()
+            .tint(DS.accent)
         }
         .padding(.vertical, 5)
     }
@@ -246,23 +253,27 @@ struct EngineConfigSheet: View {
                 .font(DS.Font.md)
                 .foregroundStyle(DS.text)
                 .frame(width: 110, alignment: .leading)
-            TextField(placeholder, text: Binding(
-                get: { value.wrappedValue.map(String.init) ?? "" },
-                set: { value.wrappedValue = Int($0.trimmingCharacters(in: .whitespaces)) }))
-                .textFieldStyle(.plain)
-                .font(DS.Font.mono(11.5))
-                .padding(.horizontal, 8)
-                .frame(width: 140, height: 28)
-                .background(DS.rect(DS.Radius.md).fill(DS.bg))
-                .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line2, lineWidth: 1))
+            TextField(
+                placeholder,
+                text: Binding(
+                    get: { value.wrappedValue.map(String.init) ?? "" },
+                    set: { value.wrappedValue = Int($0.trimmingCharacters(in: .whitespaces)) })
+            )
+            .textFieldStyle(.plain)
+            .font(DS.Font.mono(11.5))
+            .padding(.horizontal, 8)
+            .frame(width: 140, height: 28)
+            .background(DS.rect(DS.Radius.md).fill(DS.bg))
+            .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line2, lineWidth: 1))
             Spacer(minLength: 0)
         }
         .padding(.vertical, 3)
     }
 
     private func optionalText(_ keyPath: WritableKeyPath<EngineTuning, String?>) -> Binding<String> {
-        Binding(get: { tuning[keyPath: keyPath] ?? "" },
-                set: { tuning[keyPath: keyPath] = $0.isEmpty ? nil : $0 })
+        Binding(
+            get: { tuning[keyPath: keyPath] ?? "" },
+            set: { tuning[keyPath: keyPath] = $0.isEmpty ? nil : $0 })
     }
 
     private func load() {
@@ -276,8 +287,9 @@ struct EngineConfigSheet: View {
     private func save() {
         EngineStore.shared.setTuning(tuning.sanitized(), for: engine)
         if let port = Int(portText.trimmingCharacters(in: .whitespaces)),
-           (1024...65535).contains(port),
-           port != (EngineStore.shared.configuration(for: engine).port ?? engine.defaultPort) {
+            (1024...65535).contains(port),
+            port != (EngineStore.shared.configuration(for: engine).port ?? engine.defaultPort)
+        {
             state.switchEnginePort(engine, port: port)
         }
         Task { await state.engines?.controller(engine)?.reapplyTuning() }

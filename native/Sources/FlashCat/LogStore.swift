@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
 import FlashCatKit
+import Foundation
 
 enum LogLevel: String {
     case info = "info"
@@ -82,8 +82,10 @@ final class LogStore {
             let raw = String(row)
             let parsed = Self.split(raw)
             nextId += 1
-            lines.append(LogLine(id: nextId, time: parsed.time, text: parsed.text,
-                                 level: Self.classify(parsed.text)))
+            lines.append(
+                LogLine(
+                    id: nextId, time: parsed.time, text: parsed.text,
+                    level: Self.classify(parsed.text)))
         }
         lock.unlock()
     }
@@ -106,8 +108,10 @@ final class LogStore {
             for row in text.split(separator: "\n", omittingEmptySubsequences: true) {
                 let parsed = Self.split(String(row))
                 nextId += 1
-                lines.append(LogLine(id: nextId, time: parsed.time, text: parsed.text,
-                                     level: Self.classify(parsed.text)))
+                lines.append(
+                    LogLine(
+                        id: nextId, time: parsed.time, text: parsed.text,
+                        level: Self.classify(parsed.text)))
             }
             trimIfNeededLocked()
             lock.unlock()

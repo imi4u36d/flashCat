@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import SwiftUI
 import FlashCatKit
+import SwiftUI
 
 extension Notification.Name {
     /// 命令面板是视图自己的 `@State`，菜单通过这条通知请求打开它。
@@ -211,39 +211,57 @@ struct CommandPalette: View {
 
     private var commands: [CommandItem] {
         var list: [CommandItem] = Page.allCases.enumerated().map { index, page in
-            CommandItem(id: "nav.\(page.rawValue)",
-                        title: L10n.format("打开%@", L10n.t(page.rawValue)),
-                        detail: page.detail,
-                        icon: page.symbol,
-                        shortcut: index < 6 ? "⌘\(index + 1)" : nil) {
+            CommandItem(
+                id: "nav.\(page.rawValue)",
+                title: L10n.format("打开%@", L10n.t(page.rawValue)),
+                detail: page.detail,
+                icon: page.symbol,
+                shortcut: index < 6 ? "⌘\(index + 1)" : nil
+            ) {
                 state.section = page
             }
         }
-        list.append(CommandItem(id: "engine.toggle",
-                                title: state.isRunning ? "停止推理引擎" : "启动推理引擎",
-                                detail: engineToggleDetail,
-                                icon: state.isRunning ? "stop.fill" : "play.fill") {
-            state.toggleService()
-        })
-        list.append(CommandItem(id: "chat.new", title: "新对话", detail: "开一段新的本地会话",
-                                icon: "square.and.pencil", shortcut: "⌘N") {
-            state.newConversation()
-            state.section = .chat
-        })
-        list.append(CommandItem(id: "downloads", title: "打开下载中心", detail: "查看模型下载进度",
-                                icon: "arrow.down.circle", run: openDownloads))
-        list.append(CommandItem(id: "hub", title: "模型广场", detail: "搜索 Hugging Face 并下载",
-                                icon: "sparkle.magnifyingglass", run: openHub))
-        list.append(CommandItem(id: "theme", title: "切换外观",
-                                detail: L10n.format("当前：%@", L10n.t(state.theme.mode.label)),
-                                icon: state.theme.mode == .dark ? "sun.max" : "moon") {
-            toggleAppearance()
-        })
-        list.append(CommandItem(id: "sidebar", title: state.showsSidebar ? "折叠边栏" : "展开边栏",
-                                detail: "显示 / 隐藏玻璃导航列",
-                                icon: "sidebar.left", shortcut: "⌃⌘S") {
-            state.toggleSidebar()
-        })
+        list.append(
+            CommandItem(
+                id: "engine.toggle",
+                title: state.isRunning ? "停止推理引擎" : "启动推理引擎",
+                detail: engineToggleDetail,
+                icon: state.isRunning ? "stop.fill" : "play.fill"
+            ) {
+                state.toggleService()
+            })
+        list.append(
+            CommandItem(
+                id: "chat.new", title: "新对话", detail: "开一段新的本地会话",
+                icon: "square.and.pencil", shortcut: "⌘N"
+            ) {
+                state.newConversation()
+                state.section = .chat
+            })
+        list.append(
+            CommandItem(
+                id: "downloads", title: "打开下载中心", detail: "查看模型下载进度",
+                icon: "arrow.down.circle", run: openDownloads))
+        list.append(
+            CommandItem(
+                id: "hub", title: "模型广场", detail: "搜索 Hugging Face 并下载",
+                icon: "sparkle.magnifyingglass", run: openHub))
+        list.append(
+            CommandItem(
+                id: "theme", title: "切换外观",
+                detail: L10n.format("当前：%@", L10n.t(state.theme.mode.label)),
+                icon: state.theme.mode == .dark ? "sun.max" : "moon"
+            ) {
+                toggleAppearance()
+            })
+        list.append(
+            CommandItem(
+                id: "sidebar", title: state.showsSidebar ? "折叠边栏" : "展开边栏",
+                detail: "显示 / 隐藏玻璃导航列",
+                icon: "sidebar.left", shortcut: "⌃⌘S"
+            ) {
+                state.toggleSidebar()
+            })
         return list
     }
 
@@ -267,8 +285,8 @@ struct CommandItem: Identifiable {
     let run: () -> Void
 }
 
-private extension Page {
-    var detail: String {
+extension Page {
+    fileprivate var detail: String {
         switch self {
         case .overview: return "引擎状态、实时指标与接口"
         case .chat: return "本地会话与生成"

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import SwiftUI
 import AppKit
+import SwiftUI
 
 // MARK: - flashCat Design System (Direction B · pro tool)
 //
@@ -160,11 +160,13 @@ private struct DSSurfaceModifier: ViewModifier {
 
 extension View {
     /// 面板表面：纯色 + 1px 描边。全应用卡片唯一写法。
-    func dsSurface(radius: CGFloat = DS.Radius.lg,
-                   fill: Color = DS.surface,
-                   stroke: Color = DS.line,
-                   hoverable: Bool = false,
-                   active: Bool = false) -> some View {
+    func dsSurface(
+        radius: CGFloat = DS.Radius.lg,
+        fill: Color = DS.surface,
+        stroke: Color = DS.line,
+        hoverable: Bool = false,
+        active: Bool = false
+    ) -> some View {
         modifier(DSSurfaceModifier(radius: radius, fill: fill, stroke: stroke, hoverable: hoverable, active: active))
     }
 
@@ -564,8 +566,9 @@ struct DSSparkline: View {
                 guard values.count > 1 else { return }
                 let step = proxy.size.width / CGFloat(values.count - 1)
                 for (index, value) in values.enumerated() {
-                    let point = CGPoint(x: CGFloat(index) * step,
-                                        y: proxy.size.height - 1 - CGFloat(value / peak) * (proxy.size.height - 2))
+                    let point = CGPoint(
+                        x: CGFloat(index) * step,
+                        y: proxy.size.height - 1 - CGFloat(value / peak) * (proxy.size.height - 2))
                     index == 0 ? path.move(to: point) : path.addLine(to: point)
                 }
             }
@@ -612,8 +615,7 @@ struct DSSegmented<Value: Hashable>: View {
                 .buttonStyle(.plain)
                 .onHover { inside in
                     withAnimation(DS.Motion.snappy) {
-                        if inside { hoveredIndex = index }
-                        else if hoveredIndex == index { hoveredIndex = nil }
+                        if inside { hoveredIndex = index } else if hoveredIndex == index { hoveredIndex = nil }
                     }
                 }
             }
@@ -827,14 +829,16 @@ struct DSFilterBar<Value: Hashable>: View {
 extension AnyTransition {
     /// 页面切换：淡入 + 4pt 上移；离开只淡出。
     static var dsPage: AnyTransition {
-        .asymmetric(insertion: .opacity.combined(with: .offset(y: 4)),
-                    removal: .opacity)
+        .asymmetric(
+            insertion: .opacity.combined(with: .offset(y: 4)),
+            removal: .opacity)
     }
 
     /// 新条目：从上方 6pt 滑入并淡入。
     static var dsRowInsert: AnyTransition {
-        .asymmetric(insertion: .opacity.combined(with: .offset(y: -6)),
-                    removal: .opacity)
+        .asymmetric(
+            insertion: .opacity.combined(with: .offset(y: -6)),
+            removal: .opacity)
     }
 
     /// 浮层：轻微缩放 + 淡入。

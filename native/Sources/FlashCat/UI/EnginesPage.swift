@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import SwiftUI
 import AppKit
 import FlashCatKit
+import SwiftUI
 
 /// 引擎页：顶部是运行时总览（当前引擎 + 安装/更新统计），
 /// 下面用自适应网格排布引擎卡；卡片内部改成左右两栏，
@@ -56,9 +56,12 @@ struct EnginesPage: View {
         .sheet(item: $configuring) { id in
             EngineConfigSheet(state: state, engine: id)
         }
-        .alert("删除 \(pendingRemoval?.displayName ?? "") 运行时？",
-               isPresented: Binding(get: { pendingRemoval != nil },
-                                    set: { if !$0 { pendingRemoval = nil } })) {
+        .alert(
+            "删除 \(pendingRemoval?.displayName ?? "") 运行时？",
+            isPresented: Binding(
+                get: { pendingRemoval != nil },
+                set: { if !$0 { pendingRemoval = nil } })
+        ) {
             Button("删除", role: .destructive) {
                 guard let id = pendingRemoval else { return }
                 pendingRemoval = nil
@@ -152,9 +155,11 @@ struct EnginesPage: View {
                             .padding(.trailing, 4)
                     }
                     if installed {
-                        EngineIconButton(systemImage: "arrow.clockwise",
-                                         help: updateHelp(id),
-                                         tint: newer != nil ? accent : DS.text2) {
+                        EngineIconButton(
+                            systemImage: "arrow.clockwise",
+                            help: updateHelp(id),
+                            tint: newer != nil ? accent : DS.text2
+                        ) {
                             performUpdateAction(id)
                         }
                         .disabled(busy || checking.contains(id))
@@ -207,8 +212,9 @@ struct EnginesPage: View {
                             Button {
                                 state.toggleService()
                             } label: {
-                                Label(L10n.t(state.isRunning ? "停止" : "启动"),
-                                      systemImage: state.isRunning ? "stop.fill" : "play.fill")
+                                Label(
+                                    L10n.t(state.isRunning ? "停止" : "启动"),
+                                    systemImage: state.isRunning ? "stop.fill" : "play.fill")
                             }
                             .buttonStyle(.ds(state.isRunning ? .danger : .secondary, size: .small))
                             .disabled(state.isSwitchingModel || busy)
@@ -227,8 +233,9 @@ struct EnginesPage: View {
                 } else {
                     HStack(spacing: 10) {
                         if busy {
-                            ProgressRing(fraction: installs.progress[id] ?? 0,
-                                         tint: accent, size: 20, lineWidth: 3)
+                            ProgressRing(
+                                fraction: installs.progress[id] ?? 0,
+                                tint: accent, size: 20, lineWidth: 3)
                             Text(L10n.t(installs.progressStep[id] ?? phase.label))
                                 .font(DS.Font.xs)
                                 .foregroundStyle(DS.text2)
@@ -317,8 +324,9 @@ struct EnginesPage: View {
     private func updateChip(id: EngineID, tint: Color) -> some View {
         let step = L10n.t(installs.progressStep[id] ?? "安装中")
         return HStack(spacing: 6) {
-            ProgressRing(fraction: installs.progress[id] ?? 0,
-                         tint: tint, size: 20, lineWidth: 3)
+            ProgressRing(
+                fraction: installs.progress[id] ?? 0,
+                tint: tint, size: 20, lineWidth: 3)
             Text(step)
                 .font(DS.Font.xs.weight(.medium))
                 .foregroundStyle(DS.text2)
@@ -387,8 +395,9 @@ private struct EngineGlyph: View {
                     .scaledToFit()
                     .clipShape(RoundedRectangle(cornerRadius: size * 0.26, style: .continuous))
             } else {
-                LetterTile(letter: String(id.displayName.prefix(1)).uppercased(),
-                           color: color, size: size)
+                LetterTile(
+                    letter: String(id.displayName.prefix(1)).uppercased(),
+                    color: color, size: size)
             }
         }
         .frame(width: size, height: size)

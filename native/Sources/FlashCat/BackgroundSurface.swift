@@ -51,8 +51,10 @@ final class BackgroundSurface {
 
         guard let effectView else { return }
         let settings = BackgroundSettings.shared
-        let alpha = CGFloat(BackgroundMath.desktopFrost(blur: settings.blur,
-                                                        hasImage: settings.image != nil))
+        let alpha = CGFloat(
+            BackgroundMath.desktopFrost(
+                blur: settings.blur,
+                hasImage: settings.image != nil))
         // 只有强度真的变了才碰这一层：它铺满整窗、又是 behindWindow 混合，
         // 每帧标脏等于让系统重新采样桌面并重合成整个窗口，拖动时会闪。
         // 有自定义图片时强度恒为 0，这一路根本不该跑。

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import XCTest
+
 @testable import FlashCatKit
 
 /// 仓库 id 会被拼成模型目录名，路径比较决定「能不能删」。这两件事都没有第二次
@@ -56,9 +57,11 @@ final class RepositorySafetyTests: XCTestCase {
         for version in ["1.4.1", "0.7.3.dev2", "26.11.1", "1.0.0+build.5", "1.2.3-rc1", "v1"] {
             XCTAssertTrue(FlashCatPaths.isSafeVersion(version), version)
         }
-        for version in ["", "..", "../1.0", "1.0/../x", "1.0..2", "../../../../tmp/x",
-                        "/tmp/x", "1.0 0", "1.0;rm -rf ~", "1.0\n", "۱.۰",
-                        String(repeating: "9", count: 65)] {
+        for version in [
+            "", "..", "../1.0", "1.0/../x", "1.0..2", "../../../../tmp/x",
+            "/tmp/x", "1.0 0", "1.0;rm -rf ~", "1.0\n", "۱.۰",
+            String(repeating: "9", count: 65),
+        ] {
             XCTAssertFalse(FlashCatPaths.isSafeVersion(version), version)
         }
     }

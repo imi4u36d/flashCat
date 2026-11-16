@@ -57,7 +57,8 @@ public enum AnthropicCodec {
         guard let model = payload["model"] as? String, !model.isEmpty else {
             throw GatewayAPIError.badRequest("messages: model 是必填字段")
         }
-        let maxTokens = (payload["max_tokens"] as? Int)
+        let maxTokens =
+            (payload["max_tokens"] as? Int)
             ?? (payload["max_tokens"] as? Double).map(Int.init)
         guard let maxTokens, maxTokens > 0 else {
             throw GatewayAPIError.badRequest("max_tokens: 该字段必填，且必须是正整数")
@@ -111,10 +112,12 @@ public enum AnthropicCodec {
     /// 一条 Anthropic 消息会变成一到多条 OpenAI 消息：带 `tool_result` 块的
     /// user 轮次拆成若干 `role:"tool"` 消息，它同时携带的文本则再补一条普通
     /// user 消息。
-    private static func appendMessage(role: String,
-                                      content: Any?,
-                                      index: Int,
-                                      into openaiMessages: inout [[String: Any]]) throws {
+    private static func appendMessage(
+        role: String,
+        content: Any?,
+        index: Int,
+        into openaiMessages: inout [[String: Any]]
+    ) throws {
         if let text = content as? String {
             openaiMessages.append(["role": role, "content": text])
             return
@@ -198,9 +201,12 @@ public enum AnthropicCodec {
         switch type {
         case "base64":
             guard let mediaType = source["media_type"] as? String,
-                  let data = source["data"] as? String else { return nil }
-            return ["type": "image_url",
-                    "image_url": ["url": "data:\(mediaType);base64,\(data)"]]
+                let data = source["data"] as? String
+            else { return nil }
+            return [
+                "type": "image_url",
+                "image_url": ["url": "data:\(mediaType);base64,\(data)"],
+            ]
         case "url":
             guard let url = source["url"] as? String else { return nil }
             return ["type": "image_url", "image_url": ["url": url]]
@@ -256,7 +262,8 @@ public enum AnthropicCodec {
             for call in toolCalls {
                 let function = call["function"] as? [String: Any] ?? [:]
                 let arguments = (function["arguments"] as? String) ?? "{}"
-                let input = (try? JSONSerialization.jsonObject(with: Data(arguments.utf8)))
+                let input =
+                    (try? JSONSerialization.jsonObject(with: Data(arguments.utf8)))
                     ?? ["_raw": arguments]
                 content.append([
                     "type": "tool_use",
@@ -277,8 +284,9 @@ public enum AnthropicCodec {
             "role": "assistant",
             "model": (openai["model"] as? String) ?? "",
             "content": content,
-            "stop_reason": stopReason(from: choice["finish_reason"] as? String,
-                                      hasToolUse: content.contains { $0["type"] as? String == "tool_use" }),
+            "stop_reason": stopReason(
+                from: choice["finish_reason"] as? String,
+                hasToolUse: content.contains { $0["type"] as? String == "tool_use" }),
             "stop_sequence": NSNull(),
             "usage": [
                 "input_tokens": int(usage["prompt_tokens"]) ?? 0,
@@ -333,8 +341,9 @@ public enum AnthropicCodec {
                 "usage": ["input_tokens": inputTokens, "output_tokens": 0],
             ]
             return [
-                frame(event: "message_start",
-                      object: ["type": "message_start", "message": message]),
+                frame(
+                    event: "message_start",
+                    object: ["type": "message_start", "message": message]),
                 frame(object: ["type": "ping"]),
             ]
         }
@@ -386,11 +395,14 @@ public enum AnthropicCodec {
             openBlock = nil
             // 引擎始终没发 finish_reason 的工具块，收尾时照样按工具调用结束。
             let reason = stopReason ?? (toolBlocks.isEmpty ? "end_turn" : "tool_use")
-            frames.append(frame(event: "message_delta", object: [
-                "type": "message_delta",
-                "delta": ["stop_reason": reason, "stop_sequence": NSNull()],
-                "usage": ["output_tokens": outputTokens],
-            ]))
+            frames.append(
+                frame(
+                    event: "message_delta",
+                    object: [
+                        "type": "message_delta",
+                        "delta": ["stop_reason": reason, "stop_sequence": NSNull()],
+                        "usage": ["output_tokens": outputTokens],
+                    ]))
             frames.append(frame(object: ["type": "message_stop"]))
             return frames
         }
@@ -424,32 +436,37 @@ public enum AnthropicCodec {
             nextBlockIndex += 1
             openBlock = (index, kind)
             openBlocks.append(index)
-            frames.append(frame(object: [
-                "type": "content_block_start",
-                "index": index,
-                "content_block": kind == .text
-                    ? ["type": "text", "text": ""]
-                    : ["type": "thinking", "thinking": ""],
-            ]))
+            frames.append(
+                frame(object: [
+                    "type": "content_block_start",
+                    "index": index,
+                    "content_block": kind == .text
+                        ? ["type": "text", "text": ""]
+                        : ["type": "thinking", "thinking": ""],
+                ]))
             return frames
         }
 
         private func textDelta(_ text: String) -> String {
             let index = openBlock?.index ?? 0
-            return frame(event: "content_block_delta", object: [
-                "type": "content_block_delta",
-                "index": index,
-                "delta": ["type": "text_delta", "text": text],
-            ])
+            return frame(
+                event: "content_block_delta",
+                object: [
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": ["type": "text_delta", "text": text],
+                ])
         }
 
         private func thinkingDelta(_ text: String) -> String {
             let index = openBlock?.index ?? 0
-            return frame(event: "content_block_delta", object: [
-                "type": "content_block_delta",
-                "index": index,
-                "delta": ["type": "thinking_delta", "thinking": text],
-            ])
+            return frame(
+                event: "content_block_delta",
+                object: [
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": ["type": "thinking_delta", "thinking": text],
+                ])
         }
 
         private func consumeToolCall(_ call: [String: Any]) -> [String] {
@@ -467,25 +484,29 @@ public enum AnthropicCodec {
                 nextBlockIndex += 1
                 toolBlocks[openaiIndex] = blockIndex
                 openBlocks.append(blockIndex)
-                frames.append(frame(object: [
-                    "type": "content_block_start",
-                    "index": blockIndex,
-                    "content_block": [
-                        "type": "tool_use",
-                        "id": (call["id"] as? String) ?? "toolu_\(blockIndex)",
-                        "name": (function["name"] as? String) ?? "",
-                        "input": [:],
-                    ],
-                ]))
+                frames.append(
+                    frame(object: [
+                        "type": "content_block_start",
+                        "index": blockIndex,
+                        "content_block": [
+                            "type": "tool_use",
+                            "id": (call["id"] as? String) ?? "toolu_\(blockIndex)",
+                            "name": (function["name"] as? String) ?? "",
+                            "input": [:],
+                        ],
+                    ]))
             }
 
             if let fragment = (call["function"] as? [String: Any])?["arguments"] as? String, !fragment.isEmpty {
                 let index = toolBlocks[openaiIndex] ?? 0
-                frames.append(frame(event: "content_block_delta", object: [
-                    "type": "content_block_delta",
-                    "index": index,
-                    "delta": ["type": "input_json_delta", "partial_json": fragment],
-                ]))
+                frames.append(
+                    frame(
+                        event: "content_block_delta",
+                        object: [
+                            "type": "content_block_delta",
+                            "index": index,
+                            "delta": ["type": "input_json_delta", "partial_json": fragment],
+                        ]))
             }
             return frames
         }
@@ -507,7 +528,8 @@ public enum AnthropicCodec {
     /// `status`，本函数只在引擎没给 `type` 时按状态码推断一个。
     public static func errorEnvelope(from body: Data, upstreamStatus: Int) -> [String: Any] {
         if let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any],
-           let error = object["error"] as? [String: Any] {
+            let error = object["error"] as? [String: Any]
+        {
             let message = (error["message"] as? String) ?? "引擎返回错误"
             let type = (error["type"] as? String) ?? anthropicType(for: upstreamStatus)
             return ["type": "error", "error": ["type": type, "message": message]]

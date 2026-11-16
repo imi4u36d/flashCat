@@ -26,9 +26,11 @@ struct LiquidGlassSurface<S: Shape>: View {
 
 extension View {
     /// 在视图背后加一层原生 Liquid Glass。
-    func liquidGlassSurface<S: Shape>(_ shape: S,
-                                      tint: Color? = nil,
-                                      interactive: Bool = false) -> some View {
+    func liquidGlassSurface<S: Shape>(
+        _ shape: S,
+        tint: Color? = nil,
+        interactive: Bool = false
+    ) -> some View {
         background {
             LiquidGlassSurface(shape: shape, tint: tint, interactive: interactive)
         }
@@ -84,10 +86,11 @@ struct GlassFilterBar<Value: Hashable>: View {
     var maxSearchWidth: CGFloat = 200
 
     var body: some View {
-        DSFilterBar(selection: $selection,
-                    options: options,
-                    query: $query,
-                    placeholder: placeholder,
-                    maxSearchWidth: maxSearchWidth)
+        DSFilterBar(
+            selection: $selection,
+            options: options,
+            query: $query,
+            placeholder: placeholder,
+            maxSearchWidth: maxSearchWidth)
     }
 }

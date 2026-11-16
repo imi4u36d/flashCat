@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import XCTest
 import FlashCatKit
+import XCTest
+
 @testable import FlashCat
 
 /// 概览第四格：缓存命中率的 owner 表与引擎侧单位换算。

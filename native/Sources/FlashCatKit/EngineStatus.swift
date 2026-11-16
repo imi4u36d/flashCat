@@ -132,30 +132,32 @@ public struct EngineStatus: Sendable, Equatable {
     /// engine does not say, and the caller falls back to the built-in list.
     public var reasoningEfforts: [String]?
 
-    public init(state: EngineRunState = .stopped,
-                model: String? = nil,
-                loadedModels: [String] = [],
-                decodeTokensPerSecond: Double? = nil,
-                prefillTokensPerSecond: Double? = nil,
-                decodeRateKind: EngineRateKind = .none,
-                prefillRateKind: EngineRateKind = .none,
-                lifetimeDecodeTokensPerSecond: Double? = nil,
-                draftAcceptance: Double? = nil,
-                ttftMilliseconds: Double? = nil,
-                ttftKind: EngineTTFTKind = .none,
-                activeRequests: Int = 0,
-                queuedRequests: Int = 0,
-                requestsCompleted: Int = 0,
-                requestsFailed: Int = 0,
-                memoryBytes: Int? = nil,
-                peakMemoryBytes: Int? = nil,
-                maximumContextTokens: Int? = nil,
-                startedAt: Double? = nil,
-                uptimeSeconds: Double? = nil,
-                processIdentifier: Int32? = nil,
-                detail: String? = nil,
-                extras: [String: Double] = [:],
-                reasoningEfforts: [String]? = nil) {
+    public init(
+        state: EngineRunState = .stopped,
+        model: String? = nil,
+        loadedModels: [String] = [],
+        decodeTokensPerSecond: Double? = nil,
+        prefillTokensPerSecond: Double? = nil,
+        decodeRateKind: EngineRateKind = .none,
+        prefillRateKind: EngineRateKind = .none,
+        lifetimeDecodeTokensPerSecond: Double? = nil,
+        draftAcceptance: Double? = nil,
+        ttftMilliseconds: Double? = nil,
+        ttftKind: EngineTTFTKind = .none,
+        activeRequests: Int = 0,
+        queuedRequests: Int = 0,
+        requestsCompleted: Int = 0,
+        requestsFailed: Int = 0,
+        memoryBytes: Int? = nil,
+        peakMemoryBytes: Int? = nil,
+        maximumContextTokens: Int? = nil,
+        startedAt: Double? = nil,
+        uptimeSeconds: Double? = nil,
+        processIdentifier: Int32? = nil,
+        detail: String? = nil,
+        extras: [String: Double] = [:],
+        reasoningEfforts: [String]? = nil
+    ) {
         self.state = state
         self.model = model
         self.loadedModels = loadedModels
@@ -217,18 +219,20 @@ public struct EngineModel: Identifiable, Sendable, Equatable {
     public var helper: Bool
     public var engine: EngineID
 
-    public init(id: String,
-                path: String? = nil,
-                bytes: Int? = nil,
-                maximumContextTokens: Int? = nil,
-                loaded: Bool = false,
-                loading: Bool = false,
-                kind: String? = nil,
-                architecture: String? = nil,
-                capabilities: [String] = [],
-                hidden: Bool = false,
-                helper: Bool = false,
-                engine: EngineID) {
+    public init(
+        id: String,
+        path: String? = nil,
+        bytes: Int? = nil,
+        maximumContextTokens: Int? = nil,
+        loaded: Bool = false,
+        loading: Bool = false,
+        kind: String? = nil,
+        architecture: String? = nil,
+        capabilities: [String] = [],
+        hidden: Bool = false,
+        helper: Bool = false,
+        engine: EngineID
+    ) {
         self.id = id
         self.path = path
         self.bytes = bytes

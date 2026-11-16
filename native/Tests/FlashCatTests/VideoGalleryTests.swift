@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import XCTest
+
 @testable import FlashCat
 
 /// 视频索引和图片索引同构，但更容易出错的点有两个：
@@ -39,10 +40,12 @@ final class VideoGalleryTests: XCTestCase {
             title: "视频测试",
             updatedAt: now,
             messages: [
-                ChatMessage(role: "user", content: "让这张图动起来", model: "wan2.2",
-                            createdAt: now, imagePath: sourceFrame),
-                ChatMessage(role: "assistant", content: "", model: "wan2.2",
-                            createdAt: now, videoPath: generated, videoNote: note),
+                ChatMessage(
+                    role: "user", content: "让这张图动起来", model: "wan2.2",
+                    createdAt: now, imagePath: sourceFrame),
+                ChatMessage(
+                    role: "assistant", content: "", model: "wan2.2",
+                    createdAt: now, videoPath: generated, videoNote: note),
             ])
 
         let videos = makeStore().merge(threads: [thread])
@@ -53,8 +56,9 @@ final class VideoGalleryTests: XCTestCase {
         XCTAssertEqual(videos.first?.model, "wan2.2")
         XCTAssertEqual(videos.first?.note, note)
         XCTAssertEqual(videos.first?.seed, 42, "seed 要从落盘说明里解析出来")
-        XCTAssertFalse(videos.contains { $0.path == sourceFrame },
-                       "用户给的首帧图不是作品，不能进视频库")
+        XCTAssertFalse(
+            videos.contains { $0.path == sourceFrame },
+            "用户给的首帧图不是作品，不能进视频库")
     }
 
     func testSeedParsing() {
@@ -74,9 +78,10 @@ final class VideoGalleryTests: XCTestCase {
             updatedAt: now,
             messages: [
                 ChatMessage(role: "user", content: "一只猫在跑", model: "wan2.2", createdAt: now),
-                ChatMessage(role: "assistant", content: "", model: "wan2.2",
-                            createdAt: now, videoPath: generated,
-                            videoNote: "512×384 · 49 帧 · 16fps · 8 步 · seed 9"),
+                ChatMessage(
+                    role: "assistant", content: "", model: "wan2.2",
+                    createdAt: now, videoPath: generated,
+                    videoNote: "512×384 · 49 帧 · 16fps · 8 步 · seed 9"),
             ])
 
         let first = makeStore().merge(threads: [thread])
@@ -90,8 +95,9 @@ final class VideoGalleryTests: XCTestCase {
 
     func testDeletedFilesAreSkippedUntilTheyComeBack() throws {
         let generated = try makeFile("generated.mp4")
-        let video = GalleryVideo(path: generated, prompt: "一只猫", model: "wan2.2",
-                                 createdAt: Date(), note: nil, seed: 3)
+        let video = GalleryVideo(
+            path: generated, prompt: "一只猫", model: "wan2.2",
+            createdAt: Date(), note: nil, seed: 3)
         let store = makeStore()
         XCTAssertEqual(store.record(video).count, 1)
 
@@ -106,11 +112,15 @@ final class VideoGalleryTests: XCTestCase {
         let generated = try makeFile("generated.mp4")
         let store = makeStore()
         let now = Date()
-        store.record(GalleryVideo(path: generated, prompt: "旧提示词", model: "a",
-                                  createdAt: now, note: nil, seed: 1))
-        let videos = store.record(GalleryVideo(path: generated, prompt: "新提示词", model: "b",
-                                               createdAt: now.addingTimeInterval(1),
-                                               note: "512×384", seed: 2))
+        store.record(
+            GalleryVideo(
+                path: generated, prompt: "旧提示词", model: "a",
+                createdAt: now, note: nil, seed: 1))
+        let videos = store.record(
+            GalleryVideo(
+                path: generated, prompt: "新提示词", model: "b",
+                createdAt: now.addingTimeInterval(1),
+                note: "512×384", seed: 2))
 
         XCTAssertEqual(videos.count, 1)
         XCTAssertEqual(videos.first?.prompt, "新提示词")
@@ -125,13 +135,15 @@ final class VideoGalleryTests: XCTestCase {
             updatedAt: now,
             messages: [
                 ChatMessage(role: "user", content: "一只猫", model: "wan2.2", createdAt: now),
-                ChatMessage(role: "assistant", content: "", model: "wan2.2",
-                            createdAt: now,
-                            videoPath: root.appendingPathComponent("missing.mp4").path),
+                ChatMessage(
+                    role: "assistant", content: "", model: "wan2.2",
+                    createdAt: now,
+                    videoPath: root.appendingPathComponent("missing.mp4").path),
             ])
 
-        XCTAssertTrue(makeStore().merge(threads: [thread]).isEmpty,
-                      "历史里指向已删除文件的条目不能变成点不开的卡片")
+        XCTAssertTrue(
+            makeStore().merge(threads: [thread]).isEmpty,
+            "历史里指向已删除文件的条目不能变成点不开的卡片")
     }
 
     /// 同图片库：回填时不能把「文件暂时不在」的条目从索引里删掉。
@@ -140,8 +152,10 @@ final class VideoGalleryTests: XCTestCase {
         let generated = try makeFile("generated.mp4")
         let now = Date()
         let store = makeStore()
-        store.record(GalleryVideo(path: vanished, prompt: "旧片", model: "a",
-                                  createdAt: now, note: nil, seed: nil))
+        store.record(
+            GalleryVideo(
+                path: vanished, prompt: "旧片", model: "a",
+                createdAt: now, note: nil, seed: nil))
         try FileManager.default.removeItem(atPath: vanished)
 
         let thread = ChatThread(
@@ -149,10 +163,12 @@ final class VideoGalleryTests: XCTestCase {
             title: "视频测试",
             updatedAt: now,
             messages: [
-                ChatMessage(role: "user", content: "新片", model: "a",
-                            createdAt: now.addingTimeInterval(1)),
-                ChatMessage(role: "assistant", content: "", model: "a",
-                            createdAt: now.addingTimeInterval(1), videoPath: generated),
+                ChatMessage(
+                    role: "user", content: "新片", model: "a",
+                    createdAt: now.addingTimeInterval(1)),
+                ChatMessage(
+                    role: "assistant", content: "", model: "a",
+                    createdAt: now.addingTimeInterval(1), videoPath: generated),
             ])
         let merged = store.merge(threads: [thread])
         XCTAssertEqual(merged.map(\.path), [generated], "文件不在的旧条目先不展示")

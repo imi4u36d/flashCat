@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import SwiftUI
-import AppKit
 import AVKit
+import AppKit
+import SwiftUI
 
 /// 图库和视频页共用的详情弹层。
 /// 一处定义、两种内容，避免图片详情和视频详情各长一套、字段慢慢跑偏。
@@ -168,7 +168,8 @@ struct GalleryDetailSheet: View {
         .task(id: item.id) {
             guard item.isVideo, player == nil else { return }
             let url = URL(fileURLWithPath: item.path)
-            player = FileManager.default.fileExists(atPath: item.path)
+            player =
+                FileManager.default.fileExists(atPath: item.path)
                 ? AVPlayer(url: url)
                 : nil
         }
@@ -279,7 +280,8 @@ struct GalleryDetailSheet: View {
             }
         case .video(let video):
             if let note = video.note,
-               let first = note.split(separator: "·").first {
+                let first = note.split(separator: "·").first
+            {
                 let text = first.trimmingCharacters(in: .whitespaces)
                 if text.contains("×") { return text }
             }
@@ -289,7 +291,7 @@ struct GalleryDetailSheet: View {
 
     private var fileSize: String {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: item.path),
-              let bytes = attributes[.size] as? NSNumber
+            let bytes = attributes[.size] as? NSNumber
         else { return "未知" }
         return ByteCountFormatter.string(fromByteCount: bytes.int64Value, countStyle: .file)
     }
@@ -332,8 +334,10 @@ private struct ImagePreview: View {
         self.path = path
         // 网格卡片已经解过 520 px 的，900 px 是另一个键；缓存里有就别再闪一次
         // 进度圈，直接从这张图开始显示。
-        _image = State(initialValue: ImageStore.cachedThumbnail(atPath: path,
-                                                                maxPixel: Self.maxPixel))
+        _image = State(
+            initialValue: ImageStore.cachedThumbnail(
+                atPath: path,
+                maxPixel: Self.maxPixel))
     }
 
     var body: some View {

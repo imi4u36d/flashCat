@@ -71,8 +71,9 @@ enum StatusActivitySource: Sendable {
         case .requestPhases(let path):
             guard let array = JSONValue.dig(json, path) as? [[String: Any]] else { return .idle }
             let phases = Set(array.compactMap { $0["phase"] as? String })
-            return StatusActivity(prefilling: phases.contains("prefill"),
-                                  decoding: phases.contains("decode"))
+            return StatusActivity(
+                prefilling: phases.contains("prefill"),
+                decoding: phases.contains("decode"))
         }
     }
 }
@@ -225,10 +226,11 @@ struct StatusRateRule: Sendable {
         for tier in tiers {
             guard let value = tier.source.read(from: json) else { continue }
             if tier.requiresPositive, !(value > 0) { continue }
-            var kind: EngineRateKind = switch tier.kind {
-            case .fixed(let declared): declared
-            case .whenPositive(let declared): value > 0 ? declared : .none
-            }
+            var kind: EngineRateKind =
+                switch tier.kind {
+                case .fixed(let declared): declared
+                case .whenPositive(let declared): value > 0 ? declared : .none
+                }
             if tier.escalatesWithActivity {
                 let active = target == .decode ? activity.decoding : activity.prefilling
                 kind = active ? .live : .lastRequest
@@ -260,12 +262,12 @@ extension StatusRateRule.Source {
             return JSONValue.firstNumber(json, paths)
         case .quotient(let numerator, let denominator):
             guard let top = JSONValue.firstNumber(json, numerator), top > 0,
-                  let bottom = JSONValue.firstNumber(json, denominator), bottom > 0
+                let bottom = JSONValue.firstNumber(json, denominator), bottom > 0
             else { return nil }
             return top / bottom
         case .batch(let prefix):
             guard let value = JSONValue.digNumber(json, "\(prefix).tokens_per_second"), value > 0,
-                  JSONValue.digBool(json, "\(prefix).valid") != false
+                JSONValue.digBool(json, "\(prefix).valid") != false
             else { return nil }
             return value
         case .activePrefillHandles:
@@ -273,11 +275,12 @@ extension StatusRateRule.Source {
             var best: (elapsed: Double, rate: Double)?
             for handle in handles {
                 guard let state = handle["prefill_state"] as? [String: Any],
-                      let phase = state["phase"] as? String, phase != "completed"
+                    let phase = state["phase"] as? String, phase != "completed"
                 else { continue }
                 let elapsed = JSONValue.number(state["elapsed_s"]) ?? 0
                 let done = JSONValue.number(state["tokens_done"]) ?? 0
-                let reported = JSONValue.number(state["live_prefill_tok_s"])
+                let reported =
+                    JSONValue.number(state["live_prefill_tok_s"])
                     ?? JSONValue.number(state["prefill_tok_s"])
                 // 服务端每个 chunk 刷新的 `live_prefill_tok_s` 才是「此刻」；
                 // `tokens_done / elapsed_s` 是这一轮从开始到现在的均值，只在
@@ -319,7 +322,7 @@ struct StatusTTFTRule: Sendable {
             status.ttftKind = kind
         case .histogramSeconds(let sum, let count):
             guard let total = JSONValue.firstNumber(json, [sum]), total > 0,
-                  let samples = JSONValue.firstInt(json, [count]), samples > 0
+                let samples = JSONValue.firstInt(json, [count]), samples > 0
             else { return }
             status.ttftMilliseconds = total / Double(samples) * 1000
             status.ttftKind = kind
@@ -439,14 +442,17 @@ struct EngineStatusDialect: Sendable {
 // MARK: - 方言表
 
 /// 表里的一档来源。
-private func tier(_ source: StatusRateRule.Source,
-                  _ kind: StatusRateRule.Kind,
-                  requiresPositive: Bool = true,
-                  escalatesWithActivity: Bool = false) -> StatusRateRule.Tier {
-    StatusRateRule.Tier(source: source,
-                        kind: kind,
-                        requiresPositive: requiresPositive,
-                        escalatesWithActivity: escalatesWithActivity)
+private func tier(
+    _ source: StatusRateRule.Source,
+    _ kind: StatusRateRule.Kind,
+    requiresPositive: Bool = true,
+    escalatesWithActivity: Bool = false
+) -> StatusRateRule.Tier {
+    StatusRateRule.Tier(
+        source: source,
+        kind: kind,
+        requiresPositive: requiresPositive,
+        escalatesWithActivity: escalatesWithActivity)
 }
 
 /// 全部方言，键就是 descriptor 的 `telemetry[].format`。
@@ -508,29 +514,42 @@ enum EngineStatusDialects {
         rates: [
             // 真·瞬时值在同源的 `current_*_batch`：最近一个完成的同类批次。
             // 空闲时它会一直停在那儿，所以粒度还要看此刻有没有该阶段在跑。
-            StatusRateRule(target: .decode, tiers: [
-                tier(.batch(prefix: "metrics.current_decode_batch"),
-                     .fixed(.lastRequest), escalatesWithActivity: true),
-                tier(.paths(["metrics.decode_tokens_per_second"]),
-                     .fixed(.lifetimeMean), requiresPositive: false),
-            ], fallbackKind: .lifetimeMean),
-            StatusRateRule(target: .prefill, tiers: [
-                tier(.batch(prefix: "metrics.current_prefill_batch"),
-                     .fixed(.lastRequest), escalatesWithActivity: true),
-                tier(.paths(["metrics.prefill_tokens_per_second"]),
-                     .fixed(.lifetimeMean), requiresPositive: false),
-            ], fallbackKind: .lifetimeMean),
-            StatusRateRule(target: .lifetimeDecode, tiers: [
-                tier(.paths(["metrics.decode_tokens_per_second"]),
-                     .fixed(.lifetimeMean), requiresPositive: false),
-            ]),
+            StatusRateRule(
+                target: .decode,
+                tiers: [
+                    tier(
+                        .batch(prefix: "metrics.current_decode_batch"),
+                        .fixed(.lastRequest), escalatesWithActivity: true),
+                    tier(
+                        .paths(["metrics.decode_tokens_per_second"]),
+                        .fixed(.lifetimeMean), requiresPositive: false),
+                ], fallbackKind: .lifetimeMean),
+            StatusRateRule(
+                target: .prefill,
+                tiers: [
+                    tier(
+                        .batch(prefix: "metrics.current_prefill_batch"),
+                        .fixed(.lastRequest), escalatesWithActivity: true),
+                    tier(
+                        .paths(["metrics.prefill_tokens_per_second"]),
+                        .fixed(.lifetimeMean), requiresPositive: false),
+                ], fallbackKind: .lifetimeMean),
+            StatusRateRule(
+                target: .lifetimeDecode,
+                tiers: [
+                    tier(
+                        .paths(["metrics.decode_tokens_per_second"]),
+                        .fixed(.lifetimeMean), requiresPositive: false)
+                ]),
         ],
         ttft: StatusTTFTRule(source: .milliseconds(["metrics.ttft_ms.p50"]), kind: .p50),
         extras: [
-            StatusExtraRule(key: "thermal_state",
-                            value: .flagNormal(["metrics.thermal_state", "thermal_state"], "nominal")),
-            StatusExtraRule(key: "memory_pressure_warn",
-                            value: .flagNormal(["memory_pressure"], "normal")),
+            StatusExtraRule(
+                key: "thermal_state",
+                value: .flagNormal(["metrics.thermal_state", "thermal_state"], "nominal")),
+            StatusExtraRule(
+                key: "memory_pressure_warn",
+                value: .flagNormal(["memory_pressure"], "normal")),
         ])
 
     // MARK: oMLX
@@ -547,18 +566,24 @@ enum EngineStatusDialects {
             .uptimeSeconds: ["uptime_seconds"],
         ],
         derived: [
-            .versionDetail: ["version"],
+            .versionDetail: ["version"]
         ],
         rates: [
-            StatusRateRule(target: .decode, tiers: [
-                tier(.paths(["avg_generation_tps"]), .whenPositive(.lifetimeMean), requiresPositive: false),
-            ]),
-            StatusRateRule(target: .prefill, tiers: [
-                tier(.paths(["avg_prefill_tps"]), .whenPositive(.lifetimeMean), requiresPositive: false),
-            ]),
-            StatusRateRule(target: .lifetimeDecode, tiers: [
-                tier(.paths(["avg_generation_tps"]), .fixed(.lifetimeMean), requiresPositive: false),
-            ]),
+            StatusRateRule(
+                target: .decode,
+                tiers: [
+                    tier(.paths(["avg_generation_tps"]), .whenPositive(.lifetimeMean), requiresPositive: false)
+                ]),
+            StatusRateRule(
+                target: .prefill,
+                tiers: [
+                    tier(.paths(["avg_prefill_tps"]), .whenPositive(.lifetimeMean), requiresPositive: false)
+                ]),
+            StatusRateRule(
+                target: .lifetimeDecode,
+                tiers: [
+                    tier(.paths(["avg_generation_tps"]), .fixed(.lifetimeMean), requiresPositive: false)
+                ]),
         ],
         extras: [
             StatusExtraRule(key: "cache_efficiency", value: .number(["cache_efficiency"])),
@@ -589,19 +614,25 @@ enum EngineStatusDialects {
         ],
         rates: [
             // 原始速率按「越接近此刻越优先」排：滚动窗口 → 上一请求终值。
-            StatusRateRule(target: .decode, tiers: [
-                tier(.paths(["rolling.mean"]), .fixed(.live)),
-                tier(.paths(["latest.decode_tok_s"]), .fixed(.lastRequest)),
-            ]),
+            StatusRateRule(
+                target: .decode,
+                tiers: [
+                    tier(.paths(["rolling.mean"]), .fixed(.live)),
+                    tier(.paths(["latest.decode_tok_s"]), .fixed(.lastRequest)),
+                ]),
             // 预填充三档：在跑的那一路 → 上一请求终值 → 最近 ≤100 chunk 的均值。
             // 刻意不用同处的 `peak_tok_s`：那是单 chunk 峰值，不是当前速度。
-            StatusRateRule(target: .prefill, tiers: [
-                tier(.activePrefillHandles, .fixed(.live)),
-                tier(.paths(["latest.prefill_tok_s"]), .fixed(.lastRequest)),
-                tier(.quotient(numerator: ["prefill_rates.tokens"],
-                               denominator: ["prefill_rates.compute_time_s"]),
-                     .fixed(.lifetimeMean)),
-            ]),
+            StatusRateRule(
+                target: .prefill,
+                tiers: [
+                    tier(.activePrefillHandles, .fixed(.live)),
+                    tier(.paths(["latest.prefill_tok_s"]), .fixed(.lastRequest)),
+                    tier(
+                        .quotient(
+                            numerator: ["prefill_rates.tokens"],
+                            denominator: ["prefill_rates.compute_time_s"]),
+                        .fixed(.lifetimeMean)),
+                ]),
         ],
         ttft: StatusTTFTRule(source: .seconds(["latest.ttft_s"]), kind: .lastRequest),
         extras: [
@@ -628,42 +659,62 @@ enum EngineStatusDialects {
             // 进程级累计吞吐：分子分母都是同一个进程里真正算过/生成过的量。这不是
             // 「此刻多快」，但它是引擎唯一能自报的均值，网关没有样本时靠它至少说
             // 出一句真话。
-            StatusRateRule(target: .decode, tiers: [
-                tier(.quotient(numerator: ["counters.generation_tokens_total"],
-                               denominator: ["histograms.decode_time_seconds.sum"]),
-                     .fixed(.lifetimeMean)),
-            ]),
-            StatusRateRule(target: .prefill, tiers: [
-                tier(.quotient(numerator: ["counters.prefill_tokens_total"],
-                               denominator: ["histograms.prefill_time_seconds.sum"]),
-                     .fixed(.lifetimeMean)),
-            ]),
-            StatusRateRule(target: .lifetimeDecode, tiers: [
-                tier(.quotient(numerator: ["counters.generation_tokens_total"],
-                               denominator: ["histograms.decode_time_seconds.sum"]),
-                     .fixed(.lifetimeMean)),
-            ]),
+            StatusRateRule(
+                target: .decode,
+                tiers: [
+                    tier(
+                        .quotient(
+                            numerator: ["counters.generation_tokens_total"],
+                            denominator: ["histograms.decode_time_seconds.sum"]),
+                        .fixed(.lifetimeMean))
+                ]),
+            StatusRateRule(
+                target: .prefill,
+                tiers: [
+                    tier(
+                        .quotient(
+                            numerator: ["counters.prefill_tokens_total"],
+                            denominator: ["histograms.prefill_time_seconds.sum"]),
+                        .fixed(.lifetimeMean))
+                ]),
+            StatusRateRule(
+                target: .lifetimeDecode,
+                tiers: [
+                    tier(
+                        .quotient(
+                            numerator: ["counters.generation_tokens_total"],
+                            denominator: ["histograms.decode_time_seconds.sum"]),
+                        .fixed(.lifetimeMean))
+                ]),
         ],
-        ttft: StatusTTFTRule(source: .histogramSeconds(
-            sum: "histograms.time_to_first_token_seconds.sum",
-            count: "histograms.time_to_first_token_seconds.count"), kind: .lifetimeMean),
+        ttft: StatusTTFTRule(
+            source: .histogramSeconds(
+                sum: "histograms.time_to_first_token_seconds.sum",
+                count: "histograms.time_to_first_token_seconds.count"), kind: .lifetimeMean),
         extras: [
             // 速率不在这里算：解析器是无状态纯函数，实时速度只能靠相邻两次采样
             // 差分。这里只交出原始计数，由 `EngineLiveRates` 换算。
-            StatusExtraRule(key: EngineRateCounters.decodeLive,
-                            value: .number(["gauges.generation_tokens_live"])),
-            StatusExtraRule(key: EngineRateCounters.prefillLive,
-                            value: .number(["gauges.prefill_tokens_live"])),
-            StatusExtraRule(key: EngineRateCounters.prefillTokens,
-                            value: .number(["counters.prefill_tokens_total"])),
-            StatusExtraRule(key: EngineRateCounters.prefillSeconds,
-                            value: .number(["histograms.prefill_time_seconds.sum"])),
-            StatusExtraRule(key: EngineRateCounters.prefilling,
-                            value: .number(["gauges.requests_prefilling"])),
-            StatusExtraRule(key: "total_cached_tokens",
-                            value: .number(["counters.prefix_cache_tokens_total"])),
-            StatusExtraRule(key: "prompt_tokens_total",
-                            value: .number(["counters.prompt_tokens_total"])),
+            StatusExtraRule(
+                key: EngineRateCounters.decodeLive,
+                value: .number(["gauges.generation_tokens_live"])),
+            StatusExtraRule(
+                key: EngineRateCounters.prefillLive,
+                value: .number(["gauges.prefill_tokens_live"])),
+            StatusExtraRule(
+                key: EngineRateCounters.prefillTokens,
+                value: .number(["counters.prefill_tokens_total"])),
+            StatusExtraRule(
+                key: EngineRateCounters.prefillSeconds,
+                value: .number(["histograms.prefill_time_seconds.sum"])),
+            StatusExtraRule(
+                key: EngineRateCounters.prefilling,
+                value: .number(["gauges.requests_prefilling"])),
+            StatusExtraRule(
+                key: "total_cached_tokens",
+                value: .number(["counters.prefix_cache_tokens_total"])),
+            StatusExtraRule(
+                key: "prompt_tokens_total",
+                value: .number(["counters.prompt_tokens_total"])),
         ],
         refinements: [.prometheusGauges])
 
@@ -699,14 +750,20 @@ enum EngineStatusDialects {
             .queuedRequests: ["queued", "live.queued", "waiting"],
         ],
         rates: [
-            StatusRateRule(target: .decode, tiers: [
-                tier(.paths(["timings.predicted_per_second"]),
-                     .whenPositive(.lastRequest), requiresPositive: false),
-            ]),
-            StatusRateRule(target: .prefill, tiers: [
-                tier(.paths(["timings.prompt_per_second"]),
-                     .whenPositive(.lastRequest), requiresPositive: false),
-            ]),
+            StatusRateRule(
+                target: .decode,
+                tiers: [
+                    tier(
+                        .paths(["timings.predicted_per_second"]),
+                        .whenPositive(.lastRequest), requiresPositive: false)
+                ]),
+            StatusRateRule(
+                target: .prefill,
+                tiers: [
+                    tier(
+                        .paths(["timings.prompt_per_second"]),
+                        .whenPositive(.lastRequest), requiresPositive: false)
+                ]),
         ],
         overrides: [StatusOverrideRule(when: .boolTrue(["busy"]), detail: "生成中")])
 
@@ -719,15 +776,22 @@ enum EngineStatusDialects {
             .requestsCompleted: ["totals.requests"],
         ],
         rates: [
-            StatusRateRule(target: .decode, tiers: [
-                tier(.paths(["live.tok_s"]), .whenPositive(.live), requiresPositive: false),
-            ]),
-            StatusRateRule(target: .prefill, tiers: [
-                tier(.paths(["live.prefill_tok_s_mean"]), .whenPositive(.live), requiresPositive: false),
-            ]),
+            StatusRateRule(
+                target: .decode,
+                tiers: [
+                    tier(.paths(["live.tok_s"]), .whenPositive(.live), requiresPositive: false)
+                ]),
+            StatusRateRule(
+                target: .prefill,
+                tiers: [
+                    tier(.paths(["live.prefill_tok_s_mean"]), .whenPositive(.live), requiresPositive: false)
+                ]),
         ],
-        overrides: [StatusOverrideRule(when: .stringEquals(path: "live.state", value: "reading"),
-                                       state: .loading)],
+        overrides: [
+            StatusOverrideRule(
+                when: .stringEquals(path: "live.state", value: "reading"),
+                state: .loading)
+        ],
         refinements: [.strataMetricsTail])
 
     // MARK: 折叠
@@ -737,10 +801,12 @@ enum EngineStatusDialects {
     /// 顺序固定：活动阶段 → 标量字段 → 派生字段 → 速率 → TTFT → extras →
     /// 复合读法 → 状态覆盖。派生要在标量之后（依赖它们的值），覆盖要在最后
     /// （它读的是已经填好的 loadedModels / state）。
-    static func fold(_ format: EngineTelemetryFormat,
-                     json: [String: Any],
-                     health: [String: Any]? = nil,
-                     fallbackState: EngineRunState) -> EngineStatus {
+    static func fold(
+        _ format: EngineTelemetryFormat,
+        json: [String: Any],
+        health: [String: Any]? = nil,
+        fallbackState: EngineRunState
+    ) -> EngineStatus {
         var status = EngineStatus(state: fallbackState)
         // 未知格式降级成「只有状态」：descriptor 可能是由未来版本的 pack 清单带
         // 进来的，界面不该因此整块空白，也不该让一次解析抛错。
@@ -784,7 +850,8 @@ extension StatusRefinement {
             // `/health` 是最便宜的那一份，模型身份在它和 `/api/status` 里都可能出现。
             let loaded = (JSONValue.dig(json, "loaded_models") as? [String]) ?? []
             status.loadedModels = loaded
-            status.model = loaded.first
+            status.model =
+                loaded.first
                 ?? JSONValue.firstString(json, ["default_model"])
                 ?? (health?["default_model"] as? String)
             let loading = JSONValue.firstInt(json, ["models_loading"]) ?? 0
@@ -797,7 +864,8 @@ extension StatusRefinement {
             status.loadedModels = chatModels.filter(\.loaded).map(\.id)
             status.model = status.loadedModels.first
             if parsed.loadedCount > 0, status.loadedModels.isEmpty,
-               chatModels.contains(where: \.loading) {
+                chatModels.contains(where: \.loading)
+            {
                 status.state = .loading
             }
             if let current = chatModels.first(where: \.loaded) {
@@ -822,7 +890,8 @@ extension StatusRefinement {
                     status.startedAt = JSONValue.digNumber(health, "startup.started_at")
                 }
                 if let context = JSONValue.digInt(health, "context_window"),
-                   status.maximumContextTokens == nil {
+                    status.maximumContextTokens == nil
+                {
                     status.maximumContextTokens = context
                 }
                 if let mode = JSONValue.digString(health, "generation_mode") {
@@ -830,8 +899,9 @@ extension StatusRefinement {
                 }
             }
             if let accepted = JSONValue.firstNumber(json, ["latest.accepted_drafts"]),
-               let drafted = JSONValue.firstNumber(json, ["latest.drafted_tokens"]),
-               drafted > 0 {
+                let drafted = JSONValue.firstNumber(json, ["latest.drafted_tokens"]),
+                drafted > 0
+            {
                 status.draftAcceptance = accepted / drafted
             }
             if let handles = JSONValue.dig(json, "in_flight") as? [[String: Any]] {
@@ -856,21 +926,24 @@ extension StatusRefinement {
                 status.uptimeSeconds = max(0, Date().timeIntervalSince1970 - startedAt)
             }
         case .strataMetricsTail:
-            status.queuedRequests = (JSONValue.firstInt(json, ["live.queued"]) ?? 0)
+            status.queuedRequests =
+                (JSONValue.firstInt(json, ["live.queued"]) ?? 0)
                 + (JSONValue.firstInt(json, ["live.waiting"]) ?? 0)
             let drafts = JSONValue.firstInt(json, ["totals.drafts_offered"]) ?? 0
             let accepted = JSONValue.firstInt(json, ["totals.drafts_accepted"]) ?? 0
             if drafts > 0 { status.draftAcceptance = Double(accepted) / Double(drafts) }
             if let output = JSONValue.firstNumber(json, ["totals.output_tokens"]),
-               let decodeMs = JSONValue.firstNumber(json, ["totals.decode_ms"]),
-               decodeMs > 0 {
+                let decodeMs = JSONValue.firstNumber(json, ["totals.decode_ms"]),
+                decodeMs > 0
+            {
                 let mean = output / (decodeMs / 1000)
                 status.detail = String(format: "%.1f tok/s", mean)
                 if mean > 0 { status.lifetimeDecodeTokensPerSecond = mean }
             }
             if status.decodeTokensPerSecond == nil,
-               let requests = json["requests"] as? [[String: Any]],
-               let latest = requests.first {
+                let requests = json["requests"] as? [[String: Any]],
+                let latest = requests.first
+            {
                 // `live.tok_s` 缺位时才回落到最近一次请求的终值。
                 status.decodeTokensPerSecond = JSONValue.firstNumber(latest, ["decode_tok_s"])
                 status.decodeRateKind =
@@ -888,7 +961,8 @@ extension StatusRefinement {
                 // 「目标权重已经常驻」，否则等待切换会一直等到超时。
                 if !parsedCapabilities.isEmpty, !isChat, !isImage, !isVideo { continue }
                 let state = JSONValue.digString(entry, "status.value", "state")?.lowercased()
-                let loaded = JSONValue.bool(entry["loaded"])
+                let loaded =
+                    JSONValue.bool(entry["loaded"])
                     ?? (state.map { $0 == "loaded" || $0 == "ready" })
                     ?? (state == "unloaded" ? false : true)
                 if loaded { status.loadedModels.append(id) }
@@ -897,7 +971,8 @@ extension StatusRefinement {
                 // 当成当前模型会让顶栏的上下文用量与聊天参数全部错位。
                 if loaded, isChat, status.model == nil {
                     status.model = id
-                    status.maximumContextTokens = JSONValue.int(entry["max_model_len"])
+                    status.maximumContextTokens =
+                        JSONValue.int(entry["max_model_len"])
                         ?? JSONValue.int(entry["context_length"])
                         ?? JSONValue.digInt(entry, "meta.n_ctx", "meta.context_length")
                 }

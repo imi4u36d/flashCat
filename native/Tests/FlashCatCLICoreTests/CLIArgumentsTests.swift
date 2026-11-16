@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import XCTest
+
 @testable import FlashCatCLICore
 
 final class CLIArgumentsTests: XCTestCase {

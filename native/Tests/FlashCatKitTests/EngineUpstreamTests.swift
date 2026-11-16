@@ -2,12 +2,15 @@
 // Copyright (c) 2026 wangzhuo
 
 import XCTest
+
 @testable import FlashCatKit
 
 final class EngineUpstreamTests: XCTestCase {
-    private func release(_ version: String,
-                         prerelease: Bool = false,
-                         assets: [(String, String)] = []) -> EngineUpstreamRelease {
+    private func release(
+        _ version: String,
+        prerelease: Bool = false,
+        assets: [(String, String)] = []
+    ) -> EngineUpstreamRelease {
         EngineUpstreamRelease(
             version: version,
             tag: prerelease ? "v\(version)" : "v\(version)",
@@ -26,8 +29,9 @@ final class EngineUpstreamTests: XCTestCase {
         XCTAssertEqual(EngineUpstream.repository(for: .splash), "incoai/splash")
         XCTAssertEqual(EngineUpstream.repository(for: .mlxServe), "ddalcu/mlx-serve")
         XCTAssertEqual(EngineUpstream.repository(for: .strata), "Niko1221/Strata")
-        XCTAssertEqual(EngineUpstream.releasesPage(for: .splash).absoluteString,
-                       "https://github.com/incoai/splash/releases")
+        XCTAssertEqual(
+            EngineUpstream.releasesPage(for: .splash).absoluteString,
+            "https://github.com/incoai/splash/releases")
     }
 
     func testNormalizedVersionStripsTheVPrefix() {
@@ -43,14 +47,21 @@ final class EngineUpstreamTests: XCTestCase {
     }
 
     func testAssetLookupByNameAndPrefix() {
-        let subject = release("1.4.1", assets: [
-            ("splash-1.4.1-arm64-macos26.tar.gz", "https://example.com/splash-1.4.1-arm64-macos26.tar.gz"),
-            ("splash-1.4.1-arm64-macos26.tar.gz.sha256", "https://example.com/splash-1.4.1-arm64-macos26.tar.gz.sha256"),
-        ])
-        XCTAssertEqual(subject.asset(named: "splash-1.4.1-arm64-macos26.tar.gz")?.url.lastPathComponent,
-                       "splash-1.4.1-arm64-macos26.tar.gz")
-        XCTAssertEqual(subject.asset(prefix: "splash-1.4.1-")?.url.lastPathComponent,
-                       "splash-1.4.1-arm64-macos26.tar.gz")
+        let subject = release(
+            "1.4.1",
+            assets: [
+                ("splash-1.4.1-arm64-macos26.tar.gz", "https://example.com/splash-1.4.1-arm64-macos26.tar.gz"),
+                (
+                    "splash-1.4.1-arm64-macos26.tar.gz.sha256",
+                    "https://example.com/splash-1.4.1-arm64-macos26.tar.gz.sha256"
+                ),
+            ])
+        XCTAssertEqual(
+            subject.asset(named: "splash-1.4.1-arm64-macos26.tar.gz")?.url.lastPathComponent,
+            "splash-1.4.1-arm64-macos26.tar.gz")
+        XCTAssertEqual(
+            subject.asset(prefix: "splash-1.4.1-")?.url.lastPathComponent,
+            "splash-1.4.1-arm64-macos26.tar.gz")
         XCTAssertNil(subject.asset(prefix: "splash-1.4.9-"))
     }
 

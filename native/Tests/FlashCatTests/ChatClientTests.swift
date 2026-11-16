@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
+import FlashCatKit
 import Foundation
 import XCTest
-import FlashCatKit
+
 @testable import FlashCat
 
 /// 流式客户端在「停止后立刻重发」时的竞态回归测试。
@@ -67,16 +68,20 @@ final class ChatClientTests: XCTestCase {
         ChatOptions(temperature: 0.7, topP: 1, maxTokens: 0, reasoningEffort: nil, systemPrompt: "")
     }
 
-    private func send(_ client: ChatClient, port: Int, model: String,
-                      onDelta: @escaping @Sendable (String, Date) -> Void = { _, _ in })
-        async -> Result<String, ChatError> {
-        await client.send(port: port, model: model,
-                          turns: [ChatTurn(role: "user", content: "你好")],
-                          options: options,
-                          onDelta: onDelta,
-                          onReasoning: { _, _ in },
-                          onUsage: { _ in },
-                          onStatus: { _ in })
+    private func send(
+        _ client: ChatClient, port: Int, model: String,
+        onDelta: @escaping @Sendable (String, Date) -> Void = { _, _ in }
+    )
+        async -> Result<String, ChatError>
+    {
+        await client.send(
+            port: port, model: model,
+            turns: [ChatTurn(role: "user", content: "你好")],
+            options: options,
+            onDelta: onDelta,
+            onReasoning: { _, _ in },
+            onUsage: { _ in },
+            onStatus: { _ in })
     }
 
     func testCancelThenResendKeepsTheNewStreamIntact() async throws {

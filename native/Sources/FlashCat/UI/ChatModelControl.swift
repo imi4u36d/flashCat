@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import SwiftUI
 import FlashCatKit
+import SwiftUI
 
 /// 输入框里的「模型 + 思考强度」胶囊：点开是 Liquid Glass 浮层，
 /// 上方是当前思考等级的汉字，下面用离散滑杆在四档之间切换。
@@ -104,8 +104,9 @@ private struct ChatModelThinkingPopover: View {
 
             ThinkingLevelSlider(effort: effortBinding, efforts: availableEfforts, tint: tint)
 
-            DSSegmented(selection: modeBinding,
-                        options: ThinkingMode.allCases.map { ($0, $0.label) })
+            DSSegmented(
+                selection: modeBinding,
+                options: ThinkingMode.allCases.map { ($0, $0.label) })
         }
         .padding(14)
     }

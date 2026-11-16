@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import XCTest
+
 @testable import FlashCat
 
 /// 缩略图缓存是实验室页面掉帧那一处的边界：解码必须落在后台队列、同一张图只
@@ -12,8 +13,9 @@ final class ImageThumbnailCacheTests: XCTestCase {
     override func setUpWithError() throws {
         try super.setUpWithError()
         directory = NSTemporaryDirectory() + "flashcat-thumbnails-\(UUID().uuidString)"
-        try FileManager.default.createDirectory(atPath: directory,
-                                                withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            atPath: directory,
+            withIntermediateDirectories: true)
     }
 
     override func tearDownWithError() throws {
@@ -35,12 +37,14 @@ final class ImageThumbnailCacheTests: XCTestCase {
     func testCachedThumbnailStaysNilUntilDecoded() async throws {
         let path = try writePNG(width: 400, height: 400)
 
-        XCTAssertNil(ImageStore.cachedThumbnail(atPath: path, maxPixel: 200),
-                     "没解过的图不该出现在缓存里")
+        XCTAssertNil(
+            ImageStore.cachedThumbnail(atPath: path, maxPixel: 200),
+            "没解过的图不该出现在缓存里")
         let loaded = await ImageStore.thumbnailAsync(atPath: path, maxPixel: 200)
         _ = try XCTUnwrap(loaded)
-        XCTAssertNotNil(ImageStore.cachedThumbnail(atPath: path, maxPixel: 200),
-                        "解完之后再问缓存必须能命中")
+        XCTAssertNotNil(
+            ImageStore.cachedThumbnail(atPath: path, maxPixel: 200),
+            "解完之后再问缓存必须能命中")
     }
 
     func testSecondRequestReusesTheDecodedImage() async throws {
@@ -101,16 +105,18 @@ final class ImageThumbnailCacheTests: XCTestCase {
 
     /// 写一张纯色 PNG：真实解码走的是同一条 ImageIO 路径，但不用把大图塞进仓库。
     private func writePNG(width: Int, height: Int) throws -> String {
-        let rep = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil,
-                                                 pixelsWide: width,
-                                                 pixelsHigh: height,
-                                                 bitsPerSample: 8,
-                                                 samplesPerPixel: 4,
-                                                 hasAlpha: true,
-                                                 isPlanar: false,
-                                                 colorSpaceName: .deviceRGB,
-                                                 bytesPerRow: 0,
-                                                 bitsPerPixel: 0))
+        let rep = try XCTUnwrap(
+            NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: width,
+                pixelsHigh: height,
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0))
         NSGraphicsContext.saveGraphicsState()
         defer { NSGraphicsContext.restoreGraphicsState() }
         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)

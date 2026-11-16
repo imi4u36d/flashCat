@@ -3,6 +3,7 @@
 
 import Foundation
 import XCTest
+
 @testable import FlashCatCLICore
 
 /// `tailLines` 直接从文件尾分块倒读，边界都在换行/块接缝上：多要一个换行、

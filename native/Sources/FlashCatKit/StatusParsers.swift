@@ -29,8 +29,10 @@ public enum EngineStatusParser {
     /// Parse every telemetry source a descriptor asks for and merge it into one
     /// engine-neutral snapshot. Adding a new reporting format no longer means
     /// adding another engine-id branch in the controller.
-    public static func parse(documents: [EngineTelemetryDocument],
-                             fallbackState: EngineRunState = .ready) -> EngineStatus {
+    public static func parse(
+        documents: [EngineTelemetryDocument],
+        fallbackState: EngineRunState = .ready
+    ) -> EngineStatus {
         var result = EngineStatus(state: fallbackState)
         let ordered = documents.sorted {
             rank($0.source.role) < rank($1.source.role)
@@ -40,10 +42,11 @@ public enum EngineStatusParser {
         let health = documents.first { $0.source.role == .health }?.json
         for document in ordered {
             // 每个文档按它自己声明的格式查方言：核心这里不认识任何引擎。
-            let next = EngineStatusDialects.fold(document.source.format,
-                                                 json: document.json,
-                                                 health: health,
-                                                 fallbackState: fallbackState)
+            let next = EngineStatusDialects.fold(
+                document.source.format,
+                json: document.json,
+                health: health,
+                fallbackState: fallbackState)
             merge(next, into: &result)
         }
         return result
@@ -69,12 +72,14 @@ public enum EngineStatusParser {
         // 所以只有来源粒度不弱于当前时才整对替换：更好的来源（`.live`）不会被
         // 后面端点的均值洗掉，均值也不会冒充实时。
         if let value = next.decodeTokensPerSecond, value > 0,
-           next.decodeRateKind.rank >= result.decodeRateKind.rank {
+            next.decodeRateKind.rank >= result.decodeRateKind.rank
+        {
             result.decodeTokensPerSecond = value
             result.decodeRateKind = next.decodeRateKind
         }
         if let value = next.prefillTokensPerSecond, value > 0,
-           next.prefillRateKind.rank >= result.prefillRateKind.rank {
+            next.prefillRateKind.rank >= result.prefillRateKind.rank
+        {
             result.prefillTokensPerSecond = value
             result.prefillRateKind = next.prefillRateKind
         }
@@ -83,7 +88,8 @@ public enum EngineStatusParser {
         }
         if let value = next.draftAcceptance { result.draftAcceptance = value }
         if let value = next.ttftMilliseconds, value > 0,
-           next.ttftKind.rank >= result.ttftKind.rank {
+            next.ttftKind.rank >= result.ttftKind.rank
+        {
             result.ttftMilliseconds = value
             result.ttftKind = next.ttftKind
         }
@@ -102,47 +108,54 @@ public enum EngineStatusParser {
         result.extras.merge(next.extras) { _, new in new }
     }
 
-    public static func parse(engine: EngineID,
-                             status: [String: Any]?,
-                             health: [String: Any]?,
-                             fallbackState: EngineRunState = .ready) -> EngineStatus {
+    public static func parse(
+        engine: EngineID,
+        status: [String: Any]?,
+        health: [String: Any]?,
+        fallbackState: EngineRunState = .ready
+    ) -> EngineStatus {
         // 「只有一份状态文档」的引擎走这张 adapter → 格式的表。strata 与
         // mlx-serve 的状态分散在多份文档里，这份老接口对它们只能给空状态，
         // 上层应当改用 `parse(documents:)`。
         guard let format = EngineStatusDialects.primaryStatusFormat[engine.adapter] else {
             return EngineStatus(state: fallbackState)
         }
-        return EngineStatusDialects.fold(format,
-                                         json: status ?? [:],
-                                         health: health,
-                                         fallbackState: fallbackState)
+        return EngineStatusDialects.fold(
+            format,
+            json: status ?? [:],
+            health: health,
+            fallbackState: fallbackState)
     }
 
     /// Read `/v1/models/status` into model rows. `models` is a flat array; the
     /// scalar siblings (`loaded_count`, `current_model_memory`) describe the pool.
-    public static func omlxModels(_ json: [String: Any]) -> (models: [EngineModel], loadedCount: Int, memoryUsed: Int?) {
+    public static func omlxModels(_ json: [String: Any]) -> (models: [EngineModel], loadedCount: Int, memoryUsed: Int?)
+    {
         let entries = (json["models"] as? [[String: Any]]) ?? []
         var models: [EngineModel] = []
         for entry in entries {
             guard let id = JSONValue.string(entry["id"]), !id.isEmpty else { continue }
-            models.append(EngineModel(
-                id: id,
-                path: JSONValue.string(entry["model_path"]),
-                bytes: JSONValue.int(entry["actual_size"]) ?? JSONValue.int(entry["estimated_size"]),
-                maximumContextTokens: JSONValue.int(entry["max_context_window"])
-                    ?? JSONValue.int(entry["model_context_length"]),
-                loaded: JSONValue.bool(entry["loaded"]) ?? false,
-                loading: JSONValue.bool(entry["is_loading"]) ?? false,
-                kind: JSONValue.string(entry["engine_type"]) ?? JSONValue.string(entry["model_type"]),
-                capabilities: capabilities(of: entry),
-                hidden: JSONValue.bool(entry["is_hidden"]) ?? false,
-                helper: JSONValue.bool(entry["is_helper"]) ?? false,
-                engine: .omlx))
+            models.append(
+                EngineModel(
+                    id: id,
+                    path: JSONValue.string(entry["model_path"]),
+                    bytes: JSONValue.int(entry["actual_size"]) ?? JSONValue.int(entry["estimated_size"]),
+                    maximumContextTokens: JSONValue.int(entry["max_context_window"])
+                        ?? JSONValue.int(entry["model_context_length"]),
+                    loaded: JSONValue.bool(entry["loaded"]) ?? false,
+                    loading: JSONValue.bool(entry["is_loading"]) ?? false,
+                    kind: JSONValue.string(entry["engine_type"]) ?? JSONValue.string(entry["model_type"]),
+                    capabilities: capabilities(of: entry),
+                    hidden: JSONValue.bool(entry["is_hidden"]) ?? false,
+                    helper: JSONValue.bool(entry["is_helper"]) ?? false,
+                    engine: .omlx))
         }
         models.sort { $0.id.lowercased() < $1.id.lowercased() }
-        return (models,
-                JSONValue.int(json["loaded_count"]) ?? models.filter { $0.loaded }.count,
-                JSONValue.int(json["current_model_memory"]))
+        return (
+            models,
+            JSONValue.int(json["loaded_count"]) ?? models.filter { $0.loaded }.count,
+            JSONValue.int(json["current_model_memory"])
+        )
     }
 
     /// 从 `/v1/models`（或 `/v1/models/status`）的一条记录里读能力位。
@@ -156,20 +169,25 @@ public enum EngineStatusParser {
         if lower.contains("image") || lower.contains("video") { return capabilities }
 
         var seesImages = lower.contains("vision")
-        if JSONValue.digBool(entry, "vision", "supports_vision", "has_vision",
-                             "vision.enabled") == true {
+        if JSONValue.digBool(
+            entry, "vision", "supports_vision", "has_vision",
+            "vision.enabled") == true
+        {
             seesImages = true
         }
-        let modalities = (entry["input_modalities"] as? [String])
+        let modalities =
+            (entry["input_modalities"] as? [String])
             ?? (JSONValue.dig(entry, "modalities.input") as? [String])
             ?? (JSONValue.dig(entry, "meta.input_modalities") as? [String])
         if let modalities, modalities.contains(where: { $0.lowercased() == "image" }) {
             seesImages = true
         }
-        let kinds = [entry["model_type"], entry["engine_type"], entry["architecture"],
-                     JSONValue.dig(entry, "meta.model_type"),
-                     JSONValue.dig(entry, "meta.architecture")]
-            .compactMap { JSONValue.string($0)?.lowercased() }
+        let kinds = [
+            entry["model_type"], entry["engine_type"], entry["architecture"],
+            JSONValue.dig(entry, "meta.model_type"),
+            JSONValue.dig(entry, "meta.architecture"),
+        ]
+        .compactMap { JSONValue.string($0)?.lowercased() }
         if kinds.contains(where: isVisionKind) { seesImages = true }
 
         guard seesImages else { return capabilities }
@@ -186,7 +204,8 @@ public enum EngineStatusParser {
     private static func isVisionKind(_ text: String) -> Bool {
         if text.contains("vision") || text.contains("llava") || text.contains("internvl")
             || text.contains("paligemma") || text.contains("idefics") || text.contains("minicpmv")
-            || text.contains("vlfor") || text.contains("vlmodel") {
+            || text.contains("vlfor") || text.contains("vlmodel")
+        {
             return true
         }
         let tokens = text.split { !$0.isLetter && !$0.isNumber }
@@ -201,32 +220,36 @@ public enum EngineStatusParser {
         for entry in entries {
             guard let id = JSONValue.string(entry["id"]), !id.isEmpty else { continue }
             let state = JSONValue.digString(entry, "status.value", "state")
-            let loaded = JSONValue.bool(entry["loaded"])
+            let loaded =
+                JSONValue.bool(entry["loaded"])
                 ?? (state.map { $0.lowercased() == "loaded" || $0.lowercased() == "ready" })
                 ?? (state?.lowercased() == "unloaded" ? false : true)
             let loading = state?.lowercased() == "loading"
             let parsedCapabilities = capabilities(of: entry)
-            models.append(EngineModel(
-                id: id,
-                path: nil,
-                bytes: JSONValue.int(entry["bytes_on_disk"]),
-                maximumContextTokens: JSONValue.int(entry["max_context_length"])
-                    ?? JSONValue.int(entry["context_length"])
-                    ?? JSONValue.digInt(entry, "meta.n_ctx", "meta.context_length"),
-                loaded: loaded,
-                loading: loading,
-                kind: parsedCapabilities.first ?? JSONValue.string(entry["capability"])
-                    ?? JSONValue.digString(entry, "meta.engine", "meta.architecture"),
-                architecture: JSONValue.digString(entry, "meta.architecture"),
-                capabilities: parsedCapabilities,
-                // 图像与视频模型都是对话页的合法选择，不再按「不含 chat 就隐藏」
-                // 处理；嵌入这类辅助权重继续藏起来。
-                hidden: parsedCapabilities.isEmpty ? false : {
-                    let lower = Set(parsedCapabilities.map { $0.lowercased() })
-                    return !lower.contains("chat") && !lower.contains("image") && !lower.contains("video")
-                }(),
-                helper: false,
-                engine: engine))
+            models.append(
+                EngineModel(
+                    id: id,
+                    path: nil,
+                    bytes: JSONValue.int(entry["bytes_on_disk"]),
+                    maximumContextTokens: JSONValue.int(entry["max_context_length"])
+                        ?? JSONValue.int(entry["context_length"])
+                        ?? JSONValue.digInt(entry, "meta.n_ctx", "meta.context_length"),
+                    loaded: loaded,
+                    loading: loading,
+                    kind: parsedCapabilities.first ?? JSONValue.string(entry["capability"])
+                        ?? JSONValue.digString(entry, "meta.engine", "meta.architecture"),
+                    architecture: JSONValue.digString(entry, "meta.architecture"),
+                    capabilities: parsedCapabilities,
+                    // 图像与视频模型都是对话页的合法选择，不再按「不含 chat 就隐藏」
+                    // 处理；嵌入这类辅助权重继续藏起来。
+                    hidden: parsedCapabilities.isEmpty
+                        ? false
+                        : {
+                            let lower = Set(parsedCapabilities.map { $0.lowercased() })
+                            return !lower.contains("chat") && !lower.contains("image") && !lower.contains("video")
+                        }(),
+                    helper: false,
+                    engine: engine))
         }
         return models
     }
@@ -236,61 +259,83 @@ public enum EngineStatusParser {
     // 这几个函数是给「只有一份状态文档」的调用方与测试用的。解析全在
     // `EngineStatusDialects` 的方言表里，这里只把格式名钉死，签名保持原样。
 
-    public static func splash(status json: [String: Any],
-                              fallbackState: EngineRunState = .ready) -> EngineStatus {
+    public static func splash(
+        status json: [String: Any],
+        fallbackState: EngineRunState = .ready
+    ) -> EngineStatus {
         EngineStatusDialects.fold(.splashStatus, json: json, fallbackState: fallbackState)
     }
 
-    public static func omlx(status json: [String: Any],
-                            health: [String: Any]? = nil,
-                            fallbackState: EngineRunState = .ready) -> EngineStatus {
-        EngineStatusDialects.fold(.omlxStatus,
-                                  json: json,
-                                  health: health,
-                                  fallbackState: fallbackState)
+    public static func omlx(
+        status json: [String: Any],
+        health: [String: Any]? = nil,
+        fallbackState: EngineRunState = .ready
+    ) -> EngineStatus {
+        EngineStatusDialects.fold(
+            .omlxStatus,
+            json: json,
+            health: health,
+            fallbackState: fallbackState)
     }
 
-    public static func mtplx(snapshot json: [String: Any],
-                             health: [String: Any]? = nil,
-                             fallbackState: EngineRunState = .ready) -> EngineStatus {
-        EngineStatusDialects.fold(.mtplxSnapshot,
-                                  json: json,
-                                  health: health,
-                                  fallbackState: fallbackState)
+    public static func mtplx(
+        snapshot json: [String: Any],
+        health: [String: Any]? = nil,
+        fallbackState: EngineRunState = .ready
+    ) -> EngineStatus {
+        EngineStatusDialects.fold(
+            .mtplxSnapshot,
+            json: json,
+            health: health,
+            fallbackState: fallbackState)
     }
 
-    public static func prometheusJSON(_ json: [String: Any],
-                                      fallbackState: EngineRunState = .ready) -> EngineStatus {
+    public static func prometheusJSON(
+        _ json: [String: Any],
+        fallbackState: EngineRunState = .ready
+    ) -> EngineStatus {
         EngineStatusDialects.fold(.prometheusJSON, json: json, fallbackState: fallbackState)
     }
 
-    public static func llamaProps(_ json: [String: Any],
-                                  fallbackState: EngineRunState = .ready) -> EngineStatus {
+    public static func llamaProps(
+        _ json: [String: Any],
+        fallbackState: EngineRunState = .ready
+    ) -> EngineStatus {
         EngineStatusDialects.fold(.llamaProps, json: json, fallbackState: fallbackState)
     }
 
-    public static func strataHealth(_ json: [String: Any],
-                                    fallbackState: EngineRunState = .ready) -> EngineStatus {
+    public static func strataHealth(
+        _ json: [String: Any],
+        fallbackState: EngineRunState = .ready
+    ) -> EngineStatus {
         EngineStatusDialects.fold(.strataHealth, json: json, fallbackState: fallbackState)
     }
 
-    public static func strataStatus(_ json: [String: Any],
-                                    fallbackState: EngineRunState = .ready) -> EngineStatus {
+    public static func strataStatus(
+        _ json: [String: Any],
+        fallbackState: EngineRunState = .ready
+    ) -> EngineStatus {
         EngineStatusDialects.fold(.strataStatus, json: json, fallbackState: fallbackState)
     }
 
-    public static func strataMetrics(_ json: [String: Any],
-                                     fallbackState: EngineRunState = .ready) -> EngineStatus {
+    public static func strataMetrics(
+        _ json: [String: Any],
+        fallbackState: EngineRunState = .ready
+    ) -> EngineStatus {
         EngineStatusDialects.fold(.strataMetrics, json: json, fallbackState: fallbackState)
     }
 
-    private static func omlxModelStatus(_ json: [String: Any],
-                                        fallbackState: EngineRunState) -> EngineStatus {
+    private static func omlxModelStatus(
+        _ json: [String: Any],
+        fallbackState: EngineRunState
+    ) -> EngineStatus {
         EngineStatusDialects.fold(.omlxModels, json: json, fallbackState: fallbackState)
     }
 
-    private static func openAIModelStatus(_ json: [String: Any],
-                                          fallbackState: EngineRunState) -> EngineStatus {
+    private static func openAIModelStatus(
+        _ json: [String: Any],
+        fallbackState: EngineRunState
+    ) -> EngineStatus {
         EngineStatusDialects.fold(.openAIModels, json: json, fallbackState: fallbackState)
     }
 

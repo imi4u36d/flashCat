@@ -74,7 +74,8 @@ enum EngineArchiveValidator {
             let kind: ArchiveLink.Kind = first == "l" ? .symbolic : .hard
             let separator = kind == .symbolic ? " -> " : " link to "
             guard let (path, target) = splitName(line, at: separator, known: known),
-                  !target.isEmpty else {
+                !target.isEmpty
+            else {
                 throw EngineInstallError.unsafeArchiveLink(line)
             }
             links.append(ArchiveLink(kind: kind, path: path, target: target))
@@ -86,9 +87,11 @@ enum EngineArchiveValidator {
     /// 所以既不按列数、也不按第一个分隔符切：在归档的名字表里找正好停在这里的
     /// 最长后缀——tar 打印的一定是归档里的原名。GNU tar 与 bsdtar 的列数不同，
     /// 这样也不受影响。
-    private static func splitName(_ line: String,
-                                  at separator: String,
-                                  known: [String]) -> (path: String, target: String)? {
+    private static func splitName(
+        _ line: String,
+        at separator: String,
+        known: [String]
+    ) -> (path: String, target: String)? {
         var start = line.startIndex
         while let range = line.range(of: separator, range: start..<line.endIndex) {
             let head = line[..<range.lowerBound]
@@ -167,9 +170,11 @@ enum EngineArchiveValidator {
         try auditLinks(inDirectory: root.path, relative: "", fm: FileManager.default)
     }
 
-    private static func auditLinks(inDirectory path: String,
-                                   relative: String,
-                                   fm: FileManager) throws {
+    private static func auditLinks(
+        inDirectory path: String,
+        relative: String,
+        fm: FileManager
+    ) throws {
         let names: [String]
         do {
             names = try fm.contentsOfDirectory(atPath: path)

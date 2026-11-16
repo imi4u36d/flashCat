@@ -127,10 +127,12 @@ final class DownloadCenter: ObservableObject {
 
     /// - Returns: whether the process started; `false` comes with a notice.
     @discardableResult
-    func startDownload(_ plan: ModelInstaller.Plan,
-                       engine: EngineID,
-                       id: String,
-                       shared: [EngineID]?) -> Bool {
+    func startDownload(
+        _ plan: ModelInstaller.Plan,
+        engine: EngineID,
+        id: String,
+        shared: [EngineID]?
+    ) -> Bool {
         pendingSharedRepo = shared == nil ? nil : id
         pendingSharedEngines = shared ?? []
         pauseRequested = false
@@ -158,8 +160,9 @@ final class DownloadCenter: ObservableObject {
         // 标记只下在「本来就不存在」的目标上，且必须落在模型目录内：否则一次
         // 失败的重复下载会给已装好的模型盖章，之后「移除」就会删掉好权重。
         if let marker = plan.incompleteMarker,
-           !Paths.fileExists(plan.destination),
-           FlashCatPaths.contains(plan.destination, in: EnginePaths.modelsRoot) {
+            !Paths.fileExists(plan.destination),
+            FlashCatPaths.contains(plan.destination, in: EnginePaths.modelsRoot)
+        {
             Paths.ensureDirectory((marker as NSString).deletingLastPathComponent)
             FileManager.default.createFile(atPath: marker, contents: nil)
         }
@@ -174,9 +177,10 @@ final class DownloadCenter: ObservableObject {
         downloadingEngine = engine
         downloadTotalBytes = resumeTotal
         downloadFraction = resumeTotal > 0 ? Double(resumeBytes) / Double(resumeTotal) : 0
-        append(shared == nil
-            ? "==> \(engine.displayName) 下载模型：\(id)"
-            : "==> 下载模型到公共目录：\(id)", engine: engine)
+        append(
+            shared == nil
+                ? "==> \(engine.displayName) 下载模型：\(id)"
+                : "==> 下载模型到公共目录：\(id)", engine: engine)
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: plan.executable)
@@ -191,7 +195,8 @@ final class DownloadCenter: ObservableObject {
 
         // Where this child's Hub cache lives: splash downloads land there
         // before the finished assembly is installed into the models folder.
-        let hubCacheRoot = plan.environment["HF_HUB_CACHE"]
+        let hubCacheRoot =
+            plan.environment["HF_HUB_CACHE"]
             ?? (plan.environment["HF_HOME"].map { $0 + "/hub" }
                 ?? (Paths.home + "/.cache/huggingface/hub"))
 
@@ -216,17 +221,20 @@ final class DownloadCenter: ObservableObject {
                     // announcement only covers what is still missing, so the
                     // denominator is 已下载 + 剩余, never just 剩余.
                     self.downloadFetchedBytes += fetch.bytes
-                    self.downloadTotalBytes = max(self.downloadTotalBytes,
-                                                  self.downloadResumeBytes + self.downloadFetchedBytes)
+                    self.downloadTotalBytes = max(
+                        self.downloadTotalBytes,
+                        self.downloadResumeBytes + self.downloadFetchedBytes)
                     self.upsertTask(engine: engine, model: id) {
                         $0.totalBytes = max($0.totalBytes, self.downloadTotalBytes)
                     }
-                    self.watch(hubCacheRoot + "/models--"
-                               + fetch.repo.replacingOccurrences(of: "/", with: "--"),
-                               engine: engine, model: id)
+                    self.watch(
+                        hubCacheRoot + "/models--"
+                            + fetch.repo.replacingOccurrences(of: "/", with: "--"),
+                        engine: engine, model: id)
                 } else if self.downloadTotalBytes == 0,
-                          let match = TextPattern.firstMatch("(\\d{1,3})%", line),
-                          let value = Double(match[1]) {
+                    let match = TextPattern.firstMatch("(\\d{1,3})%", line),
+                    let value = Double(match[1])
+                {
                     // Fallback when no total is known: the downloader's own
                     // percentage. Snapshot engines and splash both report
                     // byte totals now, so this only covers unusual output.
@@ -318,7 +326,8 @@ final class DownloadCenter: ObservableObject {
     /// destroyed — a later download simply resumes them.
     func cancelDownload(_ task: ModelDownloadTask) {
         if let process = downloadProcess,
-           downloadingModel == task.model, downloadingEngine == task.engine {
+            downloadingModel == task.model, downloadingEngine == task.engine
+        {
             cancelRequested = true
             downloadSpeed = 0
             append("==> 取消下载：\(task.model)", engine: task.engine)
@@ -337,7 +346,8 @@ final class DownloadCenter: ObservableObject {
     /// merely dropping it from the list would make it reappear immediately.
     func removeTask(_ task: ModelDownloadTask) {
         if let process = downloadProcess, process.isRunning,
-           downloadingModel == task.model, downloadingEngine == task.engine {
+            downloadingModel == task.model, downloadingEngine == task.engine
+        {
             removeRequested = true
             cancelRequested = true
             downloadSpeed = 0
@@ -391,9 +401,11 @@ final class DownloadCenter: ObservableObject {
                 let now = Date()
 
                 if let last = self.lastWatchDate,
-                   now.timeIntervalSince(last) > 0, downloaded > self.lastWatchBytes {
+                    now.timeIntervalSince(last) > 0, downloaded > self.lastWatchBytes
+                {
                     let instant = Double(downloaded - self.lastWatchBytes) / now.timeIntervalSince(last)
-                    self.downloadSpeed = self.lastWatchBytes == 0
+                    self.downloadSpeed =
+                        self.lastWatchBytes == 0
                         ? instant
                         : self.downloadSpeed * 0.65 + instant * 0.35
                 }
@@ -464,8 +476,9 @@ final class DownloadCenter: ObservableObject {
             if removeRequested {
                 // 用户点的是删除而不是暂停：行和半成品一起清掉。
                 removeRequested = false
-                let stale = ModelDownloadTask(engine: engine, model: model, status: .paused,
-                                              shared: sharedRepo == nil ? nil : sharedEngines)
+                let stale = ModelDownloadTask(
+                    engine: engine, model: model, status: .paused,
+                    shared: sharedRepo == nil ? nil : sharedEngines)
                 removeTask(engine: engine, model: model)
                 discardPartialDownload(stale)
                 append("==> 已删除下载任务 \(model)，半成品已清理", engine: engine)
@@ -513,9 +526,10 @@ final class DownloadCenter: ObservableObject {
         // Splash addresses a model by its repository id, the packs by the
         // folder name flashCat gave it.
         let repo = model.split(separator: ":", maxSplits: 1).first.map(String.init) ?? model
-        let installed = engine.adapter == .splash
-            || engine.descriptor.modelLayout == .nested
-            || engine.descriptor.modelLayout == .external
+        let installed =
+            engine.adapter == .splash
+                || engine.descriptor.modelLayout == .nested
+                || engine.descriptor.modelLayout == .external
             ? model
             : ModelInstaller.folderName(for: repo)
         append("==> 已下载 \(model)", engine: engine)
@@ -559,7 +573,8 @@ final class DownloadCenter: ObservableObject {
         }
         let marker = ModelInstaller.incompleteMarker(for: path)
         guard Paths.fileExists(marker),
-              FlashCatPaths.contains(path, in: EnginePaths.modelsRoot) else { return }
+            FlashCatPaths.contains(path, in: EnginePaths.modelsRoot)
+        else { return }
         discard(path, why: "清理半成品")
         discard(marker, why: "清理半成品标记")
         EngineModelStore.invalidateMetaCache()
@@ -594,9 +609,11 @@ final class DownloadCenter: ObservableObject {
     /// it is about to fetch, with its exact size (hub.py prints GB as 1e9
     /// bytes). The repo's Hub cache folder is where those bytes land.
     private static func fetchPlan(in line: String) -> (bytes: Int, repo: String)? {
-        guard let match = TextPattern.firstMatch(
-            "Fetching \\d+ file\\(s\\), ([\\d.]+) (GB|MB|KB), from ([^@\\s]+)@", line),
-              let value = Double(match[1]) else { return nil }
+        guard
+            let match = TextPattern.firstMatch(
+                "Fetching \\d+ file\\(s\\), ([\\d.]+) (GB|MB|KB), from ([^@\\s]+)@", line),
+            let value = Double(match[1])
+        else { return nil }
         let multiplier: Double
         switch match[2] {
         case "GB": multiplier = 1e9

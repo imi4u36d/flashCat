@@ -31,13 +31,15 @@ public struct EngineUpstreamRelease: Sendable, Equatable {
     public let pageURL: URL
     public let assets: [Asset]
 
-    public init(version: String,
-                tag: String,
-                title: String? = nil,
-                publishedAt: Date? = nil,
-                isPrerelease: Bool = false,
-                pageURL: URL,
-                assets: [Asset] = []) {
+    public init(
+        version: String,
+        tag: String,
+        title: String? = nil,
+        publishedAt: Date? = nil,
+        isPrerelease: Bool = false,
+        pageURL: URL,
+        assets: [Asset] = []
+    ) {
         self.version = version
         self.tag = tag
         self.title = title
@@ -108,8 +110,10 @@ public actor EngineUpstreamChecker {
     private let session: URLSession
     private let apiBase: URL
 
-    public init(session: URLSession = .shared,
-                apiBase: URL = ConstantURL.make("https://api.github.com")) {
+    public init(
+        session: URLSession = .shared,
+        apiBase: URL = ConstantURL.make("https://api.github.com")
+    ) {
         self.session = session
         self.apiBase = apiBase
     }
@@ -144,7 +148,8 @@ public actor EngineUpstreamChecker {
         }
         return raw.compactMap { entry in
             guard (entry["draft"] as? Bool) != true,
-                  let tag = entry["tag_name"] as? String else { return nil }
+                let tag = entry["tag_name"] as? String
+            else { return nil }
             let html = (entry["html_url"] as? String) ?? EngineUpstream.releasesPage(for: id).absoluteString
             guard let page = URL(string: html) else { return nil }
             let assets = (entry["assets"] as? [[String: Any]]) ?? []
@@ -157,12 +162,14 @@ public actor EngineUpstreamChecker {
                 pageURL: page,
                 assets: assets.compactMap { asset in
                     guard let name = asset["name"] as? String,
-                          let link = (asset["browser_download_url"] as? String).flatMap(URL.init(string:)) else {
+                        let link = (asset["browser_download_url"] as? String).flatMap(URL.init(string:))
+                    else {
                         return nil
                     }
-                    return EngineUpstreamRelease.Asset(name: name,
-                                                       url: link,
-                                                       bytes: asset["size"] as? Int)
+                    return EngineUpstreamRelease.Asset(
+                        name: name,
+                        url: link,
+                        bytes: asset["size"] as? Int)
                 })
         }
     }
@@ -171,12 +178,14 @@ public actor EngineUpstreamChecker {
         let url = apiBase.appendingPathComponent("repos/\(EngineUpstream.repository(for: id))/tags")
         let data = try await get(url)
         guard let raw = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-              let tag = raw.compactMap({ $0["name"] as? String }).first else {
+            let tag = raw.compactMap({ $0["name"] as? String }).first
+        else {
             throw EngineUpstreamError.empty
         }
-        return EngineUpstreamRelease(version: EngineUpstream.normalizedVersion(tag),
-                                     tag: tag,
-                                     pageURL: EngineUpstream.releasesPage(for: id))
+        return EngineUpstreamRelease(
+            version: EngineUpstream.normalizedVersion(tag),
+            tag: tag,
+            pageURL: EngineUpstream.releasesPage(for: id))
     }
 
     private func get(_ url: URL) async throws -> Data {
@@ -223,8 +232,10 @@ public enum EngineUpstreamStatus: Sendable, Equatable {
 }
 
 public enum EngineUpstreamComparison {
-    public static func status(installed: [String],
-                              release: EngineUpstreamRelease) -> EngineUpstreamStatus {
+    public static func status(
+        installed: [String],
+        release: EngineUpstreamRelease
+    ) -> EngineUpstreamStatus {
         let newest = installed.max { EngineVersionOrder.isNewer($1, than: $0) }
         guard let newest else {
             return .update(installed: nil, release: release)

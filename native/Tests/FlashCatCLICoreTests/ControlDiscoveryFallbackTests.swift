@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
+import FlashCatKit
 import Foundation
 import XCTest
+
 @testable import FlashCatCLICore
-import FlashCatKit
 
 /// 控制接口「发现」阶段的错误以前被 `try? context.control` 折叠：`--control-port abc`
 /// 这种用法错误会静默退回离线视图并 exit 0，`config set` 还会真的把值写进本地偏好。
@@ -33,24 +34,31 @@ final class ControlDiscoveryFallbackTests: XCTestCase {
         try super.tearDownWithError()
     }
 
-    private func makeContext(command: String = "config",
-                             subcommand: String? = nil,
-                             arguments: [String] = [],
-                             options: [String: String] = [:]) -> CLIContext {
-        let local = LocalState(environment: [:], defaults: defaults,
-                               engineConfigurationFile: configurationFile)
-        return CLIContext(invocation: CLIInvocation(command: command, subcommand: subcommand,
-                                                    arguments: arguments, options: options),
-                          environment: [:],
-                          output: CLIOutput(),
-                          local: local,
-                          isTTY: false,
-                          stdinIsTTY: false,
-                          executable: "/usr/local/bin/flashcat")
+    private func makeContext(
+        command: String = "config",
+        subcommand: String? = nil,
+        arguments: [String] = [],
+        options: [String: String] = [:]
+    ) -> CLIContext {
+        let local = LocalState(
+            environment: [:], defaults: defaults,
+            engineConfigurationFile: configurationFile)
+        return CLIContext(
+            invocation: CLIInvocation(
+                command: command, subcommand: subcommand,
+                arguments: arguments, options: options),
+            environment: [:],
+            output: CLIOutput(),
+            local: local,
+            isTTY: false,
+            stdinIsTTY: false,
+            executable: "/usr/local/bin/flashcat")
     }
 
-    private func expectUsageError(_ operation: () async throws -> Int32,
-                                  _ message: String) async {
+    private func expectUsageError(
+        _ operation: () async throws -> Int32,
+        _ message: String
+    ) async {
         do {
             let code = try await operation()
             XCTFail("\(message)：命令居然成功了（exit \(code)）")
@@ -65,59 +73,72 @@ final class ControlDiscoveryFallbackTests: XCTestCase {
 
     func testConfigSetWithInvalidControlPortFailsInsteadOfWritingOffline() async {
         // `try?` 时代这里会先吞掉用法错误，再落到 OfflineConfig 把 appearance 写进偏好。
-        let context = makeContext(subcommand: "set",
-                                  arguments: ["appearance", "dark"],
-                                  options: ["control-port": "abc"])
-        await expectUsageError({ try await ConfigCommand.run(context) },
-                               "无效的 --control-port")
-        XCTAssertNil(defaults.object(forKey: "appearance"),
-                     "命令失败时不应已经把设置写进本地偏好")
+        let context = makeContext(
+            subcommand: "set",
+            arguments: ["appearance", "dark"],
+            options: ["control-port": "abc"])
+        await expectUsageError(
+            { try await ConfigCommand.run(context) },
+            "无效的 --control-port")
+        XCTAssertNil(
+            defaults.object(forKey: "appearance"),
+            "命令失败时不应已经把设置写进本地偏好")
     }
 
     func testConfigListWithNonLocalControlURLFailsInsteadOfPrintingDiskValues() async {
         // 非本机地址会被 `ControlLocation.discover` 拒绝：这是参数问题，不是「应用没在跑」。
-        let context = makeContext(subcommand: "list",
-                                  options: ["control-url": "ftp://127.0.0.1:9100"])
-        await expectUsageError({ try await ConfigCommand.run(context) },
-                               "非 http(s) 的 --control-url")
+        let context = makeContext(
+            subcommand: "list",
+            options: ["control-url": "ftp://127.0.0.1:9100"])
+        await expectUsageError(
+            { try await ConfigCommand.run(context) },
+            "非 http(s) 的 --control-url")
     }
 
     func testConfigUnsetWithInvalidControlPortFailsInsteadOfTouchingDisk() async {
-        let context = makeContext(subcommand: "unset",
-                                  arguments: ["systemPrompt"],
-                                  options: ["control-port": "abc"])
-        await expectUsageError({ try await ConfigCommand.run(context) },
-                               "无效的 --control-port")
-        XCTAssertNil(defaults.object(forKey: "chat.system"),
-                     "命令失败时不应清空本地偏好")
+        let context = makeContext(
+            subcommand: "unset",
+            arguments: ["systemPrompt"],
+            options: ["control-port": "abc"])
+        await expectUsageError(
+            { try await ConfigCommand.run(context) },
+            "无效的 --control-port")
+        XCTAssertNil(
+            defaults.object(forKey: "chat.system"),
+            "命令失败时不应清空本地偏好")
     }
 
     func testEnginesPortWithInvalidControlPortFailsInsteadOfReadingLocalConfig() async {
         // 读端口以前是 `try? context.control` + `try? get`，两处都能把用法错误和 401
         // 折成「本地旧值 + exit 0」，用户会误以为在线值就是本地那个。
-        let context = makeContext(command: "engines", subcommand: "port",
-                                  arguments: ["omlx"],
-                                  options: ["control-port": "abc"])
-        await expectUsageError({ try await EnginesCommand.run(context) },
-                               "无效的 --control-port")
+        let context = makeContext(
+            command: "engines", subcommand: "port",
+            arguments: ["omlx"],
+            options: ["control-port": "abc"])
+        await expectUsageError(
+            { try await EnginesCommand.run(context) },
+            "无效的 --control-port")
     }
 
     // MARK: 该降级的分支
 
     func testConfigSetStillWritesOfflineWhenTheAppIsNotRunning() async throws {
         // 空令牌等价于「控制接口找不到」：discover 抛 .notRunning，这时离线写入才是对的。
-        let context = makeContext(subcommand: "set",
-                                  arguments: ["appearance", "dark"],
-                                  options: ["control-port": "9100", "control-token": ""])
+        let context = makeContext(
+            subcommand: "set",
+            arguments: ["appearance", "dark"],
+            options: ["control-port": "9100", "control-token": ""])
         let code = try await ConfigCommand.run(context)
         XCTAssertEqual(code, CLIExit.success.rawValue)
-        XCTAssertEqual(defaults.integer(forKey: "appearance"), 2,
-                       "应用没在运行时应当写入离线偏好（dark = 2）")
+        XCTAssertEqual(
+            defaults.integer(forKey: "appearance"), 2,
+            "应用没在运行时应当写入离线偏好（dark = 2）")
     }
 
     func testEnginesListFallsBackToDiskOnlyWhenTheAppIsNotRunning() async throws {
-        let context = makeContext(command: "engines", subcommand: "list",
-                                  options: ["control-port": "9100", "control-token": ""])
+        let context = makeContext(
+            command: "engines", subcommand: "list",
+            options: ["control-port": "9100", "control-token": ""])
         let code = try await EnginesCommand.run(context)
         XCTAssertEqual(code, CLIExit.success.rawValue)
     }

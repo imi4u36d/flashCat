@@ -36,9 +36,11 @@ public enum EnginePackBuildPlanner {
     /// Directory of the release archives, relative to the repository root.
     public static let packsDirectory = "dist/packs"
 
-    public static func steps(for id: EngineID,
-                             version: String,
-                             release: EngineUpstreamRelease?) -> [EnginePackBuildStep] {
+    public static func steps(
+        for id: EngineID,
+        version: String,
+        release: EngineUpstreamRelease?
+    ) -> [EnginePackBuildStep] {
         var steps: [EnginePackBuildStep] = []
 
         switch id.adapter {
@@ -48,20 +50,22 @@ public enum EnginePackBuildPlanner {
             break
         case .splash:
             if let asset = release?.asset(prefix: "splash-\(version)-"),
-               let checksum = release?.asset(named: asset.name + ".sha256") {
+                let checksum = release?.asset(named: asset.name + ".sha256")
+            {
                 let target = "vendor/\(asset.name)"
-                steps.append(EnginePackBuildStep(
-                    id: "download",
-                    title: "下载并校验 Splash \(version) 发行包",
-                    command: """
-                    set -euo pipefail
-                    curl -fL --retry 2 -o '\(target)' '\(asset.url.absoluteString)'
-                    curl -fL --retry 2 -o '/tmp/\(asset.name).sha256' '\(checksum.url.absoluteString)'
-                    expected=$(awk '{print $1}' '/tmp/\(asset.name).sha256')
-                    actual=$(shasum -a 256 '\(target)' | awk '{print $1}')
-                    [ "$expected" = "$actual" ] || { echo "SHA256 不匹配：期望 $expected，实际 $actual"; exit 1; }
-                    echo "SHA256 校验通过：$actual"
-                    """))
+                steps.append(
+                    EnginePackBuildStep(
+                        id: "download",
+                        title: "下载并校验 Splash \(version) 发行包",
+                        command: """
+                            set -euo pipefail
+                            curl -fL --retry 2 -o '\(target)' '\(asset.url.absoluteString)'
+                            curl -fL --retry 2 -o '/tmp/\(asset.name).sha256' '\(checksum.url.absoluteString)'
+                            expected=$(awk '{print $1}' '/tmp/\(asset.name).sha256')
+                            actual=$(shasum -a 256 '\(target)' | awk '{print $1}')
+                            [ "$expected" = "$actual" ] || { echo "SHA256 不匹配：期望 $expected，实际 $actual"; exit 1; }
+                            echo "SHA256 校验通过：$actual"
+                            """))
             }
         case .mtplx:
             break
@@ -69,19 +73,21 @@ public enum EnginePackBuildPlanner {
             break
         }
 
-        steps.append(EnginePackBuildStep(
-            id: "build",
-            title: "构建 \(id.displayName) \(version) 运行时包",
-            command: "scripts/engines/build-\(id.rawValue)-pack.sh --version '\(version)' --force"))
-        steps.append(EnginePackBuildStep(
-            id: "release",
-            title: "打包并写索引",
-            command: """
-            set -euo pipefail
-            scripts/engines/make-pack-release.sh --engine \(id.rawValue) --version '\(version)' \
-              --out \(packsDirectory) --min-macos '\(minimumMacOS(for: id))'
-            scripts/engines/make-pack-index.sh --packs \(packsDirectory) --out pack-index.json
-            """))
+        steps.append(
+            EnginePackBuildStep(
+                id: "build",
+                title: "构建 \(id.displayName) \(version) 运行时包",
+                command: "scripts/engines/build-\(id.rawValue)-pack.sh --version '\(version)' --force"))
+        steps.append(
+            EnginePackBuildStep(
+                id: "release",
+                title: "打包并写索引",
+                command: """
+                    set -euo pipefail
+                    scripts/engines/make-pack-release.sh --engine \(id.rawValue) --version '\(version)' \
+                      --out \(packsDirectory) --min-macos '\(minimumMacOS(for: id))'
+                    scripts/engines/make-pack-index.sh --packs \(packsDirectory) --out pack-index.json
+                    """))
         return steps
     }
 
@@ -143,9 +149,11 @@ public enum EnginePackBuildRunner {
         return nil
     }
 
-    public static func run(_ step: EnginePackBuildStep,
-                           in repository: String,
-                           onLine: @escaping @Sendable (String) -> Void) async throws {
+    public static func run(
+        _ step: EnginePackBuildStep,
+        in repository: String,
+        onLine: @escaping @Sendable (String) -> Void
+    ) async throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = ["-lc", step.command]
@@ -197,10 +205,12 @@ public enum EnginePackBuildRunner {
     }
 
     /// Runs the whole plan in order, forwarding every output line.
-    public static func run(steps: [EnginePackBuildStep],
-                           in repository: String,
-                           onStep: @escaping @Sendable (EnginePackBuildStep) -> Void = { _ in },
-                           onLine: @escaping @Sendable (String) -> Void = { _ in }) async throws {
+    public static func run(
+        steps: [EnginePackBuildStep],
+        in repository: String,
+        onStep: @escaping @Sendable (EnginePackBuildStep) -> Void = { _ in },
+        onLine: @escaping @Sendable (String) -> Void = { _ in }
+    ) async throws {
         for step in steps {
             onStep(step)
             onLine("$ \(step.command)")

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import SwiftUI
 import AppKit
+import SwiftUI
 
 // MARK: - Appearance
 //
@@ -213,17 +213,20 @@ extension AppAppearance {
 extension NSColor {
     /// A colour that resolves against the *current* appearance every time AppKit
     /// asks for it, instead of freezing to whatever was active at creation time.
-    static func adaptive(dark: UInt32,
-                         light: UInt32,
-                         darkAlpha: Double = 1,
-                         lightAlpha: Double = 1) -> NSColor {
+    static func adaptive(
+        dark: UInt32,
+        light: UInt32,
+        darkAlpha: Double = 1,
+        lightAlpha: Double = 1
+    ) -> NSColor {
         NSColor(name: nil) { appearance in
             let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) != .aqua
             let hex = isDark ? dark : light
-            return NSColor(srgbRed: Double((hex >> 16) & 0xFF) / 255,
-                           green: Double((hex >> 8) & 0xFF) / 255,
-                           blue: Double(hex & 0xFF) / 255,
-                           alpha: isDark ? darkAlpha : lightAlpha)
+            return NSColor(
+                srgbRed: Double((hex >> 16) & 0xFF) / 255,
+                green: Double((hex >> 8) & 0xFF) / 255,
+                blue: Double(hex & 0xFF) / 255,
+                alpha: isDark ? darkAlpha : lightAlpha)
         }
     }
 
@@ -240,12 +243,16 @@ extension NSColor {
 }
 
 extension Color {
-    static func adaptive(dark: UInt32,
-                         light: UInt32,
-                         darkAlpha: Double = 1,
-                         lightAlpha: Double = 1) -> Color {
-        Color(nsColor: NSColor.adaptive(dark: dark, light: light,
-                                        darkAlpha: darkAlpha, lightAlpha: lightAlpha))
+    static func adaptive(
+        dark: UInt32,
+        light: UInt32,
+        darkAlpha: Double = 1,
+        lightAlpha: Double = 1
+    ) -> Color {
+        Color(
+            nsColor: NSColor.adaptive(
+                dark: dark, light: light,
+                darkAlpha: darkAlpha, lightAlpha: lightAlpha))
     }
 
     /// See `NSColor.adaptiveOverlay(_:)`.

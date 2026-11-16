@@ -2,8 +2,8 @@
 // Copyright (c) 2026 wangzhuo
 
 import AppKit
-import Foundation
 import FlashCatKit
+import Foundation
 
 /// The local command channel used by the bundled `flashcat` CLI.
 ///
@@ -37,7 +37,8 @@ final class ControlServer {
     init() {
         // A random token per launch is enough: the file lives in the user's
         // Application Support folder with mode 0600.
-        token = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        token =
+            UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
             + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         let info = Bundle.main.infoDictionary
         appVersion = (info?["CFBundleShortVersionString"] as? String) ?? "dev"
@@ -110,17 +111,19 @@ final class ControlServer {
     }
 
     private func writeRuntimeFile() {
-        let runtime = ControlRuntime(pid: getpid(),
-                                     port: port,
-                                     token: token,
-                                     appVersion: appVersion,
-                                     appPath: appPath,
-                                     startedAt: startedAt)
+        let runtime = ControlRuntime(
+            pid: getpid(),
+            port: port,
+            token: token,
+            appVersion: appVersion,
+            appPath: appPath,
+            startedAt: startedAt)
         do {
             try runtime.write()
         } catch {
-            logs.append("==> 无法写入 \(FlashCatPaths.controlRuntimeFile)：\(error.localizedDescription)",
-                        level: .error)
+            logs.append(
+                "==> 无法写入 \(FlashCatPaths.controlRuntimeFile)：\(error.localizedDescription)",
+                level: .error)
         }
     }
 
@@ -131,19 +134,23 @@ final class ControlServer {
     nonisolated func route(_ request: GatewayRequest) async -> GatewayResponse {
         guard Self.isAuthorized(request, token: token) else {
             Task { @MainActor [weak self] in
-                self?.logs.append("==> 拒绝未授权的控制请求：\(request.method) \(request.path)",
-                                  level: .warning)
+                self?.logs.append(
+                    "==> 拒绝未授权的控制请求：\(request.method) \(request.path)",
+                    level: .warning)
             }
-            return Self.failure(401, ControlErrorCode.unauthorized,
-                                "缺少或错误的控制接口令牌；请使用随应用安装的 flashcat 命令")
+            return Self.failure(
+                401, ControlErrorCode.unauthorized,
+                "缺少或错误的控制接口令牌；请使用随应用安装的 flashcat 命令")
         }
         return await handle(request)
     }
 
     /// Engine ids inside a request body are external input. An unknown id must
     /// fail with 400 instead of silently falling back to the owning engine.
-    private static func unknownEngine(engine: String?,
-                                      engines: [String]? = nil) -> GatewayResponse? {
+    private static func unknownEngine(
+        engine: String?,
+        engines: [String]? = nil
+    ) -> GatewayResponse? {
         if let engine, EngineID(rawValue: engine) == nil {
             return failure(400, ControlErrorCode.badRequest, "无效的引擎 id：\(engine)")
         }
@@ -163,8 +170,9 @@ final class ControlServer {
     @MainActor
     private func handle(_ request: GatewayRequest) async -> GatewayResponse {
         guard let route = ControlRoute.parse(method: request.method, path: request.path) else {
-            return Self.failure(404, ControlErrorCode.notFound,
-                                "未知控制路径 \(request.method) \(request.path)")
+            return Self.failure(
+                404, ControlErrorCode.notFound,
+                "未知控制路径 \(request.method) \(request.path)")
         }
         logs.append("==> \(request.method) \(request.path)", level: .info)
 
@@ -204,8 +212,10 @@ final class ControlServer {
             if let raw = request.query["engine"], EngineID(rawValue: raw) == nil {
                 return Self.failure(400, ControlErrorCode.badRequest, "无效的引擎 id：\(raw)")
             }
-            return Self.json(modelDocuments(engine: request.query["engine"],
-                                            includeAll: request.query["all"] == "true"))
+            return Self.json(
+                modelDocuments(
+                    engine: request.query["engine"],
+                    includeAll: request.query["all"] == "true"))
         case .modelUse:
             guard let body: ControlModelUse = Self.decode(request) else {
                 return Self.failure(400, ControlErrorCode.badRequest, "请求体需要 model 字段")
@@ -268,30 +278,33 @@ final class ControlServer {
     // MARK: App / engine documents
 
     private var appInfo: ControlAppInfo {
-        ControlAppInfo(version: appVersion,
-                       build: appBuild,
-                       pid: getpid(),
-                       startedAt: startedAt,
-                       appPath: appPath,
-                       controlPort: port)
+        ControlAppInfo(
+            version: appVersion,
+            build: appBuild,
+            pid: getpid(),
+            startedAt: startedAt,
+            appPath: appPath,
+            controlPort: port)
     }
 
     private var gatewayState: ControlGatewayState {
         let state = AppState.shared
-        return ControlGatewayState(enabled: state.settings.gatewayEnabled,
-                                   running: state.gateway.isRunning,
-                                   port: Int(state.gateway.port),
-                                   baseURL: state.gateway.baseURL,
-                                   failure: state.gateway.failureMessage)
+        return ControlGatewayState(
+            enabled: state.settings.gatewayEnabled,
+            running: state.gateway.isRunning,
+            port: Int(state.gateway.port),
+            baseURL: state.gateway.baseURL,
+            failure: state.gateway.failureMessage)
     }
 
     func statusDocument() -> ControlStatus {
         let engines = engineDocuments()
-        return ControlStatus(app: appInfo,
-                             engine: ControlEngineDocuments.primary(engines),
-                             engines: engines,
-                             gateway: gatewayState,
-                             downloads: downloadDocuments())
+        return ControlStatus(
+            app: appInfo,
+            engine: ControlEngineDocuments.primary(engines),
+            engines: engines,
+            gateway: gatewayState,
+            downloads: downloadDocuments())
     }
 
     /// 壳层只负责取数：文档长什么样由 `ControlEngineDocuments` 决定。CLI 的离线
@@ -334,8 +347,9 @@ final class ControlServer {
     private func engineAction(id: EngineID, action: EngineAction) async -> GatewayResponse {
         let state = AppState.shared
         guard let controller = state.engines?.controller(id) else {
-            return Self.failure(404, ControlErrorCode.notFound,
-                                "\(id.displayName) 还没有安装；先运行 flashcat engines install \(id.rawValue)")
+            return Self.failure(
+                404, ControlErrorCode.notFound,
+                "\(id.displayName) 还没有安装；先运行 flashcat engines install \(id.rawValue)")
         }
 
         if action == .stop {
@@ -346,8 +360,9 @@ final class ControlServer {
             }
             let stopped = await waitForEngine(id) { $0.state == .stopped || $0.state == .failed }
             if !stopped {
-                return Self.failure(409, ControlErrorCode.conflict,
-                                    "\(id.displayName) 未能在超时内停止")
+                return Self.failure(
+                    409, ControlErrorCode.conflict,
+                    "\(id.displayName) 未能在超时内停止")
             }
             return Self.json(engineDocument(id))
         }
@@ -355,8 +370,9 @@ final class ControlServer {
         if action == .use {
             if id != state.activeEngine {
                 guard await state.switchEngine(id, start: false) else {
-                    return Self.failure(409, ControlErrorCode.conflict,
-                                        "无法切换到 \(id.displayName)")
+                    return Self.failure(
+                        409, ControlErrorCode.conflict,
+                        "无法切换到 \(id.displayName)")
                 }
             }
             return Self.json(engineDocument(id))
@@ -373,8 +389,9 @@ final class ControlServer {
 
         if id != state.activeEngine {
             guard await state.switchEngine(id, start: false) else {
-                return Self.failure(409, ControlErrorCode.conflict,
-                                    "无法切换到 \(id.displayName)")
+                return Self.failure(
+                    409, ControlErrorCode.conflict,
+                    "无法切换到 \(id.displayName)")
             }
         }
 
@@ -383,11 +400,13 @@ final class ControlServer {
             // model rather than failing a command the user reasonably expects
             // to work.
             if let first = state.engineModels(for: id)
-                .first(where: { !$0.hidden && !$0.helper && !ModelLibraryEntry.isDraftModel($0.id) }) {
+                .first(where: { !$0.hidden && !$0.helper && !ModelLibraryEntry.isDraftModel($0.id) })
+            {
                 state.applyModelFromAnyEngine(first.id, engine: id)
             } else {
-                return Self.failure(409, ControlErrorCode.conflict,
-                                    "\(id.displayName) 没有可用模型；先运行 flashcat models download <repo>")
+                return Self.failure(
+                    409, ControlErrorCode.conflict,
+                    "\(id.displayName) 没有可用模型；先运行 flashcat models download <repo>")
             }
         }
 
@@ -401,25 +420,29 @@ final class ControlServer {
         let ready = await active.waitForSwitchReady(target, timeout: id.startupTimeout)
         guard ready else {
             let detail = active.failureMessage ?? "等待超时"
-            return Self.failure(503, ControlErrorCode.failed,
-                                "\(id.displayName) 未能就绪：\(detail)")
+            return Self.failure(
+                503, ControlErrorCode.failed,
+                "\(id.displayName) 未能就绪：\(detail)")
         }
         return Self.json(engineDocument(id))
     }
 
     private func engineDocument(_ id: EngineID) -> ControlEngineState {
         engineDocuments().first { $0.id == id.rawValue }
-            ?? ControlEngineState(id: id.rawValue, name: id.displayName, version: "—",
-                                  installedVersions: [], isActive: false, isInstalled: false,
-                                  state: "stopped", port: id.defaultPort, model: "",
-                                  stage: "")
+            ?? ControlEngineState(
+                id: id.rawValue, name: id.displayName, version: "—",
+                installedVersions: [], isActive: false, isInstalled: false,
+                state: "stopped", port: id.defaultPort, model: "",
+                stage: "")
     }
 
     /// Poll on the main actor: every source of truth here is `@Published`
     /// state, so a detached waiter would still have to hop back for each check.
-    private func waitForEngine(_ id: EngineID,
-                               timeout: TimeInterval = 90,
-                               predicate: (EngineController) -> Bool) async -> Bool {
+    private func waitForEngine(
+        _ id: EngineID,
+        timeout: TimeInterval = 90,
+        predicate: (EngineController) -> Bool
+    ) async -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             guard let controller = AppState.shared.engines?.controller(id) else { return false }
@@ -432,8 +455,8 @@ final class ControlServer {
 
 /// 壳层的 `ServerState` 没有 `loading`：`ServerState.init(EngineRunState)` 已经把
 /// 启动与加载折成同一个阶段。这里是唯一的折叠点，Kit 文档仍保留 `loading` 这一档。
-private extension ControlEnginePhase {
-    init(_ state: ServerState?) {
+extension ControlEnginePhase {
+    fileprivate init(_ state: ServerState?) {
         switch state {
         case .starting: self = .starting
         case .ready: self = .ready

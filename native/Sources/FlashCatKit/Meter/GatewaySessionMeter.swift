@@ -112,27 +112,31 @@ public final class GatewaySessionMeter: @unchecked Sendable {
     // MARK: 生命周期
 
     @discardableResult
-    public func begin(model: String, dialect: String, promptTokens: Int,
-               at now: Date = Date()) -> Int {
+    public func begin(
+        model: String, dialect: String, promptTokens: Int,
+        at now: Date = Date()
+    ) -> Int {
         lock.lock()
         defer { lock.unlock() }
         let id = nextID
         nextID += 1
-        sessions.append(Session(id: id,
-                                epoch: epoch,
-                                model: model,
-                                dialect: dialect,
-                                startedAt: now,
-                                promptTokens: promptTokens,
-                                completionTokens: 0,
-                                cachedPromptTokens: 0,
-                                usageKnown: false,
-                                firstTokenAt: nil,
-                                finishedAt: nil,
-                                failed: false,
-                                streamed: false,
-                                timings: nil,
-                                meter: DecodeWindowMeter()))
+        sessions.append(
+            Session(
+                id: id,
+                epoch: epoch,
+                model: model,
+                dialect: dialect,
+                startedAt: now,
+                promptTokens: promptTokens,
+                completionTokens: 0,
+                cachedPromptTokens: 0,
+                usageKnown: false,
+                firstTokenAt: nil,
+                finishedAt: nil,
+                failed: false,
+                streamed: false,
+                timings: nil,
+                meter: DecodeWindowMeter()))
         if sessions.count > Self.sessionLimit {
             // 先淘汰最早的已完成请求，再考虑在跑的会话：正在打点的请求不能
             // 因为历史太长而丢掉 finish/addTokens 的落点。
@@ -159,7 +163,7 @@ public final class GatewaySessionMeter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard let index = sessions.firstIndex(where: { $0.id == id }),
-              sessions[index].firstTokenAt == nil
+            sessions[index].firstTokenAt == nil
         else { return }
         sessions[index].startedAt = now
     }
@@ -206,8 +210,10 @@ public final class GatewaySessionMeter: @unchecked Sendable {
     /// TTFT 会被记成几毫秒，网关的预填充读数直接被顶到上限。旧实现曾在
     /// `guard count > 0` **之前**记时，理由却是「空帧也是流开始了」——
     /// 那是把「连接建立」误当成了「首字」。
-    public func addTokens(_ id: Int, _ count: Double, at now: Date = Date(),
-                   streaming: Bool = true) {
+    public func addTokens(
+        _ id: Int, _ count: Double, at now: Date = Date(),
+        streaming: Bool = true
+    ) {
         lock.lock()
         defer { lock.unlock() }
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
@@ -285,10 +291,11 @@ public final class GatewaySessionMeter: @unchecked Sendable {
     private func applyUsage(_ id: Int, _ usage: [String: Any]) {
         let prompt = (usage["prompt_tokens"] as? Int) ?? (usage["input_tokens"] as? Int) ?? 0
         let completion = (usage["completion_tokens"] as? Int) ?? (usage["output_tokens"] as? Int) ?? 0
-        noteUsage(id,
-                  promptTokens: prompt,
-                  completionTokens: completion,
-                  cachedPromptTokens: Self.cachedTokens(usage))
+        noteUsage(
+            id,
+            promptTokens: prompt,
+            completionTokens: completion,
+            cachedPromptTokens: Self.cachedTokens(usage))
     }
 
     /// 前缀缓存命中量。OpenAI 方言是 `prompt_tokens_details.cached_tokens`，
@@ -297,7 +304,8 @@ public final class GatewaySessionMeter: @unchecked Sendable {
     public static func cachedTokens(_ usage: [String: Any]) -> Int {
         for key in ["prompt_tokens_details", "input_tokens_details"] {
             if let details = usage[key] as? [String: Any],
-               let cached = details["cached_tokens"] as? Int {
+                let cached = details["cached_tokens"] as? Int
+            {
                 return max(0, cached)
             }
         }
@@ -314,11 +322,12 @@ public final class GatewaySessionMeter: @unchecked Sendable {
         let predicted = Int(JSONValue.number(json["predicted_n"]) ?? 0)
         let predictedMs = JSONValue.number(json["predicted_ms"]) ?? 0
         guard prompt > 0 || predicted > 0 else { return nil }
-        return RequestTimings(promptTokens: prompt,
-                              cachedTokens: max(0, cached),
-                              promptMilliseconds: max(0, promptMs),
-                              predictedTokens: max(0, predicted),
-                              predictedMilliseconds: max(0, predictedMs))
+        return RequestTimings(
+            promptTokens: prompt,
+            cachedTokens: max(0, cached),
+            promptMilliseconds: max(0, promptMs),
+            predictedTokens: max(0, predicted),
+            predictedMilliseconds: max(0, predictedMs))
     }
 
     /// 记下引擎自报的逐请求耗时。
@@ -343,10 +352,12 @@ public final class GatewaySessionMeter: @unchecked Sendable {
 
     /// 应用内对话直接连引擎端口、不经过网关，但概览页的「最近请求」统一读
     /// 这里，所以对话结束时把结构化 usage 也送进来校正计数。
-    public func noteUsage(_ id: Int,
-                   promptTokens prompt: Int,
-                   completionTokens completion: Int,
-                   cachedPromptTokens cached: Int = 0) {
+    public func noteUsage(
+        _ id: Int,
+        promptTokens prompt: Int,
+        completionTokens completion: Int,
+        cachedPromptTokens cached: Int = 0
+    ) {
         guard prompt > 0 || completion > 0 else { return }
         lock.lock()
         defer { lock.unlock() }
@@ -382,7 +393,7 @@ public final class GatewaySessionMeter: @unchecked Sendable {
     private static func prefillRate(_ session: Session) -> Double? {
         if let timings = session.timings, let rate = timings.prefillRate { return rate }
         guard session.streamed, session.usageKnown,
-              let first = session.firstTokenAt, session.promptTokens > 0
+            let first = session.firstTokenAt, session.promptTokens > 0
         else { return nil }
         let ttft = first.timeIntervalSince(session.startedAt)
         guard ttft > 0.001 else { return nil }
@@ -418,7 +429,8 @@ public final class GatewaySessionMeter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         let current = epoch
-        let ordered = sessions
+        let ordered =
+            sessions
             .filter { $0.epoch == current }
             .sorted { ($0.finishedAt ?? $0.startedAt) > ($1.finishedAt ?? $1.startedAt) }
         for session in ordered {
@@ -438,7 +450,8 @@ public final class GatewaySessionMeter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         let current = epoch
-        let latest = sessions
+        let latest =
+            sessions
             .filter { $0.epoch == current }
             .compactMap { session -> (at: Date, start: Date)? in
                 guard let first = session.firstTokenAt else { return nil }
@@ -563,7 +576,8 @@ public final class GatewaySessionMeter: @unchecked Sendable {
             // 活动请求读窗口速率；已结束的请求改报全程平均（引擎 timings 优先），
             // 这个终值会一直保留到它被新请求挤出列表。量不出速度的行留 0，
             // 界面画「—」——比编一个 37 769 tok/s 诚实。
-            let rate = session.finishedAt == nil
+            let rate =
+                session.finishedAt == nil
                 ? session.meter.rate(at: now)
                 : (Self.decodeRate(session) ?? 0)
             let completion = Int(session.completionTokens.rounded())
@@ -575,17 +589,18 @@ public final class GatewaySessionMeter: @unchecked Sendable {
             } else {
                 state = .decode
             }
-            return SessionSnapshot(id: session.id,
-                                   model: session.model,
-                                   dialect: session.dialect,
-                                   state: state,
-                                   elapsed: elapsed,
-                                   ttftMilliseconds: ttft.map { $0 * 1000 },
-                                   promptTokens: session.promptTokens,
-                                   completionTokens: completion,
-                                   decodeRate: rate,
-                                   prefillRate: Self.prefillRate(session) ?? 0,
-                                   ctxTokens: session.promptTokens + completion)
+            return SessionSnapshot(
+                id: session.id,
+                model: session.model,
+                dialect: session.dialect,
+                state: state,
+                elapsed: elapsed,
+                ttftMilliseconds: ttft.map { $0 * 1000 },
+                promptTokens: session.promptTokens,
+                completionTokens: completion,
+                decodeRate: rate,
+                prefillRate: Self.prefillRate(session) ?? 0,
+                ctxTokens: session.promptTokens + completion)
         }
     }
 

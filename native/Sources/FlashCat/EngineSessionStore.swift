@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
 import FlashCatKit
+import Foundation
 
 /// 引擎会话状态聚合：服务状态、指标、当前模型、切换/确认流程与生命周期心跳。
 ///

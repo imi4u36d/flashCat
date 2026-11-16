@@ -20,12 +20,14 @@ public struct EnginePackRelease: Codable, Sendable, Equatable {
     public var minMacOS: String?
     public var notes: String?
 
-    public init(version: String,
-                url: String,
-                sha256: String,
-                bytes: Int? = nil,
-                minMacOS: String? = nil,
-                notes: String? = nil) {
+    public init(
+        version: String,
+        url: String,
+        sha256: String,
+        bytes: Int? = nil,
+        minMacOS: String? = nil,
+        notes: String? = nil
+    ) {
         self.version = version
         self.url = url
         self.sha256 = sha256
@@ -38,7 +40,8 @@ public struct EnginePackRelease: Codable, Sendable, Equatable {
     /// off: the same index has to work served over https and read from disk.
     func resolvedAgainst(index indexURL: URL) -> EnginePackRelease {
         guard let parsed = URL(string: url), parsed.scheme == nil,
-              let resolved = URL(string: url, relativeTo: indexURL) else { return self }
+            let resolved = URL(string: url, relativeTo: indexURL)
+        else { return self }
         var release = self
         release.url = resolved.absoluteURL.absoluteString
         return release
@@ -61,8 +64,10 @@ public struct EnginePackIndex: Codable, Sendable, Equatable {
     /// Keyed by `EngineID.rawValue`. Unknown keys are kept out by `loadIndex`,
     /// so a UI can iterate the dictionary without filtering.
     public var engines: [String: [EnginePackRelease]]
-    public init(schemaVersion: Int = 1,
-                engines: [String: [EnginePackRelease]] = [:]) {
+    public init(
+        schemaVersion: Int = 1,
+        engines: [String: [EnginePackRelease]] = [:]
+    ) {
         self.schemaVersion = schemaVersion
         self.engines = engines
     }
@@ -81,9 +86,10 @@ public struct EnginePackIndex: Codable, Sendable, Equatable {
         // 这一层就整份作废，loadIndex 随即回落到下一份候选索引。
         for (key, releases) in engines {
             for release in releases where !FlashCatPaths.isSafeVersion(release.version) {
-                throw DecodingError.dataCorruptedError(forKey: .engines,
-                                                       in: container,
-                                                       debugDescription: "\(key) 的版本名不安全：\(release.version)")
+                throw DecodingError.dataCorruptedError(
+                    forKey: .engines,
+                    in: container,
+                    debugDescription: "\(key) 的版本名不安全：\(release.version)")
             }
         }
         self.engines = engines
@@ -216,11 +222,13 @@ public struct EngineInstallEnvironment: Sendable {
     public var tarPath: String
     public var xattrPath: String
 
-    public init(packsDirectory: String,
-                indexURL: URL? = nil,
-                bundledIndexPath: String? = nil,
-                tarPath: String = "/usr/bin/tar",
-                xattrPath: String = "/usr/bin/xattr") {
+    public init(
+        packsDirectory: String,
+        indexURL: URL? = nil,
+        bundledIndexPath: String? = nil,
+        tarPath: String = "/usr/bin/tar",
+        xattrPath: String = "/usr/bin/xattr"
+    ) {
         self.packsDirectory = packsDirectory
         self.indexURL = indexURL
         self.bundledIndexPath = bundledIndexPath
@@ -241,8 +249,11 @@ public struct EngineInstallEnvironment: Sendable {
         if let override = environment["FLASHCAT_ENGINE_PACKS_DIR"], !override.isEmpty {
             return override
         }
-        let base = FileManager.default.urls(for: .applicationSupportDirectory,
-                                           in: .userDomainMask).first
+        let base =
+            FileManager.default.urls(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask
+            ).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         return base.appendingPathComponent("flashCat", isDirectory: true)
             .appendingPathComponent("packs", isDirectory: true)
@@ -371,9 +382,12 @@ public actor EngineInstaller {
     /// ignored so a stray `.DS_Store` cannot show up as an installed pack.
     public func installedVersions(_ id: EngineID) -> [String] {
         let fm = FileManager.default
-        guard let entries = try? fm.contentsOfDirectory(at: engineRoot(id),
-                                                       includingPropertiesForKeys: [.isDirectoryKey],
-                                                       options: [.skipsHiddenFiles]) else {
+        guard
+            let entries = try? fm.contentsOfDirectory(
+                at: engineRoot(id),
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles])
+        else {
             return []
         }
         let versions = entries.compactMap { url -> String? in
@@ -385,9 +399,11 @@ public actor EngineInstaller {
 
     // MARK: Install
 
-    public func install(_ release: EnginePackRelease,
-                        for id: EngineID,
-                        progress: @Sendable (EngineInstallPhase) -> Void) async throws -> EngineInstallation {
+    public func install(
+        _ release: EnginePackRelease,
+        for id: EngineID,
+        progress: @Sendable (EngineInstallPhase) -> Void
+    ) async throws -> EngineInstallation {
         progress(.resolving)
         // 版本名会被拼成 `.downloads`、`.staging` 与 `packs/<id>/<version>` 下的
         // 路径，而它来自索引（外部输入）。必须在算出任何落盘路径之前挡住 `../..`：
@@ -439,8 +455,9 @@ public actor EngineInstaller {
             progress(.unpacking)
             // 归档先过一遍安全检查，再让 tar 落盘：绝对路径、`..`、指向包外的
             // 链接都在这里整包拒绝。
-            let plan = try EngineArchiveValidator.inspect(entries: try listArchive(archive),
-                                                          listing: try listArchiveDetails(archive))
+            let plan = try EngineArchiveValidator.inspect(
+                entries: try listArchive(archive),
+                listing: try listArchiveDetails(archive))
             let unpacked = staging.appendingPathComponent("\(id.rawValue)-\(release.version)-\(UUID().uuidString)")
             try fm.createDirectory(at: unpacked, withIntermediateDirectories: true)
             stagingDirectory = unpacked
@@ -461,9 +478,10 @@ public actor EngineInstaller {
             pruneIfEmpty(downloads)
             pruneIfEmpty(staging)
 
-            let installed = EngineInstallation(id: id,
-                                               manifest: installation.manifest,
-                                               root: destination)
+            let installed = EngineInstallation(
+                id: id,
+                manifest: installation.manifest,
+                root: destination)
             progress(.installed(version: release.version))
             return installed
         } catch {
@@ -493,8 +511,9 @@ public actor EngineInstaller {
         guard fm.fileExists(atPath: target.path) else { return false }
         let trash = trashRoot
         try fm.createDirectory(at: trash, withIntermediateDirectories: true)
-        let doomed = trash.appendingPathComponent("\(id.rawValue)-\(version)-\(UUID().uuidString)",
-                                                  isDirectory: true)
+        let doomed = trash.appendingPathComponent(
+            "\(id.rawValue)-\(version)-\(UUID().uuidString)",
+            isDirectory: true)
         try fm.moveItem(at: target, to: doomed)
         try? fm.removeItem(at: doomed)
         pruneIfEmpty(trash)
@@ -512,21 +531,22 @@ public actor EngineInstaller {
         if fm.fileExists(atPath: destination.path) {
             let trash = trashRoot
             try fm.createDirectory(at: trash, withIntermediateDirectories: true)
-            let doomed = trash.appendingPathComponent("\(id.rawValue)-\(version)-\(UUID().uuidString)",
-                                                      isDirectory: true)
+            let doomed = trash.appendingPathComponent(
+                "\(id.rawValue)-\(version)-\(UUID().uuidString)",
+                isDirectory: true)
             try fm.moveItem(at: destination, to: doomed)
             do {
                 try fm.moveItem(at: unpacked, to: destination)
             } catch {
                 // 新版本没就位就把旧的搬回去：否则失败一次就变成「引擎没了」。
-                do { try fm.moveItem(at: doomed, to: destination) }
-                catch {
+                do { try fm.moveItem(at: doomed, to: destination) } catch {
                     NSLog("flashCat: 回滚引擎 %@ 失败，旧版本仍在 %@", id.rawValue, doomed.path)
                 }
                 throw error
             }
-            do { try fm.removeItem(at: doomed) }
-            catch { NSLog("flashCat: 清理旧版本 %@ 失败：%@", doomed.path, error.localizedDescription) }
+            do { try fm.removeItem(at: doomed) } catch {
+                NSLog("flashCat: 清理旧版本 %@ 失败：%@", doomed.path, error.localizedDescription)
+            }
             pruneIfEmpty(trash)
         } else {
             try fm.moveItem(at: unpacked, to: destination)
@@ -555,7 +575,8 @@ public actor EngineInstaller {
         let fm = FileManager.default
         let relative = installation.manifest.entrypoint
         guard !relative.hasPrefix("/"), !relative.hasPrefix("~"),
-              !EngineArchiveValidator.pathComponents(relative).contains("..") else {
+            !EngineArchiveValidator.pathComponents(relative).contains("..")
+        else {
             throw EngineInstallError.unsafeArchiveEntry(relative)
         }
         let entrypoint = root.appendingPathComponent(relative)
@@ -639,9 +660,11 @@ public actor EngineInstaller {
 
     // MARK: Download
 
-    private func download(_ url: URL,
-                          to destination: URL,
-                          progress: @Sendable (EngineInstallPhase) -> Void) async throws {
+    private func download(
+        _ url: URL,
+        to destination: URL,
+        progress: @Sendable (EngineInstallPhase) -> Void
+    ) async throws {
         if url.isFileURL {
             try downloadLocal(url, to: destination, progress: progress)
         } else {
@@ -649,9 +672,11 @@ public actor EngineInstaller {
         }
     }
 
-    private func downloadLocal(_ url: URL,
-                               to destination: URL,
-                               progress: @Sendable (EngineInstallPhase) -> Void) throws {
+    private func downloadLocal(
+        _ url: URL,
+        to destination: URL,
+        progress: @Sendable (EngineInstallPhase) -> Void
+    ) throws {
         let fm = FileManager.default
         guard fm.fileExists(atPath: url.path) else {
             throw EngineInstallError.downloadFailed("找不到下载源文件：\(url.path)")
@@ -664,7 +689,8 @@ public actor EngineInstaller {
         }
         var size: Int?
         if let attributes = try? fm.attributesOfItem(atPath: destination.path),
-           let bytes = attributes[.size] as? Int {
+            let bytes = attributes[.size] as? Int
+        {
             size = bytes
         }
         progress(.downloading(progress: 1.0, receivedBytes: size ?? 0, totalBytes: size))
@@ -673,9 +699,11 @@ public actor EngineInstaller {
     /// Streams over HTTPS, writing bytes as they arrive so a 600 MB pack never
     /// sits in memory. `URLSession`'s delegate runs off-actor; the progress
     /// closure is therefore invoked from this actor after the hop back.
-    private func downloadRemote(_ url: URL,
-                                to destination: URL,
-                                progress: @Sendable (EngineInstallPhase) -> Void) async throws {
+    private func downloadRemote(
+        _ url: URL,
+        to destination: URL,
+        progress: @Sendable (EngineInstallPhase) -> Void
+    ) async throws {
         let fm = FileManager.default
         try? fm.removeItem(at: destination)
 
@@ -782,9 +810,10 @@ public actor EngineInstaller {
         group.wait()
         process.waitUntilExit()
 
-        return ProcessOutcome(status: process.terminationStatus,
-                              stdout: collector.data(0),
-                              stderr: collector.data(1))
+        return ProcessOutcome(
+            status: process.terminationStatus,
+            stdout: collector.data(0),
+            stderr: collector.data(1))
     }
 
     private static func text(_ data: Data) -> String {
@@ -841,10 +870,12 @@ private final class RemoteDownloadDelegate: NSObject, URLSessionDataDelegate, @u
         session.dataTask(with: url).resume()
     }
 
-    func urlSession(_ session: URLSession,
-                    dataTask: URLSessionDataTask,
-                    didReceive response: URLResponse,
-                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
         lock.lock()
         expected = response.expectedContentLength
         lock.unlock()
@@ -881,7 +912,10 @@ private final class RemoteDownloadDelegate: NSObject, URLSessionDataDelegate, @u
 
     private func finish(received: Int64, expected: Int64) {
         lock.lock()
-        guard !isFinished else { lock.unlock(); return }
+        guard !isFinished else {
+            lock.unlock()
+            return
+        }
         isFinished = true
         let handle = self.handle
         self.handle = nil
@@ -897,7 +931,10 @@ private final class RemoteDownloadDelegate: NSObject, URLSessionDataDelegate, @u
 
     private func finish(error: Error) {
         lock.lock()
-        guard !isFinished else { lock.unlock(); return }
+        guard !isFinished else {
+            lock.unlock()
+            return
+        }
         isFinished = true
         let handle = self.handle
         self.handle = nil

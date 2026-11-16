@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import XCTest
+
 @testable import FlashCat
 
 /// 面板上的数字只有一套口径：磁盘用十进制（和 Finder 一致），内存用二进制

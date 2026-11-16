@@ -10,7 +10,8 @@ import Foundation
 /// still an explicit source catalog (`EngineCatalog`), not a runtime engine
 /// marketplace.
 public struct EngineID: RawRepresentable, Codable, Hashable, Identifiable,
-                        Sendable, Comparable, CustomStringConvertible {
+    Sendable, Comparable, CustomStringConvertible
+{
     public let rawValue: String
 
     public init?(rawValue: String) {
@@ -27,8 +28,9 @@ public struct EngineID: RawRepresentable, Codable, Hashable, Identifiable,
     public init(from decoder: Decoder) throws {
         let value = try decoder.singleValueContainer().decode(String.self)
         guard let id = Self(rawValue: value) else {
-            throw DecodingError.dataCorruptedError(in: try decoder.singleValueContainer(),
-                                                   debugDescription: "engine id must not be empty")
+            throw DecodingError.dataCorruptedError(
+                in: try decoder.singleValueContainer(),
+                debugDescription: "engine id must not be empty")
         }
         self = id
     }
@@ -157,32 +159,34 @@ public struct EngineManifest: Codable, Sendable {
     public let modelControl: EngineModelControlSpec?
     public let telemetry: [EngineTelemetrySource]?
 
-    public init(schemaVersion: Int = 1,
-                id: EngineID,
-                name: String,
-                version: String,
-                kind: EnginePackKind,
-                arch: String = "arm64",
-                minMacOS: String = "14.0",
-                minAppVersion: String? = nil,
-                entrypoint: String,
-                workingDirectory: String? = nil,
-                modelsSubdirectory: String? = nil,
-                launchProfiles: [String: EngineLaunchProfile],
-                health: EngineHealthSpec,
-                status: [String]? = nil,
-                models: EngineModelsSpec? = nil,
-                defaultPort: Int,
-                modelSwitch: ModelSwitchMode,
-                modelArgument: EngineModelArgument? = nil,
-                capabilities: [EngineCapability],
-                license: String? = nil,
-                adapter: EngineAdapterID? = nil,
-                portRangeSize: Int? = nil,
-                startupTimeout: TimeInterval? = nil,
-                modelLayout: EngineModelLayout? = nil,
-                modelControl: EngineModelControlSpec? = nil,
-                telemetry: [EngineTelemetrySource]? = nil) {
+    public init(
+        schemaVersion: Int = 1,
+        id: EngineID,
+        name: String,
+        version: String,
+        kind: EnginePackKind,
+        arch: String = "arm64",
+        minMacOS: String = "14.0",
+        minAppVersion: String? = nil,
+        entrypoint: String,
+        workingDirectory: String? = nil,
+        modelsSubdirectory: String? = nil,
+        launchProfiles: [String: EngineLaunchProfile],
+        health: EngineHealthSpec,
+        status: [String]? = nil,
+        models: EngineModelsSpec? = nil,
+        defaultPort: Int,
+        modelSwitch: ModelSwitchMode,
+        modelArgument: EngineModelArgument? = nil,
+        capabilities: [EngineCapability],
+        license: String? = nil,
+        adapter: EngineAdapterID? = nil,
+        portRangeSize: Int? = nil,
+        startupTimeout: TimeInterval? = nil,
+        modelLayout: EngineModelLayout? = nil,
+        modelControl: EngineModelControlSpec? = nil,
+        telemetry: [EngineTelemetrySource]? = nil
+    ) {
         self.schemaVersion = schemaVersion
         self.id = id
         self.name = name
@@ -244,7 +248,8 @@ public struct EngineInstallation: Sendable {
     /// the engine page can show "damaged install" instead of crashing.
     public static func load(root: URL) -> EngineInstallation? {
         guard let data = try? Data(contentsOf: manifestURL(root: root)),
-              let manifest = try? JSONDecoder().decode(EngineManifest.self, from: data) else {
+            let manifest = try? JSONDecoder().decode(EngineManifest.self, from: data)
+        else {
             return nil
         }
         return EngineInstallation(id: manifest.id, manifest: manifest, root: root)
@@ -272,9 +277,11 @@ public enum EngineTemplate {
     /// that never mentions the flag gets it appended. Rewriting the existing
     /// value (instead of appending a duplicate) keeps the command line the app
     /// echoes in its banner honest.
-    public static func raisingIntegerFlag(_ flag: String,
-                                          toAtLeast minimum: Int,
-                                          in arguments: [String]) -> [String] {
+    public static func raisingIntegerFlag(
+        _ flag: String,
+        toAtLeast minimum: Int,
+        in arguments: [String]
+    ) -> [String] {
         guard let index = arguments.lastIndex(of: flag) else {
             return arguments + [flag, String(minimum)]
         }
@@ -358,10 +365,12 @@ public enum EnginePortAllocator {
     /// whether a foreign process is listening. A custom preferred port moves the
     /// whole band instead of being ignored, which is what the settings page
     /// implies when it lets the reader type a port.
-    public static func allocate(for engine: EngineID,
-                                preferred: Int?,
-                                taken: Set<Int>,
-                                isOpen: (Int) -> Bool) -> Int? {
+    public static func allocate(
+        for engine: EngineID,
+        preferred: Int?,
+        taken: Set<Int>,
+        isOpen: (Int) -> Bool
+    ) -> Int? {
         let start = max(1024, min(preferred ?? engine.defaultPort, 65535))
         let band = Array(start...min(start + engine.portRange.count - 1, 65535))
         for candidate in band where !taken.contains(candidate) && !isOpen(candidate) {

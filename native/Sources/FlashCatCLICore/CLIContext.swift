@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
 import FlashCatKit
+import Foundation
 
 /// Finds the app bundle the CLI belongs to. When the command is symlinked into
 /// `~/.local/bin` the executable resolves back into the bundle, so `app open`
 /// and the bundled pack index still find the right installation.
 public enum AppLocator {
-    public static func resolve(environment: [String: String],
-                               executable: String = CommandLine.arguments.first ?? "") -> URL? {
+    public static func resolve(
+        environment: [String: String],
+        executable: String = CommandLine.arguments.first ?? ""
+    ) -> URL? {
         if let explicit = environment["FLASHCAT_APP"], !explicit.isEmpty {
             let url = URL(fileURLWithPath: explicit)
             return url.pathExtension == "app" ? url : url.deletingLastPathComponent()
@@ -35,7 +37,8 @@ public enum AppLocator {
         // `argv[0]` can be a PATH-resolved name; Bundle.main knows the real
         // file when it exists.
         if !FileManager.default.fileExists(atPath: url.path),
-           let resolved = Bundle.main.executableURL {
+            let resolved = Bundle.main.executableURL
+        {
             url = resolved
         }
         url = url.resolvingSymlinksInPath()
@@ -77,9 +80,11 @@ public struct LocalState {
 
     /// `defaults` / `engineConfigurationFile` 可注入：`config` 的离线路径要能用临时域与临时
     /// 文件跑单测，否则测试会写坏用户真实的偏好设置和 engines.json。
-    public init(environment: [String: String] = ProcessInfo.processInfo.environment,
-                defaults: UserDefaults? = nil,
-                engineConfigurationFile: String = FlashCatPaths.engineConfigurationFile) {
+    public init(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        defaults: UserDefaults? = nil,
+        engineConfigurationFile: String = FlashCatPaths.engineConfigurationFile
+    ) {
         self.environment = environment
         self.app = AppLocator.resolve(environment: environment)
         self.defaults = defaults ?? UserDefaults(suiteName: FlashCatPaths.preferencesDomain)
@@ -207,7 +212,8 @@ public struct LocalState {
     private static func parse(_ object: [String: Any]) -> EngineConfiguration {
         var configuration = EngineConfiguration()
         if let active = object["active"] as? [String: Any],
-           let version = active["version"] as? String {
+            let version = active["version"] as? String
+        {
             configuration.active = version
         }
         for (key, raw) in object {
@@ -227,8 +233,9 @@ public struct LocalState {
     public var activeEngine: EngineID {
         let configuration = engineConfiguration
         if let active = configuration.active,
-           let id = EngineID(rawValue: active),
-           newest(id) != nil {
+            let id = EngineID(rawValue: active),
+            newest(id) != nil
+        {
             return id
         }
         return installedIDs.first ?? .splash
@@ -286,13 +293,18 @@ public struct LocalState {
                     let childPath = path + "/" + child
                     var childIsDirectory: ObjCBool = false
                     guard manager.fileExists(atPath: childPath, isDirectory: &childIsDirectory),
-                          childIsDirectory.boolValue else { continue }
-                    models.append(LocalModel(id: entry + "/" + child, engine: engine.rawValue,
-                                             path: childPath, bytes: directoryBytes(childPath)))
+                        childIsDirectory.boolValue
+                    else { continue }
+                    models.append(
+                        LocalModel(
+                            id: entry + "/" + child, engine: engine.rawValue,
+                            path: childPath, bytes: directoryBytes(childPath)))
                 }
             } else {
-                models.append(LocalModel(id: entry, engine: engine.rawValue,
-                                         path: path, bytes: directoryBytes(path)))
+                models.append(
+                    LocalModel(
+                        id: entry, engine: engine.rawValue,
+                        path: path, bytes: directoryBytes(path)))
             }
         }
         return models
@@ -335,13 +347,15 @@ public struct CLIContext {
     public var stdinIsTTY: Bool
     public var executable: String
 
-    public init(invocation: CLIInvocation,
-                environment: [String: String],
-                output: CLIOutput,
-                local: LocalState,
-                isTTY: Bool,
-                stdinIsTTY: Bool,
-                executable: String) {
+    public init(
+        invocation: CLIInvocation,
+        environment: [String: String],
+        output: CLIOutput,
+        local: LocalState,
+        isTTY: Bool,
+        stdinIsTTY: Bool,
+        executable: String
+    ) {
         self.invocation = invocation
         self.environment = environment
         self.output = output
@@ -385,13 +399,15 @@ public struct CLIContext {
 
     public func engineArgument(_ index: Int = 0) throws -> EngineID {
         guard invocation.arguments.indices.contains(index) else {
-            throw CLIError("需要引擎 id（\(EngineCatalog.allIDs.map(\.rawValue).joined(separator: " / "))）",
-                           exit: .usage)
+            throw CLIError(
+                "需要引擎 id（\(EngineCatalog.allIDs.map(\.rawValue).joined(separator: " / "))）",
+                exit: .usage)
         }
         let raw = invocation.arguments[index]
         guard let id = EngineID(rawValue: raw), EngineCatalog.allIDs.contains(id) else {
-            throw CLIError("未知引擎：\(raw)", exit: .usage,
-                           hint: "可用：" + EngineCatalog.allIDs.map(\.rawValue).joined(separator: ", "))
+            throw CLIError(
+                "未知引擎：\(raw)", exit: .usage,
+                hint: "可用：" + EngineCatalog.allIDs.map(\.rawValue).joined(separator: ", "))
         }
         return id
     }

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import XCTest
+
 @testable import FlashCatKit
 
 /// 引擎日志信号的判定：这条用例同时钉住「认什么」和「不认什么」。

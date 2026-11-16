@@ -2,8 +2,9 @@
 // Copyright (c) 2026 wangzhuo
 
 import AppKit
-import XCTest
 import FlashCatKit
+import XCTest
+
 @testable import FlashCat
 
 /// 成品图回传给视觉模型时必须是引擎能吃的 data URL。

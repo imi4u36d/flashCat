@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import XCTest
 import FlashCatKit
+import XCTest
+
 @testable import FlashCat
 
 /// 「默认引擎」只是下次启动的偏好，绝不能顺手改写正在运行的那一台。

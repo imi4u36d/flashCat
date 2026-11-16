@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import XCTest
 import FlashCatKit
+import XCTest
+
 @testable import FlashCat
 
 /// 指标 owner 表的解码格（hero、灵动岛、菜单栏共用的取数口径）。
@@ -13,43 +14,51 @@ import FlashCatKit
 /// 在跑请求。`MetricOrigin` 是界面可见口径，`SpeedOrigin` 是它的旧名等价。
 final class DecodeRateTotalTests: XCTestCase {
     /// 把 `speedOrigin` + 值折叠成界面口径。`engine` 默认 nil，调用点只写关心的参数。
-    private static func origin(gateway: Double,
-                               gatewayIsLive: Bool = true,
-                               engine: Double? = nil,
-                               engineKind: EngineRateKind = .none,
-                               activeRequests: Int = 0,
-                               gatewayAge: TimeInterval? = nil) -> MetricOrigin {
-        let speed = AppState.speedOrigin(gateway: gateway,
-                                         gatewayIsLive: gatewayIsLive,
-                                         engine: engine,
-                                         engineKind: engineKind,
-                                         activeRequests: activeRequests,
-                                         gatewayAge: gatewayAge)
+    private static func origin(
+        gateway: Double,
+        gatewayIsLive: Bool = true,
+        engine: Double? = nil,
+        engineKind: EngineRateKind = .none,
+        activeRequests: Int = 0,
+        gatewayAge: TimeInterval? = nil
+    ) -> MetricOrigin {
+        let speed = AppState.speedOrigin(
+            gateway: gateway,
+            gatewayIsLive: gatewayIsLive,
+            engine: engine,
+            engineKind: engineKind,
+            activeRequests: activeRequests,
+            gatewayAge: gatewayAge)
         return AppState.reading(origin: speed, gateway: gateway, engine: engine).origin
     }
 
-    private static func value(gateway: Double,
-                              gatewayIsLive: Bool = true,
-                              engine: Double? = nil,
-                              engineKind: EngineRateKind = .none,
-                              activeRequests: Int = 0,
-                              gatewayAge: TimeInterval? = nil) -> Double {
-        let speed = AppState.speedOrigin(gateway: gateway,
-                                         gatewayIsLive: gatewayIsLive,
-                                         engine: engine,
-                                         engineKind: engineKind,
-                                         activeRequests: activeRequests,
-                                         gatewayAge: gatewayAge)
+    private static func value(
+        gateway: Double,
+        gatewayIsLive: Bool = true,
+        engine: Double? = nil,
+        engineKind: EngineRateKind = .none,
+        activeRequests: Int = 0,
+        gatewayAge: TimeInterval? = nil
+    ) -> Double {
+        let speed = AppState.speedOrigin(
+            gateway: gateway,
+            gatewayIsLive: gatewayIsLive,
+            engine: engine,
+            engineKind: engineKind,
+            activeRequests: activeRequests,
+            gatewayAge: gatewayAge)
         return AppState.reading(origin: speed, gateway: gateway, engine: engine).value ?? 0
     }
 
     func testGatewayAggregateWinsOverEngineLive() {
         // 两路并发时引擎的“实时”可能只是最近一个批次；网关的按请求之和
         // 才是当前合计，也才能和「最近请求」每一行对上。
-        XCTAssertEqual(Self.value(gateway: 81.6, engine: 44.1, engineKind: .live, activeRequests: 2),
-                       81.6, accuracy: 0.001)
-        XCTAssertEqual(Self.origin(gateway: 81.6, engine: 44.1, engineKind: .live, activeRequests: 2),
-                       .gatewayLive)
+        XCTAssertEqual(
+            Self.value(gateway: 81.6, engine: 44.1, engineKind: .live, activeRequests: 2),
+            81.6, accuracy: 0.001)
+        XCTAssertEqual(
+            Self.origin(gateway: 81.6, engine: 44.1, engineKind: .live, activeRequests: 2),
+            .gatewayLive)
     }
 
     /// 请求结束后网关保留的终值不是当前速度；LAST 采集入口已取消，
@@ -61,10 +70,12 @@ final class DecodeRateTotalTests: XCTestCase {
 
     /// 客户端直连引擎端口时网关看不见，才轮到引擎的实时计数。
     func testEngineLiveIsFallbackWhenGatewayHasNothing() {
-        XCTAssertEqual(Self.value(gateway: 0, engine: 44.1, engineKind: .live, activeRequests: 1),
-                       44.1, accuracy: 0.001)
-        XCTAssertEqual(Self.origin(gateway: 0, engine: 44.1, engineKind: .live, activeRequests: 1),
-                       .engineLive)
+        XCTAssertEqual(
+            Self.value(gateway: 0, engine: 44.1, engineKind: .live, activeRequests: 1),
+            44.1, accuracy: 0.001)
+        XCTAssertEqual(
+            Self.origin(gateway: 0, engine: 44.1, engineKind: .live, activeRequests: 1),
+            .engineLive)
     }
 
     /// 引擎空闲时可能继续回报最后一格（MTPLX 的 rolling.mean 就是典型），
@@ -85,14 +96,18 @@ final class DecodeRateTotalTests: XCTestCase {
     /// 网关读数超过新鲜度门槛（两个 1 秒节拍）就不再冒充「此刻」：过期的
     /// 网关值必须让位给引擎的实时计数。
     func testStaleGatewayReadingFallsBackToEngineLive() {
-        XCTAssertEqual(Self.origin(gateway: 44.1, gatewayIsLive: true,
-                                   engine: 30, engineKind: .live, activeRequests: 1,
-                                   gatewayAge: 0.5),
-                       .gatewayLive)
-        XCTAssertEqual(Self.origin(gateway: 44.1, gatewayIsLive: true,
-                                   engine: 30, engineKind: .live, activeRequests: 1,
-                                   gatewayAge: 3.0),
-                       .engineLive)
+        XCTAssertEqual(
+            Self.origin(
+                gateway: 44.1, gatewayIsLive: true,
+                engine: 30, engineKind: .live, activeRequests: 1,
+                gatewayAge: 0.5),
+            .gatewayLive)
+        XCTAssertEqual(
+            Self.origin(
+                gateway: 44.1, gatewayIsLive: true,
+                engine: 30, engineKind: .live, activeRequests: 1,
+                gatewayAge: 3.0),
+            .engineLive)
     }
 
     func testIdleReadsZero() {
@@ -106,32 +121,49 @@ final class DecodeRateTotalTests: XCTestCase {
     /// 引擎 LAST / AVG。网关值是应用自己按请求算的，换引擎不会让整格变空。
     func testPrefillPrefersGatewayMeasurementUnlessEngineIsLive() {
         // 没有引擎预填充字段（mlx-serve）：网关的实测值必须顶上。
-        XCTAssertEqual(AppState.prefillReading(gateway: 1_800,
-                                               engine: nil,
-                                               engineKind: .none).origin,
-                       .gatewayLast)
-        XCTAssertEqual(AppState.prefillReading(gateway: 1_800,
-                                               engine: nil,
-                                               engineKind: .none).value,
-                       1_800)
+        XCTAssertEqual(
+            AppState.prefillReading(
+                gateway: 1_800,
+                engine: nil,
+                engineKind: .none
+            ).origin,
+            .gatewayLast)
+        XCTAssertEqual(
+            AppState.prefillReading(
+                gateway: 1_800,
+                engine: nil,
+                engineKind: .none
+            ).value,
+            1_800)
         // 此刻真的在预填充：引擎的实时窗口比上一轮的网关值更新，优先。
-        XCTAssertEqual(AppState.prefillReading(gateway: 1_800,
-                                               engine: 2_100,
-                                               engineKind: .live).origin,
-                       .engineLive)
+        XCTAssertEqual(
+            AppState.prefillReading(
+                gateway: 1_800,
+                engine: 2_100,
+                engineKind: .live
+            ).origin,
+            .engineLive)
         // 网关没有会话记录（客户端绕过网关直连引擎端口）：才用引擎的 LAST / AVG。
-        XCTAssertEqual(AppState.prefillReading(gateway: 0,
-                                               engine: 3_400,
-                                               engineKind: .lastRequest).origin,
-                       .engineLast)
-        XCTAssertEqual(AppState.prefillReading(gateway: 0,
-                                               engine: 900,
-                                               engineKind: .lifetimeMean).origin,
-                       .engineMean)
-        XCTAssertEqual(AppState.prefillReading(gateway: 0,
-                                               engine: nil,
-                                               engineKind: .none),
-                       .none)
+        XCTAssertEqual(
+            AppState.prefillReading(
+                gateway: 0,
+                engine: 3_400,
+                engineKind: .lastRequest
+            ).origin,
+            .engineLast)
+        XCTAssertEqual(
+            AppState.prefillReading(
+                gateway: 0,
+                engine: 900,
+                engineKind: .lifetimeMean
+            ).origin,
+            .engineMean)
+        XCTAssertEqual(
+            AppState.prefillReading(
+                gateway: 0,
+                engine: nil,
+                engineKind: .none),
+            .none)
     }
 
     /// 引擎自报速率的翻译层：LIVE、LAST 与 AVG 各翻译成自己的角标。

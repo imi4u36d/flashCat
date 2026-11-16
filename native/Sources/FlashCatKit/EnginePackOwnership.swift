@@ -27,10 +27,13 @@ public enum EnginePackOwnership {
 
     /// Version folders inside `directory` that the app may delete, matching the
     /// engine page's list.
-    public static func removableVersions(directories: [(version: String, path: String)],
-                                         userRoots: [String]) -> Set<String> {
-        Set(directories.filter { isRemovable(directory: $0.path, userRoots: userRoots) }
-            .map(\.version))
+    public static func removableVersions(
+        directories: [(version: String, path: String)],
+        userRoots: [String]
+    ) -> Set<String> {
+        Set(
+            directories.filter { isRemovable(directory: $0.path, userRoots: userRoots) }
+                .map(\.version))
     }
 
     private static func normalized(_ path: String) -> String {

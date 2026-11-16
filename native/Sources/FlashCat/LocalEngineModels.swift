@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
 import FlashCatKit
+import Foundation
 
 /// Reads the flashCat model folder for a pack-based engine. The folder holds
 /// the weights themselves — a linked folder is not a model here, because an
@@ -37,12 +37,15 @@ enum LocalEngineModels {
                 let childPath = path + "/" + child
                 var childDirectory: ObjCBool = false
                 guard manager.fileExists(atPath: childPath, isDirectory: &childDirectory),
-                      childDirectory.boolValue,
-                      isRealDirectory(childPath),
-                      EngineModelStore.isWeightsDirectory(childPath, engine: engine) else { continue }
-                models.append(model(id: canonicalID(entry + "/" + child, engine: engine),
-                                    path: childPath,
-                                    engine: engine))
+                    childDirectory.boolValue,
+                    isRealDirectory(childPath),
+                    EngineModelStore.isWeightsDirectory(childPath, engine: engine)
+                else { continue }
+                models.append(
+                    model(
+                        id: canonicalID(entry + "/" + child, engine: engine),
+                        path: childPath,
+                        engine: engine))
             }
         }
         return models
@@ -60,18 +63,19 @@ enum LocalEngineModels {
 
     private static func model(id: String, path: String, engine: EngineID) -> EngineModel {
         let meta = EngineModelStore.meta(of: path)
-        return EngineModel(id: id,
-                           path: path,
-                           bytes: meta.bytes,
-                           maximumContextTokens: meta.maximumContextTokens,
-                           loaded: false,
-                           loading: false,
-                           kind: meta.architecture,
-                           architecture: meta.architecture,
-                           capabilities: capabilities(at: path),
-                           hidden: false,
-                           helper: false,
-                           engine: engine)
+        return EngineModel(
+            id: id,
+            path: path,
+            bytes: meta.bytes,
+            maximumContextTokens: meta.maximumContextTokens,
+            loaded: false,
+            loading: false,
+            kind: meta.architecture,
+            architecture: meta.architecture,
+            capabilities: capabilities(at: path),
+            hidden: false,
+            helper: false,
+            engine: engine)
     }
 
     /// 离线判能力：目录扫描看不到 `/v1/models` 的 `capabilities`，但扩散类
@@ -86,8 +90,9 @@ enum LocalEngineModels {
         let manager = FileManager.default
         // targetName 可能是 GGUF 文件本身；能力文件都在它所在的目录里。
         var isDirectory: ObjCBool = false
-        let directory = manager.fileExists(atPath: path, isDirectory: &isDirectory)
-            && !isDirectory.boolValue
+        let directory =
+            manager.fileExists(atPath: path, isDirectory: &isDirectory)
+                && !isDirectory.boolValue
             ? (path as NSString).deletingLastPathComponent : path
         let indexURL = URL(fileURLWithPath: directory + "/model_index.json")
         let index = (try? Data(contentsOf: indexURL))
@@ -101,7 +106,8 @@ enum LocalEngineModels {
             return ["video"]
         }
         if let index, let name = index["_class_name"] as? String,
-           name.lowercased().contains("video") {
+            name.lowercased().contains("video")
+        {
             return ["video"]
         }
         if let type = modelType(at: directory), isVideoModelType(type) {
@@ -129,19 +135,24 @@ enum LocalEngineModels {
     private static func hasVision(at directory: String) -> Bool {
         let manager = FileManager.default
         if let data = try? Data(contentsOf: URL(fileURLWithPath: directory + "/config.json")),
-           let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        {
             if json["vision_config"] as? [String: Any] != nil { return true }
-            let names = [json["model_type"] as? String,
-                         json["architecture"] as? String]
+            let names =
+                [
+                    json["model_type"] as? String,
+                    json["architecture"] as? String,
+                ]
                 .compactMap { $0 }
                 + ((json["architectures"] as? [String]) ?? [])
             if names.contains(where: isVisionModelType) { return true }
         }
         if let entries = try? manager.contentsOfDirectory(atPath: directory),
-           entries.contains(where: {
-               let lowered = $0.lowercased()
-               return lowered.contains("mmproj") && lowered.hasSuffix(".gguf")
-           }) {
+            entries.contains(where: {
+                let lowered = $0.lowercased()
+                return lowered.contains("mmproj") && lowered.hasSuffix(".gguf")
+            })
+        {
             return true
         }
         return isVisionModelType(URL(fileURLWithPath: directory).lastPathComponent)
@@ -151,7 +162,8 @@ enum LocalEngineModels {
         let value = raw.lowercased()
         if value.contains("vision") || value.contains("llava") || value.contains("internvl")
             || value.contains("paligemma") || value.contains("idefics") || value.contains("minicpmv")
-            || value.contains("vlfor") || value.contains("vlmodel") {
+            || value.contains("vlfor") || value.contains("vlmodel")
+        {
             return true
         }
         let tokens = value.split { !$0.isLetter && !$0.isNumber }
@@ -160,7 +172,8 @@ enum LocalEngineModels {
 
     private static func modelType(at path: String) -> String? {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path + "/config.json")),
-              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else {
             return nil
         }
         let type = (json["model_type"] as? String) ?? (json["architecture"] as? String)
@@ -172,9 +185,11 @@ enum LocalEngineModels {
     /// 里的 "video" 字样（例如视觉理解模型）误判成视频生成。
     private static func isVideoModelType(_ raw: String) -> Bool {
         let value = raw.lowercased()
-        let families = ["minimax_h3", "minimax-h3", "ltx-video", "ltx_video",
-                        "wan2", "wan-2", "hunyuanvideo", "hunyuan-video",
-                        "cogvideo", "mochi", "fl2va", "t2v", "i2v"]
+        let families = [
+            "minimax_h3", "minimax-h3", "ltx-video", "ltx_video",
+            "wan2", "wan-2", "hunyuanvideo", "hunyuan-video",
+            "cogvideo", "mochi", "fl2va", "t2v", "i2v",
+        ]
         return families.contains { value.contains($0) }
     }
 
@@ -182,7 +197,8 @@ enum LocalEngineModels {
     /// meant to be that engine's own copy of the weights.
     private static func isRealDirectory(_ path: String) -> Bool {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
-              let type = attributes[.type] as? FileAttributeType else { return false }
+            let type = attributes[.type] as? FileAttributeType
+        else { return false }
         return type == .typeDirectory
     }
 

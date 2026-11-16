@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
 import FlashCatKit
+import Foundation
 
 /// What this Mac should run, engine by engine, decided once from the machine's
 /// own numbers.
@@ -67,21 +67,24 @@ enum HardwareAdvisor {
         for engine in EngineCatalog.allIDs {
             let catalog = ModelRecommendations.list(for: engine)
             let candidates = catalog.map {
-                FitCandidate(id: $0.id, bytes: $0.bytes,
-                             minimumMemory: $0.minimumMemory, rank: $0.rank)
+                FitCandidate(
+                    id: $0.id, bytes: $0.bytes,
+                    minimumMemory: $0.minimumMemory, rank: $0.rank)
             }
             guard let fit = ModelFit.pick(candidates, machine: machine) else { continue }
-            picks.append(HardwareRecommendation.Pick(
-                engine: engine.rawValue,
-                model: catalog[fit.index].id,
-                verdict: fit.verdict,
-                reason: reason(verdict: fit.verdict, memoryGB: machine.memoryGB)))
+            picks.append(
+                HardwareRecommendation.Pick(
+                    engine: engine.rawValue,
+                    model: catalog[fit.index].id,
+                    verdict: fit.verdict,
+                    reason: reason(verdict: fit.verdict, memoryGB: machine.memoryGB)))
         }
-        return HardwareRecommendation(chipName: machine.chipName,
-                                      memoryGB: machine.memoryGB,
-                                      freeDiskBytes: machine.freeDiskBytes,
-                                      computedAt: Date(),
-                                      picks: picks)
+        return HardwareRecommendation(
+            chipName: machine.chipName,
+            memoryGB: machine.memoryGB,
+            freeDiskBytes: machine.freeDiskBytes,
+            computedAt: Date(),
+            picks: picks)
     }
 
     /// The only place the recommendation wording lives, so the launch page, the

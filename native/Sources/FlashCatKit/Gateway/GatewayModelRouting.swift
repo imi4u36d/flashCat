@@ -24,9 +24,11 @@ public enum GatewayModelRouting {
     /// `orderedEngines` 里第一个确实能提供 `requestedModel` 的引擎。调用方把正在
     /// 运行的引擎排在最前，这样同一个 id 落在多个引擎上时，优先级和
     /// `GET /v1/models` 的展示顺序一致。
-    public static func resolve(requestedModel: String?,
-                               orderedEngines: [EngineID],
-                               modelsByEngine: [EngineID: [String]]) -> GatewayModelRoute? {
+    public static func resolve(
+        requestedModel: String?,
+        orderedEngines: [EngineID],
+        modelsByEngine: [EngineID: [String]]
+    ) -> GatewayModelRoute? {
         let wanted = requestedModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !wanted.isEmpty else { return nil }
         for engine in orderedEngines {

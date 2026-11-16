@@ -101,7 +101,8 @@ public final class GatewaySSESession: @unchecked Sendable {
     }
 
     public var isClosed: Bool {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         return closed
     }
 
@@ -116,9 +117,11 @@ public final class GatewaySSESession: @unchecked Sendable {
         }
         pendingSends += 1
         lock.unlock()
-        connection.send(content: Data(text.utf8), completion: .contentProcessed { [weak self] error in
-            self?.noteSendFinished(error: error)
-        })
+        connection.send(
+            content: Data(text.utf8),
+            completion: .contentProcessed { [weak self] error in
+                self?.noteSendFinished(error: error)
+            })
         return !isClosed
     }
 
@@ -210,7 +213,8 @@ public final class GatewayHTTPServer: @unchecked Sendable {
     }
 
     public var boundPort: UInt16 {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         return port
     }
 
@@ -338,7 +342,8 @@ public final class GatewayHTTPServer: @unchecked Sendable {
     }
 
     private func receiveRequest(_ connection: NWConnection, progress: ReadProgress) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 16) { [weak self] data, _, isComplete, error in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 16) {
+            [weak self] data, _, isComplete, error in
             guard let self else { return }
             var progress = progress
             if let data { progress.buffer.append(data) }
@@ -349,14 +354,16 @@ public final class GatewayHTTPServer: @unchecked Sendable {
                 return
             case .incomplete:
                 guard progress.buffer.count <= Self.maximumHeadBytes else {
-                    self.writeSimpleResponse(connection, status: 400,
-                                             body: Self.errorBody("request head exceeds \(Self.maximumHeadBytes) bytes"))
+                    self.writeSimpleResponse(
+                        connection, status: 400,
+                        body: Self.errorBody("request head exceeds \(Self.maximumHeadBytes) bytes"))
                     return
                 }
             case .complete(let head, let contentLength, let bodyOffset):
                 guard contentLength <= Self.maximumBodyBytes else {
-                    self.writeSimpleResponse(connection, status: 413,
-                                             body: #"{"error":{"message":"request body too large"}}"#)
+                    self.writeSimpleResponse(
+                        connection, status: 413,
+                        body: #"{"error":{"message":"request body too large"}}"#)
                     return
                 }
                 if head.expectsContinue, !progress.acknowledgedContinue {
@@ -373,12 +380,13 @@ public final class GatewayHTTPServer: @unchecked Sendable {
                 }
                 let body = progress.buffer.subdata(in: bodyStart..<(bodyStart + contentLength))
                 let rest = progress.buffer.count - bodyOffset - contentLength
-                self.dispatch(connection,
-                              head: head,
-                              body: body,
-                              leftover: rest > 0
-                                  ? progress.buffer.subdata(in: (bodyStart + contentLength)..<progress.buffer.endIndex)
-                                  : Data())
+                self.dispatch(
+                    connection,
+                    head: head,
+                    body: body,
+                    leftover: rest > 0
+                        ? progress.buffer.subdata(in: (bodyStart + contentLength)..<progress.buffer.endIndex)
+                        : Data())
                 return
             }
 
@@ -425,7 +433,8 @@ public final class GatewayHTTPServer: @unchecked Sendable {
         // 正文缓冲起来。回 400 是如实的结果——以前按零字节正文处理，交给路由的是
         // 一份看起来完整、其实为空的载荷。
         if let transferEncoding = headers["transfer-encoding"],
-           transferEncoding.lowercased() != "identity" {
+            transferEncoding.lowercased() != "identity"
+        {
             return .invalid("unsupported transfer-encoding: \(transferEncoding)")
         }
         let contentLength: Int
@@ -455,15 +464,18 @@ public final class GatewayHTTPServer: @unchecked Sendable {
 
     // MARK: response writing（响应写出）
 
-    private func dispatch(_ connection: NWConnection,
-                          head: RequestHead,
-                          body: Data,
-                          leftover: Data) {
-        let request = GatewayRequest(method: head.method,
-                                     path: head.path,
-                                     query: head.query,
-                                     headers: head.headers,
-                                     body: body)
+    private func dispatch(
+        _ connection: NWConnection,
+        head: RequestHead,
+        body: Data,
+        leftover: Data
+    ) {
+        let request = GatewayRequest(
+            method: head.method,
+            path: head.path,
+            query: head.query,
+            headers: head.headers,
+            body: body)
         let keepAlive = (head.headers["connection"] ?? "").lowercased() != "close"
         Task { [weak self] in
             guard let self else { return }
@@ -488,8 +500,9 @@ public final class GatewayHTTPServer: @unchecked Sendable {
             return
         case .complete(let head, let contentLength, let bodyOffset):
             guard contentLength <= Self.maximumBodyBytes else {
-                writeSimpleResponse(connection, status: 413,
-                                    body: #"{"error":{"message":"request body too large"}}"#)
+                writeSimpleResponse(
+                    connection, status: 413,
+                    body: #"{"error":{"message":"request body too large"}}"#)
                 return
             }
             let start = leftover.startIndex
@@ -497,9 +510,11 @@ public final class GatewayHTTPServer: @unchecked Sendable {
             if leftover.count - bodyOffset >= contentLength {
                 let body = leftover.subdata(in: bodyStart..<(bodyStart + contentLength))
                 let rest = leftover.count - bodyOffset - contentLength
-                dispatch(connection, head: head, body: body,
-                         leftover: rest > 0 ? leftover.subdata(in: (bodyStart + contentLength)..<leftover.endIndex)
-                                            : Data())
+                dispatch(
+                    connection, head: head, body: body,
+                    leftover: rest > 0
+                        ? leftover.subdata(in: (bodyStart + contentLength)..<leftover.endIndex)
+                        : Data())
                 return
             }
         case .incomplete:
@@ -539,7 +554,8 @@ public final class GatewayHTTPServer: @unchecked Sendable {
     }
 
     private func writeSimpleResponse(_ connection: NWConnection, status: Int, body: String) {
-        let head = "HTTP/1.1 \(status) \(Self.reasonPhrase(status))\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n"
+        let head =
+            "HTTP/1.1 \(status) \(Self.reasonPhrase(status))\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n"
         write(connection, data: Data((head + body).utf8)) { _ in connection.cancel() }
     }
 
@@ -551,11 +567,15 @@ public final class GatewayHTTPServer: @unchecked Sendable {
         return #"{"error":{"message":"\#(escaped)","type":"invalid_request_error"}}"#
     }
 
-    private func write(_ connection: NWConnection, data: Data,
-                       completion: @escaping @Sendable (Error?) -> Void) {
-        connection.send(content: data, completion: .contentProcessed { error in
-            completion(error)
-        })
+    private func write(
+        _ connection: NWConnection, data: Data,
+        completion: @escaping @Sendable (Error?) -> Void
+    ) {
+        connection.send(
+            content: data,
+            completion: .contentProcessed { error in
+                completion(error)
+            })
     }
 
     public static func reasonPhrase(_ status: Int) -> String {

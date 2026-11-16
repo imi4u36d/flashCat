@@ -3,6 +3,7 @@
 
 import Darwin
 import XCTest
+
 @testable import FlashCatKit
 
 /// Gateway translation coverage: Anthropic → OpenAI requests, OpenAI →
@@ -10,15 +11,20 @@ import XCTest
 final class GatewayTests: XCTestCase {
 
     /// `[String: Any]` is not Equatable; compare through canonical JSON.
-    private func assertJSONEqual(_ a: Any, _ b: Any,
-                                 file: StaticString = #filePath, line: UInt = #line) {
-        let left = (try? JSONSerialization.data(withJSONObject: a, options: [.sortedKeys]))
+    private func assertJSONEqual(
+        _ a: Any, _ b: Any,
+        file: StaticString = #filePath, line: UInt = #line
+    ) {
+        let left =
+            (try? JSONSerialization.data(withJSONObject: a, options: [.sortedKeys]))
             ?? Data()
-        let right = (try? JSONSerialization.data(withJSONObject: b, options: [.sortedKeys]))
+        let right =
+            (try? JSONSerialization.data(withJSONObject: b, options: [.sortedKeys]))
             ?? Data()
-        XCTAssertEqual(String(decoding: left, as: UTF8.self),
-                       String(decoding: right, as: UTF8.self),
-                       file: file, line: line)
+        XCTAssertEqual(
+            String(decoding: left, as: UTF8.self),
+            String(decoding: right, as: UTF8.self),
+            file: file, line: line)
     }
 
     // MARK: request translation
@@ -29,7 +35,7 @@ final class GatewayTests: XCTestCase {
             "max_tokens": 1024,
             "system": "你是一个简洁的助手。",
             "messages": [
-                ["role": "user", "content": "你好"],
+                ["role": "user", "content": "你好"]
             ],
             "temperature": 0.3,
             "top_p": 0.9,
@@ -85,19 +91,22 @@ final class GatewayTests: XCTestCase {
     }
 
     func testRequestRequiresModelAndMaxTokens() {
-        XCTAssertThrowsError(try AnthropicCodec.translateRequest([
-            "messages": [["role": "user", "content": "hi"]],
-            "max_tokens": 10,
-        ]))
-        XCTAssertThrowsError(try AnthropicCodec.translateRequest([
-            "model": "m",
-            "messages": [["role": "user", "content": "hi"]],
-        ]))
-        XCTAssertThrowsError(try AnthropicCodec.translateRequest([
-            "model": "m",
-            "max_tokens": 10,
-            "messages": [[String: Any]](),
-        ]))
+        XCTAssertThrowsError(
+            try AnthropicCodec.translateRequest([
+                "messages": [["role": "user", "content": "hi"]],
+                "max_tokens": 10,
+            ]))
+        XCTAssertThrowsError(
+            try AnthropicCodec.translateRequest([
+                "model": "m",
+                "messages": [["role": "user", "content": "hi"]],
+            ]))
+        XCTAssertThrowsError(
+            try AnthropicCodec.translateRequest([
+                "model": "m",
+                "max_tokens": 10,
+                "messages": [[String: Any]](),
+            ]))
     }
 
     func testBase64ImageBecomesDataURL() throws {
@@ -105,12 +114,18 @@ final class GatewayTests: XCTestCase {
             "model": "vl",
             "max_tokens": 100,
             "messages": [
-                ["role": "user", "content": [
-                    ["type": "text", "text": "图里是什么"],
-                    ["type": "image", "source": [
-                        "type": "base64", "media_type": "image/png", "data": "aGVsbG8=",
-                    ]],
-                ]],
+                [
+                    "role": "user",
+                    "content": [
+                        ["type": "text", "text": "图里是什么"],
+                        [
+                            "type": "image",
+                            "source": [
+                                "type": "base64", "media_type": "image/png", "data": "aGVsbG8=",
+                            ],
+                        ],
+                    ],
+                ]
             ],
         ]
         let openai = try AnthropicCodec.translateRequest(payload).openai
@@ -128,21 +143,33 @@ final class GatewayTests: XCTestCase {
             "model": "m",
             "max_tokens": 512,
             "tools": [
-                ["name": "get_weather",
-                 "description": "查天气",
-                 "input_schema": ["type": "object", "properties": ["city": ["type": "string"]]]],
+                [
+                    "name": "get_weather",
+                    "description": "查天气",
+                    "input_schema": ["type": "object", "properties": ["city": ["type": "string"]]],
+                ]
             ],
             "tool_choice": ["type": "tool", "name": "get_weather"],
             "messages": [
                 ["role": "user", "content": "北京天气如何"],
-                ["role": "assistant", "content": [
-                    ["type": "tool_use", "id": "toolu_1", "name": "get_weather",
-                     "input": ["city": "北京"]],
-                ]],
-                ["role": "user", "content": [
-                    ["type": "tool_result", "tool_use_id": "toolu_1",
-                     "content": "晴，25 度"],
-                ]],
+                [
+                    "role": "assistant",
+                    "content": [
+                        [
+                            "type": "tool_use", "id": "toolu_1", "name": "get_weather",
+                            "input": ["city": "北京"],
+                        ]
+                    ],
+                ],
+                [
+                    "role": "user",
+                    "content": [
+                        [
+                            "type": "tool_result", "tool_use_id": "toolu_1",
+                            "content": "晴，25 度",
+                        ]
+                    ],
+                ],
             ],
         ]
         let openai = try AnthropicCodec.translateRequest(payload).openai
@@ -152,10 +179,12 @@ final class GatewayTests: XCTestCase {
         XCTAssertEqual(tools[0]["type"] as? String, "function")
         let function = tools[0]["function"] as? [String: Any] ?? [:]
         XCTAssertEqual(function["name"] as? String, "get_weather")
-        assertJSONEqual(function["parameters"] ?? [:],
-                        ["type": "object", "properties": ["city": ["type": "string"]]])
-        assertJSONEqual(openai["tool_choice"] ?? [:],
-                        ["type": "function", "function": ["name": "get_weather"]])
+        assertJSONEqual(
+            function["parameters"] ?? [:],
+            ["type": "object", "properties": ["city": ["type": "string"]]])
+        assertJSONEqual(
+            openai["tool_choice"] ?? [:],
+            ["type": "function", "function": ["name": "get_weather"]])
 
         let messages = openai["messages"] as? [[String: Any]] ?? []
         XCTAssertEqual(messages.count, 3)
@@ -179,9 +208,11 @@ final class GatewayTests: XCTestCase {
             "id": "chatcmpl-1",
             "model": "Qwen3.8-27B",
             "choices": [
-                ["index": 0,
-                 "message": ["role": "assistant", "content": "你好！"],
-                 "finish_reason": "stop"],
+                [
+                    "index": 0,
+                    "message": ["role": "assistant", "content": "你好！"],
+                    "finish_reason": "stop",
+                ]
             ],
             "usage": ["prompt_tokens": 12, "completion_tokens": 5],
         ]
@@ -203,16 +234,20 @@ final class GatewayTests: XCTestCase {
             "id": "chatcmpl-2",
             "model": "m",
             "choices": [
-                ["index": 0,
-                 "message": [
-                    "role": "assistant",
-                    "content": NSNull(),
-                    "tool_calls": [
-                        ["id": "call_1", "type": "function",
-                         "function": ["name": "get_weather", "arguments": #"{"city":"北京"}"#]],
+                [
+                    "index": 0,
+                    "message": [
+                        "role": "assistant",
+                        "content": NSNull(),
+                        "tool_calls": [
+                            [
+                                "id": "call_1", "type": "function",
+                                "function": ["name": "get_weather", "arguments": #"{"city":"北京"}"#],
+                            ]
+                        ],
                     ],
-                 ],
-                 "finish_reason": "tool_calls"],
+                    "finish_reason": "tool_calls",
+                ]
             ],
             "usage": [:],
         ]
@@ -249,7 +284,7 @@ final class GatewayTests: XCTestCase {
         XCTAssertEqual(start[1].object["type"] as? String, "ping")
 
         let chunk: [String: Any] = [
-            "choices": [["index": 0, "delta": ["content": "早上"]]],
+            "choices": [["index": 0, "delta": ["content": "早上"]]]
         ]
         let frames = translator.consume(chunk: chunk).map(parseFrame)
         // First text delta opens the block: content_block_start + delta.
@@ -261,7 +296,7 @@ final class GatewayTests: XCTestCase {
         XCTAssertEqual(delta["text"] as? String, "早上")
 
         let second = translator.consume(chunk: [
-            "choices": [["index": 0, "delta": ["content": "好"], "finish_reason": "stop"]],
+            "choices": [["index": 0, "delta": ["content": "好"], "finish_reason": "stop"]]
         ]).map(parseFrame)
         XCTAssertEqual(second[0].object["type"] as? String, "content_block_delta")
 
@@ -278,7 +313,7 @@ final class GatewayTests: XCTestCase {
         let translator = AnthropicCodec.StreamTranslator(model: "m")
         _ = translator.startEvents()
         let thinking = translator.consume(chunk: [
-            "choices": [["index": 0, "delta": ["reasoning_content": "让我想想"]]],
+            "choices": [["index": 0, "delta": ["reasoning_content": "让我想想"]]]
         ]).map(parseFrame)
         XCTAssertEqual(thinking[0].object["type"] as? String, "content_block_start")
         XCTAssertEqual((thinking[0].object["content_block"] as? [String: Any])?["type"] as? String, "thinking")
@@ -286,7 +321,7 @@ final class GatewayTests: XCTestCase {
 
         // The text that follows closes thinking and opens text.
         let text = translator.consume(chunk: [
-            "choices": [["index": 0, "delta": ["content": "答案是 4"]]],
+            "choices": [["index": 0, "delta": ["content": "答案是 4"]]]
         ]).map(parseFrame)
         XCTAssertEqual(text[0].object["type"] as? String, "content_block_stop")
         XCTAssertEqual(text[1].object["type"] as? String, "content_block_start")
@@ -303,10 +338,10 @@ final class GatewayTests: XCTestCase {
         var frames: [(event: String?, object: [String: Any])] = []
         frames += translator.startEvents().map(parseFrame)
         frames += translator.consume(chunk: [
-            "choices": [["index": 0, "delta": ["reasoning_content": "想"]]],
+            "choices": [["index": 0, "delta": ["reasoning_content": "想"]]]
         ]).map(parseFrame)
         frames += translator.consume(chunk: [
-            "choices": [["index": 0, "delta": ["content": "答"]]],
+            "choices": [["index": 0, "delta": ["content": "答"]]]
         ]).map(parseFrame)
         frames += translator.finishEvents().map(parseFrame)
 
@@ -326,12 +361,12 @@ final class GatewayTests: XCTestCase {
         _ = translator.startEvents()
 
         let firstText = translator.consume(chunk: [
-            "choices": [["index": 0, "delta": ["content": "先"]]],
+            "choices": [["index": 0, "delta": ["content": "先"]]]
         ]).map(parseFrame)
         XCTAssertEqual(firstText[0].object["index"] as? Int, 0)
 
         let thinking = translator.consume(chunk: [
-            "choices": [["index": 0, "delta": ["reasoning_content": "等等"]]],
+            "choices": [["index": 0, "delta": ["reasoning_content": "等等"]]]
         ]).map(parseFrame)
         XCTAssertEqual(thinking[0].object["type"] as? String, "content_block_stop")
         XCTAssertEqual(thinking[0].object["index"] as? Int, 0, "文本块必须先关掉")
@@ -339,7 +374,7 @@ final class GatewayTests: XCTestCase {
         XCTAssertEqual(thinking[2].object["index"] as? Int, 1)
 
         let text = translator.consume(chunk: [
-            "choices": [["index": 0, "delta": ["content": "后"]]],
+            "choices": [["index": 0, "delta": ["content": "后"]]]
         ]).map(parseFrame)
         XCTAssertEqual(text[0].object["type"] as? String, "content_block_stop")
         XCTAssertEqual(text[0].object["index"] as? Int, 1)
@@ -353,10 +388,19 @@ final class GatewayTests: XCTestCase {
         let translator = AnthropicCodec.StreamTranslator(model: "m")
         _ = translator.startEvents()
         let begin = translator.consume(chunk: [
-            "choices": [["index": 0, "delta": ["tool_calls": [
-                ["index": 0, "id": "call_9", "type": "function",
-                 "function": ["name": "get_weather", "arguments": ""]],
-            ]]]],
+            "choices": [
+                [
+                    "index": 0,
+                    "delta": [
+                        "tool_calls": [
+                            [
+                                "index": 0, "id": "call_9", "type": "function",
+                                "function": ["name": "get_weather", "arguments": ""],
+                            ]
+                        ]
+                    ],
+                ]
+            ]
         ]).map(parseFrame)
         XCTAssertEqual(begin[0].object["type"] as? String, "content_block_start")
         let block = begin[0].object["content_block"] as? [String: Any] ?? [:]
@@ -365,17 +409,25 @@ final class GatewayTests: XCTestCase {
         XCTAssertEqual(block["name"] as? String, "get_weather")
 
         let fragment = translator.consume(chunk: [
-            "choices": [["index": 0, "delta": ["tool_calls": [
-                ["index": 0, "function": ["arguments": #"{"city":"#]],
-            ]]]],
+            "choices": [
+                [
+                    "index": 0,
+                    "delta": [
+                        "tool_calls": [
+                            ["index": 0, "function": ["arguments": #"{"city":"#]]
+                        ]
+                    ],
+                ]
+            ]
         ]).map(parseFrame)
         XCTAssertEqual((fragment[0].object["delta"] as? [String: Any])?["type"] as? String, "input_json_delta")
         XCTAssertEqual((fragment[0].object["delta"] as? [String: Any])?["partial_json"] as? String, #"{"city":"#)
 
         let finish = translator.finishEvents().map(parseFrame)
         let delta = finish.first { $0.event == "message_delta" }
-        assertJSONEqual(delta?.object["delta"] ?? [:],
-                        ["stop_reason": "tool_use", "stop_sequence": NSNull()])
+        assertJSONEqual(
+            delta?.object["delta"] ?? [:],
+            ["stop_reason": "tool_use", "stop_sequence": NSNull()])
     }
 
     // MARK: errors & counting
@@ -394,12 +446,15 @@ final class GatewayTests: XCTestCase {
 
     func testCountInputTokens() {
         let payload: [String: Any] = [
-            "system": "hello world",          // 10 chars / 4 → 2
+            "system": "hello world",  // 10 chars / 4 → 2
             "messages": [
                 ["role": "user", "content": "你好世界"],  // CJK ×4 → 4
-                ["role": "user", "content": [
-                    ["type": "image", "source": ["type": "base64", "data": "x"]],
-                ]],
+                [
+                    "role": "user",
+                    "content": [
+                        ["type": "image", "source": ["type": "base64", "data": "x"]]
+                    ],
+                ],
             ],
         ]
         XCTAssertEqual(AnthropicCodec.countInputTokens(payload), 2 + 4 + 1_000)
@@ -463,7 +518,7 @@ final class GatewayTests: XCTestCase {
             for: URLRequest(url: URL(string: "http://127.0.0.1:\(port)/stream")!))
         XCTAssertEqual((streamResponse as? HTTPURLResponse)?.statusCode, 200)
         let text = String(decoding: streamData, as: UTF8.self)
-        XCTAssertEqual(text.components(separatedBy: "data: ").count - 1, 4) // 3 events + [DONE]
+        XCTAssertEqual(text.components(separatedBy: "data: ").count - 1, 4)  // 3 events + [DONE]
         XCTAssertTrue(text.contains(#"{"n":2}"#))
 
         // Anthropic-style dialect detection.
@@ -479,8 +534,10 @@ final class GatewayTests: XCTestCase {
 
     /// 挂起比失败难查得多：本轮 P1 修的正是「start 永不 resume」，所以每次
     /// 可能卡住的 await 都套一层超时，让「卡住」变成一条明确的失败信息。
-    private func withTimeout<T: Sendable>(seconds: TimeInterval,
-                                          _ operation: @escaping @Sendable () async -> T) async throws -> T {
+    private func withTimeout<T: Sendable>(
+        seconds: TimeInterval,
+        _ operation: @escaping @Sendable () async -> T
+    ) async throws -> T {
         try await withThrowingTaskGroup(of: T.self) { group in
             group.addTask { await operation() }
             group.addTask {
@@ -494,8 +551,10 @@ final class GatewayTests: XCTestCase {
     }
 
     /// 端口段 39100...39140 被 `testServerRoundTrip` 占用，这里从 39300 起找端口。
-    private func startLoopbackServer(_ server: GatewayHTTPServer,
-                                     candidates: ClosedRange<UInt16> = 39_300...39_360) async throws -> UInt16 {
+    private func startLoopbackServer(
+        _ server: GatewayHTTPServer,
+        candidates: ClosedRange<UInt16> = 39_300...39_360
+    ) async throws -> UInt16 {
         for candidate in candidates {
             if try await withTimeout(seconds: 5, { await server.start(port: candidate) }) {
                 return candidate
@@ -555,7 +614,7 @@ final class GatewayTests: XCTestCase {
         while request.utf8.count < GatewayHTTPServer.maximumHeadBytes + 4_096 {
             request += "X-Pad: \(padding)\r\n"
         }
-        client.send(request) // 故意不发结束的空行
+        client.send(request)  // 故意不发结束的空行
         let response = client.readToEnd()
         XCTAssertTrue(response.contains(" 400 "), "超长请求头应回 400，实际：\(response)")
         XCTAssertTrue(response.contains("head exceeds"), "应答应说明超限原因：\(response)")
@@ -575,8 +634,9 @@ final class GatewayTests: XCTestCase {
         XCTAssertFalse(first.contains("\"ok\""), "畸形请求不应到达路由：\(first)")
 
         let notUTF8 = try XCTUnwrap(RawTCPClient(port: port))
-        notUTF8.send(Data([0xFF, 0xFE, 0x00])
-            + Data(" / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n".utf8))
+        notUTF8.send(
+            Data([0xFF, 0xFE, 0x00])
+                + Data(" / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n".utf8))
         let second = notUTF8.readToEnd()
         XCTAssertTrue(second.contains(" 400 "), "非 UTF-8 请求头应回 400，实际：\(second)")
     }
@@ -589,15 +649,16 @@ final class GatewayTests: XCTestCase {
         defer { server.stop() }
         let client = try XCTUnwrap(RawTCPClient(port: port))
 
-        client.send([
-            "POST /v1/messages HTTP/1.1",
-            "Host: 127.0.0.1",
-            "Expect: 100-continue",
-            "Content-Length: 7",
-            "Connection: close",
-            "",
-            "",
-        ].joined(separator: "\r\n"))
+        client.send(
+            [
+                "POST /v1/messages HTTP/1.1",
+                "Host: 127.0.0.1",
+                "Expect: 100-continue",
+                "Content-Length: 7",
+                "Connection: close",
+                "",
+                "",
+            ].joined(separator: "\r\n"))
         let interim = client.read(until: "\r\n\r\n")
         XCTAssertTrue(interim.contains("100 Continue"), "没有回 100 Continue，实际：\(interim)")
 
@@ -615,14 +676,15 @@ final class GatewayTests: XCTestCase {
         defer { server.stop() }
         let client = try XCTUnwrap(RawTCPClient(port: port))
 
-        client.send([
-            "POST /v1/chat/completions HTTP/1.1",
-            "Host: 127.0.0.1",
-            "Transfer-Encoding: chunked",
-            "Connection: close",
-            "",
-            "",
-        ].joined(separator: "\r\n") + "2\r\n{}\r\n0\r\n\r\n")
+        client.send(
+            [
+                "POST /v1/chat/completions HTTP/1.1",
+                "Host: 127.0.0.1",
+                "Transfer-Encoding: chunked",
+                "Connection: close",
+                "",
+                "",
+            ].joined(separator: "\r\n") + "2\r\n{}\r\n0\r\n\r\n")
         let response = client.readToEnd()
         XCTAssertTrue(response.contains(" 400 "), "chunked 应回 400，实际：\(response)")
         XCTAssertTrue(response.contains("transfer-encoding"), "应答应说明不支持的编码：\(response)")

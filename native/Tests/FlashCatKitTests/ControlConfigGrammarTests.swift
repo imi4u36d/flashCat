@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import XCTest
+
 @testable import FlashCatKit
 
 final class ControlConfigGrammarTests: XCTestCase {
@@ -112,8 +113,9 @@ final class ControlConfigGrammarTests: XCTestCase {
     func testIntEnforcesRangeAndReportsIt() {
         XCTAssertEqual(try ControlConfigGrammar.int("1024", key: "port", range: ControlConfigGrammar.portRange), 1024)
         XCTAssertThrowsError(try ControlConfigGrammar.int("80", key: "port", range: ControlConfigGrammar.portRange)) {
-            XCTAssertEqual(($0 as? ControlConfigError)?.message,
-                           "port 需要 1024…65535 的整数")
+            XCTAssertEqual(
+                ($0 as? ControlConfigError)?.message,
+                "port 需要 1024…65535 的整数")
         }
         XCTAssertThrowsError(try ControlConfigGrammar.int("abc", key: "port", range: ControlConfigGrammar.portRange))
     }
@@ -121,8 +123,9 @@ final class ControlConfigGrammarTests: XCTestCase {
     func testDoubleEnforcesRangeAndReportsIt() {
         XCTAssertEqual(try ControlConfigGrammar.double("0.5", key: "temperature", range: 0...2), 0.5)
         XCTAssertThrowsError(try ControlConfigGrammar.double("3", key: "temperature", range: 0...2)) {
-            XCTAssertEqual(($0 as? ControlConfigError)?.message,
-                           "temperature 需要 0.0…2.0 的数字")
+            XCTAssertEqual(
+                ($0 as? ControlConfigError)?.message,
+                "temperature 需要 0.0…2.0 的数字")
         }
         XCTAssertThrowsError(try ControlConfigGrammar.double("hot", key: "temperature", range: 0...2))
     }

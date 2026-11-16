@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
 import Darwin
 import FlashCatKit
+import Foundation
 
 public enum StatusCommand {
     public static func run(_ context: CLIContext) async throws -> Int32 {
@@ -26,7 +26,8 @@ public enum StatusCommand {
             } else {
                 printHuman(snapshot, context)
             }
-            finalExit = snapshot.report.running
+            finalExit =
+                snapshot.report.running
                 ? CLIExit.success.rawValue
                 : snapshot.exit.rawValue
             if !watch { break }
@@ -64,29 +65,34 @@ public enum StatusCommand {
     private static func snapshot(_ context: CLIContext) async -> Snapshot {
         do {
             let location = try context.control
-            let status: ControlStatus = try await location.client.get("/v1/status",
-                                                                      timeout: context.timeout)
-            return Snapshot(report: Report(running: true,
-                                           appRunning: true,
-                                           app: status.app,
-                                           engine: status.engine,
-                                           engines: status.engines,
-                                           gateway: status.gateway,
-                                           downloads: status.downloads,
-                                           offline: false,
-                                           error: nil,
-                                           // 在线时这份文档来自应用自己的状态，
-                                           // CLI 侧那份 engines.json 坏没坏都不影响结论。
-                                           warnings: []),
-                            offlineReason: nil,
-                            exit: .success)
+            let status: ControlStatus = try await location.client.get(
+                "/v1/status",
+                timeout: context.timeout)
+            return Snapshot(
+                report: Report(
+                    running: true,
+                    appRunning: true,
+                    app: status.app,
+                    engine: status.engine,
+                    engines: status.engines,
+                    gateway: status.gateway,
+                    downloads: status.downloads,
+                    offline: false,
+                    error: nil,
+                    // 在线时这份文档来自应用自己的状态，
+                    // CLI 侧那份 engines.json 坏没坏都不影响结论。
+                    warnings: []),
+                offlineReason: nil,
+                exit: .success)
         } catch let error as CLIError {
-            return Snapshot(report: offlineReport(context, reason: error.message),
-                            offlineReason: error.message,
-                            exit: error.exit)
+            return Snapshot(
+                report: offlineReport(context, reason: error.message),
+                offlineReason: error.message,
+                exit: error.exit)
         } catch {
-            return Snapshot(report: offlineReport(context, reason: error.localizedDescription),
-                            offlineReason: error.localizedDescription)
+            return Snapshot(
+                report: offlineReport(context, reason: error.localizedDescription),
+                offlineReason: error.localizedDescription)
         }
     }
 
@@ -96,22 +102,24 @@ public enum StatusCommand {
         // 否则「没有任何引擎」看起来就像事实，而不是一份读坏的文件的后果。
         let readout = local.engineConfigurationReadout()
         let engines = ControlEngineDocuments.engines(local.engineDocumentInputs())
-        let gateway = ControlGatewayState(enabled: local.gatewayEnabled,
-                                          running: local.gatewayEnabled && portOpen(local.gatewayPort),
-                                          port: local.gatewayPort,
-                                          baseURL: "http://127.0.0.1:\(local.gatewayPort)",
-                                          failure: nil)
+        let gateway = ControlGatewayState(
+            enabled: local.gatewayEnabled,
+            running: local.gatewayEnabled && portOpen(local.gatewayPort),
+            port: local.gatewayPort,
+            baseURL: "http://127.0.0.1:\(local.gatewayPort)",
+            failure: nil)
         let appRunning = local.app.map(AppCommand.isRunning) ?? false
-        return Report(running: false,
-                      appRunning: appRunning,
-                      app: nil,
-                      engine: ControlEngineDocuments.primary(engines),
-                      engines: engines,
-                      gateway: gateway,
-                      downloads: localDownloads(),
-                      offline: true,
-                      error: reason,
-                      warnings: readout.warning.map { [$0] } ?? [])
+        return Report(
+            running: false,
+            appRunning: appRunning,
+            app: nil,
+            engine: ControlEngineDocuments.primary(engines),
+            engines: engines,
+            gateway: gateway,
+            downloads: localDownloads(),
+            offline: true,
+            error: reason,
+            warnings: readout.warning.map { [$0] } ?? [])
     }
 
     private static func localDownloads() -> [ControlDownloadSummary] {
@@ -124,19 +132,21 @@ public enum StatusCommand {
             var shared: [String]?
         }
         guard let data = FileManager.default.contents(atPath: FlashCatPaths.downloadTasksFile),
-              let tasks = try? JSONDecoder().decode([TaskFile].self, from: data) else {
+            let tasks = try? JSONDecoder().decode([TaskFile].self, from: data)
+        else {
             return []
         }
         return tasks.map { task in
             let downloaded = task.downloadedBytes ?? 0
             let total = task.totalBytes ?? 0
-            return ControlDownloadSummary(engine: task.engine,
-                                          model: task.model,
-                                          status: task.status == "downloading" ? "paused" : task.status,
-                                          downloadedBytes: downloaded,
-                                          totalBytes: total,
-                                          fraction: total > 0 ? min(Double(downloaded) / Double(total), 1) : nil,
-                                          shared: task.shared)
+            return ControlDownloadSummary(
+                engine: task.engine,
+                model: task.model,
+                status: task.status == "downloading" ? "paused" : task.status,
+                downloadedBytes: downloaded,
+                totalBytes: total,
+                fraction: total > 0 ? min(Double(downloaded) / Double(total), 1) : nil,
+                shared: task.shared)
         }
     }
 
@@ -144,8 +154,9 @@ public enum StatusCommand {
         let out = context.output
         let report = snapshot.report
         if report.running, let app = report.app {
-            out.line(out.bold("flashCat \(app.version)") + "  " + out.green("运行中")
-                     + out.dim(" · pid \(app.pid) · 控制接口 \(app.controlPort)"))
+            out.line(
+                out.bold("flashCat \(app.version)") + "  " + out.green("运行中")
+                    + out.dim(" · pid \(app.pid) · 控制接口 \(app.controlPort)"))
         } else if report.appRunning {
             out.line(out.bold("flashCat") + "  " + out.yellow("运行中 · 控制接口不可用"))
             if let reason = snapshot.offlineReason {
@@ -162,17 +173,19 @@ public enum StatusCommand {
         if let engine = report.engine, engine.isInstalled {
             let state = CLIFormat.engineState(engine.state)
             let tone = engine.state == "ready" ? out.green(state) : out.yellow(state)
-            out.line("引擎   " + out.bold(engine.name) + " " + engine.version + " · " + tone
-                     + (engine.model.isEmpty ? "" : " · " + engine.model)
-                     + " · :\(engine.port)"
-                     + (engine.uptimeSeconds.map { " · 已运行 \(CLIFormat.duration($0))" } ?? ""))
+            out.line(
+                "引擎   " + out.bold(engine.name) + " " + engine.version + " · " + tone
+                    + (engine.model.isEmpty ? "" : " · " + engine.model)
+                    + " · :\(engine.port)"
+                    + (engine.uptimeSeconds.map { " · 已运行 \(CLIFormat.duration($0))" } ?? ""))
         } else {
             out.line("引擎   没有安装")
         }
         let gateway = report.gateway
         let gatewayState = gateway.running ? out.green("运行中") : (gateway.enabled ? out.yellow("未运行") : out.dim("已关闭"))
-        out.line("网关   " + gateway.baseURL + "/v1 · " + gatewayState
-                 + (gateway.failure.map { " · " + $0 } ?? ""))
+        out.line(
+            "网关   " + gateway.baseURL + "/v1 · " + gatewayState
+                + (gateway.failure.map { " · " + $0 } ?? ""))
         let installed = report.engines.filter(\.isInstalled)
         if !installed.isEmpty {
             out.line("已装   " + installed.map { "\($0.name) \($0.version)" }.joined(separator: "、"))

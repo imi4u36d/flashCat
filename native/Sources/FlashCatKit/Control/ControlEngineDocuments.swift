@@ -31,18 +31,20 @@ public struct ControlEngineDocumentInput: Sendable, Equatable {
     public var uptimeSeconds: Int?
     public var pid: Int?
 
-    public init(id: EngineID,
-                installedVersion: String? = nil,
-                installedVersions: [String] = [],
-                isActive: Bool = false,
-                phase: ControlEnginePhase = .stopped,
-                configuredPort: Int? = nil,
-                boundPort: Int? = nil,
-                selectedModel: String = "",
-                lastModel: String? = nil,
-                stage: String = "",
-                uptimeSeconds: Int? = nil,
-                pid: Int? = nil) {
+    public init(
+        id: EngineID,
+        installedVersion: String? = nil,
+        installedVersions: [String] = [],
+        isActive: Bool = false,
+        phase: ControlEnginePhase = .stopped,
+        configuredPort: Int? = nil,
+        boundPort: Int? = nil,
+        selectedModel: String = "",
+        lastModel: String? = nil,
+        stage: String = "",
+        uptimeSeconds: Int? = nil,
+        pid: Int? = nil
+    ) {
         self.id = id
         self.installedVersion = installedVersion
         self.installedVersions = installedVersions
@@ -77,20 +79,21 @@ public enum ControlEngineDocuments {
     }
 
     public static func engine(_ input: ControlEngineDocumentInput) -> ControlEngineState {
-        ControlEngineState(id: input.id.rawValue,
-                           name: input.id.displayName,
-                           // 未安装时显示占位符而不是空串：表格列需要一个非空值。
-                           version: input.installedVersion ?? "—",
-                           installedVersions: input.installedVersions,
-                           isActive: input.isActive,
-                           isInstalled: input.installedVersion != nil,
-                           state: input.phase.rawValue,
-                           port: port(input),
-                           model: model(input),
-                           stage: input.stage,
-                           uptimeSeconds: input.uptimeSeconds,
-                           pid: input.pid,
-                           capabilities: input.id.descriptor.capabilities.map(\.rawValue).sorted())
+        ControlEngineState(
+            id: input.id.rawValue,
+            name: input.id.displayName,
+            // 未安装时显示占位符而不是空串：表格列需要一个非空值。
+            version: input.installedVersion ?? "—",
+            installedVersions: input.installedVersions,
+            isActive: input.isActive,
+            isInstalled: input.installedVersion != nil,
+            state: input.phase.rawValue,
+            port: port(input),
+            model: model(input),
+            stage: input.stage,
+            uptimeSeconds: input.uptimeSeconds,
+            pid: input.pid,
+            capabilities: input.id.descriptor.capabilities.map(\.rawValue).sorted())
     }
 
     public static func engines(_ inputs: [ControlEngineDocumentInput]) -> [ControlEngineState] {

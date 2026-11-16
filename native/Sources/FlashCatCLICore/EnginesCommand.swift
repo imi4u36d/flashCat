@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
 import FlashCatKit
+import Foundation
 
 public enum EnginesCommand {
     public static func run(_ context: CLIContext) async throws -> Int32 {
@@ -28,8 +28,9 @@ public enum EnginesCommand {
             let engine = try context.engineArgument()
             return try await LogsCommand.run(context, engineOverride: engine)
         default:
-            throw CLIError("未知 engines 子命令：\(action)", exit: .usage,
-                           hint: "可用：list / start / stop / restart / use / install / uninstall / port / logs")
+            throw CLIError(
+                "未知 engines 子命令：\(action)", exit: .usage,
+                hint: "可用：list / start / stop / restart / use / install / uninstall / port / logs")
         }
     }
 
@@ -49,16 +50,19 @@ public enum EnginesCommand {
             context.output.json(engines)
         } else {
             let rows = engines.map { engine in
-                [engine.id,
-                 engine.version,
-                 engine.isActive ? "yes" : "",
-                 engine.isInstalled ? CLIFormat.engineState(engine.state) : "未安装",
-                 String(engine.port),
-                 engine.model.isEmpty ? "—" : engine.model]
+                [
+                    engine.id,
+                    engine.version,
+                    engine.isActive ? "yes" : "",
+                    engine.isInstalled ? CLIFormat.engineState(engine.state) : "未安装",
+                    String(engine.port),
+                    engine.model.isEmpty ? "—" : engine.model,
+                ]
             }
-            context.output.table(headers: ["ENGINE", "VERSION", "ACTIVE", "STATE", "PORT", "MODEL"],
-                                 rows: rows,
-                                 empty: "没有引擎")
+            context.output.table(
+                headers: ["ENGINE", "VERSION", "ACTIVE", "STATE", "PORT", "MODEL"],
+                rows: rows,
+                empty: "没有引擎")
         }
         return CLIExit.success.rawValue
     }
@@ -80,9 +84,10 @@ public enum EnginesCommand {
         if context.output.json {
             context.output.json(engine)
         } else {
-            context.output.line("\(engine.name) \(engine.version) · \(CLIFormat.engineState(engine.state))"
-                                + (engine.model.isEmpty ? "" : " · \(engine.model)")
-                                + " · :\(engine.port)")
+            context.output.line(
+                "\(engine.name) \(engine.version) · \(CLIFormat.engineState(engine.state))"
+                    + (engine.model.isEmpty ? "" : " · \(engine.model)")
+                    + " · :\(engine.port)")
         }
         return CLIExit.success.rawValue
     }
@@ -97,19 +102,22 @@ public enum EnginesCommand {
         do {
             packIndex = try await installer.loadIndex()
         } catch {
-            throw CLIError("无法读取引擎包索引：\(error.localizedDescription)", exit: .failure,
-                           hint: "用 --index 指定 pack-index.json，或设置 FLASHCAT_PACK_INDEX_URL")
+            throw CLIError(
+                "无法读取引擎包索引：\(error.localizedDescription)", exit: .failure,
+                hint: "用 --index 指定 pack-index.json，或设置 FLASHCAT_PACK_INDEX_URL")
         }
         let releases = packIndex.releases(for: id)
         guard !releases.isEmpty else {
-            throw CLIError("索引里没有 \(id.displayName) 的安装包", exit: .notFound,
-                           hint: "先运行 flashcat engines install --index <索引> 或检查 pack-index.json")
+            throw CLIError(
+                "索引里没有 \(id.displayName) 的安装包", exit: .notFound,
+                hint: "先运行 flashcat engines install --index <索引> 或检查 pack-index.json")
         }
         let release: EnginePackRelease
         if let requestedVersion {
             guard let match = releases.first(where: { $0.version == requestedVersion }) else {
-                throw CLIError("\(id.displayName) 没有版本 \(requestedVersion)", exit: .notFound,
-                               hint: "可用版本：" + releases.map(\.version).joined(separator: ", "))
+                throw CLIError(
+                    "\(id.displayName) 没有版本 \(requestedVersion)", exit: .notFound,
+                    hint: "可用版本：" + releases.map(\.version).joined(separator: ", "))
             }
             release = match
         } else {
@@ -125,8 +133,10 @@ public enum EnginesCommand {
                     let installed: Bool
                     let message: String
                 }
-                context.output.json(Body(engine: id.rawValue, version: release.version,
-                                         installed: true, message: "已经安装"))
+                context.output.json(
+                    Body(
+                        engine: id.rawValue, version: release.version,
+                        installed: true, message: "已经安装"))
             } else {
                 context.output.line("\(id.displayName) \(release.version) 已经安装，无需重复安装")
             }
@@ -134,18 +144,20 @@ public enum EnginesCommand {
         }
 
         guard release.hasAvailableSource else {
-            throw CLIError("索引里的 \(id.displayName) \(release.version) 指向本机不存在的归档",
-                           exit: .notFound,
-                           hint: "用 --index 指定可下载的 pack-index.json，或设置 FLASHCAT_PACK_INDEX_URL")
+            throw CLIError(
+                "索引里的 \(id.displayName) \(release.version) 指向本机不存在的归档",
+                exit: .notFound,
+                hint: "用 --index 指定可下载的 pack-index.json，或设置 FLASHCAT_PACK_INDEX_URL")
         }
 
         if !context.output.json, !context.output.quiet {
             let size = release.bytes.map { " · " + CLIFormat.bytes($0) } ?? ""
             context.output.note("安装 \(id.displayName) \(release.version)\(size)")
         }
-        let progress = ProgressPrinter(json: context.output.json,
-                                       quiet: context.output.quiet,
-                                       interactive: CLI.isatty(FileHandle.standardError.fileDescriptor))
+        let progress = ProgressPrinter(
+            json: context.output.json,
+            quiet: context.output.quiet,
+            interactive: CLI.isatty(FileHandle.standardError.fileDescriptor))
         do {
             let installation = try await installer.install(release, for: id) { phase in
                 progress.update(phase)
@@ -158,9 +170,11 @@ public enum EnginesCommand {
                     let version: String
                     let path: String
                 }
-                context.output.json(Body(engine: id.rawValue,
-                                         version: installation.version,
-                                         path: installation.root.path))
+                context.output.json(
+                    Body(
+                        engine: id.rawValue,
+                        version: installation.version,
+                        path: installation.root.path))
             } else {
                 context.output.success("\(id.displayName) \(installation.version) 已安装到 \(installation.root.path)")
             }
@@ -184,15 +198,18 @@ public enum EnginesCommand {
         // 0.7.3 after the user confirms a prompt that named 0.7.2.
         let version = try selectedVersion(installed.map(\.version), requested: requestedVersion)
         guard let target = installed.first(where: { $0.version == version }) else {
-            throw CLIError("\(id.displayName) 没有安装版本 \(version)", exit: .notFound,
-                           hint: "已安装：" + installed.map(\.version).joined(separator: ", "))
+            throw CLIError(
+                "\(id.displayName) 没有安装版本 \(version)", exit: .notFound,
+                hint: "已安装：" + installed.map(\.version).joined(separator: ", "))
         }
-        let removable = EnginePackOwnership.isRemovable(directory: target.root.path,
-                                                        userRoots: EngineInstallations.userRoots())
+        let removable = EnginePackOwnership.isRemovable(
+            directory: target.root.path,
+            userRoots: EngineInstallations.userRoots())
         guard removable else {
-            throw CLIError("\(id.displayName) \(target.version) 位于只读位置，不能从 CLI 删除",
-                           exit: .conflict,
-                           hint: "应用 bundle 和 checkout 里的 pack 由构建/签名管理")
+            throw CLIError(
+                "\(id.displayName) \(target.version) 位于只读位置，不能从 CLI 删除",
+                exit: .conflict,
+                hint: "应用 bundle 和 checkout 里的 pack 由构建/签名管理")
         }
         do {
             let location = try context.control
@@ -201,8 +218,9 @@ public enum EnginesCommand {
             // 401 / 超时当成「没在跑」等于在活的进程底下删掉它的 pack，所以它们
             // 必须抛出去；只有 `.notRunning` 才允许跳过这个检查。
             if let running = engines.first(where: { $0.id == id.rawValue && $0.isRunning }) {
-                throw CLIError("\(running.name) 正在运行，先停止再卸载", exit: .conflict,
-                               hint: "flashcat engines stop \(id.rawValue)")
+                throw CLIError(
+                    "\(running.name) 正在运行，先停止再卸载", exit: .conflict,
+                    hint: "flashcat engines stop \(id.rawValue)")
             }
         } catch let error as CLIError where ControlFallback.shouldFallBack(error) {
             // 应用没在运行：没有进程能正在跑这个 pack，跳过运行中检查。
@@ -211,8 +229,9 @@ public enum EnginesCommand {
             context.output.note("已取消")
             return CLIExit.success.rawValue
         }
-        let installer = EngineInstaller(environment: EngineInstallEnvironment(
-            packsDirectory: FlashCatPaths.enginesDirectory))
+        let installer = EngineInstaller(
+            environment: EngineInstallEnvironment(
+                packsDirectory: FlashCatPaths.enginesDirectory))
         do {
             let removed = try await installer.uninstall(id, version: target.version)
             guard removed else {
@@ -243,8 +262,9 @@ public enum EnginesCommand {
             }
             let location = try context.control
             let body = ControlConfigSet(key: key, value: String(value))
-            let entry: ControlConfigEntry = try await location.client.post("/v1/config", body: body,
-                                                                          timeout: context.timeout)
+            let entry: ControlConfigEntry = try await location.client.post(
+                "/v1/config", body: body,
+                timeout: context.timeout)
             if context.output.json {
                 context.output.json(entry)
             } else {
@@ -262,14 +282,16 @@ public enum EnginesCommand {
                 value = ControlConfigGrammar.port(port, fallback: id.defaultPort)
             } else {
                 // 在线文档里没有这一项（老版本应用）时，本地 engines.json 才是唯一线索。
-                value = ControlConfigGrammar.port(context.local.engineConfiguration.port[id.rawValue],
-                                                  fallback: id.defaultPort)
+                value = ControlConfigGrammar.port(
+                    context.local.engineConfiguration.port[id.rawValue],
+                    fallback: id.defaultPort)
             }
         } catch let error as CLIError where ControlFallback.shouldFallBack(error) {
             // 只有应用没在运行时才读本地；401 / 超时用本地旧值冒充「当前端口」会让
             // 用户以为改端口失败是语法问题。
-            value = ControlConfigGrammar.port(context.local.engineConfiguration.port[id.rawValue],
-                                              fallback: id.defaultPort)
+            value = ControlConfigGrammar.port(
+                context.local.engineConfiguration.port[id.rawValue],
+                fallback: id.defaultPort)
         }
         if context.output.json {
             struct Body: Encodable {
@@ -287,8 +309,9 @@ public enum EnginesCommand {
 
     private static func engineAndVersion(_ context: CLIContext) throws -> (EngineID, String?) {
         guard var raw = context.invocation.arguments.first else {
-            throw CLIError("需要引擎 id", exit: .usage,
-                           hint: "例如 flashcat engines install omlx")
+            throw CLIError(
+                "需要引擎 id", exit: .usage,
+                hint: "例如 flashcat engines install omlx")
         }
         var version = context.invocation.option("release")
         if let at = raw.firstIndex(of: "@") {
@@ -296,8 +319,9 @@ public enum EnginesCommand {
             raw = String(raw[..<at])
         }
         guard let id = EngineID(rawValue: raw), EngineCatalog.allIDs.contains(id) else {
-            throw CLIError("未知引擎：\(raw)", exit: .usage,
-                           hint: "可用：" + EngineCatalog.allIDs.map(\.rawValue).joined(separator: ", "))
+            throw CLIError(
+                "未知引擎：\(raw)", exit: .usage,
+                hint: "可用：" + EngineCatalog.allIDs.map(\.rawValue).joined(separator: ", "))
         }
         return (id, version)
     }
@@ -306,7 +330,8 @@ public enum EnginesCommand {
         var indexURL: URL?
         var bundledPath: String?
         if let raw = context.invocation.option("index") ?? context.environment["FLASHCAT_PACK_INDEX_URL"],
-           !raw.isEmpty {
+            !raw.isEmpty
+        {
             if raw.lowercased().hasPrefix("http://") || raw.lowercased().hasPrefix("https://") {
                 guard let url = URL(string: raw) else {
                     throw CLIError("索引地址无效：\(raw)", exit: .usage)
@@ -327,14 +352,17 @@ public enum EnginesCommand {
 
     private static func bundledIndex(_ context: CLIContext) -> String? {
         if let app = AppLocator.resolve(environment: context.environment),
-           let resources = AppLocator.resourceRoot(app) {
+            let resources = AppLocator.resourceRoot(app)
+        {
             let candidate = resources.appendingPathComponent("pack-index.json").path
             if FileManager.default.fileExists(atPath: candidate) { return candidate }
         }
         // Development: the binary lives under .build/ and the checkout's index
         // is a few directories up.
-        let candidates = [URL(fileURLWithPath: context.executable).deletingLastPathComponent(),
-                          URL(fileURLWithPath: FileManager.default.currentDirectoryPath)]
+        let candidates = [
+            URL(fileURLWithPath: context.executable).deletingLastPathComponent(),
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
+        ]
         for start in candidates {
             var cursor = start
             for _ in 0..<6 {
@@ -357,8 +385,9 @@ public enum EnginesCommand {
             return
         }
         do {
-            _ = try await location.client.postData("/v1/engines/reload", body: Data("{}".utf8),
-                                                   timeout: 10)
+            _ = try await location.client.postData(
+                "/v1/engines/reload", body: Data("{}".utf8),
+                timeout: 10)
         } catch {
             // 重载失败不影响安装结果；应用下次启动会自己重建索引。留一行 verbose 线索，
             // 免得「装完没立刻刷新」变成无从排查的怪现象。
@@ -379,8 +408,9 @@ public enum EnginesCommand {
             return newest
         }
         guard versions.contains(requested) else {
-            throw CLIError("没有安装版本 \(requested)", exit: .notFound,
-                           hint: "已安装：" + versions.joined(separator: ", "))
+            throw CLIError(
+                "没有安装版本 \(requested)", exit: .notFound,
+                hint: "已安装：" + versions.joined(separator: ", "))
         }
         return requested
     }
@@ -413,7 +443,8 @@ private final class ProgressPrinter: @unchecked Sendable {
         case .resolving: text = "解析版本"
         case .downloading(let fraction, let received, let total):
             let percent = String(format: "%.0f%%", min(max(fraction, 0), 1) * 100)
-            text = "下载中 \(percent) · \(CLIFormat.bytes(received))"
+            text =
+                "下载中 \(percent) · \(CLIFormat.bytes(received))"
                 + (total.map { " / " + CLIFormat.bytes($0) } ?? "")
         case .verifying: text = "校验 SHA256"
         case .unpacking: text = "解包"

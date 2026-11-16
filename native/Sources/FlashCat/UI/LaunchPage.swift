@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import SwiftUI
 import AppKit
 import FlashCatKit
+import SwiftUI
 
 /// 首次启动页：先推荐这台 Mac 该跑哪台引擎 + 哪档模型，再让用户一键装好。
 ///
@@ -77,12 +77,14 @@ struct LaunchPage: View {
             Text(L10n.t(isRecommendation ? "先装一台引擎" : "选择一台引擎"))
                 .font(DS.Font.display)
                 .foregroundStyle(DS.text)
-            Text(isRecommendation
-                 ? "引擎运行时按 pack 分发，第一次打开需要下载（80 MB ~ 600 MB）。装好后控制台会自动接管。"
-                 : "没有可用的引擎运行时。装一台就能开始；之后可以在引擎页随时加装其他引擎。")
-                .font(DS.Font.md)
-                .foregroundStyle(DS.text2)
-                .fixedSize(horizontal: false, vertical: true)
+            Text(
+                isRecommendation
+                    ? "引擎运行时按 pack 分发，第一次打开需要下载（80 MB ~ 600 MB）。装好后控制台会自动接管。"
+                    : "没有可用的引擎运行时。装一台就能开始；之后可以在引擎页随时加装其他引擎。"
+            )
+            .font(DS.Font.md)
+            .foregroundStyle(DS.text2)
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -108,9 +110,10 @@ struct LaunchPage: View {
             ForEach(Array(EngineCatalog.allIDs.enumerated()), id: \.element) { index, id in
                 if let pick = recommendation.pick(for: id) {
                     pickRow(pick)
-                        .launchEntrance(appeared,
-                                        delay: 0.12 + Double(index) * 0.045,
-                                        reduceMotion: reduceMotion)
+                        .launchEntrance(
+                            appeared,
+                            delay: 0.12 + Double(index) * 0.045,
+                            reduceMotion: reduceMotion)
                 }
             }
         }
@@ -120,9 +123,10 @@ struct LaunchPage: View {
         let id = pick.engineID
         let installed = id.map { state.engineIsInstalled($0) } ?? false
         return HStack(spacing: 14) {
-            IconTile(symbol: id.map(engineSymbol) ?? "cpu",
-                     color: id.map(engineAccent) ?? DS.info,
-                     size: 34)
+            IconTile(
+                symbol: id.map(engineSymbol) ?? "cpu",
+                color: id.map(engineAccent) ?? DS.info,
+                size: 34)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(id?.displayName ?? pick.engine)
@@ -156,9 +160,10 @@ struct LaunchPage: View {
         VStack(spacing: 10) {
             ForEach(Array(EngineCatalog.allIDs.enumerated()), id: \.element) { index, id in
                 engineRow(id)
-                    .launchEntrance(appeared,
-                                    delay: 0.10 + Double(index) * 0.045,
-                                    reduceMotion: reduceMotion)
+                    .launchEntrance(
+                        appeared,
+                        delay: 0.10 + Double(index) * 0.045,
+                        reduceMotion: reduceMotion)
             }
         }
     }
@@ -201,10 +206,12 @@ struct LaunchPage: View {
                 InstalledBadge()
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             } else if phase.isBusy || busy == id {
-                LaunchProgressBadge(fraction: fraction,
-                                    label: label,
-                                    tint: engineAccent(id))
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                LaunchProgressBadge(
+                    fraction: fraction,
+                    label: label,
+                    tint: engineAccent(id)
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
             } else {
                 Button {
                     startInstall(id, recommended: recommended)
@@ -235,9 +242,10 @@ struct LaunchPage: View {
                     Text("开始使用")
                 }
                 .buttonStyle(.ds(.primary, size: .large))
-                .help(installedCandidate == nil
-                      ? "直接进入控制台，稍后再装引擎"
-                      : "以 \(installedCandidate?.displayName ?? "") 进入控制台")
+                .help(
+                    installedCandidate == nil
+                        ? "直接进入控制台，稍后再装引擎"
+                        : "以 \(installedCandidate?.displayName ?? "") 进入控制台")
             }
 
             if let error = installs.indexError, !error.isEmpty {
@@ -255,7 +263,8 @@ struct LaunchPage: View {
     private var installedCandidate: EngineID? {
         if state.engineIsInstalled(state.activeEngine) { return state.activeEngine }
         if let recommended = recommendation?.picks.compactMap(\.engineID)
-            .first(where: { state.engineIsInstalled($0) }) {
+            .first(where: { state.engineIsInstalled($0) })
+        {
             return recommended
         }
         return EngineCatalog.allIDs.first(where: { state.engineIsInstalled($0) })
@@ -332,8 +341,8 @@ private struct LaunchEntrance: ViewModifier {
     }
 }
 
-private extension View {
-    func launchEntrance(_ active: Bool, delay: Double, reduceMotion: Bool) -> some View {
+extension View {
+    fileprivate func launchEntrance(_ active: Bool, delay: Double, reduceMotion: Bool) -> some View {
         modifier(LaunchEntrance(active: active, delay: delay, reduceMotion: reduceMotion))
     }
 }
@@ -386,8 +395,9 @@ private struct LaunchProgressBadge: View {
                         .trim(from: 0, to: 0.18)
                         .stroke(tint.opacity(0.55), lineWidth: 1)
                         .rotationEffect(.degrees(spinning ? 360 : 0))
-                        .animation(.linear(duration: 1.6).repeatForever(autoreverses: false),
-                                   value: spinning)
+                        .animation(
+                            .linear(duration: 1.6).repeatForever(autoreverses: false),
+                            value: spinning)
                 }
             }
             .frame(width: 20, height: 20)

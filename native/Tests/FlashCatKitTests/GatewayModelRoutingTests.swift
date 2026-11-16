@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import XCTest
+
 @testable import FlashCatKit
 
 final class GatewayModelRoutingTests: XCTestCase {
@@ -27,16 +28,18 @@ final class GatewayModelRoutingTests: XCTestCase {
     }
 
     func testUnknownModelDoesNotFallBackToTheActiveModel() {
-        XCTAssertNil(GatewayModelRouting.resolve(
-            requestedModel: "not-installed",
-            orderedEngines: [.splash, .omlx],
-            modelsByEngine: [.splash: ["a"], .omlx: ["b"]]))
+        XCTAssertNil(
+            GatewayModelRouting.resolve(
+                requestedModel: "not-installed",
+                orderedEngines: [.splash, .omlx],
+                modelsByEngine: [.splash: ["a"], .omlx: ["b"]]))
     }
 
     func testBlankModelIsNotRouted() {
-        XCTAssertNil(GatewayModelRouting.resolve(
-            requestedModel: "   ",
-            orderedEngines: [.splash],
-            modelsByEngine: [.splash: ["a"]]))
+        XCTAssertNil(
+            GatewayModelRouting.resolve(
+                requestedModel: "   ",
+                orderedEngines: [.splash],
+                modelsByEngine: [.splash: ["a"]]))
     }
 }

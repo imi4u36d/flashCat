@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
-import SwiftUI
 import AppKit
 import Combine
 import Darwin
 import FlashCatKit
+import Foundation
+import SwiftUI
 
 enum Page: String, CaseIterable, Identifiable {
     case overview = "概览"
@@ -289,7 +289,6 @@ final class AppState: ObservableObject {
     var repoProbeError: String? { hub.repoProbeError }
     var repoProbeRepo: String { hub.repoProbeRepo }
 
-
     private var toastWork: DispatchWorkItem?
     private var supplementInFlight = false
     /// The single task that owns a model switch. Nothing else may touch the
@@ -402,9 +401,11 @@ final class AppState: ObservableObject {
         modelLibraryBridge = modelLibrary.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
-        NotificationCenter.default.addObserver(forName: EngineStore.tuningDidChangeNotification,
-                                               object: nil,
-                                               queue: .main) { [weak self] _ in
+        NotificationCenter.default.addObserver(
+            forName: EngineStore.tuningDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
             Task { @MainActor [weak self] in self?.tuningRevision += 1 }
         }
     }
@@ -436,13 +437,15 @@ final class AppState: ObservableObject {
         guard !model.isEmpty else { return nil }
         let key = "\(activeEngine.rawValue)|\(model)"
         if let cache = contextWindowCache, cache.key == key,
-           Date().timeIntervalSince(cache.at) < 20 {
+            Date().timeIntervalSince(cache.at) < 20
+        {
             return cache.value
         }
         var window = engineModels(for: activeEngine)
             .first { $0.id == model }?.maximumContextTokens
         if window == nil || window == 0,
-           let path = catalog.machineModel(model)?.path, !path.isEmpty {
+            let path = catalog.machineModel(model)?.path, !path.isEmpty
+        {
             window = EngineModelStore.meta(of: path).maximumContextTokens
         }
         // GGUF 权重里没有 config.json，引擎停着时上面两条都拿不到值；记住上次
@@ -486,9 +489,11 @@ final class AppState: ObservableObject {
     /// 引擎报出本次窗口的那一刻记下来。同样只在状态变化时写。
     private func rememberReportedWindow() {
         guard let reported = stats?.maximumContextTokens, reported > 0,
-              !selectedModel.isEmpty else { return }
-        UserDefaults.standard.set(reported,
-                                  forKey: Self.reportedWindowKey("\(activeEngine.rawValue)|\(selectedModel)"))
+            !selectedModel.isEmpty
+        else { return }
+        UserDefaults.standard.set(
+            reported,
+            forKey: Self.reportedWindowKey("\(activeEngine.rawValue)|\(selectedModel)"))
     }
 
     /// 聊天参数留空「最大生成 tokens」时的默认值：先取模型自身上限，再用引擎
@@ -508,9 +513,9 @@ final class AppState: ObservableObject {
         var engineWindow: Int?
         if let reported = stats?.maximumContextTokens, reported > 0 { engineWindow = reported }
         switch (modelContextWindow(selectedModel), engineWindow) {
-        case let (model?, window?): return min(model, window)
-        case let (model?, nil): return model
-        case let (nil, window?): return window
+        case (let model?, let window?): return min(model, window)
+        case (let model?, nil): return model
+        case (nil, let window?): return window
         case (nil, nil): return nil
         }
     }
@@ -540,7 +545,8 @@ final class AppState: ObservableObject {
             return livePromptTokens + Int(metrics.streamTotalTokens.rounded())
         }
         guard let last = messages.last(where: { $0.role == "assistant" && ($0.usage?.promptTokens ?? 0) > 0 }),
-              let usage = last.usage else { return 0 }
+            let usage = last.usage
+        else { return 0 }
         return usage.promptTokens + usage.completionTokens
     }
 
@@ -603,7 +609,8 @@ final class AppState: ObservableObject {
         // 卸载旧权重的那段空窗里引擎进程还亮着、阶段会回落到「运行中」——
         // 刚被清空的模型不能说它在跑，那一格宁可空着。
         guard isSwitchingModel,
-              startupStage == EngineStartupStage.ready.rawValue else {
+            startupStage == EngineStartupStage.ready.rawValue
+        else {
             return residentStageText
         }
         return ""
@@ -625,7 +632,8 @@ final class AppState: ObservableObject {
         var parts = [L10n.t(serverState.rawValue)]
         let stage = startupStage
         if !stage.isEmpty, stage != serverState.rawValue,
-           stage != EngineStartupStage.ready.rawValue, stage != "已停止" {
+            stage != EngineStartupStage.ready.rawValue, stage != "已停止"
+        {
             parts.append(L10n.t(stage))
         }
         if serverState == .starting {
@@ -715,53 +723,68 @@ final class AppState: ObservableObject {
     // 这 7 个静态纯函数被既有测试直接调用（DecodeRateTotalTests / CacheHitTests），
     // 实现已经搬进 store，留一层转发让测试原样通过。
 
-    nonisolated static func reading(origin: SpeedOrigin,
-                                    gateway: Double,
-                                    engine: Double?) -> MetricReading {
+    nonisolated static func reading(
+        origin: SpeedOrigin,
+        gateway: Double,
+        engine: Double?
+    ) -> MetricReading {
         MetricsStore.reading(origin: origin, gateway: gateway, engine: engine)
     }
 
-    nonisolated static func prefillReading(gateway: Double,
-                                           engine: Double?,
-                                           engineKind: EngineRateKind = .none) -> MetricReading {
+    nonisolated static func prefillReading(
+        gateway: Double,
+        engine: Double?,
+        engineKind: EngineRateKind = .none
+    ) -> MetricReading {
         MetricsStore.prefillReading(gateway: gateway, engine: engine, engineKind: engineKind)
     }
 
-    nonisolated static func prefillReading(engine: Double?,
-                                           engineKind: EngineRateKind = .none) -> MetricReading {
+    nonisolated static func prefillReading(
+        engine: Double?,
+        engineKind: EngineRateKind = .none
+    ) -> MetricReading {
         MetricsStore.prefillReading(engine: engine, engineKind: engineKind)
     }
 
-    nonisolated static func ttftReading(engine: Double?,
-                                        engineKind: EngineTTFTKind = .none,
-                                        gateway: Double) -> TTFTReading {
+    nonisolated static func ttftReading(
+        engine: Double?,
+        engineKind: EngineTTFTKind = .none,
+        gateway: Double
+    ) -> TTFTReading {
         MetricsStore.ttftReading(engine: engine, engineKind: engineKind, gateway: gateway)
     }
 
-    nonisolated static func cacheHitReading(gateway: Double,
-                                            requests: Int,
-                                            engine: Double?) -> MetricReading {
+    nonisolated static func cacheHitReading(
+        gateway: Double,
+        requests: Int,
+        engine: Double?
+    ) -> MetricReading {
         MetricsStore.cacheHitReading(gateway: gateway, requests: requests, engine: engine)
     }
 
-    nonisolated static func speedOrigin(gateway: Double,
-                                        gatewayIsLive: Bool = true,
-                                        engine: Double?,
-                                        engineKind: EngineRateKind = .none,
-                                        activeRequests: Int = 0,
-                                        gatewayAge: TimeInterval? = nil) -> SpeedOrigin {
-        MetricsStore.speedOrigin(gateway: gateway,
-                                 gatewayIsLive: gatewayIsLive,
-                                 engine: engine,
-                                 engineKind: engineKind,
-                                 activeRequests: activeRequests,
-                                 gatewayAge: gatewayAge)
+    nonisolated static func speedOrigin(
+        gateway: Double,
+        gatewayIsLive: Bool = true,
+        engine: Double?,
+        engineKind: EngineRateKind = .none,
+        activeRequests: Int = 0,
+        gatewayAge: TimeInterval? = nil
+    ) -> SpeedOrigin {
+        MetricsStore.speedOrigin(
+            gateway: gateway,
+            gatewayIsLive: gatewayIsLive,
+            engine: engine,
+            engineKind: engineKind,
+            activeRequests: activeRequests,
+            gatewayAge: gatewayAge)
     }
 
-    nonisolated static func chartFrozenAt(previous: Date?,
-                                          wasLive: Bool,
-                                          isLive: Bool,
-                                          now: Date) -> Date? {
+    nonisolated static func chartFrozenAt(
+        previous: Date?,
+        wasLive: Bool,
+        isLive: Bool,
+        now: Date
+    ) -> Date? {
         MetricsStore.chartFrozenAt(previous: previous, wasLive: wasLive, isLive: isLive, now: now)
     }
 
@@ -1041,8 +1064,10 @@ final class AppState: ObservableObject {
     func refreshLocalRepos() {
         var local = Set(sharedRepos.map { ModelSharing.canonical($0) })
         for id in EngineCatalog.allIDs {
-            for model in LocalEngineModels.scan(engine: id,
-                                                directory: EnginePaths.modelsDirectory(id)) {
+            for model in LocalEngineModels.scan(
+                engine: id,
+                directory: EnginePaths.modelsDirectory(id))
+            {
                 local.insert(ModelSharing.canonical(model.id))
             }
         }
@@ -1129,7 +1154,8 @@ final class AppState: ObservableObject {
     /// exactly when the recommended model is the one that is installed.
     func recommendationTag(for id: String, engine: EngineID) -> String? {
         guard let pick = hardwareRecommendation?.pick(for: engine),
-              ModelLibraryEntry.normalized(pick.model) == ModelLibraryEntry.normalized(id) else { return nil }
+            ModelLibraryEntry.normalized(pick.model) == ModelLibraryEntry.normalized(id)
+        else { return nil }
         return L10n.format("推荐 · %@", pick.reason)
     }
 
@@ -1224,7 +1250,8 @@ final class AppState: ObservableObject {
     /// engines has to know what the destination can serve before it commits.
     func engineModels(for id: EngineID) -> [EngineModel] {
         if let hit = engineModelsCache[id],
-           Date().timeIntervalSince(hit.at) < Self.modelListTTL {
+            Date().timeIntervalSince(hit.at) < Self.modelListTTL
+        {
             return hit.models
         }
         let models = scanEngineModels(for: id)
@@ -1252,13 +1279,15 @@ final class AppState: ObservableObject {
                     // Splash 的视觉能力来自独立的 mmproj 投影（GGUF 旁边的
                     // mmproj-*.gguf），目录扫描看不到；不补这个能力位，视觉
                     // 模型在对话页会被当成纯文本模型，画完图也不回传像素。
-                    let vision = $0.mmprojPath != nil
+                    let vision =
+                        $0.mmprojPath != nil
                         || LocalEngineModels.capabilities(at: $0.path).contains("vision")
                         || LocalEngineModels.capabilities(at: $0.targetName).contains("vision")
-                    return EngineModel(id: $0.id, path: $0.path, bytes: $0.bytes,
-                                       maximumContextTokens: nil, loaded: false, loading: false,
-                                       kind: nil, capabilities: vision ? ["chat", "vision"] : [],
-                                       hidden: false, helper: false, engine: .splash)
+                    return EngineModel(
+                        id: $0.id, path: $0.path, bytes: $0.bytes,
+                        maximumContextTokens: nil, loaded: false, loading: false,
+                        kind: nil, capabilities: vision ? ["chat", "vision"] : [],
+                        hidden: false, helper: false, engine: .splash)
                 }
         }
         let scanned = LocalEngineModels.scan(engine: id, directory: EnginePaths.modelsDirectory(id))
@@ -1277,17 +1306,20 @@ final class AppState: ObservableObject {
             .map { model in
                 // Splash 认 `owner/repo`，两个 pack 认扁平目录名——启动时交给引擎
                 // 的就是这个 id，不能用另一种写法。
-                let id = engine.adapter == .splash || engine.descriptor.modelLayout == .nested
+                let id =
+                    engine.adapter == .splash || engine.descriptor.modelLayout == .nested
                     ? model.id
                     : ModelInstaller.folderName(for: model.id)
-                let vision = model.mmprojPath != nil
+                let vision =
+                    model.mmprojPath != nil
                     || LocalEngineModels.capabilities(at: model.targetName).contains("vision")
-                return EngineModel(id: id,
-                                   path: model.targetName,
-                                   bytes: model.bytes,
-                                   maximumContextTokens: nil, loaded: false, loading: false,
-                                   kind: nil, capabilities: vision ? ["chat", "vision"] : [],
-                                   hidden: false, helper: false, engine: engine)
+                return EngineModel(
+                    id: id,
+                    path: model.targetName,
+                    bytes: model.bytes,
+                    maximumContextTokens: nil, loaded: false, loading: false,
+                    kind: nil, capabilities: vision ? ["chat", "vision"] : [],
+                    hidden: false, helper: false, engine: engine)
             }
     }
 
@@ -1303,7 +1335,8 @@ final class AppState: ObservableObject {
     /// rows whether or not that engine is installed, running or holding a model.
     func libraryEntries(for engine: EngineID) -> [ModelLibraryEntry] {
         if let hit = libraryEntriesCache[engine],
-           Date().timeIntervalSince(hit.at) < Self.modelListTTL {
+            Date().timeIntervalSince(hit.at) < Self.modelListTTL
+        {
             return hit.entries
         }
         let entries = buildLibraryEntries(for: engine)
@@ -1318,18 +1351,21 @@ final class AppState: ObservableObject {
         } else {
             installed = engineModels(for: engine).map { model in
                 let path = model.path ?? (EnginePaths.modelsDirectory(engine) + "/" + model.id)
-                return ModelInfo(id: model.id,
-                                 path: path,
-                                 bytes: model.bytes ?? 0,
-                                 origin: .local,
-                                 targetName: "",
-                                 quantization: ModelQuantization.detect(in: model.id)
-                                     ?? EngineModelStore.meta(of: path).quantization)
+                return ModelInfo(
+                    id: model.id,
+                    path: path,
+                    bytes: model.bytes ?? 0,
+                    origin: .local,
+                    targetName: "",
+                    quantization: ModelQuantization.detect(in: model.id)
+                        ?? EngineModelStore.meta(of: path).quantization)
             }
         }
-        return ModelLibrary.entries(installed: installed,
-                                    engine: engine,
-                                    recommendations: libraryRecommendations(for: engine)) { id in
+        return ModelLibrary.entries(
+            installed: installed,
+            engine: engine,
+            recommendations: libraryRecommendations(for: engine)
+        ) { id in
             engine.adapter == .splash ? self.catalog.draftRepository(id, family: nil) : nil
         }
     }
@@ -1381,11 +1417,13 @@ final class AppState: ObservableObject {
     func setDraftAssignment(_ draft: String?, engine: EngineID, model: String) {
         EngineStore.shared.setDraftAssignment(draft, engine: engine, model: model)
         if let draft, !draft.isEmpty {
-            toast(L10n.format("已为 %@ 指定辅助模型 %@", shortModelName(model), shortModelName(draft)),
-                  transient: true)
+            toast(
+                L10n.format("已为 %@ 指定辅助模型 %@", shortModelName(model), shortModelName(draft)),
+                transient: true)
         } else {
-            toast(L10n.format("已清除 %@ 的辅助模型，跟随引擎设置", shortModelName(model)),
-                  transient: true)
+            toast(
+                L10n.format("已清除 %@ 的辅助模型，跟随引擎设置", shortModelName(model)),
+                transient: true)
         }
         if engine == activeEngine, controller?.isRunning == true {
             Task { [weak self] in
@@ -1467,8 +1505,10 @@ final class AppState: ObservableObject {
     /// `nil` means the requested (or currently selected) model is ready.
     /// - Parameter allowingGeneration: 应用内图像生成用。它自己已经把
     ///   `generating` 置真，但换模型正是这次生成要做的事，不能因此拒绝自己。
-    func prepareModelForGateway(_ requestedModel: String?,
-                                allowingGeneration: Bool = false) async -> GatewayModelPreparationError? {
+    func prepareModelForGateway(
+        _ requestedModel: String?,
+        allowingGeneration: Bool = false
+    ) async -> GatewayModelPreparationError? {
         let previous = gatewayPreparationTail
         let operation = Task { @MainActor [weak self] () -> GatewayModelPreparationError? in
             await previous?.value
@@ -1480,9 +1520,12 @@ final class AppState: ObservableObject {
         return await operation.value
     }
 
-    private func prepareModelForGatewayExclusively(_ requestedModel: String?,
-                                                  allowingGeneration: Bool)
-        async -> GatewayModelPreparationError? {
+    private func prepareModelForGatewayExclusively(
+        _ requestedModel: String?,
+        allowingGeneration: Bool
+    )
+        async -> GatewayModelPreparationError?
+    {
         guard !needsEngineSetup, let engines else {
             return .unavailable("还没有安装推理引擎，请先在 flashCat 中安装并启动一个引擎")
         }
@@ -1501,23 +1544,30 @@ final class AppState: ObservableObject {
 
         var orderedEngines = [activeEngine]
         orderedEngines.append(contentsOf: availableEngines.filter { $0 != activeEngine })
-        let modelsByEngine = Dictionary(uniqueKeysWithValues: orderedEngines.map { engine in
-            (engine, engineModels(for: engine).map(\.id))
-        })
+        let modelsByEngine = Dictionary(
+            uniqueKeysWithValues: orderedEngines.map { engine in
+                (engine, engineModels(for: engine).map(\.id))
+            })
 
         let route: GatewayModelRoute
         let wanted = requestedModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if wanted.isEmpty {
             let activeModels = modelsByEngine[activeEngine] ?? []
-            guard let fallback = EngineModelSelection.resolve(saved: selectedModel,
-                                                              available: activeModels) else {
+            guard
+                let fallback = EngineModelSelection.resolve(
+                    saved: selectedModel,
+                    available: activeModels)
+            else {
                 return .badRequest("请求没有 model 字段，flashCat 也没有可用的默认模型")
             }
             route = GatewayModelRoute(model: fallback, engine: activeEngine)
         } else {
-            guard let resolved = GatewayModelRouting.resolve(requestedModel: wanted,
-                                                              orderedEngines: orderedEngines,
-                                                              modelsByEngine: modelsByEngine) else {
+            guard
+                let resolved = GatewayModelRouting.resolve(
+                    requestedModel: wanted,
+                    orderedEngines: orderedEngines,
+                    modelsByEngine: modelsByEngine)
+            else {
                 return .modelNotFound("没有已安装的模型 \(wanted)")
             }
             route = resolved
@@ -1538,8 +1588,9 @@ final class AppState: ObservableObject {
             return .unavailable("flashCat 正在生成回复，暂时不能切换模型")
         }
         if requiresWork || selectedModel != route.model {
-            gateway.logs.append("==> API 请求模型 \(route.model) · \(route.engine.displayName)",
-                                level: .system)
+            gateway.logs.append(
+                "==> API 请求模型 \(route.model) · \(route.engine.displayName)",
+                level: .system)
         }
 
         if !alreadyActive {
@@ -1570,7 +1621,8 @@ final class AppState: ObservableObject {
         if !controller.isRunning {
             await controller.start(localModel: selectedModelInfo, requestedModel: route.model)
         } else if !gatewayModelIsResident(route.model, in: controller),
-                  controller.model != route.model {
+            controller.model != route.model
+        {
             // A running engine with other weights resident: use the same
             // unload-confirm-load path as the switcher. Hot engines do this in
             // place; restart engines stop the process first.
@@ -1585,17 +1637,20 @@ final class AppState: ObservableObject {
             }
         }
 
-        let ready = await controller.waitForSwitchReady(route.model,
-                                                         timeout: route.engine.startupTimeout)
+        let ready = await controller.waitForSwitchReady(
+            route.model,
+            timeout: route.engine.startupTimeout)
         syncController()
         guard ready else {
-            let reason = controller.failureMessage
+            let reason =
+                controller.failureMessage
                 ?? "\(route.engine.displayName) 未能在预期时间内加载 \(route.model)"
             return .failed(reason)
         }
         if requiresWork {
-            gateway.logs.append("==> API 模型已就绪 · \(route.model) · 端口 \(controller.port)",
-                                level: .system)
+            gateway.logs.append(
+                "==> API 模型已就绪 · \(route.model) · 端口 \(controller.port)",
+                level: .system)
         }
         return nil
     }
@@ -1685,9 +1740,11 @@ final class AppState: ObservableObject {
             applyModelFromAnyEngine(id, engine: engine)
             return
         }
-        toast(L10n.format("已把 %@ 设为 %@ 的默认模型，下次启动生效；当前运行的 %@ 不受影响",
-                          shortModelName(id), engine.displayName, activeEngine.displayName),
-              transient: true)
+        toast(
+            L10n.format(
+                "已把 %@ 设为 %@ 的默认模型，下次启动生效；当前运行的 %@ 不受影响",
+                shortModelName(id), engine.displayName, activeEngine.displayName),
+            transient: true)
     }
 
     /// Make `engine` the running one and load `model` on it in one motion.
@@ -1719,8 +1776,9 @@ final class AppState: ObservableObject {
             // 被更新的选择接管了：状态与引擎都归那一代，这里静默退出。
             guard generation == self.switchGeneration else { return }
             guard activated || self.activeEngine == engine else {
-                self.settleModelSwitch(generation: generation,
-                                       outcome: .failed("\(engine.displayName) 没有可用的控制器"))
+                self.settleModelSwitch(
+                    generation: generation,
+                    outcome: .failed("\(engine.displayName) 没有可用的控制器"))
                 return
             }
             self.libraryEngine = engine
@@ -1732,17 +1790,20 @@ final class AppState: ObservableObject {
 
             self.switchStage = "加载新模型"
             guard let controller = self.controller else {
-                self.settleModelSwitch(generation: generation,
-                                       outcome: .failed("\(engine.displayName) 没有可用的控制器"))
+                self.settleModelSwitch(
+                    generation: generation,
+                    outcome: .failed("\(engine.displayName) 没有可用的控制器"))
                 return
             }
             await controller.start(localModel: self.selectedModelInfo, requestedModel: model)
             // 等「真的加载完」而不是「HTTP 壳子绿了」，否则界面会在权重刚
             // 开始搬的时候就退出「切换中」（见 waitForSwitchReady 里的日志）。
             let ready = await controller.waitForSwitchReady(model, timeout: engine.startupTimeout)
-            self.settleModelSwitch(generation: generation, outcome: ready
-                ? .ready
-                : .failed(controller.failureMessage ?? "\(engine.displayName) 未能在预期时间内就绪"))
+            self.settleModelSwitch(
+                generation: generation,
+                outcome: ready
+                    ? .ready
+                    : .failed(controller.failureMessage ?? "\(engine.displayName) 未能在预期时间内就绪"))
         }
     }
 
@@ -1768,8 +1829,9 @@ final class AppState: ObservableObject {
             if target != switchingModel {
                 queuedSwitchModel = target
                 // 排队只是「你的点击没丢」的一过性回执：不留在通知历史里。
-                toast(L10n.format("正在切换模型，完成后自动切到 %@", shortModelName(target)),
-                      transient: true)
+                toast(
+                    L10n.format("正在切换模型，完成后自动切到 %@", shortModelName(target)),
+                    transient: true)
             }
             return
         }
@@ -1786,9 +1848,12 @@ final class AppState: ObservableObject {
         // With weights loaded the switch unloads them first, which leaves the
         // engine without a model for a while — ask before doing that. With
         // nothing resident the pick is only a selection, applied on next start.
-        guard EngineModelSelection.needsConfirmation(isRunning: isRunning,
-                                                     current: selectedModel,
-                                                     target: target) else {
+        guard
+            EngineModelSelection.needsConfirmation(
+                isRunning: isRunning,
+                current: selectedModel,
+                target: target)
+        else {
             commitModelSwitch(to: target)
             return
         }
@@ -1868,16 +1933,19 @@ final class AppState: ObservableObject {
         switchStage = wasRunning ? "准备切换" : "启动引擎"
         switchTask = Task { [weak self] in
             guard let self, let controller = self.controller else {
-                self?.settleModelSwitch(generation: generation,
-                                        outcome: .failed("\(self?.activeEngine.displayName ?? "引擎") 没有可用的控制器"))
+                self?.settleModelSwitch(
+                    generation: generation,
+                    outcome: .failed("\(self?.activeEngine.displayName ?? "引擎") 没有可用的控制器"))
                 return
             }
             guard wasRunning else {
                 await controller.start(localModel: self.selectedModelInfo, requestedModel: id)
                 let ready = await controller.waitForSwitchReady(id, timeout: self.activeEngine.startupTimeout)
-                self.settleModelSwitch(generation: generation, outcome: ready
-                    ? .ready
-                    : .failed(controller.failureMessage ?? "\(self.activeEngine.displayName) 未能在预期时间内就绪"))
+                self.settleModelSwitch(
+                    generation: generation,
+                    outcome: ready
+                        ? .ready
+                        : .failed(controller.failureMessage ?? "\(self.activeEngine.displayName) 未能在预期时间内就绪"))
                 return
             }
             let outcome = await controller.switchModel(id) { stage in
@@ -1925,9 +1993,10 @@ final class AppState: ObservableObject {
         queuedSwitchModel = nil
         retireModelSwitch()
         // 退路回执，不是需要回头再看的状态：加载仍在后台推进，阶段行会说。
-        toast(L10n.format("已取消等待 · %@ 仍在后台加载", engine.displayName),
-              kind: .warning,
-              transient: true)
+        toast(
+            L10n.format("已取消等待 · %@ 仍在后台加载", engine.displayName),
+            kind: .warning,
+            transient: true)
     }
 
     /// Keep the stage line honest if the engine moves on its own between stages.
@@ -1944,9 +2013,10 @@ final class AppState: ObservableObject {
         case .ready:
             // 换模型是读者自己点的那一下的结果，看到「运行中」就够了：
             // 这条只闪一下，不写进通知历史。
-            toast(L10n.format("模型已就绪 · %@", shortModelName(selectedModel)),
-                  kind: .success,
-                  transient: true)
+            toast(
+                L10n.format("模型已就绪 · %@", shortModelName(selectedModel)),
+                kind: .success,
+                transient: true)
         case .failed(let reason):
             notice = reason
             toast("模型切换失败，请查看日志")
@@ -2045,13 +2115,15 @@ final class AppState: ObservableObject {
         return canChat
     }
 
-    func send(_ text: String,
-              attachment: ChatImageAttachment? = nil,
-              lastFrame: ChatImageAttachment? = nil,
-              referenceImages: [ChatImageAttachment] = [],
-              referenceClips: [VideoReferenceClip] = [],
-              image: ImageOptions = ImageOptions(),
-              video: VideoOptions = VideoOptions()) {
+    func send(
+        _ text: String,
+        attachment: ChatImageAttachment? = nil,
+        lastFrame: ChatImageAttachment? = nil,
+        referenceImages: [ChatImageAttachment] = [],
+        referenceClips: [VideoReferenceClip] = [],
+        image: ImageOptions = ImageOptions(),
+        video: VideoOptions = VideoOptions()
+    ) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty || generating { return }
         guard !needsEngineSetup else {
@@ -2063,9 +2135,10 @@ final class AppState: ObservableObject {
             return
         }
         if activeModelSupportsVideo {
-            sendVideo(trimmed, attachment: attachment, lastFrame: lastFrame,
-                      referenceImages: referenceImages, referenceClips: referenceClips,
-                      options: video)
+            sendVideo(
+                trimmed, attachment: attachment, lastFrame: lastFrame,
+                referenceImages: referenceImages, referenceClips: referenceClips,
+                options: video)
             return
         }
         if activeModelSupportsImage {
@@ -2083,7 +2156,8 @@ final class AppState: ObservableObject {
         let needsStartup = !canChat
 
         // 被「停止」的空回答留在界面上，但不该当成一轮空 assistant 发给引擎。
-        var turns: [ChatTurn] = messages
+        var turns: [ChatTurn] =
+            messages
             .filter { !$0.streaming && !$0.content.isEmpty }
             .map { ChatTurn(role: $0.role, content: $0.content) }
         var openingTurn = ChatTurn(role: "user", content: trimmed)
@@ -2095,7 +2169,8 @@ final class AppState: ObservableObject {
         turns.append(openingTurn)
 
         messages.append(ChatMessage(role: "user", content: trimmed, model: selectedModel, createdAt: Date()))
-        messages.append(ChatMessage(role: "assistant", content: "", model: selectedModel, createdAt: Date(), streaming: true))
+        messages.append(
+            ChatMessage(role: "assistant", content: "", model: selectedModel, createdAt: Date(), streaming: true))
         streamMessageID = messages[messages.count - 1].id.uuidString
         // 先把「问题」这条写进最近对话：这样切走之后它在列表里就有自己的
         // 一行（标着「生成中」），后台跑完再原地覆盖成完整的一问一答。
@@ -2119,19 +2194,21 @@ final class AppState: ObservableObject {
         if !openingTurn.imageURLs.isEmpty {
             systemPrompt += "\n\n随这条消息附上的是你最近生成的成品；先看图再回答，不要只凭对话里的路径猜。"
         }
-        let options = ChatOptions(temperature: settings.temperature,
-                                  topP: settings.topP,
-                                  maxTokens: maxTokensLimit,
-                                  reasoningEffort: settings.effectiveReasoningEffort,
-                                  systemPrompt: systemPrompt,
-                                  thinkingBudget: EngineStore.shared
-                                      .tuning(for: activeEngine)
-                                      .effectiveThinkingBudget(for: activeEngine))
+        let options = ChatOptions(
+            temperature: settings.temperature,
+            topP: settings.topP,
+            maxTokens: maxTokensLimit,
+            reasoningEffort: settings.effectiveReasoningEffort,
+            systemPrompt: systemPrompt,
+            thinkingBudget: EngineStore.shared
+                .tuning(for: activeEngine)
+                .effectiveThinkingBudget(for: activeEngine))
         let model = selectedModel
         // 上下文实时估算的基数：本轮提示词（含系统提示）的 token 数。回复结束
         // 后仍会回落到引擎回报的真实 usage。
-        let promptTokens = TokenEstimator.promptTokens(
-            messages: turns.map { ["role": $0.role, "content": $0.content] })
+        let promptTokens =
+            TokenEstimator.promptTokens(
+                messages: turns.map { ["role": $0.role, "content": $0.content] })
             + TokenEstimator.estimate(options.systemPrompt)
             + turns.reduce(0) { $0 + $1.imageURLs.count } * TokenEstimator.approximateImageTokens
         livePromptTokens = promptTokens
@@ -2173,7 +2250,8 @@ final class AppState: ObservableObject {
             // 之前，冷启动时那段加载几十 GB 权重的时间不能摊进预填充。
             GatewayMeter.shared.markStarted(meterID, at: started)
             let endpointPort = self.port
-            let result = await chatClient.send(port: endpointPort, model: model, turns: turns, options: options,
+            let result = await chatClient.send(
+                port: endpointPort, model: model, turns: turns, options: options,
                 onDelta: { piece, at in
                     GatewayMeter.shared.addTokens(meterID, TokenEstimator.fractional(piece), at: at)
                     Task { @MainActor in
@@ -2209,18 +2287,20 @@ final class AppState: ObservableObject {
                     }
                 },
                 onUsage: { usage in
-                    GatewayMeter.shared.noteUsage(meterID,
-                                                  promptTokens: usage.promptTokens,
-                                                  completionTokens: usage.completionTokens,
-                                                  cachedPromptTokens: usage.cachedPromptTokens)
+                    GatewayMeter.shared.noteUsage(
+                        meterID,
+                        promptTokens: usage.promptTokens,
+                        completionTokens: usage.completionTokens,
+                        cachedPromptTokens: usage.cachedPromptTokens)
                     Task { @MainActor in
                         guard self.sendGeneration == generation else { return }
                         guard self.updateStreamingMessage({ $0.usage = usage }) else { return }
                         // 思考截断可见性：引擎按预算收束思考时，reasoning_tokens
                         // 正好落在预算上，用「≥ 预算」判定这次思考被截断。
                         if let budget = options.thinkingBudget,
-                           let reasoning = usage.reasoningTokens,
-                           reasoning >= budget {
+                            let reasoning = usage.reasoningTokens,
+                            reasoning >= budget
+                        {
                             self.controller?.logs.append(
                                 "==> 思考截断：本次思考 \(reasoning) tokens 触及预算 \(budget)，已被强制收束；如需更长思考请在引擎配置调大「思考截断」",
                                 level: .warning)
@@ -2293,9 +2373,11 @@ final class AppState: ObservableObject {
             generating = false
             // 读者早就切走了：回答落回它自己的会话，再冒一条通知告诉他落在哪。
             if let finished = self.persistStreamingConversation(),
-               let thread = self.threads.first(where: { $0.id == finished }) {
-                self.toast(L10n.format("「%@」已在后台生成完成", thread.title),
-                           kind: .success)
+                let thread = self.threads.first(where: { $0.id == finished })
+            {
+                self.toast(
+                    L10n.format("「%@」已在后台生成完成", thread.title),
+                    kind: .success)
             }
         }
     }
@@ -2335,7 +2417,8 @@ final class AppState: ObservableObject {
     var imageToolModel: EngineModel? {
         let models = imageToolModels
         if !imageToolModelID.isEmpty,
-           let chosen = models.first(where: { $0.id == imageToolModelID }) {
+            let chosen = models.first(where: { $0.id == imageToolModelID })
+        {
             return chosen
         }
         return models.first
@@ -2363,9 +2446,11 @@ final class AppState: ObservableObject {
     ///
     /// 编排复用 `prepareModelForGateway(allowingGeneration:)`：加载几十 GB 的
     /// 图像权重、把对话模型换出去，都走网关那条已经验证过冷启动的路径。
-    private func sendImage(_ prompt: String,
-                           attachment: ChatImageAttachment?,
-                           options: ImageOptions) {
+    private func sendImage(
+        _ prompt: String,
+        attachment: ChatImageAttachment?,
+        options: ImageOptions
+    ) {
         let model = selectedModel
         // 蒸馏包的采样表写在权重里：引擎只认那个步数，个别包收到别的值会直接
         // 拒绝。面板已经把滑杆换成固定值，这里再把请求对齐一次，别让旧设置
@@ -2379,7 +2464,8 @@ final class AppState: ObservableObject {
         var sourceBase64: String?
         if let attachment {
             guard let imported = ImageStore.importImage(atPath: attachment.path),
-                  let encoded = ImageStore.base64(atPath: imported) else {
+                let encoded = ImageStore.base64(atPath: imported)
+            else {
                 notice = "读取图片失败：\(attachment.name)"
                 return
             }
@@ -2387,11 +2473,14 @@ final class AppState: ObservableObject {
             sourceBase64 = encoded
         }
 
-        messages.append(ChatMessage(role: "user", content: prompt, model: model,
-                                    createdAt: Date(), imagePath: sourcePath))
-        let placeholder = ChatMessage(role: "assistant", content: "", model: model,
-                                      createdAt: Date(), streaming: true,
-                                      imageProgress: "正在准备图像模型")
+        messages.append(
+            ChatMessage(
+                role: "user", content: prompt, model: model,
+                createdAt: Date(), imagePath: sourcePath))
+        let placeholder = ChatMessage(
+            role: "assistant", content: "", model: model,
+            createdAt: Date(), streaming: true,
+            imageProgress: "正在准备图像模型")
         messages.append(placeholder)
         streamMessageID = placeholder.id.uuidString
         history.save(messages: messages, threadID: threadID)
@@ -2404,16 +2493,18 @@ final class AppState: ObservableObject {
         imageTask?.cancel()
         imageTask = Task { [weak self] in
             guard let self else { return }
-            let preparation = await self.prepareModelForGateway(model,
-                                                                allowingGeneration: true)
+            let preparation = await self.prepareModelForGateway(
+                model,
+                allowingGeneration: true)
             guard self.sendGeneration == generation else { return }
             if let preparation {
                 self.failImage(preparation.message)
                 return
             }
 
-            let meterID = GatewayMeter.shared.begin(model: model, dialect: "image",
-                                                    promptTokens: 0)
+            let meterID = GatewayMeter.shared.begin(
+                model: model, dialect: "image",
+                promptTokens: 0)
             GatewayMeter.shared.markStarted(meterID, at: Date())
             self.generationStatus = sourceBase64 == nil ? "正在生成图像" : "正在重绘图像"
             let request = ImageGenerationRequest(
@@ -2425,8 +2516,10 @@ final class AppState: ObservableObject {
                 sourceBase64: sourceBase64,
                 strength: sourceBase64 == nil ? nil : options.strength,
                 mode: sourceBase64 == nil ? nil : "variation")
-            let outcome = await self.imageClient.generate(port: self.port,
-                                                          request: request) { [weak self] progress in
+            let outcome = await self.imageClient.generate(
+                port: self.port,
+                request: request
+            ) { [weak self] progress in
                 Task { @MainActor in
                     guard let self, self.sendGeneration == generation else { return }
                     self.updateStreamingMessage { $0.imageProgress = progress }
@@ -2442,10 +2535,11 @@ final class AppState: ObservableObject {
                 let path = ImageStore.save(result.png)
                 // 图注用引擎实际跑的步数：Turbo 这类蒸馏包会把 20 步请求
                 // 改写成自己的 8 步 sigma 表，写请求值会让图注和面板打架。
-                let note = self.imageNote(options: options,
-                                          attachment: attachment,
-                                          path: path,
-                                          actualSteps: result.steps)
+                let note = self.imageNote(
+                    options: options,
+                    attachment: attachment,
+                    path: path,
+                    actualSteps: result.steps)
                 self.updateStreamingMessage { message in
                     message.streaming = false
                     message.imageProgress = nil
@@ -2461,13 +2555,14 @@ final class AppState: ObservableObject {
                     // 只登记模型生成的成品；用户底图挂在前面那条 user 消息的
                     // imagePath 上，不会走到这里。历史只保留六段对话，图库自己
                     // 留一份索引，删掉对话也不会把已保存的作品一起抹掉。
-                    ImageGalleryStore.shared.record(GalleryImage(
-                        path: path,
-                        prompt: prompt,
-                        model: model,
-                        createdAt: Date(),
-                        note: note,
-                        seed: seed))
+                    ImageGalleryStore.shared.record(
+                        GalleryImage(
+                            path: path,
+                            prompt: prompt,
+                            model: model,
+                            createdAt: Date(),
+                            note: note,
+                            seed: seed))
                 }
                 if path == nil { self.notice = "图像已生成，但写入磁盘失败" }
             case .failure(let error):
@@ -2505,7 +2600,8 @@ final class AppState: ObservableObject {
         sent.append(openingTurn)
 
         messages.append(ChatMessage(role: "user", content: text, model: chatModel, createdAt: Date()))
-        messages.append(ChatMessage(role: "assistant", content: "", model: chatModel, createdAt: Date(), streaming: true))
+        messages.append(
+            ChatMessage(role: "assistant", content: "", model: chatModel, createdAt: Date(), streaming: true))
         streamMessageID = messages[messages.count - 1].id.uuidString
         // 先把这一问摆进最近对话：换模型要几十秒，用户中途切走也点得回来。
         history.save(messages: messages, threadID: threadID)
@@ -2517,22 +2613,26 @@ final class AppState: ObservableObject {
         chatStartupStage = needsStartup ? "模型正在启动中…" : nil
         metrics.resetStreamMeter()
 
-        var options = ChatOptions(temperature: settings.temperature,
-                                  topP: settings.topP,
-                                  maxTokens: effectiveMaxTokens,
-                                  reasoningEffort: settings.effectiveReasoningEffort,
-                                  systemPrompt: settings.systemPrompt,
-                                  thinkingBudget: EngineStore.shared
-                                      .tuning(for: activeEngine)
-                                      .effectiveThinkingBudget(for: activeEngine))
+        var options = ChatOptions(
+            temperature: settings.temperature,
+            topP: settings.topP,
+            maxTokens: effectiveMaxTokens,
+            reasoningEffort: settings.effectiveReasoningEffort,
+            systemPrompt: settings.systemPrompt,
+            thinkingBudget: EngineStore.shared
+                .tuning(for: activeEngine)
+                .effectiveThinkingBudget(for: activeEngine))
         // 工具描述已经写清用途，系统提示只补一句「别光描述、直接画」。
-        options.systemPrompt = options.systemPrompt.isEmpty
+        options.systemPrompt =
+            options.systemPrompt.isEmpty
             ? ImageTool.guidance
             : options.systemPrompt + "\n\n" + ImageTool.guidance
-        options.systemPrompt += seesImages
+        options.systemPrompt +=
+            seesImages
             ? "\n\n画完的成品会作为图片回传给你。先看清画面再回答或继续改，不要只凭提示词猜。"
             : "\n\n你看不到图片本身，只拿得到路径与尺寸。不要编造画面里没确认的细节。"
-        let tools = ChatToolSchema(ImageTool.schema(sizeOptions: ImageModelProfile(model: imageModel).presets.map(\.id)))
+        let tools = ChatToolSchema(
+            ImageTool.schema(sizeOptions: ImageModelProfile(model: imageModel).presets.map(\.id)))
         let imageOptions = ImageOptionsStore.load()
         // 整组图共用一个 seed：同一条提示词重发能复现，图注里也能看见。
         let seriesSeed = Int.random(in: 1...1_000_000_000)
@@ -2555,9 +2655,12 @@ final class AppState: ObservableObject {
 
             // 引擎可能还停在上一轮画图用的图像模型上（用户中途停止过），
             // 直接发聊天请求会 503。先把对话模型换回显存，已经在了就是空操作。
-            if let problem = await self.ensureResidentModel(chatModel, stage: { stage in
-                self.setToolStage(stage, generation: generation)
-            }) {
+            if let problem = await self.ensureResidentModel(
+                chatModel,
+                stage: { stage in
+                    self.setToolStage(stage, generation: generation)
+                })
+            {
                 self.finishImageToolTurn(failure: problem, generation: generation)
                 return
             }
@@ -2574,16 +2677,19 @@ final class AppState: ObservableObject {
                 guard self.sendGeneration == generation, !Task.isCancelled else { return }
                 // 轮次用完、或这一轮已经画满：最后一趟不带工具，模型只能把
                 // 这一组图讲完，不会又画一轮把对话卡在这里。
-                let roundTools = (rounds >= ImageTool.maximumRounds || drawn >= ImageTool.maximumImagesPerTurn)
+                let roundTools =
+                    (rounds >= ImageTool.maximumRounds || drawn >= ImageTool.maximumImagesPerTurn)
                     ? ChatToolSchema() : tools
                 let started = Date()
-                let promptTokens = TokenEstimator.promptTokens(
-                    messages: sent.map { ["role": $0.role, "content": $0.content] })
+                let promptTokens =
+                    TokenEstimator.promptTokens(
+                        messages: sent.map { ["role": $0.role, "content": $0.content] })
                     + TokenEstimator.estimate(options.systemPrompt)
                     + sent.reduce(0) { $0 + $1.imageURLs.count } * TokenEstimator.approximateImageTokens
                 self.livePromptTokens = promptTokens
-                let meterID = GatewayMeter.shared.begin(model: chatModel, dialect: "chat",
-                                                        promptTokens: promptTokens)
+                let meterID = GatewayMeter.shared.begin(
+                    model: chatModel, dialect: "chat",
+                    promptTokens: promptTokens)
                 GatewayMeter.shared.markStarted(meterID, at: started)
 
                 let result = await self.chatClient.send(
@@ -2623,10 +2729,11 @@ final class AppState: ObservableObject {
                         }
                     },
                     onUsage: { reported in
-                        GatewayMeter.shared.noteUsage(meterID,
-                                                      promptTokens: reported.promptTokens,
-                                                      completionTokens: reported.completionTokens,
-                                                      cachedPromptTokens: reported.cachedPromptTokens)
+                        GatewayMeter.shared.noteUsage(
+                            meterID,
+                            promptTokens: reported.promptTokens,
+                            completionTokens: reported.completionTokens,
+                            cachedPromptTokens: reported.cachedPromptTokens)
                     },
                     onStatus: { status in
                         Task { @MainActor in
@@ -2669,12 +2776,14 @@ final class AppState: ObservableObject {
                 }
                 usage.finishReason = reported.finishReason
 
-                let calls = roundTools.isEmpty
+                let calls =
+                    roundTools.isEmpty
                     ? []
                     : self.chatClient.lastToolCalls.filter { $0.name == ImageTool.name }
                 guard !calls.isEmpty else {
-                    self.finishImageToolTurn(content: transcript, usage: usage,
-                                             generation: generation, started: turnStarted)
+                    self.finishImageToolTurn(
+                        content: transcript, usage: usage,
+                        generation: generation, started: turnStarted)
                     return
                 }
 
@@ -2683,18 +2792,21 @@ final class AppState: ObservableObject {
                 var drawnPaths: [String] = []
                 for call in calls {
                     guard self.sendGeneration == generation, !Task.isCancelled else { return }
-                    let outcome = await self.runImageTool(call,
-                                                          imageModel: imageModel,
-                                                          chatModel: chatModel,
-                                                          generation: generation,
-                                                          allowance: ImageTool.maximumImagesPerTurn - drawn,
-                                                          seed: seriesSeed,
-                                                          options: imageOptions)
+                    let outcome = await self.runImageTool(
+                        call,
+                        imageModel: imageModel,
+                        chatModel: chatModel,
+                        generation: generation,
+                        allowance: ImageTool.maximumImagesPerTurn - drawn,
+                        seed: seriesSeed,
+                        options: imageOptions)
                     drawn += outcome.drawn
                     results.append(outcome.result)
                     drawnPaths.append(contentsOf: outcome.imagePaths)
-                    sent.append(ChatTurn(role: "tool", content: outcome.result.content,
-                                         toolCallID: outcome.result.callID))
+                    sent.append(
+                        ChatTurn(
+                            role: "tool", content: outcome.result.content,
+                            toolCallID: outcome.result.callID))
                 }
                 self.recordToolExchange(calls: calls, results: results, generation: generation)
                 rounds += 1
@@ -2705,12 +2817,14 @@ final class AppState: ObservableObject {
                     let urls = self.imageURLs(for: drawnPaths)
                     if !urls.isEmpty {
                         self.setToolStage("正在看刚画的图…", generation: generation)
-                        sent.append(ChatTurn(role: "user",
-                                             content: self.visionFeedback(
-                                                count: urls.count,
-                                                canDrawMore: rounds < ImageTool.maximumRounds
-                                                    && drawn < ImageTool.maximumImagesPerTurn),
-                                             imageURLs: urls))
+                        sent.append(
+                            ChatTurn(
+                                role: "user",
+                                content: self.visionFeedback(
+                                    count: urls.count,
+                                    canDrawMore: rounds < ImageTool.maximumRounds
+                                        && drawn < ImageTool.maximumImagesPerTurn),
+                                imageURLs: urls))
                     }
                 }
                 // 常驻时没有「换回」这一步，阶段行已经在 runImageTool 里清掉。
@@ -2731,29 +2845,35 @@ final class AppState: ObservableObject {
     /// 执行一次画图调用：把图像模型换进来、逐张画完、再换回对话模型。
     /// 结果无论成败都写一段 JSON 回给模型——失败也要让它知道为什么，
     /// 它才能向用户解释或者少画两张。
-    private func runImageTool(_ call: ChatToolCall,
-                              imageModel: EngineModel,
-                              chatModel: String,
-                              generation: Int,
-                              allowance: Int,
-                              seed: Int,
-                              options: ImageOptions) async -> ImageToolOutcome {
+    private func runImageTool(
+        _ call: ChatToolCall,
+        imageModel: EngineModel,
+        chatModel: String,
+        generation: Int,
+        allowance: Int,
+        seed: Int,
+        options: ImageOptions
+    ) async -> ImageToolOutcome {
         let parsed: ImageTool.Call
         switch ImageTool.parse(call) {
         case .success(let value):
             parsed = value
         case .failure(let error):
-            return ImageToolOutcome(result: ChatToolResult(callID: call.id,
-                                                           content: ImageTool.failure(error.message)),
-                                    drawn: 0, imagePaths: [])
+            return ImageToolOutcome(
+                result: ChatToolResult(
+                    callID: call.id,
+                    content: ImageTool.failure(error.message)),
+                drawn: 0, imagePaths: [])
         }
         guard allowance > 0 else {
-            return ImageToolOutcome(result: ChatToolResult(
-                callID: call.id,
-                content: ImageTool.failure("这一轮已经画满 \(ImageTool.maximumImagesPerTurn) 张了，先把这组图交给用户。")),
-                                    drawn: 0, imagePaths: [])
+            return ImageToolOutcome(
+                result: ChatToolResult(
+                    callID: call.id,
+                    content: ImageTool.failure("这一轮已经画满 \(ImageTool.maximumImagesPerTurn) 张了，先把这组图交给用户。")),
+                drawn: 0, imagePaths: [])
         }
-        let prompts = parsed.prompts.count > allowance
+        let prompts =
+            parsed.prompts.count > allowance
             ? Array(parsed.prompts.prefix(allowance))
             : parsed.prompts
 
@@ -2763,16 +2883,19 @@ final class AppState: ObservableObject {
         let size = Self.sanitizedCanvas(parsed.size, profile: profile, fallback: options.size)
 
         setToolStage("正在准备图像模型 \(imageModel.shortName)…", generation: generation)
-        if let error = await ensureResidentModel(imageModel.id,
-                                                 stage: { [weak self] stage in
-                                                     self?.setToolStage(stage, generation: generation)
-                                                 },
-                                                 alongside: imageToolResident) {
+        if let error = await ensureResidentModel(
+            imageModel.id,
+            stage: { [weak self] stage in
+                self?.setToolStage(stage, generation: generation)
+            },
+            alongside: imageToolResident)
+        {
             _ = await ensureResidentModel(chatModel, stage: { _ in })
-            return ImageToolOutcome(result: ChatToolResult(
-                callID: call.id,
-                content: ImageTool.failure("图像模型没能加载：\(error)")),
-                                    drawn: 0, imagePaths: [])
+            return ImageToolOutcome(
+                result: ChatToolResult(
+                    callID: call.id,
+                    content: ImageTool.failure("图像模型没能加载：\(error)")),
+                drawn: 0, imagePaths: [])
         }
 
         var images: [(path: String, note: String)] = []
@@ -2780,22 +2903,25 @@ final class AppState: ObservableObject {
         for (index, prompt) in prompts.enumerated() {
             if Task.isCancelled || sendGeneration != generation { break }
             setToolStage("正在画第 \(index + 1)/\(prompts.count) 张…", generation: generation)
-            let meterID = GatewayMeter.shared.begin(model: imageModel.id, dialect: "image",
-                                                    promptTokens: TokenEstimator.estimate(prompt))
+            let meterID = GatewayMeter.shared.begin(
+                model: imageModel.id, dialect: "image",
+                promptTokens: TokenEstimator.estimate(prompt))
             GatewayMeter.shared.markStarted(meterID)
-            let request = ImageGenerationRequest(model: imageModel.id,
-                                                 prompt: prompt,
-                                                 size: size,
-                                                 seed: seed,
-                                                 steps: steps,
-                                                 sourceBase64: nil,
-                                                 strength: nil,
-                                                 mode: nil)
+            let request = ImageGenerationRequest(
+                model: imageModel.id,
+                prompt: prompt,
+                size: size,
+                seed: seed,
+                steps: steps,
+                sourceBase64: nil,
+                strength: nil,
+                mode: nil)
             let outcome = await imageClient.generate(port: port, request: request) { [weak self] progress in
                 Task { @MainActor in
                     guard let self, self.sendGeneration == generation else { return }
-                    self.setToolStage("正在画第 \(index + 1)/\(prompts.count) 张 · \(progress)",
-                                      generation: generation)
+                    self.setToolStage(
+                        "正在画第 \(index + 1)/\(prompts.count) 张 · \(progress)",
+                        generation: generation)
                 }
             }
             switch outcome {
@@ -2805,21 +2931,24 @@ final class AppState: ObservableObject {
                     failureMessage = "图片已经生成，但写入磁盘失败"
                     continue
                 }
-                let requestOptions = ImageOptions(size: size, steps: steps, seed: seed,
-                                                  strength: options.strength)
-                let note = imageNote(options: requestOptions,
-                                     attachment: nil,
-                                     path: path,
-                                     actualSteps: result.steps)
+                let requestOptions = ImageOptions(
+                    size: size, steps: steps, seed: seed,
+                    strength: options.strength)
+                let note = imageNote(
+                    options: requestOptions,
+                    attachment: nil,
+                    path: path,
+                    actualSteps: result.steps)
                 images.append((path, note))
                 appendToolImage(path: path, note: note, seed: seed, generation: generation)
-                ImageGalleryStore.shared.record(GalleryImage(
-                    path: path,
-                    prompt: prompt,
-                    model: imageModel.id,
-                    createdAt: Date(),
-                    note: note,
-                    seed: seed))
+                ImageGalleryStore.shared.record(
+                    GalleryImage(
+                        path: path,
+                        prompt: prompt,
+                        model: imageModel.id,
+                        createdAt: Date(),
+                        note: note,
+                        seed: seed))
             case .failure(let error):
                 // 三个客户端错误类型现在都有自己的 `isCancellation`，判据不再看文案；
                 // `Task.isCancelled` 仍然要留：任务在错误交回来之前就被撤销时，
@@ -2835,8 +2964,9 @@ final class AppState: ObservableObject {
         // 否则（设置关掉、或引擎为了腾内存把对话模型挤掉了）必须换回来——
         // 不换的话下一趟聊天要等引擎重新加载，用户看到的是「模型正在启动」。
         if imageToolResident,
-           let controller,
-           gatewayModelIsResident(chatModel, in: controller) {
+            let controller,
+            gatewayModelIsResident(chatModel, in: controller)
+        {
             setToolStage(nil, generation: generation)
         } else {
             setToolStage("正在换回对话模型…", generation: generation)
@@ -2845,18 +2975,20 @@ final class AppState: ObservableObject {
         }
 
         guard !images.isEmpty else {
-            return ImageToolOutcome(result: ChatToolResult(
-                callID: call.id,
-                content: ImageTool.failure(failureMessage ?? "没有画出图片")),
-                                    drawn: 0, imagePaths: [])
+            return ImageToolOutcome(
+                result: ChatToolResult(
+                    callID: call.id,
+                    content: ImageTool.failure(failureMessage ?? "没有画出图片")),
+                drawn: 0, imagePaths: [])
         }
         var content = ImageTool.result(images: images, seed: seed, size: size)
         if let failureMessage {
             content += "（有 \(prompts.count - images.count) 张失败：\(failureMessage)）"
         }
-        return ImageToolOutcome(result: ChatToolResult(callID: call.id, content: content),
-                                drawn: images.count,
-                                imagePaths: images.map(\.path))
+        return ImageToolOutcome(
+            result: ChatToolResult(callID: call.id, content: content),
+            drawn: images.count,
+            imagePaths: images.map(\.path))
     }
 
     /// 把某个模型换进显存，但不改 `selectedModel`：工具只是借用图像模型，
@@ -2864,15 +2996,18 @@ final class AppState: ObservableObject {
     ///
     /// `alongside` 为真时只加载、不卸载已经常驻的模型：图像模型进来时对话模型
     /// 还要接着把这一轮写完，换掉它就得再花几十秒加载回来。
-    private func ensureResidentModel(_ target: String,
-                                     stage: @escaping (String) -> Void,
-                                     alongside: Bool = false) async -> String? {
+    private func ensureResidentModel(
+        _ target: String,
+        stage: @escaping (String) -> Void,
+        alongside: Bool = false
+    ) async -> String? {
         guard let controller else { return "推理引擎未就绪" }
         if gatewayModelIsResident(target, in: controller) { return nil }
         if !controller.isRunning {
             await controller.start()
         }
-        let outcome = alongside
+        let outcome =
+            alongside
             ? await controller.loadModelKeepingResident(target, stage: stage)
             : await controller.switchModel(target, stage: stage)
         switch outcome {
@@ -2892,11 +3027,15 @@ final class AppState: ObservableObject {
             if !message.toolCalls.isEmpty {
                 let answered = Set(message.toolResults.map(\.callID))
                 if message.toolCalls.allSatisfy({ answered.contains($0.id) }) {
-                    turns.append(ChatTurn(role: "assistant", content: message.content,
-                                          toolCalls: message.toolCalls))
+                    turns.append(
+                        ChatTurn(
+                            role: "assistant", content: message.content,
+                            toolCalls: message.toolCalls))
                     for result in message.toolResults {
-                        turns.append(ChatTurn(role: "tool", content: result.content,
-                                              toolCallID: result.callID))
+                        turns.append(
+                            ChatTurn(
+                                role: "tool", content: result.content,
+                                toolCallID: result.callID))
                     }
                     continue
                 }
@@ -2910,16 +3049,19 @@ final class AppState: ObservableObject {
     /// 模型可能忽略枚举自己编尺寸：解析成宽高后用这一族的规则校一遍，
     /// 不合格就退回用户当前设置；连用户设置都不适用时（换了图像模型家族），
     /// 取这一族的第一个预设，而不是让引擎去拒绝一个它画不了的长宽比。
-    private static func sanitizedCanvas(_ raw: String?,
-                                        profile: ImageModelProfile,
-                                        fallback: String) -> String {
+    private static func sanitizedCanvas(
+        _ raw: String?,
+        profile: ImageModelProfile,
+        fallback: String
+    ) -> String {
         func acceptable(_ value: String) -> Bool {
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             let parts = trimmed.split(separator: "x")
             guard parts.count == 2,
-                  let width = Int(parts[0]),
-                  let height = Int(parts[1]),
-                  profile.isValidCanvas(width: width, height: height) else { return false }
+                let width = Int(parts[0]),
+                let height = Int(parts[1]),
+                profile.isValidCanvas(width: width, height: height)
+            else { return false }
             return profile.allowsCustomCanvas || profile.presets.contains { $0.id == trimmed }
         }
         if let raw, acceptable(raw) { return raw.lowercased() }
@@ -2966,16 +3108,19 @@ final class AppState: ObservableObject {
         var text = "你刚画好了这 \(count) 张图，下面按生成顺序附上成品。"
         text += "先逐张看清画面：主体、构图、文字、手部这些细节，是否达到你在提示词里写的要求。"
         text += "描述时只说你真正看到的，不要照着提示词编。"
-        text += canDrawMore
+        text +=
+            canDrawMore
             ? "达到要求就用一两句话向用户交代；需要改就继续调用 \(ImageTool.name) 补画，只补要改的，别重复画已经满意的。"
             : "这一轮的画图次数已经用完，直接根据看到的画面收尾；还需要改的地方，用文字告诉用户。"
         return text
     }
 
     /// 调用与结果留在消息里，下一轮（甚至重启后）还要按原样回放给引擎。
-    private func recordToolExchange(calls: [ChatToolCall],
-                                    results: [ChatToolResult],
-                                    generation: Int) {
+    private func recordToolExchange(
+        calls: [ChatToolCall],
+        results: [ChatToolResult],
+        generation: Int
+    ) {
         guard sendGeneration == generation else { return }
         updateStreamingMessage { message in
             message.toolCalls.append(contentsOf: calls)
@@ -2984,10 +3129,12 @@ final class AppState: ObservableObject {
     }
 
     /// 这一轮画完：压上累计用量、收掉「生成中」，再落盘。
-    private func finishImageToolTurn(content: String,
-                                     usage: ChatUsage,
-                                     generation: Int,
-                                     started: Date) {
+    private func finishImageToolTurn(
+        content: String,
+        usage: ChatUsage,
+        generation: Int,
+        started: Date
+    ) {
         guard sendGeneration == generation else { return }
         let elapsed = Date().timeIntervalSince(started)
         updateStreamingMessage { message in
@@ -3035,19 +3182,22 @@ final class AppState: ObservableObject {
     /// 视频模型的发送链路：对话、历史、打点都复用，只把端点换成
     /// `/v1/video/generations`。服务端回的是 rgb8 原始帧，VideoClient 在客户端
     /// 封装成 MP4 后落盘，消息里只留路径。
-    private func sendVideo(_ prompt: String,
-                           attachment: ChatImageAttachment?,
-                           lastFrame: ChatImageAttachment?,
-                           referenceImages: [ChatImageAttachment],
-                           referenceClips: [VideoReferenceClip],
-                           options: VideoOptions) {
+    private func sendVideo(
+        _ prompt: String,
+        attachment: ChatImageAttachment?,
+        lastFrame: ChatImageAttachment?,
+        referenceImages: [ChatImageAttachment],
+        referenceClips: [VideoReferenceClip],
+        options: VideoOptions
+    ) {
         let model = selectedModel
         let seed = options.seed ?? Int.random(in: 1...1_000_000_000)
         var sourcePath: String?
         var sourceBase64: String?
         if let attachment {
             guard let imported = ImageStore.importImage(atPath: attachment.path),
-                  let encoded = ImageStore.base64(atPath: imported) else {
+                let encoded = ImageStore.base64(atPath: imported)
+            else {
                 notice = "读取首帧图片失败：\(attachment.name)"
                 return
             }
@@ -3058,7 +3208,8 @@ final class AppState: ObservableObject {
         var lastFrameBase64: String?
         if let lastFrame {
             guard let imported = ImageStore.importImage(atPath: lastFrame.path),
-                  let encoded = ImageStore.base64(atPath: imported) else {
+                let encoded = ImageStore.base64(atPath: imported)
+            else {
                 notice = "读取尾帧图片失败：\(lastFrame.name)"
                 return
             }
@@ -3078,17 +3229,20 @@ final class AppState: ObservableObject {
         let referenceClipPaths = referenceClips.map(\.path)
         let usesReferences = !referenceImagePaths.isEmpty || !referenceClipPaths.isEmpty
 
-        messages.append(ChatMessage(role: "user", content: prompt, model: model,
-                                    createdAt: Date(),
-                                    imagePath: usesReferences ? nil : sourcePath,
-                                    videoLastFramePath: usesReferences ? nil : lastFramePath,
-                                    videoReferenceImagePaths:
-                                        referenceImagePaths.isEmpty ? nil : referenceImagePaths,
-                                    videoReferenceClipPaths:
-                                        referenceClipPaths.isEmpty ? nil : referenceClipPaths))
-        let placeholder = ChatMessage(role: "assistant", content: "", model: model,
-                                      createdAt: Date(), streaming: true,
-                                      videoProgress: "正在准备视频模型")
+        messages.append(
+            ChatMessage(
+                role: "user", content: prompt, model: model,
+                createdAt: Date(),
+                imagePath: usesReferences ? nil : sourcePath,
+                videoLastFramePath: usesReferences ? nil : lastFramePath,
+                videoReferenceImagePaths:
+                    referenceImagePaths.isEmpty ? nil : referenceImagePaths,
+                videoReferenceClipPaths:
+                    referenceClipPaths.isEmpty ? nil : referenceClipPaths))
+        let placeholder = ChatMessage(
+            role: "assistant", content: "", model: model,
+            createdAt: Date(), streaming: true,
+            videoProgress: "正在准备视频模型")
         messages.append(placeholder)
         streamMessageID = placeholder.id.uuidString
         history.save(messages: messages, threadID: threadID)
@@ -3104,13 +3258,17 @@ final class AppState: ObservableObject {
             // 参考素材先读完再加载模型：文件有问题就早点报错，不必让用户等
             // 几十 GB 的权重加载完才发现参考视频读不了。
             var referenceImagesBase64: [String] = []
-            let referencePixel = options.referenceDetail == .max
+            let referencePixel =
+                options.referenceDetail == .max
                 ? 1280
                 : max(options.dimensions.width, options.dimensions.height)
             for path in referenceImagePaths {
                 guard self.sendGeneration == generation else { return }
-                guard let encoded = ImageStore.jpegBase64(atPath: path,
-                                                          maximumPixel: CGFloat(referencePixel)) else {
+                guard
+                    let encoded = ImageStore.jpegBase64(
+                        atPath: path,
+                        maximumPixel: CGFloat(referencePixel))
+                else {
                     self.failVideo("读取参考图失败：\((path as NSString).lastPathComponent)")
                     return
                 }
@@ -3119,7 +3277,8 @@ final class AppState: ObservableObject {
             var referencePayloads: [VideoReferencePayload] = []
             if !referenceClipPaths.isEmpty {
                 let canvas = options.dimensions
-                let maximum = options.referenceDetail == .max
+                let maximum =
+                    options.referenceDetail == .max
                     ? CGSize(width: 1280, height: 1280)
                     : CGSize(width: canvas.width, height: canvas.height)
                 for (index, path) in referenceClipPaths.enumerated() {
@@ -3130,12 +3289,13 @@ final class AppState: ObservableObject {
                     do {
                         let frames = try await VideoReferenceExtractor.frames(
                             url: URL(fileURLWithPath: path),
-                            maximumSize: maximum) { [weak self] text in
-                                Task { @MainActor in
-                                    guard let self, self.sendGeneration == generation else { return }
-                                    self.updateStreamingMessage { $0.videoProgress = text }
-                                }
+                            maximumSize: maximum
+                        ) { [weak self] text in
+                            Task { @MainActor in
+                                guard let self, self.sendGeneration == generation else { return }
+                                self.updateStreamingMessage { $0.videoProgress = text }
                             }
+                        }
                         referencePayloads.append(VideoReferencePayload(framesBase64: frames))
                     } catch is CancellationError {
                         return
@@ -3145,16 +3305,18 @@ final class AppState: ObservableObject {
                     }
                 }
             }
-            let preparation = await self.prepareModelForGateway(model,
-                                                                allowingGeneration: true)
+            let preparation = await self.prepareModelForGateway(
+                model,
+                allowingGeneration: true)
             guard self.sendGeneration == generation else { return }
             if let preparation {
                 self.failVideo(preparation.message)
                 return
             }
 
-            let meterID = GatewayMeter.shared.begin(model: model, dialect: "video",
-                                                    promptTokens: 0)
+            let meterID = GatewayMeter.shared.begin(
+                model: model, dialect: "video",
+                promptTokens: 0)
             GatewayMeter.shared.markStarted(meterID, at: Date())
             if usesReferences {
                 self.generationStatus = "正在生成视频（\(referenceImagesBase64.count) 张参考图 · \(referencePayloads.count) 段参考视频）"
@@ -3179,8 +3341,10 @@ final class AppState: ObservableObject {
                 referenceImagesBase64: referenceImagesBase64,
                 referenceVideos: referencePayloads,
                 referenceDetail: options.referenceDetail)
-            let outcome = await self.videoClient.generate(port: self.port,
-                                                          request: request) { [weak self] progress in
+            let outcome = await self.videoClient.generate(
+                port: self.port,
+                request: request
+            ) { [weak self] progress in
                 Task { @MainActor in
                     guard let self, self.sendGeneration == generation else { return }
                     self.updateStreamingMessage { $0.videoProgress = progress }
@@ -3198,11 +3362,12 @@ final class AppState: ObservableObject {
                     VideoStore.save(mp4)
                 }.value
                 guard self.sendGeneration == generation else { return }
-                let note = self.videoNote(options: options, source: sourcePath,
-                                          lastFrame: lastFramePath,
-                                          referenceImages: referenceImagePaths.count,
-                                          referenceClips: referencePayloads.count,
-                                          result: result, seed: seed)
+                let note = self.videoNote(
+                    options: options, source: sourcePath,
+                    lastFrame: lastFramePath,
+                    referenceImages: referenceImagePaths.count,
+                    referenceClips: referencePayloads.count,
+                    result: result, seed: seed)
                 self.updateStreamingMessage { message in
                     message.streaming = false
                     message.videoProgress = nil
@@ -3218,12 +3383,14 @@ final class AppState: ObservableObject {
                     self.notice = "视频已生成，但写入磁盘失败"
                 } else if let path {
                     // 和图片一样单独记一份：历史只留最近六段，删对话也不该丢作品。
-                    VideoGalleryStore.shared.record(GalleryVideo(path: path,
-                                                                 prompt: prompt,
-                                                                 model: model,
-                                                                 createdAt: Date(),
-                                                                 note: note,
-                                                                 seed: seed))
+                    VideoGalleryStore.shared.record(
+                        GalleryVideo(
+                            path: path,
+                            prompt: prompt,
+                            model: model,
+                            createdAt: Date(),
+                            note: note,
+                            seed: seed))
                 }
             case .failure(let error):
                 GatewayMeter.shared.finish(meterID, failed: true)
@@ -3254,7 +3421,8 @@ final class AppState: ObservableObject {
         let lowered = raw.lowercased()
         if lowered.contains("does not support references")
             || lowered.contains("declares no 'ref2va'")
-            || lowered.contains("ref2va pack cannot serve") {
+            || lowered.contains("ref2va pack cannot serve")
+        {
             return "这个视频模型不支持参考素材。参考图/参考视频需要 REF2VA 视频包；首尾帧请换用 FL2VA/LTX 包。"
         }
         if lowered.contains("attach at least one image or video") {
@@ -3270,11 +3438,13 @@ final class AppState: ObservableObject {
             return "参考视频太短：至少需要 5 帧（约 0.2 秒）。换一段更长的视频。"
         }
         if lowered.contains("ref_videos") || lowered.contains("ref_images")
-            || lowered.contains("ref_image_size") {
+            || lowered.contains("ref_image_size")
+        {
             return "参考素材没有被接受（\(raw)）。参考图请用 PNG/JPEG，参考视频至少 5 帧。"
         }
         if lowered.contains("out of memory") || lowered.contains("oom")
-            || lowered.contains("insufficient memory") || lowered.contains("memory") {
+            || lowered.contains("insufficient memory") || lowered.contains("memory")
+        {
             return "显存不够生成这段视频。把分辨率或帧数调小一些再试（例如 512×384、49 帧）。"
         }
         if lowered.contains("vae_encoder") || lowered.contains("last frame conditioning") {
@@ -3298,17 +3468,21 @@ final class AppState: ObservableObject {
         return raw
     }
 
-    private func videoNote(options: VideoOptions,
-                           source: String?,
-                           lastFrame: String?,
-                           referenceImages: Int = 0,
-                           referenceClips: Int = 0,
-                           result: VideoGenerationResult,
-                           seed: Int) -> String {
-        var parts = ["\(result.width)×\(result.height)",
-                     "\(result.frames) 帧",
-                     "\(result.fps)fps",
-                     "\(options.steps) 步"]
+    private func videoNote(
+        options: VideoOptions,
+        source: String?,
+        lastFrame: String?,
+        referenceImages: Int = 0,
+        referenceClips: Int = 0,
+        result: VideoGenerationResult,
+        seed: Int
+    ) -> String {
+        var parts = [
+            "\(result.width)×\(result.height)",
+            "\(result.frames) 帧",
+            "\(result.fps)fps",
+            "\(options.steps) 步",
+        ]
         if source != nil, lastFrame != nil {
             parts.append("首尾帧生视频")
         } else if source != nil {
@@ -3354,10 +3528,12 @@ final class AppState: ObservableObject {
         return raw
     }
 
-    private func imageNote(options: ImageOptions,
-                           attachment: ChatImageAttachment?,
-                           path: String?,
-                           actualSteps: Int? = nil) -> String {
+    private func imageNote(
+        options: ImageOptions,
+        attachment: ChatImageAttachment?,
+        path: String?,
+        actualSteps: Int? = nil
+    ) -> String {
         var parts: [String] = []
         if let path, let pixels = ImageStore.pixelSize(atPath: path) {
             parts.append("\(Int(pixels.width))×\(Int(pixels.height))")
@@ -3436,9 +3612,10 @@ final class AppState: ObservableObject {
         if messages.last?.role == "user" { messages.removeLast() }
         // 图生图那一轮：底图是用户消息的一部分，重来一次也要带着它。
         let attachment = lastUser.imagePath.map { path in
-            ChatImageAttachment(path: path,
-                                name: (path as NSString).lastPathComponent,
-                                pixelSize: ImageStore.pixelSize(atPath: path))
+            ChatImageAttachment(
+                path: path,
+                name: (path as NSString).lastPathComponent,
+                pixelSize: ImageStore.pixelSize(atPath: path))
         }
         send(lastUser.content, attachment: attachment)
     }
@@ -3478,25 +3655,26 @@ final class AppState: ObservableObject {
         }
         detachGenerationForThreadSwitch()
         messages = thread.messages.map {
-            ChatMessage(role: $0.role, content: $0.content, model: $0.model,
-                        createdAt: $0.createdAt, usage: $0.usage,
-                        seconds: $0.seconds, tokensPerSecond: $0.tokensPerSecond,
-                        firstTokenSeconds: $0.firstTokenSeconds,
-                        thinkingSeconds: $0.thinkingSeconds,
-                        reasoning: $0.reasoning,
-                        interrupted: $0.interrupted,
-                        imagePath: $0.imagePath,
-                        imageNote: $0.imageNote,
-                        imageSourcePath: $0.imageSourcePath,
-                        imageStrength: $0.imageStrength,
-                        imageSeed: $0.imageSeed,
-                        imagePaths: $0.imagePaths,
-                        toolCalls: $0.toolCalls,
-                        toolResults: $0.toolResults,
-                        videoPath: $0.videoPath,
-                        videoNote: $0.videoNote,
-                        videoSourcePath: $0.videoSourcePath,
-                        videoLastFramePath: $0.videoLastFramePath)
+            ChatMessage(
+                role: $0.role, content: $0.content, model: $0.model,
+                createdAt: $0.createdAt, usage: $0.usage,
+                seconds: $0.seconds, tokensPerSecond: $0.tokensPerSecond,
+                firstTokenSeconds: $0.firstTokenSeconds,
+                thinkingSeconds: $0.thinkingSeconds,
+                reasoning: $0.reasoning,
+                interrupted: $0.interrupted,
+                imagePath: $0.imagePath,
+                imageNote: $0.imageNote,
+                imageSourcePath: $0.imageSourcePath,
+                imageStrength: $0.imageStrength,
+                imageSeed: $0.imageSeed,
+                imagePaths: $0.imagePaths,
+                toolCalls: $0.toolCalls,
+                toolResults: $0.toolResults,
+                videoPath: $0.videoPath,
+                videoNote: $0.videoNote,
+                videoSourcePath: $0.videoSourcePath,
+                videoLastFramePath: $0.videoLastFramePath)
         }
         threadID = thread.id
         // 打开的这段对话就是「当前对话」：不写回 `conversation.json` 的话，
@@ -3585,7 +3763,8 @@ final class AppState: ObservableObject {
         // 界面和引擎会各说各话，直到有人手动重启。先停引擎再动手。
         let serving = engine == activeEngine && selectedModel == id
         if serving { stopService() }
-        let path = engineModels(for: engine).first(where: { $0.id == id })?.path
+        let path =
+            engineModels(for: engine).first(where: { $0.id == id })?.path
             ?? EnginePaths.modelPath(for: engine, model: id)
         do {
             try FileManager.default.removeItem(atPath: path)
@@ -3631,16 +3810,18 @@ final class AppState: ObservableObject {
             return false
         }
         let recommendation = ModelRecommendations.recommendation(for: id)
-        let draft = engine.adapter == .splash
+        let draft =
+            engine.adapter == .splash
             ? (catalog.draftRepository(id, family: family) ?? recommendation?.draftRepository)
             : nil
 
         let plan: ModelInstaller.Plan
         do {
-            plan = try ModelInstaller.plan(engine: engine,
-                                           model: id,
-                                           draftRepository: draft,
-                                           cache: settings.hfCache)
+            plan = try ModelInstaller.plan(
+                engine: engine,
+                model: id,
+                draftRepository: draft,
+                cache: settings.hfCache)
         } catch {
             notice = (error as? ModelInstaller.Failure)?.message ?? "\(error)"
             return false
@@ -3678,9 +3859,10 @@ final class AppState: ObservableObject {
         }
         let plan: ModelInstaller.Plan
         do {
-            plan = try ModelInstaller.sharedPlan(repo: target,
-                                                 engines: engines,
-                                                 cache: settings.hfCache)
+            plan = try ModelInstaller.sharedPlan(
+                repo: target,
+                engines: engines,
+                cache: settings.hfCache)
         } catch {
             notice = (error as? ModelInstaller.Failure)?.message ?? "\(error)"
             return false
@@ -3701,9 +3883,10 @@ final class AppState: ObservableObject {
         ModelSharing.setEngines(Set(engines), for: repo)
         EngineModelStore.invalidateMetaCache()
         reloadModels()
-        toast(engines.isEmpty
-            ? "已收回 \(repo) 的引擎授权"
-            : "\(repo) 现在可用于 \(engines.map(\.displayName).joined(separator: "、"))")
+        toast(
+            engines.isEmpty
+                ? "已收回 \(repo) 的引擎授权"
+                : "\(repo) 现在可用于 \(engines.map(\.displayName).joined(separator: "、"))")
     }
 
     /// 删除公共目录里的权重：先收回授权（各引擎的链接随之删掉），再删文件。
@@ -3832,7 +4015,7 @@ final class AppState: ObservableObject {
     /// store 只报告「下完了」。
     private func handle(_ event: DownloadEvent) {
         switch event {
-        case let .modelReady(engine, model, installed):
+        case .modelReady(let engine, let model, let installed):
             // 启动前补件之后紧跟的是启动本身：没有提示要回答，选中模型也不能
             // 在启动底下被换掉。
             guard !supplementInFlight else { return }
@@ -3842,7 +4025,7 @@ final class AppState: ObservableObject {
             }
             applyModel(installed)
             toast(L10n.format("已下载 %@", model))
-        case let .shareRequested(repo, engines):
+        case .shareRequested(let repo, let engines):
             publishShared(repo: repo, engines: engines)
         }
     }
@@ -3887,10 +4070,12 @@ final class AppState: ObservableObject {
     ///   粘贴板、已经改好的设置），留在历史里只是噪音，所以只闪几秒，不占通知
     ///   历史与未读数。失败、阻塞、后台任务完成和破坏性操作仍然留存——那是读
     ///   者回头要看的。
-    func toast(_ message: String,
-               title: String? = nil,
-               kind: IslandNotice.Kind? = nil,
-               transient: Bool = false) {
+    func toast(
+        _ message: String,
+        title: String? = nil,
+        kind: IslandNotice.Kind? = nil,
+        transient: Bool = false
+    ) {
         // Classify from the source text (the kind rules are written against
         // Chinese phrases) before swapping in the localized message. Callers
         // that already know the lifecycle phase pass an explicit kind so a

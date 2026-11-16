@@ -93,9 +93,10 @@ public enum ModelFit {
         guard !ladder.isEmpty else { return nil }
 
         func verdict(_ candidate: FitCandidate) -> DeviceFit {
-            ModelFit.verdict(bytes: candidate.bytes,
-                             minimumMemory: candidate.minimumMemory,
-                             machine: machine)
+            ModelFit.verdict(
+                bytes: candidate.bytes,
+                minimumMemory: candidate.minimumMemory,
+                machine: machine)
         }
 
         let running = ladder.filter { verdict($0.element).runs }

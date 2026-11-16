@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import SwiftUI
 import AppKit
+import SwiftUI
 
 // MARK: - Console palette (matches the shipped WebUI's visual language)
 //
@@ -13,11 +13,12 @@ import AppKit
 
 extension Color {
     init(console hex: UInt32, opacity: Double = 1) {
-        self.init(.sRGB,
-                  red: Double((hex >> 16) & 0xFF) / 255,
-                  green: Double((hex >> 8) & 0xFF) / 255,
-                  blue: Double(hex & 0xFF) / 255,
-                  opacity: opacity)
+        self.init(
+            .sRGB,
+            red: Double((hex >> 16) & 0xFF) / 255,
+            green: Double((hex >> 8) & 0xFF) / 255,
+            blue: Double(hex & 0xFF) / 255,
+            opacity: opacity)
     }
 }
 
@@ -108,9 +109,11 @@ struct ConsoleBackdrop: View {
             // 画布始终保留原来的渐变与页面强调色，自定义图片只是叠在渐变之上，
             // 不会改动页面、玻璃卡片和文字的观感。没有图片时，渐变按「APP 透明度」
             // 让出桌面：0 = 完全不透明，1 = 完全透出桌面。
-            LinearGradient(colors: [Console.backgroundTop, Console.backgroundBottom],
-                           startPoint: .topLeading, endPoint: .bottomTrailing)
-                .opacity(background.image == nil ? 1 - background.desktopReveal : 1)
+            LinearGradient(
+                colors: [Console.backgroundTop, Console.backgroundBottom],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            )
+            .opacity(background.image == nil ? 1 - background.desktopReveal : 1)
 
             if let image = background.image {
                 // 用透明视图定尺寸、图片只做 overlay：避免 `scaledToFill` 的图片把
@@ -125,20 +128,24 @@ struct ConsoleBackdrop: View {
                             // 直接和侧栏、页面文字抢视觉。半径可在设置里调整。
                             .blur(radius: background.blur)
                             .scaleEffect(1.1)
-                            // 不要给这一层加 `.id`：半径一变就换身份，SwiftUI 会
-                            // 把整块图片图层销毁重建，拖动时窗口出帧掉到一半、
-                            // 画面整块跳变（用户看到的就是「拖模糊条闪屏」）。
-                            // 现在的 `.blur` 会跟着半径重绘，不需要抖身份。
+                        // 不要给这一层加 `.id`：半径一变就换身份，SwiftUI 会
+                        // 把整块图片图层销毁重建，拖动时窗口出帧掉到一半、
+                        // 画面整块跳变（用户看到的就是「拖模糊条闪屏」）。
+                        // 现在的 `.blur` 会跟着半径重绘，不需要抖身份。
                     }
                     .clipped()
 
                 // 无论图片多清晰，都盖一层画布渐变保底，保证文字始终有足够对比度。
                 // 「APP 透明度」越高，这层越淡，但不低于保底值；剩下的行程
                 // 线性铺开，滑杆不会有一半是空的。见 `BackgroundMath.veilOpacity`。
-                LinearGradient(colors: [Console.backgroundTop, Console.backgroundBottom],
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
-                    .opacity(BackgroundMath.veilOpacity(background.opacity,
-                                                        dark: scheme == .dark))
+                LinearGradient(
+                    colors: [Console.backgroundTop, Console.backgroundBottom],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+                .opacity(
+                    BackgroundMath.veilOpacity(
+                        background.opacity,
+                        dark: scheme == .dark))
             }
         }
         .ignoresSafeArea()
@@ -161,18 +168,21 @@ private struct ConsoleCardSurfaceModifier: ViewModifier {
                     DS.rect(min(radius, DS.Radius.lg)).fill(tint.opacity(0.35))
                 }
             }
-            .dsSurface(radius: min(radius, DS.Radius.lg),
-                       fill: DS.surface,
-                       stroke: tint == nil ? DS.line : DS.line2,
-                       hoverable: interactive)
+            .dsSurface(
+                radius: min(radius, DS.Radius.lg),
+                fill: DS.surface,
+                stroke: tint == nil ? DS.line : DS.line2,
+                hoverable: interactive)
     }
 }
 
 extension View {
     /// 套上模型页卡片那层表面。默认圆角与模型卡一致，内边距由调用方自己加。
-    func consoleCardSurface(radius: CGFloat = Console.cardRadius,
-                            tint: Color? = nil,
-                            interactive: Bool = false) -> some View {
+    func consoleCardSurface(
+        radius: CGFloat = Console.cardRadius,
+        tint: Color? = nil,
+        interactive: Bool = false
+    ) -> some View {
         modifier(ConsoleCardSurfaceModifier(radius: radius, tint: tint, interactive: interactive))
     }
 }
@@ -186,8 +196,9 @@ struct GlassCard<Content: View>: View {
     var body: some View {
         content()
             .padding(padding)
-            .consoleCardSurface(radius: radius,
-                                tint: tint == .clear ? nil : tint.opacity(0.16))
+            .consoleCardSurface(
+                radius: radius,
+                tint: tint == .clear ? nil : tint.opacity(0.16))
     }
 }
 
@@ -264,9 +275,11 @@ struct NativeSegmented<Value: Hashable>: View {
     }
 
     var body: some View {
-        DSSegmented(selection: $selection,
-                    options: Array(zip(options, labels)).map { (value: $0.0, label: $0.1) })
-            .frame(width: width, alignment: .leading)
+        DSSegmented(
+            selection: $selection,
+            options: Array(zip(options, labels)).map { (value: $0.0, label: $0.1) }
+        )
+        .frame(width: width, alignment: .leading)
     }
 }
 
@@ -365,10 +378,11 @@ struct StatusChip: View {
     var filled: Bool = false
 
     var body: some View {
-        DSChip(text: text,
-               dot: color,
-               live: filled && color == DS.ok,
-               tint: filled ? color : nil)
+        DSChip(
+            text: text,
+            dot: color,
+            live: filled && color == DS.ok,
+            tint: filled ? color : nil)
     }
 }
 
@@ -394,4 +408,3 @@ struct RowDeleteButton: View {
         }
     }
 }
-

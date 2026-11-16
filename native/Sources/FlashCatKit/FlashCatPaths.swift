@@ -164,8 +164,9 @@ public enum FlashCatPaths {
             // A real directory here would be an older layout: leave it alone
             // rather than replacing something the engine may be writing to.
             if !fileExists(link) {
-                try? FileManager.default.createSymbolicLink(atPath: link,
-                                                            withDestinationPath: target)
+                try? FileManager.default.createSymbolicLink(
+                    atPath: link,
+                    withDestinationPath: target)
             }
         default:
             ensureDirectory(link)

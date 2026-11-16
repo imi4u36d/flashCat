@@ -91,9 +91,11 @@ final class AppSettings {
         guard !defaults.bool(forKey: flag) else { return }
         defaults.set(true, forKey: flag)
 
-        let keys = ["port", "model", "maxMemory", "maxContext", "idleReleaseOff",
-                    "languageOnly", "thinkingMode", "reasoningEffort", "extraArgs",
-                    "autoStart", "launchAtLogin", "hfCache", "recentModels", "chat.system"]
+        let keys = [
+            "port", "model", "maxMemory", "maxContext", "idleReleaseOff",
+            "languageOnly", "thinkingMode", "reasoningEffort", "extraArgs",
+            "autoStart", "launchAtLogin", "hfCache", "recentModels", "chat.system",
+        ]
         for key in keys where defaults.object(forKey: key) == nil {
             if let value = defaults.object(forKey: "flutter." + key) {
                 defaults.set(value, forKey: key)
@@ -190,7 +192,8 @@ final class AppSettings {
     var appearance: AppAppearance {
         get {
             guard let raw = defaults.object(forKey: "appearance") as? Int,
-                  let value = AppAppearance(rawValue: raw) else { return .system }
+                let value = AppAppearance(rawValue: raw)
+            else { return .system }
             return value
         }
         set { defaults.set(newValue.rawValue, forKey: "appearance") }
@@ -254,7 +257,8 @@ final class AppSettings {
         // The override exists for tests and for a second instance launched from
         // a checkout; the shipped app uses the setting.
         if let raw = ProcessInfo.processInfo.environment["FLASHCAT_CONTROL_PORT"],
-           let value = Int(raw), (1024...65535).contains(value) {
+            let value = Int(raw), (1024...65535).contains(value)
+        {
             return value
         }
         let value = defaults.integer(forKey: "controlPort")
@@ -293,7 +297,10 @@ final class AppSettings {
             } else if character == "\"" || character == "'" {
                 quote = character
             } else if character.isWhitespace {
-                if !current.isEmpty { result.append(current); current = "" }
+                if !current.isEmpty {
+                    result.append(current)
+                    current = ""
+                }
             } else {
                 current.append(character)
             }

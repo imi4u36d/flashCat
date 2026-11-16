@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
 import FlashCatKit
+import Foundation
 
 enum ModelOrigin: String {
     case local = "本地"
@@ -53,7 +53,8 @@ enum ModelQuantization {
         }
         // "4-bit" / "8bit".
         if let value = firstMatch(#"(?i)\b([1-8])\s*-?\s*bit\b"#, in: text),
-           let bits = Int(value.filter(\.isNumber)) {
+            let bits = Int(value.filter(\.isNumber))
+        {
             return label(bits: bits)
         }
         // "3bpw" / "3.5 bpw" — bits-per-weight wording used by MLX packs.
@@ -68,7 +69,8 @@ enum ModelQuantization {
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
         let range = NSRange(text.startIndex..., in: text)
         guard let match = regex.firstMatch(in: text, range: range),
-              let matchRange = Range(match.range, in: text) else { return nil }
+            let matchRange = Range(match.range, in: text)
+        else { return nil }
         return String(text[matchRange])
     }
 }
@@ -134,7 +136,9 @@ final class ModelCatalogService {
         try? FileManager.default.removeItem(atPath: model.path)
         try? FileManager.default.removeItem(atPath: model.path + ".flashcat-incomplete")
         let parent = (model.path as NSString).deletingLastPathComponent
-        if Paths.fileExists(parent), let items = try? FileManager.default.contentsOfDirectory(atPath: parent), items.isEmpty {
+        if Paths.fileExists(parent), let items = try? FileManager.default.contentsOfDirectory(atPath: parent),
+            items.isEmpty
+        {
             try? FileManager.default.removeItem(atPath: parent)
         }
     }
@@ -196,7 +200,8 @@ final class ModelCatalogService {
         for directory in directories(repository) {
             let name = basename(directory).lowercased()
             if (name == "draft" || name == "dflash2")
-                && Paths.fileExists(directory + "/config.json") {
+                && Paths.fileExists(directory + "/config.json")
+            {
                 draft = directory
                 break
             }
@@ -249,7 +254,8 @@ final class ModelCatalogService {
         guard Paths.fileExists(targetDirectory) else { return nil }
         let draft = assembly + "/draft"
         if quantization == nil {
-            quantization = ModelQuantization.detect(in: modelId)
+            quantization =
+                ModelQuantization.detect(in: modelId)
                 ?? EngineModelStore.meta(of: targetDirectory).quantization
         }
 
@@ -290,7 +296,8 @@ final class ModelCatalogService {
 
     private func splitPart(_ path: String) -> Int {
         if let match = TextPattern.firstMatch("-(\\d{5})-of-\\d{5}\\.gguf$", path),
-           let part = Int(match[1]) {
+            let part = Int(match[1])
+        {
             return part
         }
         return Int.max
@@ -316,8 +323,11 @@ final class ModelCatalogService {
 
     private func allFiles(_ root: String) -> [String] {
         var result: [String] = []
-        guard let enumerator = FileManager.default.enumerator(at: URL(fileURLWithPath: root),
-                                                             includingPropertiesForKeys: nil) else {
+        guard
+            let enumerator = FileManager.default.enumerator(
+                at: URL(fileURLWithPath: root),
+                includingPropertiesForKeys: nil)
+        else {
             return result
         }
         for item in enumerator {

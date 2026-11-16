@@ -46,7 +46,8 @@ struct DynamicIsland: View {
     private var rate: Double {
         let reading = state.decodeReading
         guard reading.origin == .gatewayLive || reading.origin == .engineLive,
-              let value = reading.value, value > 0 else { return 0 }
+            let value = reading.value, value > 0
+        else { return 0 }
         return value
     }
 
@@ -80,9 +81,11 @@ struct DynamicIsland: View {
         .background(shape.fill(surfaceFill))
         .overlay(shape.strokeBorder(expanded || hovering ? DS.line2 : DS.line, lineWidth: 1))
         .clipShape(shape)
-        .shadow(color: expanded ? DS.shadow : .clear,
-                radius: expanded ? 24 : 0,
-                y: expanded ? 12 : 0)
+        .shadow(
+            color: expanded ? DS.shadow : .clear,
+            radius: expanded ? 24 : 0,
+            y: expanded ? 12 : 0
+        )
         .contentShape(shape)
         .onHover { inside in
             withAnimation(DS.Motion.snappy) { hovering = inside }

@@ -13,7 +13,7 @@ struct ChatToolCall: Equatable, Codable {
     /// 参数对象。模型有一次写坏的 JSON，这一轮就用不了——由调用方报错给模型。
     var object: [String: Any]? {
         guard let data = arguments.data(using: .utf8),
-              let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         return value
     }
@@ -164,7 +164,7 @@ struct ChatToolSchema: Equatable, Sendable {
     /// 解码回请求体要的对象数组。编不回去只可能是空表，按「没有工具」处理。
     var objects: [[String: Any]] {
         guard !json.isEmpty,
-              let value = try? JSONSerialization.jsonObject(with: json) as? [[String: Any]]
+            let value = try? JSONSerialization.jsonObject(with: json) as? [[String: Any]]
         else { return [] }
         return value
     }
@@ -262,12 +262,14 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         let onUsage: @Sendable (ChatUsage) -> Void
         let onStatus: @Sendable (String) -> Void
 
-        init(task: URLSessionDataTask,
-             onDelta: @escaping @Sendable (String, Date) -> Void,
-             onReasoning: @escaping @Sendable (String, Date) -> Void,
-             onToolCall: @escaping @Sendable (String, Date) -> Void,
-             onUsage: @escaping @Sendable (ChatUsage) -> Void,
-             onStatus: @escaping @Sendable (String) -> Void) {
+        init(
+            task: URLSessionDataTask,
+            onDelta: @escaping @Sendable (String, Date) -> Void,
+            onReasoning: @escaping @Sendable (String, Date) -> Void,
+            onToolCall: @escaping @Sendable (String, Date) -> Void,
+            onUsage: @escaping @Sendable (ChatUsage) -> Void,
+            onStatus: @escaping @Sendable (String) -> Void
+        ) {
             self.task = task
             self.onDelta = onDelta
             self.onReasoning = onReasoning
@@ -299,7 +301,8 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         func consume(_ line: Data) {
             // 用 `.whitespacesAndNewlines`：CRLF 流的分片行尾带 `\r`，
             // 只裁空格时 `[DONE]` 永远匹配不上。
-            let trimmed = String(data: line, encoding: .utf8)?
+            let trimmed =
+                String(data: line, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if trimmed.isEmpty { return }
             if !trimmed.hasPrefix("data:") {
@@ -312,7 +315,8 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
                 return
             }
             guard let data = payload.data(using: .utf8),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else {
                 return
             }
 
@@ -338,7 +342,8 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
                 // 不同引擎对思考流的字段名不一致：OpenAI 兼容层常见
                 // `reasoning_content`，部分本地引擎用 `reasoning` 或 `thinking`，
                 // 也有的把片段包在 `reasoning_details` 数组里。
-                let reasoningPiece = (chunk["reasoning_content"] as? String)
+                let reasoningPiece =
+                    (chunk["reasoning_content"] as? String)
                     ?? (chunk["reasoning"] as? String)
                     ?? (chunk["thinking"] as? String)
                     ?? Self.reasoningDetails(chunk["reasoning_details"])
@@ -430,9 +435,10 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 
         func readableError(status: Int) -> String {
             if let data = raw.data(using: .utf8),
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let error = json["error"] as? [String: Any],
-               let message = error["message"] as? String {
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let error = json["error"] as? [String: Any],
+                let message = error["message"] as? String
+            {
                 return message
             }
             return "服务返回 HTTP \(status)"
@@ -523,16 +529,18 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         ]
     }
 
-    func send(port: Int,
-              model: String,
-              turns: [ChatTurn],
-              options: ChatOptions,
-              tools: ChatToolSchema = ChatToolSchema(),
-              onDelta: @escaping @Sendable (String, Date) -> Void,
-              onReasoning: @escaping @Sendable (String, Date) -> Void,
-              onUsage: @escaping @Sendable (ChatUsage) -> Void,
-              onStatus: @escaping @Sendable (String) -> Void,
-              onToolCall: @escaping @Sendable (String, Date) -> Void = { _, _ in }) async -> Result<String, ChatError> {
+    func send(
+        port: Int,
+        model: String,
+        turns: [ChatTurn],
+        options: ChatOptions,
+        tools: ChatToolSchema = ChatToolSchema(),
+        onDelta: @escaping @Sendable (String, Date) -> Void,
+        onReasoning: @escaping @Sendable (String, Date) -> Void,
+        onUsage: @escaping @Sendable (ChatUsage) -> Void,
+        onStatus: @escaping @Sendable (String) -> Void,
+        onToolCall: @escaping @Sendable (String, Date) -> Void = { _, _ in }
+    ) async -> Result<String, ChatError> {
         cancel()
 
         var body: [String: Any] = [
@@ -593,8 +601,10 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 
         guard let url = URL(string: "http://127.0.0.1:\(port)/v1/chat/completions") else {
             onStatus("失败")
-            return .failure(ChatError(kind: .invalidEndpoint(port: port),
-                                      message: "本地网关地址无效：端口 \(port)"))
+            return .failure(
+                ChatError(
+                    kind: .invalidEndpoint(port: port),
+                    message: "本地网关地址无效：端口 \(port)"))
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -605,14 +615,17 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         } catch {
             onStatus("失败")
-            return .failure(ChatError(kind: .encoding,
-                                      message: "请求体编码失败：\(error.localizedDescription)"))
+            return .failure(
+                ChatError(
+                    kind: .encoding,
+                    message: "请求体编码失败：\(error.localizedDescription)"))
         }
 
         let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
         let dataTask = session.dataTask(with: request)
-        let stream = Request(task: dataTask, onDelta: onDelta, onReasoning: onReasoning,
-                             onToolCall: onToolCall, onUsage: onUsage, onStatus: onStatus)
+        let stream = Request(
+            task: dataTask, onDelta: onDelta, onReasoning: onReasoning,
+            onToolCall: onToolCall, onUsage: onUsage, onStatus: onStatus)
         install(stream)
         onStatus("生成中")
 
@@ -635,19 +648,25 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
         if let error = stream.transportError ?? dataTask.error {
             let cancelled = (error as? URLError)?.code == .cancelled
             onStatus(cancelled ? "已取消" : "失败")
-            return .failure(ChatError(kind: cancelled ? .cancelled : .transport,
-                                      message: cancelled ? "已取消" : error.localizedDescription))
+            return .failure(
+                ChatError(
+                    kind: cancelled ? .cancelled : .transport,
+                    message: cancelled ? "已取消" : error.localizedDescription))
         }
         if stream.status < 200 || stream.status >= 300 {
             onStatus("失败")
-            return .failure(ChatError(kind: .badStatus(stream.status),
-                                      message: stream.readableError(status: stream.status)))
+            return .failure(
+                ChatError(
+                    kind: .badStatus(stream.status),
+                    message: stream.readableError(status: stream.status)))
         }
         if stream.text.isEmpty && !stream.raw.isEmpty {
             // Some builds answer with a single JSON document instead of SSE.
-            if let json = try? JSONSerialization.jsonObject(with: stream.raw.data(using: .utf8) ?? Data()) as? [String: Any],
-               let choices = json["choices"] as? [[String: Any]],
-               let message = choices.first?["message"] as? [String: Any] {
+            if let json = try? JSONSerialization.jsonObject(with: stream.raw.data(using: .utf8) ?? Data())
+                as? [String: Any],
+                let choices = json["choices"] as? [[String: Any]],
+                let message = choices.first?["message"] as? [String: Any]
+            {
                 if let content = message["content"] as? String, !content.isEmpty {
                     stream.text = content
                     onDelta(content, Date())
@@ -669,9 +688,11 @@ final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 
     // MARK: URLSession delegate
 
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask,
-                    didReceive response: URLResponse,
-                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+    func urlSession(
+        _ session: URLSession, dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
         request(for: dataTask)?.status = (response as? HTTPURLResponse)?.statusCode ?? 0
         completionHandler(.allow)
     }

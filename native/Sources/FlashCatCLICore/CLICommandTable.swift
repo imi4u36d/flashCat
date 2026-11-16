@@ -28,11 +28,13 @@ public struct CLIOptionSpec: Equatable, Sendable {
     public let placeholder: String?
     public let summary: String
 
-    public init(_ name: String,
-                short: Character? = nil,
-                kind: CLIOptionKind = .flag,
-                placeholder: String? = nil,
-                summary: String) {
+    public init(
+        _ name: String,
+        short: Character? = nil,
+        kind: CLIOptionKind = .flag,
+        placeholder: String? = nil,
+        summary: String
+    ) {
         self.name = name
         self.short = short
         self.kind = kind
@@ -73,72 +75,89 @@ public enum CLIOptions {
     public static let help = CLIOptionSpec("help", short: "h", summary: "显示帮助")
     public static let version = CLIOptionSpec("version", short: "V", summary: "显示版本")
     public static let noColor = CLIOptionSpec("no-color", summary: "关闭 ANSI 颜色")
-    public static let timeout = CLIOptionSpec("timeout", short: "t", kind: .number,
-                                              placeholder: "<秒>",
-                                              summary: "控制接口超时（默认 30，长任务 900）")
-    public static let controlPort = CLIOptionSpec("control-port", kind: .number,
-                                                  placeholder: "<端口>",
-                                                  summary: "覆盖控制端口（默认读 control.json）")
-    public static let controlURL = CLIOptionSpec("control-url", kind: .value,
-                                                 placeholder: "<URL>",
-                                                 summary: "覆盖控制接口地址（仅本机回环，或 https）")
-    public static let controlToken = CLIOptionSpec("control-token", kind: .value,
-                                                   placeholder: "<令牌>",
-                                                   summary: "覆盖控制令牌（默认读 control.json）")
+    public static let timeout = CLIOptionSpec(
+        "timeout", short: "t", kind: .number,
+        placeholder: "<秒>",
+        summary: "控制接口超时（默认 30，长任务 900）")
+    public static let controlPort = CLIOptionSpec(
+        "control-port", kind: .number,
+        placeholder: "<端口>",
+        summary: "覆盖控制端口（默认读 control.json）")
+    public static let controlURL = CLIOptionSpec(
+        "control-url", kind: .value,
+        placeholder: "<URL>",
+        summary: "覆盖控制接口地址（仅本机回环，或 https）")
+    public static let controlToken = CLIOptionSpec(
+        "control-token", kind: .value,
+        placeholder: "<令牌>",
+        summary: "覆盖控制令牌（默认读 control.json）")
 
     // MARK: status
 
     public static let watch = CLIOptionSpec("watch", summary: "每秒刷新（Ctrl-C 退出）")
-    public static let interval = CLIOptionSpec("interval", kind: .number, placeholder: "<秒>",
-                                               summary: "刷新间隔，默认 1")
+    public static let interval = CLIOptionSpec(
+        "interval", kind: .number, placeholder: "<秒>",
+        summary: "刷新间隔，默认 1")
 
     // MARK: engines
 
-    public static let release = CLIOptionSpec("release", kind: .value, placeholder: "<版本>",
-                                              summary: "指定要安装的 pack 版本，默认最新")
-    public static let index = CLIOptionSpec("index", kind: .value, placeholder: "<路径|URL>",
-                                            summary: "覆盖 pack 索引位置")
+    public static let release = CLIOptionSpec(
+        "release", kind: .value, placeholder: "<版本>",
+        summary: "指定要安装的 pack 版本，默认最新")
+    public static let index = CLIOptionSpec(
+        "index", kind: .value, placeholder: "<路径|URL>",
+        summary: "覆盖 pack 索引位置")
     public static let force = CLIOptionSpec("force", summary: "跳过保护性检查，强制执行")
     public static let yes = CLIOptionSpec("yes", short: "y", summary: "不可逆操作不再确认")
     public static let noReload = CLIOptionSpec("no-reload", summary: "装完不触发 engines reload")
 
     // MARK: models
 
-    public static let engine = CLIOptionSpec("engine", short: "e", kind: .value, placeholder: "<id>",
-                                             summary: "限定引擎")
+    public static let engine = CLIOptionSpec(
+        "engine", short: "e", kind: .value, placeholder: "<id>",
+        summary: "限定引擎")
     public static let all = CLIOptionSpec("all", short: "a", summary: "连推荐档位一起列出")
     public static let shared = CLIOptionSpec("shared", summary: "用共享权重目录")
     public static let wait = CLIOptionSpec("wait", short: "w", summary: "等到任务结束再返回")
-    public static let forEngines = CLIOptionSpec("for", kind: .list, placeholder: "<a,b>",
-                                                 summary: "同时为这些引擎准备（可重复）")
+    public static let forEngines = CLIOptionSpec(
+        "for", kind: .list, placeholder: "<a,b>",
+        summary: "同时为这些引擎准备（可重复）")
 
     // MARK: chat
 
-    public static let model = CLIOptionSpec("model", short: "m", kind: .value, placeholder: "<模型>",
-                                            summary: "指定模型（默认当前模型）")
-    public static let system = CLIOptionSpec("system", kind: .value, placeholder: "<提示词>",
-                                             summary: "系统提示")
-    public static let temperature = CLIOptionSpec("temperature", kind: .number, placeholder: "<值>",
-                                                  summary: "温度，默认读应用设置")
-    public static let topP = CLIOptionSpec("top-p", kind: .number, placeholder: "<值>",
-                                           summary: "top-p，默认读应用设置")
-    public static let maxTokens = CLIOptionSpec("max-tokens", kind: .number, placeholder: "<数>",
-                                                summary: "最大输出；0 表示模型上限")
+    public static let model = CLIOptionSpec(
+        "model", short: "m", kind: .value, placeholder: "<模型>",
+        summary: "指定模型（默认当前模型）")
+    public static let system = CLIOptionSpec(
+        "system", kind: .value, placeholder: "<提示词>",
+        summary: "系统提示")
+    public static let temperature = CLIOptionSpec(
+        "temperature", kind: .number, placeholder: "<值>",
+        summary: "温度，默认读应用设置")
+    public static let topP = CLIOptionSpec(
+        "top-p", kind: .number, placeholder: "<值>",
+        summary: "top-p，默认读应用设置")
+    public static let maxTokens = CLIOptionSpec(
+        "max-tokens", kind: .number, placeholder: "<数>",
+        summary: "最大输出；0 表示模型上限")
     public static let stream = CLIOptionSpec("stream", summary: "流式输出（默认 tty 下开启）")
     public static let noStream = CLIOptionSpec("no-stream", summary: "关闭流式输出")
     public static let showReasoning = CLIOptionSpec("show-reasoning", summary: "把思考过程打到 stderr")
-    public static let gatewayURL = CLIOptionSpec("gateway-url", kind: .value, placeholder: "<URL>",
-                                                 summary: "覆盖网关地址（默认读设置）")
+    public static let gatewayURL = CLIOptionSpec(
+        "gateway-url", kind: .value, placeholder: "<URL>",
+        summary: "覆盖网关地址（默认读设置）")
 
     // MARK: logs
 
     public static let gateway = CLIOptionSpec("gateway", summary: "网关日志")
     public static let control = CLIOptionSpec("control", summary: "控制接口日志")
     public static let app = CLIOptionSpec("app", summary: "应用日志")
-    public static let lines = CLIOptionSpec("lines", short: "n", kind: .number, placeholder: "<数>",
-                                            summary: "显示尾部行数，默认 200")
-    public static let level = CLIOptionSpec("level", kind: .value, placeholder: "<级别>",
-                                            summary: "过滤 info/system/warning/error/success")
+    public static let lines = CLIOptionSpec(
+        "lines", short: "n", kind: .number, placeholder: "<数>",
+        summary: "显示尾部行数，默认 200")
+    public static let level = CLIOptionSpec(
+        "level", kind: .value, placeholder: "<级别>",
+        summary: "过滤 info/system/warning/error/success")
     public static let follow = CLIOptionSpec("follow", short: "f", summary: "持续跟踪（Ctrl-C 退出）")
 
     // MARK: cli
@@ -152,8 +171,9 @@ public enum CLIOptions {
     /// 为什么还留着：删掉它会让 `flashcat models list --engines splash` 这类
     /// 老脚本从「参数被忽略」变成「未知选项 + 退出码 2」。它不进帮助、也不进
     /// 任何命令的选项表，只是解析器继续接受。
-    public static let engines = CLIOptionSpec("engines", kind: .value, placeholder: "<id>",
-                                              summary: "兼容保留：解析器接受，但没有命令读取")
+    public static let engines = CLIOptionSpec(
+        "engines", kind: .value, placeholder: "<id>",
+        summary: "兼容保留：解析器接受，但没有命令读取")
 }
 
 // MARK: - 命令
@@ -174,13 +194,15 @@ public struct CLICommandSpec: Equatable, Sendable {
     /// 该命令可能出现的退出码（含 0）。帮助里的「退出码」段由它生成。
     public let exitCodes: [CLIExit]
 
-    public init(name: String,
-                summary: String,
-                usage: String,
-                details: [String] = [],
-                subcommands: [String] = [],
-                options: [CLIOptionSpec] = [],
-                exitCodes: [CLIExit]) {
+    public init(
+        name: String,
+        summary: String,
+        usage: String,
+        details: [String] = [],
+        subcommands: [String] = [],
+        options: [CLIOptionSpec] = [],
+        exitCodes: [CLIExit]
+    ) {
         self.name = name
         self.summary = summary
         self.usage = usage
@@ -266,10 +288,14 @@ public enum CLICommandTable {
                 "port <id> [端口]        查看或修改端口（需要应用在运行）",
                 "logs <id>               等价于 logs --engine <id>",
             ],
-            subcommands: ["list", "start", "stop", "restart", "use",
-                          "install", "uninstall", "port", "logs"],
-            options: [CLIOptions.release, CLIOptions.index, CLIOptions.force,
-                      CLIOptions.yes, CLIOptions.noReload],
+            subcommands: [
+                "list", "start", "stop", "restart", "use",
+                "install", "uninstall", "port", "logs",
+            ],
+            options: [
+                CLIOptions.release, CLIOptions.index, CLIOptions.force,
+                CLIOptions.yes, CLIOptions.noReload,
+            ],
             exitCodes: controlExitCodes + [.notFound, .conflict]),
         CLICommandSpec(
             name: "models",
@@ -283,34 +309,42 @@ public enum CLICommandTable {
                 "path <模型> [--engine id]   打印模型目录",
             ],
             subcommands: ["list", "use", "download", "delete", "path"],
-            options: [CLIOptions.engine, CLIOptions.all, CLIOptions.shared,
-                      CLIOptions.wait, CLIOptions.forEngines, CLIOptions.yes],
+            options: [
+                CLIOptions.engine, CLIOptions.all, CLIOptions.shared,
+                CLIOptions.wait, CLIOptions.forEngines, CLIOptions.yes,
+            ],
             exitCodes: controlExitCodes + [.notFound, .conflict]),
         CLICommandSpec(
             name: "chat",
             summary: "通过本地网关发起一轮对话",
             usage: "flashcat chat [提示词] [选项]",
             details: ["提示词写 - 或省略时从 stdin 读取。"],
-            options: [CLIOptions.model, CLIOptions.engine, CLIOptions.system,
-                      CLIOptions.temperature, CLIOptions.topP, CLIOptions.maxTokens,
-                      CLIOptions.stream, CLIOptions.noStream,
-                      CLIOptions.showReasoning, CLIOptions.gatewayURL],
+            options: [
+                CLIOptions.model, CLIOptions.engine, CLIOptions.system,
+                CLIOptions.temperature, CLIOptions.topP, CLIOptions.maxTokens,
+                CLIOptions.stream, CLIOptions.noStream,
+                CLIOptions.showReasoning, CLIOptions.gatewayURL,
+            ],
             exitCodes: controlExitCodes + [.notFound, .conflict]),
         CLICommandSpec(
             name: "gateway",
             summary: "查看、启动或停止 OpenAI / Claude 网关",
             usage: "flashcat gateway <status|start|stop>",
-            details: ["status  查看端口与运行状态",
-                      "start   启用并启动",
-                      "stop    停用并停止"],
+            details: [
+                "status  查看端口与运行状态",
+                "start   启用并启动",
+                "stop    停用并停止",
+            ],
             subcommands: ["status", "start", "stop"],
             exitCodes: controlExitCodes + [.conflict]),
         CLICommandSpec(
             name: "logs",
             summary: "看引擎、网关或控制接口日志（可跟踪）",
             usage: "flashcat logs [--engine id|--gateway|--control|--app] [选项]",
-            options: [CLIOptions.engine, CLIOptions.gateway, CLIOptions.control,
-                      CLIOptions.app, CLIOptions.lines, CLIOptions.level, CLIOptions.follow],
+            options: [
+                CLIOptions.engine, CLIOptions.gateway, CLIOptions.control,
+                CLIOptions.app, CLIOptions.lines, CLIOptions.level, CLIOptions.follow,
+            ],
             exitCodes: controlExitCodes + [.notFound]),
         CLICommandSpec(
             name: "config",
@@ -388,22 +422,29 @@ public enum CLICommandTable {
     /// 不会改这里的任何一个码——脚本靠这些码判断状态，不能因为一行提示就漂移。
     public static let exitCodes: [CLIExitCodeSpec] = [
         CLIExitCodeSpec(code: .success, summary: "成功", httpStatuses: [], controlErrorCodes: []),
-        CLIExitCodeSpec(code: .failure, summary: "执行失败（没有专门映射的错误都落到这里）",
-                        httpStatuses: [], controlErrorCodes: []),
-        CLIExitCodeSpec(code: .usage, summary: "用法或参数错误",
-                        httpStatuses: [400], controlErrorCodes: []),
-        CLIExitCodeSpec(code: .notRunning, summary: "flashCat 应用未运行 / 控制接口不可达",
-                        httpStatuses: [], controlErrorCodes: []),
-        CLIExitCodeSpec(code: .notFound, summary: "找不到引擎、模型或设置项",
-                        httpStatuses: [404], controlErrorCodes: []),
-        CLIExitCodeSpec(code: .timeout, summary: "等待超时",
-                        httpStatuses: [408, 504],
-                        controlErrorCodes: [ControlErrorCode.timeout]),
-        CLIExitCodeSpec(code: .conflict, summary: "状态冲突（切换中、下载中、未确认）",
-                        httpStatuses: [409], controlErrorCodes: []),
-        CLIExitCodeSpec(code: .unauthorized, summary: "控制令牌错误",
-                        httpStatuses: [401, 403],
-                        controlErrorCodes: [ControlErrorCode.unauthorized]),
+        CLIExitCodeSpec(
+            code: .failure, summary: "执行失败（没有专门映射的错误都落到这里）",
+            httpStatuses: [], controlErrorCodes: []),
+        CLIExitCodeSpec(
+            code: .usage, summary: "用法或参数错误",
+            httpStatuses: [400], controlErrorCodes: []),
+        CLIExitCodeSpec(
+            code: .notRunning, summary: "flashCat 应用未运行 / 控制接口不可达",
+            httpStatuses: [], controlErrorCodes: []),
+        CLIExitCodeSpec(
+            code: .notFound, summary: "找不到引擎、模型或设置项",
+            httpStatuses: [404], controlErrorCodes: []),
+        CLIExitCodeSpec(
+            code: .timeout, summary: "等待超时",
+            httpStatuses: [408, 504],
+            controlErrorCodes: [ControlErrorCode.timeout]),
+        CLIExitCodeSpec(
+            code: .conflict, summary: "状态冲突（切换中、下载中、未确认）",
+            httpStatuses: [409], controlErrorCodes: []),
+        CLIExitCodeSpec(
+            code: .unauthorized, summary: "控制令牌错误",
+            httpStatuses: [401, 403],
+            controlErrorCodes: [ControlErrorCode.unauthorized]),
     ]
 
     // MARK: 别名与解析器用的表
@@ -425,57 +466,81 @@ public enum CLICommandTable {
     // MARK: 路由归属
 
     public static let routeOwnership: [CLIRouteOwnership] = [
-        CLIRouteOwnership(route: .health, commands: ["app"], method: "GET", path: "/v1/health",
-                          summary: "应用是否在跑"),
-        CLIRouteOwnership(route: .status, commands: ["status", "chat", "gateway", "app"],
-                          method: "GET", path: "/v1/status", summary: "整体状态快照"),
-        CLIRouteOwnership(route: .doctor, commands: ["doctor"], method: "GET", path: "/v1/doctor",
-                          summary: "安装与运行时体检"),
-        CLIRouteOwnership(route: .config, commands: ["config", "engines"], method: "GET",
-                          path: "/v1/config", summary: "读取设置文档"),
-        CLIRouteOwnership(route: .configSet, commands: ["config", "engines"], method: "POST",
-                          path: "/v1/config", summary: "写入设置项"),
-        CLIRouteOwnership(route: .downloads, commands: ["models"], method: "GET",
-                          path: "/v1/downloads", summary: "列出下载任务"),
-        CLIRouteOwnership(route: .downloadPause, commands: [], method: "POST",
-                          path: "/v1/downloads/pause",
-                          summary: "CLI 不发起：暂停是 GUI 里的人机交互动作，没有对应命令。"),
-        CLIRouteOwnership(route: .downloadResume, commands: [], method: "POST",
-                          path: "/v1/downloads/resume",
-                          summary: "CLI 不发起：恢复下载同样只从 GUI 触发。"),
-        CLIRouteOwnership(route: .downloadCancel, commands: [], method: "POST",
-                          path: "/v1/downloads/cancel",
-                          summary: "CLI 不发起：取消下载只从 GUI 触发。"),
-        CLIRouteOwnership(route: .logs, commands: ["logs"], method: "GET", path: "/v1/logs",
-                          summary: "读取日志尾部"),
-        CLIRouteOwnership(route: .models, commands: ["models", "chat"], method: "GET",
-                          path: "/v1/models", summary: "列出模型"),
-        CLIRouteOwnership(route: .modelUse, commands: ["models"], method: "POST",
-                          path: "/v1/models/use", summary: "加载模型"),
-        CLIRouteOwnership(route: .modelDownload, commands: ["models"], method: "POST",
-                          path: "/v1/models/download", summary: "下载模型"),
-        CLIRouteOwnership(route: .modelDelete, commands: ["models"], method: "POST",
-                          path: "/v1/models/delete", summary: "删除模型"),
-        CLIRouteOwnership(route: .gatewayStart, commands: ["gateway", "chat"], method: "POST",
-                          path: "/v1/gateway/start", summary: "启用并启动网关"),
-        CLIRouteOwnership(route: .gatewayStop, commands: ["gateway"], method: "POST",
-                          path: "/v1/gateway/stop", summary: "停用并停止网关"),
-        CLIRouteOwnership(route: .appQuit, commands: ["app"], method: "POST", path: "/v1/app/quit",
-                          summary: "让应用优雅退出"),
-        CLIRouteOwnership(route: .appOpen, commands: [], method: "POST", path: "/v1/app/open",
-                          summary: "CLI 不发起：`app open` 直接 startApplication 拉起应用，不等控制接口。"),
-        CLIRouteOwnership(route: .engines, commands: ["engines"], method: "GET", path: "/v1/engines",
-                          summary: "列出引擎"),
-        CLIRouteOwnership(route: .enginesReload, commands: ["engines"], method: "POST",
-                          path: "/v1/engines/reload", summary: "重新扫描引擎 pack"),
-        CLIRouteOwnership(route: .engineStart("omlx"), commands: ["engines"], method: "POST",
-                          path: "/v1/engines/omlx/start", summary: "切换并启动某个引擎"),
-        CLIRouteOwnership(route: .engineStop("omlx"), commands: ["engines"], method: "POST",
-                          path: "/v1/engines/omlx/stop", summary: "停止某个引擎"),
-        CLIRouteOwnership(route: .engineRestart("omlx"), commands: ["engines"], method: "POST",
-                          path: "/v1/engines/omlx/restart", summary: "重启某个引擎"),
-        CLIRouteOwnership(route: .engineUse("omlx"), commands: ["engines"], method: "POST",
-                          path: "/v1/engines/omlx/use", summary: "只切换活动引擎"),
+        CLIRouteOwnership(
+            route: .health, commands: ["app"], method: "GET", path: "/v1/health",
+            summary: "应用是否在跑"),
+        CLIRouteOwnership(
+            route: .status, commands: ["status", "chat", "gateway", "app"],
+            method: "GET", path: "/v1/status", summary: "整体状态快照"),
+        CLIRouteOwnership(
+            route: .doctor, commands: ["doctor"], method: "GET", path: "/v1/doctor",
+            summary: "安装与运行时体检"),
+        CLIRouteOwnership(
+            route: .config, commands: ["config", "engines"], method: "GET",
+            path: "/v1/config", summary: "读取设置文档"),
+        CLIRouteOwnership(
+            route: .configSet, commands: ["config", "engines"], method: "POST",
+            path: "/v1/config", summary: "写入设置项"),
+        CLIRouteOwnership(
+            route: .downloads, commands: ["models"], method: "GET",
+            path: "/v1/downloads", summary: "列出下载任务"),
+        CLIRouteOwnership(
+            route: .downloadPause, commands: [], method: "POST",
+            path: "/v1/downloads/pause",
+            summary: "CLI 不发起：暂停是 GUI 里的人机交互动作，没有对应命令。"),
+        CLIRouteOwnership(
+            route: .downloadResume, commands: [], method: "POST",
+            path: "/v1/downloads/resume",
+            summary: "CLI 不发起：恢复下载同样只从 GUI 触发。"),
+        CLIRouteOwnership(
+            route: .downloadCancel, commands: [], method: "POST",
+            path: "/v1/downloads/cancel",
+            summary: "CLI 不发起：取消下载只从 GUI 触发。"),
+        CLIRouteOwnership(
+            route: .logs, commands: ["logs"], method: "GET", path: "/v1/logs",
+            summary: "读取日志尾部"),
+        CLIRouteOwnership(
+            route: .models, commands: ["models", "chat"], method: "GET",
+            path: "/v1/models", summary: "列出模型"),
+        CLIRouteOwnership(
+            route: .modelUse, commands: ["models"], method: "POST",
+            path: "/v1/models/use", summary: "加载模型"),
+        CLIRouteOwnership(
+            route: .modelDownload, commands: ["models"], method: "POST",
+            path: "/v1/models/download", summary: "下载模型"),
+        CLIRouteOwnership(
+            route: .modelDelete, commands: ["models"], method: "POST",
+            path: "/v1/models/delete", summary: "删除模型"),
+        CLIRouteOwnership(
+            route: .gatewayStart, commands: ["gateway", "chat"], method: "POST",
+            path: "/v1/gateway/start", summary: "启用并启动网关"),
+        CLIRouteOwnership(
+            route: .gatewayStop, commands: ["gateway"], method: "POST",
+            path: "/v1/gateway/stop", summary: "停用并停止网关"),
+        CLIRouteOwnership(
+            route: .appQuit, commands: ["app"], method: "POST", path: "/v1/app/quit",
+            summary: "让应用优雅退出"),
+        CLIRouteOwnership(
+            route: .appOpen, commands: [], method: "POST", path: "/v1/app/open",
+            summary: "CLI 不发起：`app open` 直接 startApplication 拉起应用，不等控制接口。"),
+        CLIRouteOwnership(
+            route: .engines, commands: ["engines"], method: "GET", path: "/v1/engines",
+            summary: "列出引擎"),
+        CLIRouteOwnership(
+            route: .enginesReload, commands: ["engines"], method: "POST",
+            path: "/v1/engines/reload", summary: "重新扫描引擎 pack"),
+        CLIRouteOwnership(
+            route: .engineStart("omlx"), commands: ["engines"], method: "POST",
+            path: "/v1/engines/omlx/start", summary: "切换并启动某个引擎"),
+        CLIRouteOwnership(
+            route: .engineStop("omlx"), commands: ["engines"], method: "POST",
+            path: "/v1/engines/omlx/stop", summary: "停止某个引擎"),
+        CLIRouteOwnership(
+            route: .engineRestart("omlx"), commands: ["engines"], method: "POST",
+            path: "/v1/engines/omlx/restart", summary: "重启某个引擎"),
+        CLIRouteOwnership(
+            route: .engineUse("omlx"), commands: ["engines"], method: "POST",
+            path: "/v1/engines/omlx/use", summary: "只切换活动引擎"),
     ]
 
     // MARK: 投影给解析器

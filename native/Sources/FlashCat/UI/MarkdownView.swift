@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import SwiftUI
 import Foundation
+import SwiftUI
 
 /// 对话正文的 Markdown 渲染：标题、段落、围栏代码、引用、列表、表格与分隔线。
 ///
@@ -90,33 +90,35 @@ struct StreamingMarkdownView: View {
         } else {
             let count = min(targetCount, max(targetCount > 0 ? 1 : 0, Int(ceil(revealedProgress))))
             let slice = count >= targetCount ? text : String(text.prefix(count))
-            MarkdownView(text: slice,
-                         caching: false,
-                         fillsWidth: fillsWidth,
-                         tailFadeAlpha: leadingTailAlpha())
-                .onAppear {
-                    targetLength = text.count
-                    activeStreaming = streaming
-                    if text.count > 40, revealedProgress < Double(text.count) {
-                        revealedProgress = Double(text.count)
-                    }
-                    ensurePumpRunning()
+            MarkdownView(
+                text: slice,
+                caching: false,
+                fillsWidth: fillsWidth,
+                tailFadeAlpha: leadingTailAlpha()
+            )
+            .onAppear {
+                targetLength = text.count
+                activeStreaming = streaming
+                if text.count > 40, revealedProgress < Double(text.count) {
+                    revealedProgress = Double(text.count)
                 }
-                .onDisappear { stopPump() }
-                .onChange(of: text.count) { _, newCount in
-                    targetLength = newCount
-                    if Double(newCount) < revealedProgress {
-                        revealedProgress = Double(newCount)
-                    }
-                    ensurePumpRunning()
+                ensurePumpRunning()
+            }
+            .onDisappear { stopPump() }
+            .onChange(of: text.count) { _, newCount in
+                targetLength = newCount
+                if Double(newCount) < revealedProgress {
+                    revealedProgress = Double(newCount)
                 }
-                .onChange(of: streaming) { _, active in
-                    activeStreaming = active
-                    if !active {
-                        stopPump()
-                        revealedProgress = Double(text.count)
-                    }
+                ensurePumpRunning()
+            }
+            .onChange(of: streaming) { _, active in
+                activeStreaming = active
+                if !active {
+                    stopPump()
+                    revealedProgress = Double(text.count)
                 }
+            }
         }
     }
 
@@ -382,17 +384,19 @@ private enum MarkdownComposer {
         } else {
             parsed = AttributedString(text)
         }
-        return inline(parsed,
-                      font: .system(size: 12.5, weight: isHeader ? .semibold : .regular),
-                      color: isHeader ? DS.text : DS.text2)
+        return inline(
+            parsed,
+            font: .system(size: 12.5, weight: isHeader ? .semibold : .regular),
+            color: isHeader ? DS.text : DS.text2)
     }
 
     private static func content(for kind: MarkdownBlock.Kind) -> AttributedString {
         switch kind {
         case .heading(let level, let content):
-            return inline(content,
-                          font: .system(size: headingSize(level), weight: .semibold),
-                          color: DS.text)
+            return inline(
+                content,
+                font: .system(size: headingSize(level), weight: .semibold),
+                color: DS.text)
 
         case .paragraph(let content):
             return inline(content, font: .system(size: bodySize), color: DS.text)
@@ -424,9 +428,11 @@ private enum MarkdownComposer {
 
     // MARK: Inline styling
 
-    static func inline(_ source: AttributedString,
-                       font: Font,
-                       color: Color) -> AttributedString {
+    static func inline(
+        _ source: AttributedString,
+        font: Font,
+        color: Color
+    ) -> AttributedString {
         var text = source
         text.font = font
         text.foregroundColor = color
@@ -451,8 +457,10 @@ private enum MarkdownComposer {
         return text
     }
 
-    private static func joined(_ pieces: [AttributedString],
-                               separator: AttributedString) -> AttributedString {
+    private static func joined(
+        _ pieces: [AttributedString],
+        separator: AttributedString
+    ) -> AttributedString {
         var out = AttributedString()
         for (index, piece) in pieces.enumerated() {
             if index > 0 { out += separator }
@@ -559,7 +567,8 @@ struct MarkdownBlock: Identifiable {
             // 纯文本快路径：不含任何行内 Markdown 语法字符时直接构造，避免每次
             // 流式重解析都对整段历史段落调用昂贵的 Foundation Markdown 解析器。
             if !trimmed.contains(where: { "*_`~\\[]<&".contains($0) }),
-               !trimmed.contains("http") {
+                !trimmed.contains("http")
+            {
                 return AttributedString(trimmed)
             }
             parseCacheLock.lock()
@@ -610,8 +619,11 @@ struct MarkdownBlock: Identifiable {
                     index += 1
                 }
                 if index < lines.count { index += 1 }
-                blocks.append(MarkdownBlock(kind: .code(language.isEmpty ? nil : language,
-                                                        code.joined(separator: "\n"))))
+                blocks.append(
+                    MarkdownBlock(
+                        kind: .code(
+                            language.isEmpty ? nil : language,
+                            code.joined(separator: "\n"))))
                 continue
             }
 
@@ -630,7 +642,8 @@ struct MarkdownBlock: Identifiable {
             if trimmed.hasPrefix(">") {
                 var quoted: [String] = []
                 while index < lines.count,
-                      lines[index].trimmingCharacters(in: .whitespaces).hasPrefix(">") {
+                    lines[index].trimmingCharacters(in: .whitespaces).hasPrefix(">")
+                {
                     let content = lines[index].trimmingCharacters(in: .whitespaces)
                         .dropFirst()
                         .trimmingCharacters(in: .whitespaces)
@@ -645,7 +658,9 @@ struct MarkdownBlock: Identifiable {
                 var items: [AttributedString] = []
                 while index < lines.count {
                     let candidate = lines[index].trimmingCharacters(in: .whitespaces)
-                    guard candidate.hasPrefix("- ") || candidate.hasPrefix("* ") || candidate.hasPrefix("+ ") else { break }
+                    guard candidate.hasPrefix("- ") || candidate.hasPrefix("* ") || candidate.hasPrefix("+ ") else {
+                        break
+                    }
                     items.append(inline(String(candidate.dropFirst(2))))
                     index += 1
                 }
@@ -676,7 +691,8 @@ struct MarkdownBlock: Identifiable {
                 while index < lines.count {
                     let candidate = lines[index].trimmingCharacters(in: .whitespaces)
                     guard candidate.hasPrefix("|"), candidate.hasSuffix("|") else { break }
-                    let cells = candidate
+                    let cells =
+                        candidate
                         .trimmingCharacters(in: CharacterSet(charactersIn: "|"))
                         .components(separatedBy: "|")
                         .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -706,7 +722,8 @@ struct MarkdownBlock: Identifiable {
                     || trimmedCandidate.hasPrefix("+ ")
                     || trimmedCandidate.hasPrefix("|")
                     || trimmedCandidate.firstMatch(ofHeading: true) != nil
-                    || orderedItem(trimmedCandidate) != nil {
+                    || orderedItem(trimmedCandidate) != nil
+                {
                     break
                 }
                 paragraph.append(candidate)
@@ -727,13 +744,13 @@ struct MarkdownBlock: Identifiable {
     }
 }
 
-private extension String {
-    struct HeadingMatch {
+extension String {
+    fileprivate struct HeadingMatch {
         let level: Int
         let text: String
     }
 
-    func firstMatch(ofHeading: Bool) -> HeadingMatch? {
+    fileprivate func firstMatch(ofHeading: Bool) -> HeadingMatch? {
         guard ofHeading else { return nil }
         var level = 0
         for character in self {

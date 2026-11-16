@@ -2,17 +2,20 @@
 // Copyright (c) 2026 wangzhuo
 
 import XCTest
+
 @testable import FlashCatCLICore
 
 final class EnginesCommandTests: XCTestCase {
     func testSelectedVersionDefaultsToNewest() throws {
-        XCTAssertEqual(try EnginesCommand.selectedVersion(["0.7.3", "0.7.2"], requested: nil),
-                       "0.7.3")
+        XCTAssertEqual(
+            try EnginesCommand.selectedVersion(["0.7.3", "0.7.2"], requested: nil),
+            "0.7.3")
     }
 
     func testSelectedVersionHonoursAnExactMatch() throws {
-        XCTAssertEqual(try EnginesCommand.selectedVersion(["0.7.3", "0.7.2"], requested: "0.7.2"),
-                       "0.7.2")
+        XCTAssertEqual(
+            try EnginesCommand.selectedVersion(["0.7.3", "0.7.2"], requested: "0.7.2"),
+            "0.7.2")
     }
 
     func testSelectedVersionNeverRetargetsAMissingVersion() {

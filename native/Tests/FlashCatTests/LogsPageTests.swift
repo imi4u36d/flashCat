@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import XCTest
+
 @testable import FlashCat
 
 /// 日志页的阅读顺序：存储层按时间追加，页面把最新的排在最上面。

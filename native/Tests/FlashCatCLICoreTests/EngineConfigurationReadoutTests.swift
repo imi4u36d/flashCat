@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
+import FlashCatKit
 import Foundation
 import XCTest
+
 @testable import FlashCatCLICore
-import FlashCatKit
 
 /// `engines.json` 读不出来时，CLI 以前用 `try?` 把它折成空配置：`status` /
 /// `config list` 会打出一份看起来完全正常、其实全由默认值拼出来的文档。
@@ -90,10 +91,11 @@ final class EngineConfigurationReadoutTests: XCTestCase {
 
     /// 记账行（`active` / `default`）不是引擎：不能出现在 per-engine 表里。
     func testBookkeepingKeysAreNotEngines() throws {
-        try write(#"""
-        {"active": {"version": "omlx"}, "default": {"port": 9000},
-         "splash": {"lastModel": "Qwen3-4B", "port": 8300}}
-        """#)
+        try write(
+            #"""
+            {"active": {"version": "omlx"}, "default": {"port": 9000},
+             "splash": {"lastModel": "Qwen3-4B", "port": 8300}}
+            """#)
         let configuration = local().engineConfiguration
         XCTAssertEqual(Set(configuration.lastModel.keys), ["splash"])
         XCTAssertEqual(Set(configuration.port.keys), ["splash"])

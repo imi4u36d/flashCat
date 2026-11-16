@@ -3,6 +3,7 @@
 
 import CryptoKit
 import XCTest
+
 @testable import FlashCatKit
 
 final class EngineInstallerTests: XCTestCase {
@@ -33,12 +34,18 @@ final class EngineInstallerTests: XCTestCase {
         ]
 
         let links = try EngineInstaller.links(inListing: listing, names: names)
-        XCTAssertEqual(links, [
-            ArchiveLink(kind: .symbolic, path: "splash-1.6.1/python/bin/python3", target: "python3.13"),
-            ArchiveLink(kind: .symbolic, path: "splash-1.6.1/python/lib/pkgconfig/python3.pc", target: "python-3.13.pc"),
-            ArchiveLink(kind: .symbolic, path: "splash-1.6.1/python/lib/pkgconfig/python3-embed.pc", target: "python-3.13-embed.pc"),
-            ArchiveLink(kind: .symbolic, path: "splash-1.6.1/python/share/man/man1/python3.1", target: "python3.13.1"),
-        ])
+        XCTAssertEqual(
+            links,
+            [
+                ArchiveLink(kind: .symbolic, path: "splash-1.6.1/python/bin/python3", target: "python3.13"),
+                ArchiveLink(
+                    kind: .symbolic, path: "splash-1.6.1/python/lib/pkgconfig/python3.pc", target: "python-3.13.pc"),
+                ArchiveLink(
+                    kind: .symbolic, path: "splash-1.6.1/python/lib/pkgconfig/python3-embed.pc",
+                    target: "python-3.13-embed.pc"),
+                ArchiveLink(
+                    kind: .symbolic, path: "splash-1.6.1/python/share/man/man1/python3.1", target: "python3.13.1"),
+            ])
         XCTAssertNoThrow(try EngineInstaller.validate(links: links, stripComponents: 1))
     }
 
@@ -58,8 +65,10 @@ final class EngineInstallerTests: XCTestCase {
         ]
         for line in rejected {
             let links = try EngineInstaller.links(inListing: [line], names: names)
-            XCTAssertThrowsError(try EngineInstaller.validate(links: links, stripComponents: 1),
-                                 "应当拒绝：\(line)") { error in
+            XCTAssertThrowsError(
+                try EngineInstaller.validate(links: links, stripComponents: 1),
+                "应当拒绝：\(line)"
+            ) { error in
                 guard case EngineInstallError.unsafeArchiveLink = error else {
                     return XCTFail("期望 unsafeArchiveLink，实际 \(error)")
                 }
@@ -67,9 +76,11 @@ final class EngineInstallerTests: XCTestCase {
         }
 
         // 看不懂的链接行按失败处理，不跳过：跳过等于把决定权交给 tar。
-        XCTAssertThrowsError(try EngineInstaller.links(
-            inListing: ["lrwxr-xr-x 0 zhuo staff 0 Nov 11 15:00 omlx-0.7.3/run"],
-            names: names)) { error in
+        XCTAssertThrowsError(
+            try EngineInstaller.links(
+                inListing: ["lrwxr-xr-x 0 zhuo staff 0 Nov 11 15:00 omlx-0.7.3/run"],
+                names: names)
+        ) { error in
             guard case EngineInstallError.unsafeArchiveLink = error else {
                 return XCTFail("期望 unsafeArchiveLink，实际 \(error)")
             }
@@ -90,18 +101,20 @@ final class EngineInstallerTests: XCTestCase {
         ]
         for line in allowed {
             let links = try EngineInstaller.links(inListing: [line], names: names)
-            XCTAssertNoThrow(try EngineInstaller.validate(links: links, stripComponents: 1),
-                             "不应当拒绝：\(line)")
+            XCTAssertNoThrow(
+                try EngineInstaller.validate(links: links, stripComponents: 1),
+                "不应当拒绝：\(line)")
         }
     }
 
     /// 链接名字里带空格、名字里带 ` -> ` 时，靠归档名字表里最长的后缀认出名字。
     func testLinkNamesWithSpacesOrArrowsStillParse() throws {
         let names = ["omlx-0.7.3/My Dir/python3", "omlx-0.7.3/weird -> name"]
-        let links = try EngineInstaller.links(inListing: [
-            "lrwxr-xr-x 0 zhuo staff 0 Nov 11 15:00 omlx-0.7.3/My Dir/python3 -> python3.13",
-            "lrwxr-xr-x 0 zhuo staff 0 Nov 11 15:00 omlx-0.7.3/weird -> name -> python3.13",
-        ], names: names)
+        let links = try EngineInstaller.links(
+            inListing: [
+                "lrwxr-xr-x 0 zhuo staff 0 Nov 11 15:00 omlx-0.7.3/My Dir/python3 -> python3.13",
+                "lrwxr-xr-x 0 zhuo staff 0 Nov 11 15:00 omlx-0.7.3/weird -> name -> python3.13",
+            ], names: names)
         XCTAssertEqual(links.map(\.path), ["omlx-0.7.3/My Dir/python3", "omlx-0.7.3/weird -> name"])
         XCTAssertEqual(links.map(\.target), ["python3.13", "python3.13"])
     }
@@ -112,12 +125,14 @@ final class EngineInstallerTests: XCTestCase {
         let bin = root.appendingPathComponent("bin", isDirectory: true)
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         try Data("#!/bin/sh\n".utf8).write(to: bin.appendingPathComponent("python3.13"))
-        try FileManager.default.createSymbolicLink(atPath: bin.appendingPathComponent("python3").path,
-                                                    withDestinationPath: "python3.13")
+        try FileManager.default.createSymbolicLink(
+            atPath: bin.appendingPathComponent("python3").path,
+            withDestinationPath: "python3.13")
         XCTAssertNoThrow(try EngineInstaller.validateExtractedLinks(in: root))
 
-        try FileManager.default.createSymbolicLink(atPath: bin.appendingPathComponent("escape").path,
-                                                    withDestinationPath: "../../../../etc/passwd")
+        try FileManager.default.createSymbolicLink(
+            atPath: bin.appendingPathComponent("escape").path,
+            withDestinationPath: "../../../../etc/passwd")
         XCTAssertThrowsError(try EngineInstaller.validateExtractedLinks(in: root)) { error in
             guard case EngineInstallError.unsafeArchiveLink(let link) = error else {
                 return XCTFail("期望 unsafeArchiveLink，实际 \(error)")
@@ -126,11 +141,11 @@ final class EngineInstallerTests: XCTestCase {
         }
 
         try FileManager.default.removeItem(at: bin.appendingPathComponent("escape"))
-        try FileManager.default.createSymbolicLink(atPath: bin.appendingPathComponent("absolute").path,
-                                                    withDestinationPath: "/etc/passwd")
+        try FileManager.default.createSymbolicLink(
+            atPath: bin.appendingPathComponent("absolute").path,
+            withDestinationPath: "/etc/passwd")
         XCTAssertThrowsError(try EngineInstaller.validateExtractedLinks(in: root))
     }
-
 
     private var workDirectory: URL!
     private var packsDirectory: URL!
@@ -155,32 +170,36 @@ final class EngineInstallerTests: XCTestCase {
     // MARK: - Install
 
     func testReleaseKnowsWhetherItsSourceExists() throws {
-        let missing = EnginePackRelease(version: "0.7.2",
-                                        url: "file:///tmp/\(UUID().uuidString).tar.gz",
-                                        sha256: String(repeating: "a", count: 64))
+        let missing = EnginePackRelease(
+            version: "0.7.2",
+            url: "file:///tmp/\(UUID().uuidString).tar.gz",
+            sha256: String(repeating: "a", count: 64))
         XCTAssertFalse(missing.hasAvailableSource)
 
-        let remote = EnginePackRelease(version: "0.7.2",
-                                       url: "https://example.invalid/omlx-0.7.2.tar.gz",
-                                       sha256: String(repeating: "a", count: 64))
+        let remote = EnginePackRelease(
+            version: "0.7.2",
+            url: "https://example.invalid/omlx-0.7.2.tar.gz",
+            sha256: String(repeating: "a", count: 64))
         XCTAssertTrue(remote.hasAvailableSource)
 
         let local = workDirectory.appendingPathComponent("omlx-0.7.2.tar.gz")
         XCTAssertTrue(FileManager.default.createFile(atPath: local.path, contents: Data()))
-        let present = EnginePackRelease(version: "0.7.2", url: local.absoluteString,
-                                        sha256: String(repeating: "a", count: 64))
+        let present = EnginePackRelease(
+            version: "0.7.2", url: local.absoluteString,
+            sha256: String(repeating: "a", count: 64))
         XCTAssertTrue(present.hasAvailableSource)
     }
 
     func testInstallsFromLocalArchive() async throws {
         let archive = try makeArchive(version: "0.7.2", topLevelDirectory: "omlx-0.7.2")
         let checksum = try sha256Hex(of: archive)
-        let release = EnginePackRelease(version: "0.7.2",
-                                        url: archive.absoluteString,
-                                        sha256: checksum,
-                                        bytes: nil,
-                                        minMacOS: "14.0",
-                                        notes: "本地归档")
+        let release = EnginePackRelease(
+            version: "0.7.2",
+            url: archive.absoluteString,
+            sha256: checksum,
+            bytes: nil,
+            minMacOS: "14.0",
+            notes: "本地归档")
 
         let installer = EngineInstaller(environment: makeEnvironment())
         let phases = PhaseBox()
@@ -211,17 +230,19 @@ final class EngineInstallerTests: XCTestCase {
         for expected in [EngineInstallPhase.verifying, .unpacking, .validating, .activating] {
             XCTAssertTrue(recorded.contains(expected), "缺少阶段 \(expected.label)")
         }
-        XCTAssertTrue(recorded.contains {
-            if case .downloading(let value, _, _) = $0 { return value == 1.0 }
-            return false
-        })
+        XCTAssertTrue(
+            recorded.contains {
+                if case .downloading(let value, _, _) = $0 { return value == 1.0 }
+                return false
+            })
     }
 
     func testChecksumMismatchLeavesNothingBehind() async throws {
         let archive = try makeArchive(version: "0.7.2", topLevelDirectory: "omlx-0.7.2")
-        let release = EnginePackRelease(version: "0.7.2",
-                                        url: archive.absoluteString,
-                                        sha256: String(repeating: "0", count: 64))
+        let release = EnginePackRelease(
+            version: "0.7.2",
+            url: archive.absoluteString,
+            sha256: String(repeating: "0", count: 64))
 
         let installer = EngineInstaller(environment: makeEnvironment())
         let phases = PhaseBox()
@@ -249,9 +270,10 @@ final class EngineInstallerTests: XCTestCase {
 
     func testRejectsUnsupportedArchive() async throws {
         let installer = EngineInstaller(environment: makeEnvironment())
-        let release = EnginePackRelease(version: "0.7.2",
-                                        url: "file:///tmp/omlx-0.7.2.zip",
-                                        sha256: String(repeating: "a", count: 64))
+        let release = EnginePackRelease(
+            version: "0.7.2",
+            url: "file:///tmp/omlx-0.7.2.zip",
+            sha256: String(repeating: "a", count: 64))
         await assertThrowsErrorAsync {
             _ = try await installer.install(release, for: .omlx) { _ in }
         } verify: { error in
@@ -261,15 +283,17 @@ final class EngineInstallerTests: XCTestCase {
             XCTAssertTrue(url.hasSuffix(".zip"))
         }
 
-        let tgz = EnginePackRelease(version: "0.7.2",
-                                    url: "file:///tmp/omlx-0.7.2.tgz",
-                                    sha256: String(repeating: "a", count: 64))
+        let tgz = EnginePackRelease(
+            version: "0.7.2",
+            url: "file:///tmp/omlx-0.7.2.tgz",
+            sha256: String(repeating: "a", count: 64))
         await assertThrowsErrorAsync {
             _ = try await installer.install(tgz, for: .omlx) { _ in }
         } verify: { error in
             // .tgz is accepted as a format; it only fails because the file is absent.
-            XCTAssertEqual(error as? EngineInstallError,
-                           .downloadFailed("找不到下载源文件：/tmp/omlx-0.7.2.tgz"))
+            XCTAssertEqual(
+                error as? EngineInstallError,
+                .downloadFailed("找不到下载源文件：/tmp/omlx-0.7.2.tgz"))
         }
     }
 
@@ -277,15 +301,17 @@ final class EngineInstallerTests: XCTestCase {
         // No single top-level folder: stripping a component here would throw
         // the manifest away, so the detector must choose 0 for this layout.
         let archive = try makeArchive(version: "0.7.4", topLevelDirectory: nil)
-        let release = EnginePackRelease(version: "0.7.4",
-                                        url: archive.absoluteString,
-                                        sha256: try sha256Hex(of: archive))
+        let release = EnginePackRelease(
+            version: "0.7.4",
+            url: archive.absoluteString,
+            sha256: try sha256Hex(of: archive))
 
         let installer = EngineInstaller(environment: makeEnvironment())
         let installation = try await installer.install(release, for: .omlx) { _ in }
         XCTAssertEqual(installation.manifest.version, "0.7.4")
-        XCTAssertTrue(FileManager.default.fileExists(
-            atPath: installation.root.appendingPathComponent("manifest.json").path))
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: installation.root.appendingPathComponent("manifest.json").path))
     }
 
     /// 回归：版本名来自索引（外部输入），会被拼进 `.downloads`、`.staging` 与
@@ -295,9 +321,10 @@ final class EngineInstallerTests: XCTestCase {
         let escapeTarget = workDirectory.appendingPathComponent("escape-target", isDirectory: true)
         try FileManager.default.createDirectory(at: escapeTarget, withIntermediateDirectories: true)
         let archive = try makeArchive(version: "0.7.2", topLevelDirectory: "omlx-0.7.2")
-        let hostile = EnginePackRelease(version: "../../escape-target/omlx-0.7.2",
-                                        url: archive.absoluteString,
-                                        sha256: try sha256Hex(of: archive))
+        let hostile = EnginePackRelease(
+            version: "../../escape-target/omlx-0.7.2",
+            url: archive.absoluteString,
+            sha256: try sha256Hex(of: archive))
 
         let installer = EngineInstaller(environment: makeEnvironment())
         let phases = PhaseBox()
@@ -334,27 +361,27 @@ final class EngineInstallerTests: XCTestCase {
         XCTAssertEqual(EngineInstaller.stripComponents(for: ["omlx-0.7.2/", "omlx-0.7.2/manifest.json"]), 1)
 
         let manifest = """
-        {
-          "schemaVersion": 1,
-          "id": "omlx",
-          "name": "oMLX",
-          "version": "0.7.2",
-          "kind": "bundled",
-          "arch": "arm64",
-          "minMacOS": "14.0",
-          "entrypoint": "python/bin/python3",
-          "workingDirectory": ".",
-          "modelsSubdirectory": "models",
-          "launchProfiles": {
-            "default": { "args": ["-m", "omlx.cli", "serve", "--port", "{port}"] }
-          },
-          "health": { "path": "/health", "readyStatus": 200, "loadingStatus": 503 },
-          "defaultPort": 8100,
-          "modelSwitch": "hot",
-          "capabilities": ["chat", "streaming"],
-          "license": "Apache-2.0"
-        }
-        """
+            {
+              "schemaVersion": 1,
+              "id": "omlx",
+              "name": "oMLX",
+              "version": "0.7.2",
+              "kind": "bundled",
+              "arch": "arm64",
+              "minMacOS": "14.0",
+              "entrypoint": "python/bin/python3",
+              "workingDirectory": ".",
+              "modelsSubdirectory": "models",
+              "launchProfiles": {
+                "default": { "args": ["-m", "omlx.cli", "serve", "--port", "{port}"] }
+              },
+              "health": { "path": "/health", "readyStatus": 200, "loadingStatus": 503 },
+              "defaultPort": 8100,
+              "modelSwitch": "hot",
+              "capabilities": ["chat", "streaming"],
+              "license": "Apache-2.0"
+            }
+            """
         let buildRoot = workDirectory.appendingPathComponent("single-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: buildRoot, withIntermediateDirectories: true)
         try Data(manifest.utf8).write(to: buildRoot.appendingPathComponent("manifest.json"), options: .atomic)
@@ -362,9 +389,10 @@ final class EngineInstallerTests: XCTestCase {
         let result = try runProcess("/usr/bin/tar", ["-czf", archive.path, "-C", buildRoot.path, "manifest.json"])
         XCTAssertEqual(result.status, 0, "tar 打包失败：\(result.stderrText)")
 
-        let release = EnginePackRelease(version: "0.7.2",
-                                        url: archive.absoluteString,
-                                        sha256: try sha256Hex(of: archive))
+        let release = EnginePackRelease(
+            version: "0.7.2",
+            url: archive.absoluteString,
+            sha256: try sha256Hex(of: archive))
         await assertThrowsErrorAsync {
             _ = try await EngineInstaller(environment: self.makeEnvironment())
                 .install(release, for: .omlx) { _ in }
@@ -379,16 +407,18 @@ final class EngineInstallerTests: XCTestCase {
     /// 回归：1.5.6 把软链一律拒了，splash 的 Python 发行包装不上。同包内的相对
     /// 软链必须能装，而且装完还是软链（不是被 tar 解成副本）。
     func testInstallsArchiveWithRelativeSymlinks() async throws {
-        let archive = try makeArchive(version: "1.6.1",
-                                      topLevelDirectory: "splash-1.6.1",
-                                      engineID: "splash",
-                                      links: [
-                                        ("python/lib/pkgconfig/python3.pc", "python-3.13.pc"),
-                                        ("python/share/man/man1/python3.1", "python3.13.1"),
-                                      ])
-        let release = EnginePackRelease(version: "1.6.1",
-                                        url: archive.absoluteString,
-                                        sha256: try sha256Hex(of: archive))
+        let archive = try makeArchive(
+            version: "1.6.1",
+            topLevelDirectory: "splash-1.6.1",
+            engineID: "splash",
+            links: [
+                ("python/lib/pkgconfig/python3.pc", "python-3.13.pc"),
+                ("python/share/man/man1/python3.1", "python3.13.1"),
+            ])
+        let release = EnginePackRelease(
+            version: "1.6.1",
+            url: archive.absoluteString,
+            sha256: try sha256Hex(of: archive))
 
         let installer = EngineInstaller(environment: makeEnvironment())
         let installation = try await installer.install(release, for: .splash) { _ in }
@@ -406,13 +436,15 @@ final class EngineInstallerTests: XCTestCase {
 
     /// 指向包外的链接在 tar 写盘之前就被拒，暂存目录与下载残留都要清干净。
     func testInstallRejectsLinkThatLeavesThePack() async throws {
-        let archive = try makeArchive(version: "1.6.1",
-                                      topLevelDirectory: "splash-1.6.1",
-                                      engineID: "splash",
-                                      links: [("python/lib/escape", "../../../../etc/passwd")])
-        let release = EnginePackRelease(version: "1.6.1",
-                                        url: archive.absoluteString,
-                                        sha256: try sha256Hex(of: archive))
+        let archive = try makeArchive(
+            version: "1.6.1",
+            topLevelDirectory: "splash-1.6.1",
+            engineID: "splash",
+            links: [("python/lib/escape", "../../../../etc/passwd")])
+        let release = EnginePackRelease(
+            version: "1.6.1",
+            url: archive.absoluteString,
+            sha256: try sha256Hex(of: archive))
 
         let installer = EngineInstaller(environment: makeEnvironment())
         let phases = PhaseBox()
@@ -425,8 +457,9 @@ final class EngineInstallerTests: XCTestCase {
             XCTAssertTrue(link.contains("python/lib/escape"), link)
         }
 
-        XCTAssertFalse(FileManager.default.fileExists(
-            atPath: packsDirectory.appendingPathComponent("splash").path))
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: packsDirectory.appendingPathComponent("splash").path))
         XCTAssertTrue(residue(in: downloadsDirectory).isEmpty, "\(residue(in: downloadsDirectory))")
         XCTAssertTrue(residue(in: stagingDirectory).isEmpty, "\(residue(in: stagingDirectory))")
         if case .failed(let message)? = phases.phases.last {
@@ -441,19 +474,19 @@ final class EngineInstallerTests: XCTestCase {
     func testLoadIndexFromLocalFile() async throws {
         let indexURL = workDirectory.appendingPathComponent("pack-index.json")
         let json = """
-        {
-          "schemaVersion": 1,
-          "engines": {
-            "omlx": [
-              { "version": "0.7.2", "url": "https://example.invalid/omlx-0.7.2.tar.gz", "sha256": "aa" },
-              { "version": "0.7.3", "url": "https://example.invalid/omlx-0.7.3.tar.gz", "sha256": "bb" }
-            ],
-            "teleportation": [
-              { "version": "9.9.9", "url": "https://example.invalid/x.tar.gz", "sha256": "cc" }
-            ]
-          }
-        }
-        """
+            {
+              "schemaVersion": 1,
+              "engines": {
+                "omlx": [
+                  { "version": "0.7.2", "url": "https://example.invalid/omlx-0.7.2.tar.gz", "sha256": "aa" },
+                  { "version": "0.7.3", "url": "https://example.invalid/omlx-0.7.3.tar.gz", "sha256": "bb" }
+                ],
+                "teleportation": [
+                  { "version": "9.9.9", "url": "https://example.invalid/x.tar.gz", "sha256": "cc" }
+                ]
+              }
+            }
+            """
         try Data(json.utf8).write(to: indexURL, options: .atomic)
 
         var environment = makeEnvironment()
@@ -476,37 +509,40 @@ final class EngineInstallerTests: XCTestCase {
     func testLoadIndexResolvesRelativeURLsAgainstTheIndexLocation() async throws {
         let indexURL = workDirectory.appendingPathComponent("pack-index.json")
         let json = """
-        {
-          "schemaVersion": 1,
-          "engines": {
-            "omlx": [
-              { "version": "0.7.3", "url": "omlx-0.7.3-arm64-macos26.0.tar.gz", "sha256": "bb" },
-              { "version": "0.7.2", "url": "https://example.invalid/omlx-0.7.2.tar.gz", "sha256": "aa" }
-            ]
-          }
-        }
-        """
+            {
+              "schemaVersion": 1,
+              "engines": {
+                "omlx": [
+                  { "version": "0.7.3", "url": "omlx-0.7.3-arm64-macos26.0.tar.gz", "sha256": "bb" },
+                  { "version": "0.7.2", "url": "https://example.invalid/omlx-0.7.2.tar.gz", "sha256": "aa" }
+                ]
+              }
+            }
+            """
         try Data(json.utf8).write(to: indexURL, options: .atomic)
 
         var environment = makeEnvironment()
         environment.indexURL = URL(fileURLWithPath: indexURL.path)
         let index = try await EngineInstaller(environment: environment).loadIndex()
 
-        XCTAssertEqual(index.latest(for: .omlx)?.url,
-                       workDirectory.appendingPathComponent("omlx-0.7.3-arm64-macos26.0.tar.gz").absoluteString)
+        XCTAssertEqual(
+            index.latest(for: .omlx)?.url,
+            workDirectory.appendingPathComponent("omlx-0.7.3-arm64-macos26.0.tar.gz").absoluteString)
         XCTAssertEqual(index.releases(for: .omlx).last?.url, "https://example.invalid/omlx-0.7.2.tar.gz")
     }
 
     /// Same rule with an index served over the network: the base is the index's
     /// own address, never a local path.
     func testRelativeURLResolvesAgainstAnHTTPSIndex() {
-        let release = EnginePackRelease(version: "0.7.3",
-                                       url: "omlx-0.7.3-arm64-macos26.0.tar.gz",
-                                       sha256: "bb")
+        let release = EnginePackRelease(
+            version: "0.7.3",
+            url: "omlx-0.7.3-arm64-macos26.0.tar.gz",
+            sha256: "bb")
         let index = URL(string: "https://example.invalid/packs/pack-index.json")!
 
-        XCTAssertEqual(release.resolvedAgainst(index: index).url,
-                       "https://example.invalid/packs/omlx-0.7.3-arm64-macos26.0.tar.gz")
+        XCTAssertEqual(
+            release.resolvedAgainst(index: index).url,
+            "https://example.invalid/packs/omlx-0.7.3-arm64-macos26.0.tar.gz")
     }
 
     /// A relative address must fail before the network call, not inside it.
@@ -529,10 +565,10 @@ final class EngineInstallerTests: XCTestCase {
     /// `/latest/`.
     func testRelativeURLResolvesAgainstThePostRedirectIndexAddress() async throws {
         let body = """
-        {"schemaVersion":1,"engines":{"omlx":[
-          {"version":"0.7.3","url":"omlx-0.7.3-arm64-macos26.0.tar.gz","sha256":"bb"}
-        ]}}
-        """
+            {"schemaVersion":1,"engines":{"omlx":[
+              {"version":"0.7.3","url":"omlx-0.7.3-arm64-macos26.0.tar.gz","sha256":"bb"}
+            ]}}
+            """
         let server = GatewayHTTPServer { request in
             switch request.path {
             case "/latest/pack-index.json":
@@ -563,8 +599,9 @@ final class EngineInstallerTests: XCTestCase {
         environment.indexURL = URL(string: "http://127.0.0.1:\(port)/latest/pack-index.json")!
         let index = try await EngineInstaller(environment: environment).loadIndex()
 
-        XCTAssertEqual(index.latest(for: .omlx)?.url,
-                       "http://127.0.0.1:\(port)/v1.4.1/omlx-0.7.3-arm64-macos26.0.tar.gz")
+        XCTAssertEqual(
+            index.latest(for: .omlx)?.url,
+            "http://127.0.0.1:\(port)/v1.4.1/omlx-0.7.3-arm64-macos26.0.tar.gz")
     }
 
     func testLoadIndexWithoutAnySourceThrows() async throws {
@@ -586,15 +623,15 @@ final class EngineInstallerTests: XCTestCase {
         try Data("{ 这不是 JSON".utf8).write(to: remote, options: .atomic)
         let bundled = workDirectory.appendingPathComponent("bundled-pack-index.json")
         let json = """
-        {
-          "schemaVersion": 1,
-          "engines": {
-            "omlx": [
-              { "version": "0.7.2", "url": "https://example.invalid/omlx-0.7.2.tar.gz", "sha256": "aa" }
-            ]
-          }
-        }
-        """
+            {
+              "schemaVersion": 1,
+              "engines": {
+                "omlx": [
+                  { "version": "0.7.2", "url": "https://example.invalid/omlx-0.7.2.tar.gz", "sha256": "aa" }
+                ]
+              }
+            }
+            """
         try Data(json.utf8).write(to: bundled, options: .atomic)
 
         var environment = makeEnvironment()
@@ -623,8 +660,9 @@ final class EngineInstallerTests: XCTestCase {
             }
             XCTAssertTrue(reason.contains("remote-pack-index.json"), reason)
             XCTAssertTrue(reason.contains("无法解析"), reason)
-            XCTAssertEqual(error.localizedDescription,
-                           "无法获取引擎包索引：\(reason)")
+            XCTAssertEqual(
+                error.localizedDescription,
+                "无法获取引擎包索引：\(reason)")
         }
     }
 
@@ -632,33 +670,34 @@ final class EngineInstallerTests: XCTestCase {
     /// 版本，`loadIndex` 随即回落到下一份候选。
     func testIndexDecodingRejectsVersionsThatEscapeThePacksDirectory() throws {
         let hostile = """
-        {
-          "schemaVersion": 1,
-          "engines": {
-            "omlx": [
-              { "version": "../../../../tmp/x", "url": "https://example.invalid/x.tar.gz", "sha256": "aa" }
-            ]
-          }
-        }
-        """
+            {
+              "schemaVersion": 1,
+              "engines": {
+                "omlx": [
+                  { "version": "../../../../tmp/x", "url": "https://example.invalid/x.tar.gz", "sha256": "aa" }
+                ]
+              }
+            }
+            """
         XCTAssertThrowsError(try JSONDecoder().decode(EnginePackIndex.self, from: Data(hostile.utf8))) { error in
             guard let decodingError = error as? DecodingError,
-                  case .dataCorrupted = decodingError else {
+                case .dataCorrupted = decodingError
+            else {
                 return XCTFail("期望 DecodingError.dataCorrupted，实际 \(error)")
             }
         }
 
         // 正常的版本名（含预发布标记）不受影响。
         let safe = """
-        {
-          "schemaVersion": 1,
-          "engines": {
-            "omlx": [
-              { "version": "1.4.1-dev.2", "url": "https://example.invalid/x.tar.gz", "sha256": "aa" }
-            ]
-          }
-        }
-        """
+            {
+              "schemaVersion": 1,
+              "engines": {
+                "omlx": [
+                  { "version": "1.4.1-dev.2", "url": "https://example.invalid/x.tar.gz", "sha256": "aa" }
+                ]
+              }
+            }
+            """
         let index = try JSONDecoder().decode(EnginePackIndex.self, from: Data(safe.utf8))
         XCTAssertEqual(index.latest(for: .omlx)?.version, "1.4.1-dev.2")
     }
@@ -691,9 +730,10 @@ final class EngineInstallerTests: XCTestCase {
         XCTAssertEqual(afterInstall, ["0.7.2"])
 
         let archive = try makeArchive(version: "0.7.3", topLevelDirectory: "omlx-0.7.3")
-        let broken = EnginePackRelease(version: "0.7.3",
-                                       url: archive.absoluteString,
-                                       sha256: String(repeating: "f", count: 64))
+        let broken = EnginePackRelease(
+            version: "0.7.3",
+            url: archive.absoluteString,
+            sha256: String(repeating: "f", count: 64))
         await assertThrowsErrorAsync {
             _ = try await installer.install(broken, for: .omlx) { _ in }
         } verify: { error in
@@ -714,9 +754,10 @@ final class EngineInstallerTests: XCTestCase {
     // MARK: - Phases
 
     func testPhaseLabelsAndFraction() {
-        let downloading = EngineInstallPhase.downloading(progress: 0.42,
-                                                         receivedBytes: 420,
-                                                         totalBytes: 1000)
+        let downloading = EngineInstallPhase.downloading(
+            progress: 0.42,
+            receivedBytes: 420,
+            totalBytes: 1000)
         XCTAssertTrue(downloading.label.contains("42"), downloading.label)
         XCTAssertEqual(downloading.fraction, 0.42)
         XCTAssertTrue(downloading.isBusy)
@@ -747,26 +788,30 @@ final class EngineInstallerTests: XCTestCase {
     // MARK: - Fixtures
 
     private func makeEnvironment() -> EngineInstallEnvironment {
-        EngineInstallEnvironment(packsDirectory: packsDirectory.path,
-                                 indexURL: nil,
-                                 bundledIndexPath: nil,
-                                 tarPath: "/usr/bin/tar",
-                                 xattrPath: "/usr/bin/xattr")
+        EngineInstallEnvironment(
+            packsDirectory: packsDirectory.path,
+            indexURL: nil,
+            bundledIndexPath: nil,
+            tarPath: "/usr/bin/tar",
+            xattrPath: "/usr/bin/xattr")
     }
 
     private func makeRelease(version: String) throws -> EnginePackRelease {
         let archive = try makeArchive(version: version, topLevelDirectory: "omlx-\(version)")
-        return EnginePackRelease(version: version,
-                                 url: archive.absoluteString,
-                                 sha256: try sha256Hex(of: archive))
+        return EnginePackRelease(
+            version: version,
+            url: archive.absoluteString,
+            sha256: try sha256Hex(of: archive))
     }
 
     /// Builds a real `.tar.gz` on disk: either wrapped in one top-level folder
     /// (the layout the installer must strip) or flat.
-    private func makeArchive(version: String,
-                             topLevelDirectory: String?,
-                             engineID: String = "omlx",
-                             links: [(path: String, target: String)] = []) throws -> URL {
+    private func makeArchive(
+        version: String,
+        topLevelDirectory: String?,
+        engineID: String = "omlx",
+        links: [(path: String, target: String)] = []
+    ) throws -> URL {
         let fm = FileManager.default
         let buildRoot = workDirectory.appendingPathComponent("build-\(UUID().uuidString)", isDirectory: true)
         let contentRoot = topLevelDirectory.map { buildRoot.appendingPathComponent($0, isDirectory: true) } ?? buildRoot
@@ -774,27 +819,27 @@ final class EngineInstallerTests: XCTestCase {
         try fm.createDirectory(at: binDirectory, withIntermediateDirectories: true)
 
         let manifest = """
-        {
-          "schemaVersion": 1,
-          "id": "\(engineID)",
-          "name": "oMLX",
-          "version": "\(version)",
-          "kind": "bundled",
-          "arch": "arm64",
-          "minMacOS": "14.0",
-          "entrypoint": "python/bin/python3",
-          "workingDirectory": ".",
-          "modelsSubdirectory": "models",
-          "launchProfiles": {
-            "default": { "args": ["-m", "omlx.cli", "serve", "--port", "{port}"] }
-          },
-          "health": { "path": "/health", "readyStatus": 200, "loadingStatus": 503 },
-          "defaultPort": 8100,
-          "modelSwitch": "hot",
-          "capabilities": ["chat", "streaming"],
-          "license": "Apache-2.0"
-        }
-        """
+            {
+              "schemaVersion": 1,
+              "id": "\(engineID)",
+              "name": "oMLX",
+              "version": "\(version)",
+              "kind": "bundled",
+              "arch": "arm64",
+              "minMacOS": "14.0",
+              "entrypoint": "python/bin/python3",
+              "workingDirectory": ".",
+              "modelsSubdirectory": "models",
+              "launchProfiles": {
+                "default": { "args": ["-m", "omlx.cli", "serve", "--port", "{port}"] }
+              },
+              "health": { "path": "/health", "readyStatus": 200, "loadingStatus": 503 },
+              "defaultPort": 8100,
+              "modelSwitch": "hot",
+              "capabilities": ["chat", "streaming"],
+              "license": "Apache-2.0"
+            }
+            """
         try Data(manifest.utf8).write(to: contentRoot.appendingPathComponent("manifest.json"), options: .atomic)
 
         let entrypoint = binDirectory.appendingPathComponent("python3")
@@ -840,8 +885,11 @@ final class EngineInstallerTests: XCTestCase {
     }
 
     private func allFiles(under directory: URL) -> [String] {
-        guard let enumerator = FileManager.default.enumerator(at: directory,
-                                                             includingPropertiesForKeys: nil) else {
+        guard
+            let enumerator = FileManager.default.enumerator(
+                at: directory,
+                includingPropertiesForKeys: nil)
+        else {
             return []
         }
         var paths: [String] = []
@@ -870,10 +918,11 @@ final class EngineInstallerTests: XCTestCase {
         let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
         let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        return ProcessResult(status: process.terminationStatus,
-                             stdout: String(decoding: outData, as: UTF8.self),
-                             stderr: String(decoding: errData, as: UTF8.self)
-                                 .trimmingCharacters(in: .whitespacesAndNewlines))
+        return ProcessResult(
+            status: process.terminationStatus,
+            stdout: String(decoding: outData, as: UTF8.self),
+            stderr: String(decoding: errData, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines))
     }
 }
 
@@ -899,10 +948,12 @@ private final class PhaseBox: @unchecked Sendable {
 }
 
 /// `XCTAssertThrowsError` has no async variant.
-private func assertThrowsErrorAsync(_ expression: () async throws -> Void,
-                                       verify: (Error) -> Void = { _ in },
-                                       file: StaticString = #filePath,
-                                       line: UInt = #line) async {
+private func assertThrowsErrorAsync(
+    _ expression: () async throws -> Void,
+    verify: (Error) -> Void = { _ in },
+    file: StaticString = #filePath,
+    line: UInt = #line
+) async {
     do {
         try await expression()
         XCTFail("期望抛出错误，但调用成功返回", file: file, line: line)

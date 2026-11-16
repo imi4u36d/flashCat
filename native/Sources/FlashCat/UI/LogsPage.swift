@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import SwiftUI
 import AppKit
 import FlashCatKit
+import SwiftUI
 
 /// 日志页：顶部过滤条 + 一块玻璃控制台，版式对齐 WebUI。
 struct LogsPage: View {
@@ -30,9 +30,10 @@ struct LogsPage: View {
     }()
 
     private func display() -> LogsDigest {
-        LogsDigest.make(from: paused ? frozen : state.logs(for: effectiveEngine),
-                        level: level,
-                        query: appliedQuery)
+        LogsDigest.make(
+            from: paused ? frozen : state.logs(for: effectiveEngine),
+            level: level,
+            query: appliedQuery)
     }
 
     var body: some View {
@@ -71,12 +72,13 @@ struct LogsPage: View {
     }
 
     private func filterBar(_ data: LogsDigest) -> some View {
-        DSFilterBar(selection: $level,
-                    options: LogsFilter.allCases.map { item in
-                        (item, "\(item.label) (\(data.counts[item] ?? 0))")
-                    },
-                    query: $query,
-                    placeholder: "搜索")
+        DSFilterBar(
+            selection: $level,
+            options: LogsFilter.allCases.map { item in
+                (item, "\(item.label) (\(data.counts[item] ?? 0))")
+            },
+            query: $query,
+            placeholder: "搜索")
     }
 
     @ViewBuilder

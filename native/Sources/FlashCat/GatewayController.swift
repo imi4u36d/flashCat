@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
+@preconcurrency import FlashCatKit
 import Foundation
 import SwiftUI
-@preconcurrency import FlashCatKit
 
 /// The local API gateway: one fixed port that speaks both standard dialects —
 /// OpenAI (`/v1/chat/completions`, `/v1/models`) and Anthropic
@@ -40,9 +40,10 @@ final class GatewayController: ObservableObject {
         logs.openFile()
         logs.append("==> 启动 API 网关 · 端口 \(port)", level: .system)
         let newServer = GatewayHTTPServer { [weak self] request in
-            await self?.route(request) ?? GatewayResponse.json(
-                ["type": "error", "error": ["type": "api_error", "message": "gateway unavailable"]],
-                status: 500)
+            await self?.route(request)
+                ?? GatewayResponse.json(
+                    ["type": "error", "error": ["type": "api_error", "message": "gateway unavailable"]],
+                    status: 500)
         }
         guard await newServer.start(port: port) else {
             let message = "端口 \(port) 被占用，网关未启动"
@@ -87,9 +88,11 @@ final class GatewayController: ObservableObject {
         }
 
         guard request.method == "POST" else {
-            return Self.errorResponse(GatewayAPIError(status: 405, type: "invalid_request_error",
-                                                      message: "method \(request.method) is not supported"),
-                                      anthropic: request.isAnthropicStyle)
+            return Self.errorResponse(
+                GatewayAPIError(
+                    status: 405, type: "invalid_request_error",
+                    message: "method \(request.method) is not supported"),
+                anthropic: request.isAnthropicStyle)
         }
 
         switch request.path {
@@ -99,8 +102,9 @@ final class GatewayController: ObservableObject {
             return await self.anthropicMessages(request)
         default:
             return Self.errorResponse(
-                GatewayAPIError(status: 404, type: "not_found_error",
-                                message: "未知路径 \(request.path)；可用：/v1/chat/completions（OpenAI）、/v1/messages（Claude）、/v1/models"),
+                GatewayAPIError(
+                    status: 404, type: "not_found_error",
+                    message: "未知路径 \(request.path)；可用：/v1/chat/completions（OpenAI）、/v1/messages（Claude）、/v1/models"),
                 anthropic: request.isAnthropicStyle)
         }
     }
@@ -160,7 +164,7 @@ final class GatewayController: ObservableObject {
             [
                 "id": entry.id,
                 "object": "model",
-                "created": 1767225600,
+                "created": 1_767_225_600,
                 "owned_by": "flashcat:\(entry.engine.rawValue)",
                 "loaded": entry.loaded,
             ]
@@ -184,7 +188,7 @@ final class GatewayController: ObservableObject {
         return GatewayResponse.json([
             "id": entry.id,
             "object": "model",
-            "created": 1767225600,
+            "created": 1_767_225_600,
             "owned_by": "flashcat:\(entry.engine.rawValue)",
             "loaded": entry.loaded,
         ])
@@ -209,18 +213,21 @@ final class GatewayController: ObservableObject {
         // already holds, which is worse than a clean error because the client
         // believes the requested model ran.
         if let preparationError = await AppState.shared.prepareModelForGateway(
-            openaiPayload?["model"] as? String) {
+            openaiPayload?["model"] as? String)
+        {
             return Self.preparationErrorResponse(preparationError, anthropic: false)
         }
 
         let snapshot = await MainActor.run { () -> EngineSnapshot? in
             guard let state = Optional(AppState.shared), let controller = state.controller,
-                  controller.isReady else { return nil }
+                controller.isReady
+            else { return nil }
             return EngineSnapshot(port: controller.port)
         }
         guard let upstream = snapshot else {
-            return Self.errorResponse(GatewayAPIError.overloaded("推理引擎未运行，请先在 flashCat 中启动服务"),
-                                      anthropic: false)
+            return Self.errorResponse(
+                GatewayAPIError.overloaded("推理引擎未运行，请先在 flashCat 中启动服务"),
+                anthropic: false)
         }
 
         let wantsStream = (openaiPayload?["stream"] as? Bool) ?? false
@@ -232,9 +239,11 @@ final class GatewayController: ObservableObject {
             promptTokens: TokenEstimator.promptTokens(messages: openaiPayload?["messages"]))
         if wantsStream {
             let response: GatewayUpstream.StreamResponse
-            switch await GatewayUpstream.postStreaming(port: upstream.port,
-                                                       path: request.path,
-                                                       body: request.body) {
+            switch await GatewayUpstream.postStreaming(
+                port: upstream.port,
+                path: request.path,
+                body: request.body)
+            {
             case .success(let streamed):
                 response = streamed
             case .failure(let error):
@@ -263,7 +272,8 @@ final class GatewayController: ObservableObject {
                             }
                             // 顺手解析每一片：既算实时速率，也接住末片的 usage。
                             if let data = GatewayUpstream.dataPayload(ofLine: trimmed),
-                               let chunk = Self.parseObject(Data(data.utf8)) {
+                                let chunk = Self.parseObject(Data(data.utf8))
+                            {
                                 GatewayMeter.shared.ingest(meterID, chunk: chunk)
                             }
                             _ = session.write(trimmed + "\n\n")
@@ -279,9 +289,11 @@ final class GatewayController: ObservableObject {
         }
 
         let buffered: GatewayUpstream.BufferedResponse
-        switch await GatewayUpstream.postJSON(port: upstream.port,
-                                             path: request.path,
-                                             body: request.body) {
+        switch await GatewayUpstream.postJSON(
+            port: upstream.port,
+            path: request.path,
+            body: request.body)
+        {
         case .success(let response):
             buffered = response
         case .failure(let error):
@@ -311,8 +323,9 @@ final class GatewayController: ObservableObject {
         } catch let error as GatewayAPIError {
             return Self.errorResponse(error, anthropic: true)
         } catch {
-            return Self.errorResponse(GatewayAPIError.badRequest("无法解析请求：\(error.localizedDescription)"),
-                                      anthropic: true)
+            return Self.errorResponse(
+                GatewayAPIError.badRequest("无法解析请求：\(error.localizedDescription)"),
+                anthropic: true)
         }
         guard let openaiBody = try? JSONSerialization.data(withJSONObject: openai) else {
             return Self.errorResponse(GatewayAPIError.badRequest("无法编码上游请求"), anthropic: true)
@@ -328,21 +341,25 @@ final class GatewayController: ObservableObject {
             return EngineSnapshot(port: controller.port)
         }
         guard let upstream = snapshot else {
-            return Self.errorResponse(GatewayAPIError.overloaded("推理引擎未运行，请先在 flashCat 中启动服务"),
-                                      anthropic: true)
+            return Self.errorResponse(
+                GatewayAPIError.overloaded("推理引擎未运行，请先在 flashCat 中启动服务"),
+                anthropic: true)
         }
         // 只算一次：旧实现给 meter 和 StreamTranslator 各算了一遍，
         // `countInputTokens` 要遍历全部 messages，长对话上直接翻倍。
         let inputTokens = AnthropicCodec.countInputTokens(payload)
-        let meterID = GatewayMeter.shared.begin(model: model,
-                                               dialect: "claude",
-                                               promptTokens: inputTokens)
+        let meterID = GatewayMeter.shared.begin(
+            model: model,
+            dialect: "claude",
+            promptTokens: inputTokens)
 
         if stream {
             let response: GatewayUpstream.StreamResponse
-            switch await GatewayUpstream.postStreaming(port: upstream.port,
-                                                       path: "/v1/chat/completions",
-                                                       body: openaiBody) {
+            switch await GatewayUpstream.postStreaming(
+                port: upstream.port,
+                path: "/v1/chat/completions",
+                body: openaiBody)
+            {
             case .success(let streamed):
                 response = streamed
             case .failure(let error):
@@ -363,7 +380,8 @@ final class GatewayController: ObservableObject {
                         for try await line in response.bytes.lines {
                             if session.isClosed { break }
                             guard let payload = GatewayUpstream.dataPayload(ofLine: line),
-                                  let chunk = Self.parseObject(Data(payload.utf8)) else { continue }
+                                let chunk = Self.parseObject(Data(payload.utf8))
+                            else { continue }
                             GatewayMeter.shared.ingest(meterID, chunk: chunk)
                             for frame in translator.consume(chunk: chunk)
                             where !session.write(frame) { return }
@@ -380,9 +398,11 @@ final class GatewayController: ObservableObject {
         }
 
         let buffered: GatewayUpstream.BufferedResponse
-        switch await GatewayUpstream.postJSON(port: upstream.port,
-                                             path: "/v1/chat/completions",
-                                             body: openaiBody) {
+        switch await GatewayUpstream.postJSON(
+            port: upstream.port,
+            path: "/v1/chat/completions",
+            body: openaiBody)
+        {
         case .success(let response):
             buffered = response
         case .failure(let error):
@@ -393,17 +413,21 @@ final class GatewayController: ObservableObject {
             GatewayMeter.shared.finish(meterID, failed: true)
             var out = GatewayResponse()
             out.status = buffered.status == 0 ? 502 : buffered.status
-            out.body = Data((try? JSONSerialization.data(
-                withJSONObject: AnthropicCodec.errorEnvelope(from: buffered.body,
-                                                             upstreamStatus: buffered.status)))
-                ?? Data(#"{"type":"error","error":{"type":"api_error","message":"engine error"}}"#.utf8))
+            out.body = Data(
+                (try? JSONSerialization.data(
+                    withJSONObject: AnthropicCodec.errorEnvelope(
+                        from: buffered.body,
+                        upstreamStatus: buffered.status)))
+                    ?? Data(#"{"type":"error","error":{"type":"api_error","message":"engine error"}}"#.utf8))
             return out
         }
         guard let openaiResponse = Self.parseObject(buffered.body) else {
             GatewayMeter.shared.finish(meterID, failed: true)
-            return Self.errorResponse(GatewayAPIError(status: 502, type: "api_error",
-                                                      message: "引擎返回了无法解析的响应"),
-                                      anthropic: true)
+            return Self.errorResponse(
+                GatewayAPIError(
+                    status: 502, type: "api_error",
+                    message: "引擎返回了无法解析的响应"),
+                anthropic: true)
         }
         GatewayMeter.shared.ingestResponse(meterID, body: buffered.body)
         return GatewayResponse.json(AnthropicCodec.translateResponse(openaiResponse))
@@ -424,9 +448,11 @@ final class GatewayController: ObservableObject {
     /// 不冻结、`latestContext()` 一直把它算进去，会话表满了 32 条之后还会把
     /// 真正在跑的请求挤掉。`finish` 自身幂等（见 GatewayMeter.finish 里
     /// `finishedAt == nil` 的判断），所以把收尾放进 `defer` 是安全的。
-    nonisolated static func withStreamMetering(_ meter: GatewayMeter,
-                                              id: Int,
-                                              _ produce: () async -> Void) async {
+    nonisolated static func withStreamMetering(
+        _ meter: GatewayMeter,
+        id: Int,
+        _ produce: () async -> Void
+    ) async {
         defer { meter.finish(id) }
         await produce()
     }
@@ -436,8 +462,10 @@ final class GatewayController: ObservableObject {
     /// 旧实现把「引擎没起」「等超时」「连接断了」统统回成 503 且一个字不落日志，
     /// 用户只能看到 503，然后从「是不是模型太大」开始猜。现在 503 = 引擎不可达
     /// （可重试）、504 = 引擎在跑但太慢、502 = 请求没走通。
-    nonisolated private static func upstreamFailureResponse(_ error: GatewayUpstreamError,
-                                                            anthropic: Bool) -> GatewayResponse {
+    nonisolated private static func upstreamFailureResponse(
+        _ error: GatewayUpstreamError,
+        anthropic: Bool
+    ) -> GatewayResponse {
         logUpstreamFailure(error)
         let apiError: GatewayAPIError
         switch error {
@@ -446,13 +474,15 @@ final class GatewayController: ObservableObject {
             // 当成可重试的过载，而不是请求写错了。
             apiError = GatewayAPIError.overloaded(error.logMessage)
         case .timedOut:
-            apiError = GatewayAPIError(status: 504,
-                                       type: anthropic ? "api_error" : "upstream",
-                                       message: error.logMessage)
+            apiError = GatewayAPIError(
+                status: 504,
+                type: anthropic ? "api_error" : "upstream",
+                message: error.logMessage)
         case .transport:
-            apiError = GatewayAPIError(status: 502,
-                                       type: anthropic ? "api_error" : "upstream",
-                                       message: error.logMessage)
+            apiError = GatewayAPIError(
+                status: 502,
+                type: anthropic ? "api_error" : "upstream",
+                message: error.logMessage)
         }
         return errorResponse(apiError, anthropic: anthropic)
     }
@@ -471,12 +501,15 @@ final class GatewayController: ObservableObject {
     }
 
     nonisolated private static func errorResponse(_ error: GatewayAPIError, anthropic: Bool) -> GatewayResponse {
-        GatewayResponse.json(anthropic ? error.anthropicEnvelope() : error.openAIEnvelope(),
-                             status: error.status)
+        GatewayResponse.json(
+            anthropic ? error.anthropicEnvelope() : error.openAIEnvelope(),
+            status: error.status)
     }
 
-    nonisolated private static func preparationErrorResponse(_ error: GatewayModelPreparationError,
-                                                               anthropic: Bool) -> GatewayResponse {
+    nonisolated private static func preparationErrorResponse(
+        _ error: GatewayModelPreparationError,
+        anthropic: Bool
+    ) -> GatewayResponse {
         let apiError: GatewayAPIError
         switch error {
         case .modelNotFound(let message):
@@ -493,7 +526,8 @@ final class GatewayController: ObservableObject {
 
     /// An upstream streaming request that failed before streaming: drain the
     /// body and answer with it verbatim (OpenAI dialect).
-    nonisolated private static func drainAsResponse(_ response: GatewayUpstream.StreamResponse) async -> GatewayResponse {
+    nonisolated private static func drainAsResponse(_ response: GatewayUpstream.StreamResponse) async -> GatewayResponse
+    {
         var body = Data()
         do {
             for try await byte in response.bytes { body.append(byte) }
@@ -507,7 +541,9 @@ final class GatewayController: ObservableObject {
     }
 
     /// Same, but rewritten into the Anthropic error envelope.
-    nonisolated private static func drainAsAnthropicError(_ response: GatewayUpstream.StreamResponse) async -> GatewayResponse {
+    nonisolated private static func drainAsAnthropicError(
+        _ response: GatewayUpstream.StreamResponse
+    ) async -> GatewayResponse {
         var body = Data()
         do {
             for try await byte in response.bytes { body.append(byte) }
@@ -516,9 +552,10 @@ final class GatewayController: ObservableObject {
         }
         var out = GatewayResponse()
         out.status = response.status
-        out.body = Data((try? JSONSerialization.data(
-            withJSONObject: AnthropicCodec.errorEnvelope(from: body, upstreamStatus: response.status)))
-            ?? Data(#"{"type":"error","error":{"type":"api_error","message":"engine error"}}"#.utf8))
+        out.body = Data(
+            (try? JSONSerialization.data(
+                withJSONObject: AnthropicCodec.errorEnvelope(from: body, upstreamStatus: response.status)))
+                ?? Data(#"{"type":"error","error":{"type":"api_error","message":"engine error"}}"#.utf8))
         return out
     }
 }

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
 import FlashCatKit
+import Foundation
 
 enum ServerState: String {
     case stopped = "已停止"
@@ -116,11 +116,13 @@ final class EngineController {
     /// switch already completed (a second, pointless HTTP 200 in the log).
     private var lastHotLoad: (target: String, at: Date)?
 
-    init(id: EngineID,
-         installation: EngineInstallation,
-         settings: AppSettings,
-         catalog: ModelCatalog,
-         port: Int) {
+    init(
+        id: EngineID,
+        installation: EngineInstallation,
+        settings: AppSettings,
+        catalog: ModelCatalog,
+        port: Int
+    ) {
         self.id = id
         self.installation = installation
         self.settings = settings
@@ -198,15 +200,18 @@ final class EngineController {
     /// （`process`、`failureMessage`、日志），否则界面会先看到「已就绪」，
     /// 再看到失败正文。
     @discardableResult
-    private func transition(to next: Phase,
-                            file: StaticString = #fileID,
-                            line: UInt = #line) -> Bool {
+    private func transition(
+        to next: Phase,
+        file: StaticString = #fileID,
+        line: UInt = #line
+    ) -> Bool {
         guard next != phase else { return false }
         guard isTransitionAllowed(from: phase, to: next) else {
             // 悄悄接受是这类 bug 最难查的地方：状态自己走到不该到的位置，
             // 界面上只表现为「点了没反应」。留在日志里，排查至少有线索。
-            logs.append("==> 忽略非法的状态迁移：\(phase) → \(next)（\(file):\(line)）",
-                        level: .warning)
+            logs.append(
+                "==> 忽略非法的状态迁移：\(phase) → \(next)（\(file):\(line)）",
+                level: .warning)
             return false
         }
         phase = next
@@ -304,8 +309,9 @@ final class EngineController {
             // 时候显示运行中，用户再点一个模型就会把加载中的进程 SIGINT 掉。
             // 要的模型还没进 loaded_models，就仍然按「加载权重」报阶段。
             if descriptor.switchMode == .hot, let wanted = desiredModel, !wanted.isEmpty,
-               let live = status, live.model != wanted,
-               live.loadedModels.contains(wanted) == false {
+                let live = status, live.model != wanted,
+                live.loadedModels.contains(wanted) == false
+            {
                 return EngineStartupStage.loadingWeights.rawValue
             }
             return EngineStartupStage.ready.rawValue
@@ -353,7 +359,8 @@ final class EngineController {
         var value: Double?
         for line in logs.tail(40).reversed() {
             if let match = TextPattern.firstMatch("(\\d{1,3}(?:\\.\\d)?)%", line.text),
-               let parsed = Double(match[0]) {
+                let parsed = Double(match[0])
+            {
                 value = min(max(parsed, 0), 100)
                 break
             }
@@ -481,7 +488,8 @@ final class EngineController {
     }
 
     private func launchPlan(localModel: ModelInfo?, requestedModel: String?) -> LaunchPlan? {
-        let selected = requestedModel
+        let selected =
+            requestedModel
             ?? EngineStore.shared.configuration(for: id).lastModel
             ?? (settings.model.isEmpty ? nil : settings.model)
         guard let selected, !selected.isEmpty else {
@@ -493,8 +501,10 @@ final class EngineController {
         // launcher resolves and one for a prepared local assembly. Prefer the
         // model-aware profile, then the generic one, then whatever exists.
         let profileNames = [localModel == nil ? "hub" : "local", "default"]
-        guard let profile = profileNames.compactMap({ manifest.launchProfiles[$0] }).first
-                ?? manifest.launchProfiles.values.first else {
+        guard
+            let profile = profileNames.compactMap({ manifest.launchProfiles[$0] }).first
+                ?? manifest.launchProfiles.values.first
+        else {
             fail("\(id.displayName) 的运行时包没有启动模板")
             return nil
         }
@@ -502,7 +512,8 @@ final class EngineController {
         // The manifest decides how the model is handed over. An engine only ever
         // sees a path inside flashCat's own models folder — the weights live
         // there, not in the user's upstream caches.
-        let modelPath = LocalEngineModels.scan(engine: id, directory: modelsDirectory)
+        let modelPath =
+            LocalEngineModels.scan(engine: id, directory: modelsDirectory)
             .first(where: { $0.id == selected })?.path
             ?? EnginePaths.modelPath(for: id, model: selected)
         let modelArgument: String
@@ -557,9 +568,10 @@ final class EngineController {
         // manifest 只能修开发机，所以在装配参数时统一纠正；放在调优参数之后，
         // 自定义参数里写下的旧上限也会被这一行盖掉。
         if descriptor.adapter == .mlxServe {
-            arguments = EngineTemplate.raisingIntegerFlag("--max-resident-models",
-                                                          toAtLeast: 2,
-                                                          in: arguments)
+            arguments = EngineTemplate.raisingIntegerFlag(
+                "--max-resident-models",
+                toAtLeast: 2,
+                in: arguments)
         }
 
         if !arguments.contains(String(port)) {
@@ -605,11 +617,12 @@ final class EngineController {
             environment["FLASHCAT_PID_FILE"] = EnginePaths.pidFile(.splash)
         }
 
-        return LaunchPlan(executable: installation.entrypoint.path,
-                          arguments: arguments,
-                          workingDirectory: installation.root.path,
-                          environment: environment,
-                          model: selected)
+        return LaunchPlan(
+            executable: installation.entrypoint.path,
+            arguments: arguments,
+            workingDirectory: installation.root.path,
+            environment: environment,
+            model: selected)
     }
 
     /// 就绪即撤掉启动看门狗。它只为「这一次启动」计时；跑完之后还挂着的话，
@@ -707,8 +720,9 @@ final class EngineController {
                     $0 > 1 && self.processAlive($0) && self.processBelongsToPack($0)
                 }
                 guard !survivors.isEmpty else { return }
-                self.logs.append("==> 服务未在 \(Int(grace)) 秒内完全退出，强制结束残留进程（\(survivors.count) 个）",
-                                 level: .system)
+                self.logs.append(
+                    "==> 服务未在 \(Int(grace)) 秒内完全退出，强制结束残留进程（\(survivors.count) 个）",
+                    level: .system)
                 for victim in survivors { kill(victim, SIGKILL) }
             }
         }
@@ -748,8 +762,9 @@ final class EngineController {
             if process == nil && !portOpen(port) { return true }
             if !escalated, Date().timeIntervalSince(startedAt) > grace, let pid {
                 escalated = true
-                logs.append("==> \(id.displayName) 未在 \(Int(grace)) 秒内退出，强制结束（pid \(pid)）",
-                            level: .system)
+                logs.append(
+                    "==> \(id.displayName) 未在 \(Int(grace)) 秒内退出，强制结束（pid \(pid)）",
+                    level: .system)
                 killTree(pid, SIGKILL)
             }
             if Task.isCancelled { break }
@@ -881,10 +896,12 @@ final class EngineController {
         }
         let task = Process()
         task.launchPath = installation.entrypoint.path
-        task.arguments = ["-u", "-c", Self.watchdogScript,
-                          String(enginePid),
-                          String(ProcessInfo.processInfo.processIdentifier),
-                          packMarkerDirectory]
+        task.arguments = [
+            "-u", "-c", Self.watchdogScript,
+            String(enginePid),
+            String(ProcessInfo.processInfo.processIdentifier),
+            packMarkerDirectory,
+        ]
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
         task.standardInput = FileHandle.nullDevice
@@ -907,11 +924,13 @@ final class EngineController {
         // this placeholder the script's `$1/$2/$3` shift by one: it would treat
         // the app's pid as the engine and the empty marker as the app, then
         // SIGINT flashCat itself the moment the engine starts.
-        task.arguments = ["-c", Self.nativeWatchdogScript,
-                          "flashcat-watchdog",
-                          String(enginePid),
-                          String(ProcessInfo.processInfo.processIdentifier),
-                          packMarkerDirectory]
+        task.arguments = [
+            "-c", Self.nativeWatchdogScript,
+            "flashcat-watchdog",
+            String(enginePid),
+            String(ProcessInfo.processInfo.processIdentifier),
+            packMarkerDirectory,
+        ]
         task.standardOutput = FileHandle.nullDevice
         task.standardError = FileHandle.nullDevice
         task.standardInput = FileHandle.nullDevice
@@ -923,40 +942,40 @@ final class EngineController {
     }
 
     private static let nativeWatchdogScript = #"""
-    engine="$1"
-    app="$2"
-    marker="$3"
+        engine="$1"
+        app="$2"
+        marker="$3"
 
-    # Snapshot the tree while the root is alive. Once it exits, its children are
-    # re-parented to launchd and `pgrep -P` can no longer tie them back to the
-    # engine — walking the tree at kill time (the old behaviour) therefore found
-    # nothing to signal exactly when it was needed.
-    collect() {
-      for child in $(/usr/bin/pgrep -P "$1" 2>/dev/null); do
-        printf '%s\n' "$child"
-        collect "$child"
-      done
-    }
-    victims="$(collect "$engine")"
+        # Snapshot the tree while the root is alive. Once it exits, its children are
+        # re-parented to launchd and `pgrep -P` can no longer tie them back to the
+        # engine — walking the tree at kill time (the old behaviour) therefore found
+        # nothing to signal exactly when it was needed.
+        collect() {
+          for child in $(/usr/bin/pgrep -P "$1" 2>/dev/null); do
+            printf '%s\n' "$child"
+            collect "$child"
+          done
+        }
+        victims="$(collect "$engine")"
 
-    while kill -0 "$app" 2>/dev/null && kill -0 "$engine" 2>/dev/null; do
-      sleep 1
-    done
+        while kill -0 "$app" 2>/dev/null && kill -0 "$engine" 2>/dev/null; do
+          sleep 1
+        done
 
-    signal_victims() {
-      signal="$1"
-      for pid in $victims "$engine"; do
-        path=$(/bin/ps -p "$pid" -o command= 2>/dev/null) || continue
-        case "$path" in
-          "$marker"/*) /bin/kill "-$signal" "$pid" 2>/dev/null || true ;;
-        esac
-      done
-    }
+        signal_victims() {
+          signal="$1"
+          for pid in $victims "$engine"; do
+            path=$(/bin/ps -p "$pid" -o command= 2>/dev/null) || continue
+            case "$path" in
+              "$marker"/*) /bin/kill "-$signal" "$pid" 2>/dev/null || true ;;
+            esac
+          done
+        }
 
-    signal_victims INT
-    sleep 15
-    signal_victims KILL
-    """#
+        signal_victims INT
+        sleep 15
+        signal_victims KILL
+        """#
 
     /// Runs as `python -u -c <script> <engine-pid> <app-pid> <pack-marker>`.
     /// Every candidate is re-verified against the pack root through
@@ -965,69 +984,69 @@ final class EngineController {
     /// the engine root is still alive — after its death the children are
     /// re-parented to launchd and the chain would be lost.
     private static let watchdogScript = #"""
-    import ctypes, os, signal, subprocess, sys, time
+        import ctypes, os, signal, subprocess, sys, time
 
-    engine = int(sys.argv[1])
-    app = int(sys.argv[2])
-    marker = os.path.realpath(sys.argv[3])
+        engine = int(sys.argv[1])
+        app = int(sys.argv[2])
+        marker = os.path.realpath(sys.argv[3])
 
-    libproc = None
-    try:
-        libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
-    except OSError:
-        pass
-
-    def alive(pid):
+        libproc = None
         try:
-            os.kill(pid, 0)
-            return True
+            libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
         except OSError:
-            return False
+            pass
 
-    def ours(pid):
-        if libproc is None:
-            return False
-        try:
-            buf = ctypes.create_string_buffer(4096)
-            n = libproc.proc_pidpath(pid, buf, 4096)
-            path = buf.value.decode("utf-8", "replace") if n > 0 else ""
-        except Exception:
-            return False
-        return path.startswith(marker + "/")
-
-    def tree(pid):
-        pids, index = [pid], 0
-        while index < len(pids):
+        def alive(pid):
             try:
-                out = subprocess.run(["/usr/bin/pgrep", "-P", str(pids[index])],
-                                     capture_output=True, text=True, timeout=5).stdout
-                pids.extend(int(line) for line in out.split())
+                os.kill(pid, 0)
+                return True
+            except OSError:
+                return False
+
+        def ours(pid):
+            if libproc is None:
+                return False
+            try:
+                buf = ctypes.create_string_buffer(4096)
+                n = libproc.proc_pidpath(pid, buf, 4096)
+                path = buf.value.decode("utf-8", "replace") if n > 0 else ""
             except Exception:
-                pass
-            index += 1
-        return pids
+                return False
+            return path.startswith(marker + "/")
 
-    snapshot = tree(engine)
-    while alive(app) and alive(engine):
+        def tree(pid):
+            pids, index = [pid], 0
+            while index < len(pids):
+                try:
+                    out = subprocess.run(["/usr/bin/pgrep", "-P", str(pids[index])],
+                                         capture_output=True, text=True, timeout=5).stdout
+                    pids.extend(int(line) for line in out.split())
+                except Exception:
+                    pass
+                index += 1
+            return pids
+
         snapshot = tree(engine)
-        time.sleep(2)
+        while alive(app) and alive(engine):
+            snapshot = tree(engine)
+            time.sleep(2)
 
-    victims = [pid for pid in snapshot if alive(pid) and ours(pid)]
-    for pid in victims:
-        try:
-            os.kill(pid, signal.SIGINT)
-        except OSError:
-            pass
-    deadline = time.time() + 15
-    while victims and time.time() < deadline:
-        time.sleep(1)
-        victims = [pid for pid in victims if alive(pid)]
-    for pid in victims:
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except OSError:
-            pass
-    """#
+        victims = [pid for pid in snapshot if alive(pid) and ours(pid)]
+        for pid in victims:
+            try:
+                os.kill(pid, signal.SIGINT)
+            except OSError:
+                pass
+        deadline = time.time() + 15
+        while victims and time.time() < deadline:
+            time.sleep(1)
+            victims = [pid for pid in victims if alive(pid)]
+        for pid in victims:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        """#
 
     func updateCatalog(_ value: ModelCatalog) { catalog = value }
 
@@ -1037,12 +1056,14 @@ final class EngineController {
             catalog = ModelCatalogService().load()
             return
         }
-        let response = await modelControl(action,
-                                          target: "",
-                                          fallbackPath: action.path,
-                                          timeout: 20)
-        logs.append("==> 重新扫描模型 → HTTP \(response?.status ?? 0)",
-                    level: (response?.status ?? 0) < 300 ? .system : .warning)
+        let response = await modelControl(
+            action,
+            target: "",
+            fallbackPath: action.path,
+            timeout: 20)
+        logs.append(
+            "==> 重新扫描模型 → HTTP \(response?.status ?? 0)",
+            level: (response?.status ?? 0) < 300 ? .system : .warning)
     }
 
     // MARK: process plumbing
@@ -1217,9 +1238,10 @@ final class EngineController {
         }
 
         if state == .starting,
-           descriptor.switchMode != .hot
-            || desiredModel == nil
-            || status?.loadedModels.contains(desiredModel ?? "") == true {
+            descriptor.switchMode != .hot
+                || desiredModel == nil
+                || status?.loadedModels.contains(desiredModel ?? "") == true
+        {
             markReady()
         }
         await applyTuningIfNeeded()
@@ -1288,8 +1310,9 @@ final class EngineController {
         // 健康探测已经拿到的 2xx 文档直接复用，不再为同一个端点发第二次请求。
         var prefetched: [String: [String: Any]] = [:]
         if let healthResponse, (200..<300).contains(healthResponse.status),
-           let object = try? JSONSerialization.jsonObject(with: healthResponse.body),
-           let json = object as? [String: Any] {
+            let object = try? JSONSerialization.jsonObject(with: healthResponse.body),
+            let json = object as? [String: Any]
+        {
             prefetched[healthPath] = json
         }
         let port = self.port
@@ -1302,9 +1325,10 @@ final class EngineController {
                 }
                 group.addTask {
                     guard let response = await HTTP.get(port: port, path: source.path, timeout: 1.8),
-                          (200..<300).contains(response.status),
-                          let object = try? JSONSerialization.jsonObject(with: response.body),
-                          let json = object as? [String: Any] else {
+                        (200..<300).contains(response.status),
+                        let object = try? JSONSerialization.jsonObject(with: response.body),
+                        let json = object as? [String: Any]
+                    else {
                         return (index, nil)
                     }
                     return (index, EngineTelemetryDocument(source: source, json: json))
@@ -1326,7 +1350,8 @@ final class EngineController {
         guard descriptor.adapter == .omlx else { return }
         guard let wanted = parsed.model ?? desiredModel, !wanted.isEmpty else { return }
         if let cached = reasoningEffortsCache, cached.model == wanted,
-           Date().timeIntervalSince(cached.at) < 30 {
+            Date().timeIntervalSince(cached.at) < 30
+        {
             if let efforts = cached.efforts { parsed.reasoningEfforts = efforts }
             return
         }
@@ -1404,8 +1429,10 @@ final class EngineController {
     ///
     /// 只有热加载引擎能同时挂两份权重；别的引擎没有这个能力，退回原来的独占
     /// 切换，保证行为是「换过去」而不是「加载失败」。
-    func loadModelKeepingResident(_ target: String,
-                                  stage: @escaping (String) -> Void) async -> ModelSwitchOutcome {
+    func loadModelKeepingResident(
+        _ target: String,
+        stage: @escaping (String) -> Void
+    ) async -> ModelSwitchOutcome {
         let wanted = target.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !wanted.isEmpty else { return .failed("模型标识为空") }
         guard descriptor.switchMode == .hot, isRunning else {
@@ -1455,12 +1482,13 @@ final class EngineController {
         let victims = resident.filter { $0 != target }
         if victims.isEmpty { return true }
 
-        var pending = [String]()
+        var pending: [String] = []
         for victim in victims {
-            let response = await modelControl(descriptor.modelControl?.unload,
-                                              target: victim,
-                                              fallbackPath: EngineRoutes.unload(victim),
-                                              timeout: 60)
+            let response = await modelControl(
+                descriptor.modelControl?.unload,
+                target: victim,
+                fallbackPath: EngineRoutes.unload(victim),
+                timeout: 60)
             let status = response?.status ?? 0
             logs.append("==> 卸载 \(victim) → HTTP \(status)", level: status < 300 ? .system : .error)
             // 400 (not loaded) / 404 (unknown id) mean this id holds no weights,
@@ -1484,8 +1512,9 @@ final class EngineController {
                 let clear = clearSince ?? Date()
                 clearSince = clear
                 if Date().timeIntervalSince(clear) >= 1.5 {
-                    logs.append("==> 旧模型已卸载（\(Int(Date().timeIntervalSince(startedAt))) 秒），开始加载 \(target)",
-                                level: .system)
+                    logs.append(
+                        "==> 旧模型已卸载（\(Int(Date().timeIntervalSince(startedAt))) 秒），开始加载 \(target)",
+                        level: .system)
                     return true
                 }
             } else {
@@ -1517,15 +1546,18 @@ final class EngineController {
         // dashboard alive while this awaits.
         // Settings only reach a model at load time, so push them first.
         if descriptor.adapter == .omlx { await pushTuning(for: [target]) }
-        let response = await modelControl(descriptor.modelControl?.load,
-                                          target: target,
-                                          fallbackPath: EngineRoutes.load(target),
-                                          timeout: 600)
+        let response = await modelControl(
+            descriptor.modelControl?.load,
+            target: target,
+            fallbackPath: EngineRoutes.load(target),
+            timeout: 600)
         let status = response?.status ?? 0
-        logs.append("==> \(id.displayName) 切换到 \(target) → HTTP \(status)",
-                    level: status < 300 ? .system : .error)
+        logs.append(
+            "==> \(id.displayName) 切换到 \(target) → HTTP \(status)",
+            level: status < 300 ? .system : .error)
         if status >= 300 {
-            failureMessage = status == 507
+            failureMessage =
+                status == 507
                 ? "内存不足，无法加载 \(target)"
                 : "加载 \(target) 失败（HTTP \(status)）"
         } else {
@@ -1536,10 +1568,12 @@ final class EngineController {
         return status < 300
     }
 
-    private func modelControl(_ action: EngineModelAction?,
-                              target: String,
-                              fallbackPath: String,
-                              timeout: TimeInterval) async -> HTTPResponse? {
+    private func modelControl(
+        _ action: EngineModelAction?,
+        target: String,
+        fallbackPath: String,
+        timeout: TimeInterval
+    ) async -> HTTPResponse? {
         guard let action else {
             return await HTTP.post(port: port, path: fallbackPath, timeout: timeout)
         }
@@ -1555,11 +1589,12 @@ final class EngineController {
         } else {
             json = nil
         }
-        return await HTTP.request(method: action.method,
-                                  port: port,
-                                  path: path,
-                                  json: json,
-                                  timeout: timeout)
+        return await HTTP.request(
+            method: action.method,
+            port: port,
+            path: path,
+            json: json,
+            timeout: timeout)
     }
 
     /// oMLX starts with its own default model, so the requested one may still
@@ -1569,7 +1604,10 @@ final class EngineController {
         guard !switchInFlight else { return }
         guard descriptor.switchMode == .hot, let target = desiredModel, !target.isEmpty else { return }
         if let last = lastHotLoad, last.target == target,
-           Date().timeIntervalSince(last.at) < 20 { return }
+            Date().timeIntervalSince(last.at) < 20
+        {
+            return
+        }
         if let loaded = status?.loadedModels, loaded.contains(target) { return }
         if status?.model == target { return }
         _ = await loadModelHot(target)
@@ -1646,7 +1684,8 @@ final class EngineController {
         let markers = orphanCleanupDirectories.map { $0 + "/" }
         for entry in allProcesses() where entry.pid != ProcessInfo.processInfo.processIdentifier {
             guard let path = processExecutablePath(entry.pid),
-                  markers.contains(where: { path.hasPrefix($0) }) else { continue }
+                markers.contains(where: { path.hasPrefix($0) })
+            else { continue }
             note("==> 清扫上次会话遗留的引擎进程（pid \(entry.pid)）")
             killTree(entry.pid, SIGKILL)
         }
@@ -1731,16 +1770,19 @@ final class EngineController {
             // The payload is push-ready: the resolved thinking budget rides in.
             let override = EngineStore.shared.draftAssignment(for: id, model: target)
             guard let settings = tuning.omlxSettings(id: id, draftOverride: override),
-                  !settings.isEmpty else { continue }
+                !settings.isEmpty
+            else { continue }
             let payload = settings.mapValues { $0.jsonObject }
             guard let data = try? JSONSerialization.data(withJSONObject: payload) else { continue }
-            let response = await HTTP.put(port: port,
-                                          path: EngineRoutes.modelSettings(target),
-                                          json: data,
-                                          timeout: 20)
+            let response = await HTTP.put(
+                port: port,
+                path: EngineRoutes.modelSettings(target),
+                json: data,
+                timeout: 20)
             let status = response?.status ?? 0
-            logs.append("==> \(target) 应用 MTP/DFlash 设置 -> HTTP \(status)",
-                        level: status < 300 ? .system : .warning)
+            logs.append(
+                "==> \(target) 应用 MTP/DFlash 设置 -> HTTP \(status)",
+                level: status < 300 ? .system : .warning)
             if status >= 300 { failures += 1 }
         }
         if failures > 0 {
@@ -1759,9 +1801,11 @@ final class EngineController {
     }
 
     private func readPidFile() -> Int32? {
-        guard let text = try? String(contentsOfFile: EnginePaths.pidFile(id), encoding: .utf8)
-            .trimmingCharacters(in: .whitespaces),
-            let pid = Int32(text), pid > 0 else { return nil }
+        guard
+            let text = try? String(contentsOfFile: EnginePaths.pidFile(id), encoding: .utf8)
+                .trimmingCharacters(in: .whitespaces),
+            let pid = Int32(text), pid > 0
+        else { return nil }
         return pid
     }
 }
@@ -1799,11 +1843,13 @@ enum HTTP {
         await send(method: "POST", port: port, path: path, body: nil, timeout: timeout)
     }
 
-    static func request(method: EngineHTTPMethod,
-                        port: Int,
-                        path: String,
-                        json: Data?,
-                        timeout: TimeInterval) async -> HTTPResponse? {
+    static func request(
+        method: EngineHTTPMethod,
+        port: Int,
+        path: String,
+        json: Data?,
+        timeout: TimeInterval
+    ) async -> HTTPResponse? {
         await send(method: method.rawValue, port: port, path: path, body: json, timeout: timeout)
     }
 
@@ -1812,11 +1858,13 @@ enum HTTP {
         await send(method: "PUT", port: port, path: path, body: json, timeout: timeout)
     }
 
-    private static func send(method: String,
-                             port: Int,
-                             path: String,
-                             body: Data?,
-                             timeout: TimeInterval) async -> HTTPResponse? {
+    private static func send(
+        method: String,
+        port: Int,
+        path: String,
+        body: Data?,
+        timeout: TimeInterval
+    ) async -> HTTPResponse? {
         guard let url = URL(string: "http://127.0.0.1:\(port)\(path)") else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = method

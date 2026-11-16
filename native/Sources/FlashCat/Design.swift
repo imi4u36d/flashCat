@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import SwiftUI
 import AppKit
+import SwiftUI
 
 // MARK: - Palette
 //
@@ -18,11 +18,12 @@ import AppKit
 
 extension Color {
     init(hex: UInt32, opacity: Double = 1) {
-        self.init(.sRGB,
-                  red: Double((hex >> 16) & 0xFF) / 255,
-                  green: Double((hex >> 8) & 0xFF) / 255,
-                  blue: Double(hex & 0xFF) / 255,
-                  opacity: opacity)
+        self.init(
+            .sRGB,
+            red: Double((hex >> 16) & 0xFF) / 255,
+            green: Double((hex >> 8) & 0xFF) / 255,
+            blue: Double(hex & 0xFF) / 255,
+            opacity: opacity)
     }
 }
 
@@ -131,10 +132,12 @@ struct PageBackdrop: View {
     var accent: Color = Native.accent
 
     var body: some View {
-        LinearGradient(colors: [Native.surface, Native.surfaceDeep],
-                       startPoint: .top, endPoint: .bottom)
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
+        LinearGradient(
+            colors: [Native.surface, Native.surfaceDeep],
+            startPoint: .top, endPoint: .bottom
+        )
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 }
 
@@ -347,7 +350,8 @@ enum BrandGlyph {
         for root in roots {
             let bundleURL = root.appendingPathComponent(bundleName)
             if let resources = Bundle(url: bundleURL),
-               let found = resources.url(forResource: name, withExtension: "png") {
+                let found = resources.url(forResource: name, withExtension: "png")
+            {
                 url = found
                 break
             }
@@ -412,13 +416,15 @@ struct BrandMark: View {
             let bundleURL = root.appendingPathComponent(bundleName)
             guard let resources = Bundle(url: bundleURL) else { continue }
             if let url = resources.url(forResource: "app-icon", withExtension: "png"),
-               let image = NSImage(contentsOf: url) {
+                let image = NSImage(contentsOf: url)
+            {
                 return image
             }
         }
         // Copy the build script drops straight into Contents/Resources.
         if let url = Bundle.main.url(forResource: "app-icon", withExtension: "png"),
-           let image = NSImage(contentsOf: url) {
+            let image = NSImage(contentsOf: url)
+        {
             return image
         }
         return NSApplication.shared.applicationIconImage
@@ -537,12 +543,14 @@ struct Card<Content: View>: View {
     var tint: Color = .clear
     let content: Content
 
-    init(_ title: String? = nil,
-         subtitle: String? = nil,
-         trailing: AnyView? = nil,
-         padded: Bool = true,
-         tint: Color = .clear,
-         @ViewBuilder content: () -> Content) {
+    init(
+        _ title: String? = nil,
+        subtitle: String? = nil,
+        trailing: AnyView? = nil,
+        padded: Bool = true,
+        tint: Color = .clear,
+        @ViewBuilder content: () -> Content
+    ) {
         self.title = title
         self.subtitle = subtitle
         self.trailing = trailing
@@ -712,8 +720,9 @@ struct MetricCard: View {
         .background {
             LiquidGlassSurface(
                 shape: RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous),
-                tint: hero ? Native.accent.opacity(0.18)
-                           : (hovering ? Native.accent.opacity(0.06) : nil)
+                tint: hero
+                    ? Native.accent.opacity(0.18)
+                    : (hovering ? Native.accent.opacity(0.06) : nil)
             )
         }
         .onHover { value in
@@ -780,8 +789,10 @@ struct StatusStrip: View {
                 .transition(.opacity)
             }
         }
-        .glassEffect(.regular,
-                    in: RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous))
+        .glassEffect(
+            .regular,
+            in: RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous)
+        )
         .animation(.easeOut(duration: 0.16), value: statusText)
         .animation(.easeOut(duration: 0.16), value: failure)
     }
@@ -815,8 +826,10 @@ struct ProgressRing: View {
                 .stroke(DS.line2, lineWidth: lineWidth)
             Circle()
                 .trim(from: 0, to: CGFloat(clamped))
-                .stroke(tint,
-                        style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .stroke(
+                    tint,
+                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+                )
                 .rotationEffect(.degrees(-90))
             Text(verbatim: "\(percent)%")
                 .font(DS.Font.mono(size * 0.28, weight: .semibold))
@@ -843,11 +856,13 @@ struct ShimmerSweep: View {
                 let period: Double = 1.35
                 let time = timeline.date.timeIntervalSinceReferenceDate
                 let phase = CGFloat(time.truncatingRemainder(dividingBy: period) / period)
-                LinearGradient(colors: [.clear, Native.overlay(0.22), .clear],
-                               startPoint: .leading,
-                               endPoint: .trailing)
-                    .frame(width: sweep)
-                    .offset(x: -sweep + phase * (width + sweep))
+                LinearGradient(
+                    colors: [.clear, Native.overlay(0.22), .clear],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(width: sweep)
+                .offset(x: -sweep + phase * (width + sweep))
             }
         }
         .allowsHitTesting(false)
@@ -930,10 +945,12 @@ struct PageHeader<Actions: View>: View {
     var eyebrow: String? = nil
     @ViewBuilder let actions: () -> Actions
 
-    init(title: String,
-         subtitle: String? = nil,
-         eyebrow: String? = nil,
-         @ViewBuilder actions: @escaping () -> Actions) {
+    init(
+        title: String,
+        subtitle: String? = nil,
+        eyebrow: String? = nil,
+        @ViewBuilder actions: @escaping () -> Actions
+    ) {
         self.title = title
         self.subtitle = subtitle
         self.eyebrow = eyebrow

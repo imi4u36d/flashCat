@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
+import FlashCatKit
 import Foundation
 import XCTest
-import FlashCatKit
+
 @testable import FlashCatCLICore
 
 /// HTTP 状态码 → 退出码是 SPEC 里最硬的契约（脚本靠它判断故障类型），但一直只藏在
@@ -31,16 +32,18 @@ final class ControlClientExitCodeTests: XCTestCase {
             (504, .timeout),
         ]
         for (status, expected) in table {
-            XCTAssertEqual(ControlClient.exitCode(status: status, code: nil), expected,
-                           "HTTP \(status) 应映射到 \(expected)")
+            XCTAssertEqual(
+                ControlClient.exitCode(status: status, code: nil), expected,
+                "HTTP \(status) 应映射到 \(expected)")
         }
     }
 
     func testServerErrorCodeWinsOverStatus() {
         // 服务端可能用 400 包一个 unauthorized：令牌过期必须在状态码之前判定，
         // 否则用户会看到「用法错误」而不是「令牌过期，重启应用」。
-        XCTAssertEqual(ControlClient.exitCode(status: 400, code: ControlErrorCode.unauthorized),
-                       .unauthorized)
+        XCTAssertEqual(
+            ControlClient.exitCode(status: 400, code: ControlErrorCode.unauthorized),
+            .unauthorized)
         XCTAssertEqual(ControlClient.exitCode(status: 504, code: ControlErrorCode.timeout), .timeout)
     }
 

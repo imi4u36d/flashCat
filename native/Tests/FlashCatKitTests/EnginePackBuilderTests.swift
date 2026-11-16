@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import XCTest
+
 @testable import FlashCatKit
 
 /// Plans for "build the pack here, then install it". The three engines have
@@ -23,10 +24,12 @@ final class EnginePackBuildPlannerTests: XCTestCase {
         let steps = EnginePackBuildPlanner.steps(for: .omlx, version: "0.7.3rc1", release: nil)
         XCTAssertEqual(steps.map(\.id), ["build", "release"])
         XCTAssertTrue(steps[0].command.contains("build-omlx-pack.sh --version '0.7.3rc1'"))
-        XCTAssertFalse(steps.contains { $0.command.contains("brew") },
-                       "oMLX updates must not depend on Homebrew")
-        XCTAssertFalse(steps.contains { $0.command.contains("curl") },
-                       "the wheel download lives in the build script, not the plan")
+        XCTAssertFalse(
+            steps.contains { $0.command.contains("brew") },
+            "oMLX updates must not depend on Homebrew")
+        XCTAssertFalse(
+            steps.contains { $0.command.contains("curl") },
+            "the wheel download lives in the build script, not the plan")
     }
 
     func testMLXServePlanUsesItsPackScriptAndMinimumMacOS() {
@@ -52,10 +55,12 @@ final class EnginePackBuildPlannerTests: XCTestCase {
             isPrerelease: false,
             pageURL: URL(string: "https://github.com/incoai/splash/releases/tag/v1.4.1")!,
             assets: [
-                .init(name: "splash-1.4.1-arm64-macos26.tar.gz",
-                      url: URL(string: "https://example.com/splash-1.4.1-arm64-macos26.tar.gz")!),
-                .init(name: "splash-1.4.1-arm64-macos26.tar.gz.sha256",
-                      url: URL(string: "https://example.com/splash-1.4.1-arm64-macos26.tar.gz.sha256")!),
+                .init(
+                    name: "splash-1.4.1-arm64-macos26.tar.gz",
+                    url: URL(string: "https://example.com/splash-1.4.1-arm64-macos26.tar.gz")!),
+                .init(
+                    name: "splash-1.4.1-arm64-macos26.tar.gz.sha256",
+                    url: URL(string: "https://example.com/splash-1.4.1-arm64-macos26.tar.gz.sha256")!),
             ])
         let steps = EnginePackBuildPlanner.steps(for: .splash, version: "1.4.1", release: landing)
         XCTAssertEqual(steps.map(\.id), ["download", "build", "release"])
@@ -91,13 +96,15 @@ final class EnginePackBuildPlannerTests: XCTestCase {
 
         let release = try EnginePackBuildRunner.loadRelease(at: path.path)
 
-        XCTAssertEqual(release.url,
-                       dir.appendingPathComponent("omlx-0.7.2-arm64-macos26.0.tar.gz").absoluteString)
+        XCTAssertEqual(
+            release.url,
+            dir.appendingPathComponent("omlx-0.7.2-arm64-macos26.0.tar.gz").absoluteString)
     }
 
     func testReleaseFilePath() {
-        XCTAssertEqual(EnginePackBuildPlanner.releaseFile(for: .omlx, version: "0.7.3.dev2"),
-                       "dist/packs/omlx-0.7.3.dev2.release.json")
+        XCTAssertEqual(
+            EnginePackBuildPlanner.releaseFile(for: .omlx, version: "0.7.3.dev2"),
+            "dist/packs/omlx-0.7.3.dev2.release.json")
     }
 
     /// 回归：`terminationHandler` 曾是在 `process.run()` 之后才赋值的。子进程在
@@ -110,8 +117,10 @@ final class EnginePackBuildPlannerTests: XCTestCase {
         let failure = ErrorBox()
         let task = Task {
             do {
-                try await EnginePackBuildRunner.run(step,
-                                                    in: FileManager.default.temporaryDirectory.path) { _ in }
+                try await EnginePackBuildRunner.run(
+                    step,
+                    in: FileManager.default.temporaryDirectory.path
+                ) { _ in }
             } catch {
                 failure.set(error)
             }
@@ -131,12 +140,15 @@ final class EnginePackBuildPlannerTests: XCTestCase {
     /// 去 `String(data:encoding:)`，解码失败就把整块（可能是好几行）静默丢掉，
     /// 中文构建输出会凭空少行。这里让 bash 分两次写出同一个字符的字节。
     func testMultiByteCharacterSplitAcrossReadsIsNotDropped() async throws {
-        let step = EnginePackBuildStep(id: "utf8",
-                                       title: "中文输出",
-                                       command: #"printf '\xe4\xb8'; sleep 0.2; printf '\xad\n'"#)
+        let step = EnginePackBuildStep(
+            id: "utf8",
+            title: "中文输出",
+            command: #"printf '\xe4\xb8'; sleep 0.2; printf '\xad\n'"#)
         let lines = LineBox()
-        try await EnginePackBuildRunner.run(step,
-                                            in: FileManager.default.temporaryDirectory.path) {
+        try await EnginePackBuildRunner.run(
+            step,
+            in: FileManager.default.temporaryDirectory.path
+        ) {
             lines.append($0)
         }
         XCTAssertEqual(lines.value, ["中"])

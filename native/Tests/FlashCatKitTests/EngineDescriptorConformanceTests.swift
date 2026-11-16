@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import XCTest
+
 @testable import FlashCatKit
 
 /// descriptor 是引擎差异的唯一落点，但「差异」具体落在两张表里：
@@ -30,8 +31,9 @@ final class EngineDescriptorConformanceTests: XCTestCase {
     func testEveryEngineHasATuningProfile() {
         for id in EngineCatalog.allIDs {
             let descriptor = EngineCatalog.descriptor(for: id)
-            XCTAssertNotNil(EngineTuningProfile.registered(for: descriptor.adapter),
-                            "\(id.rawValue) 的 adapter \(descriptor.adapter.rawValue) 没有 EngineTuningProfile 表项")
+            XCTAssertNotNil(
+                EngineTuningProfile.registered(for: descriptor.adapter),
+                "\(id.rawValue) 的 adapter \(descriptor.adapter.rawValue) 没有 EngineTuningProfile 表项")
         }
     }
 
@@ -41,15 +43,18 @@ final class EngineDescriptorConformanceTests: XCTestCase {
         for id in EngineCatalog.allIDs {
             let descriptor = EngineCatalog.descriptor(for: id)
             let hasPrimary = EngineStatusDialects.primaryStatusFormat[descriptor.adapter] != nil
-            XCTAssertTrue(hasPrimary || !descriptor.telemetry.isEmpty,
-                          "\(id.rawValue) 既没有主状态格式，也没有 telemetry 声明")
+            XCTAssertTrue(
+                hasPrimary || !descriptor.telemetry.isEmpty,
+                "\(id.rawValue) 既没有主状态格式，也没有 telemetry 声明")
             for source in descriptor.telemetry {
-                XCTAssertNotNil(EngineStatusDialects.dialect(for: source.format),
-                                "\(id.rawValue) 声明了 \(source.format.rawValue)，但没有对应方言")
+                XCTAssertNotNil(
+                    EngineStatusDialects.dialect(for: source.format),
+                    "\(id.rawValue) 声明了 \(source.format.rawValue)，但没有对应方言")
             }
             if let format = EngineStatusDialects.primaryStatusFormat[descriptor.adapter] {
-                XCTAssertNotNil(EngineStatusDialects.dialect(for: format),
-                                "\(id.rawValue) 的主格式 \(format.rawValue) 没有对应方言")
+                XCTAssertNotNil(
+                    EngineStatusDialects.dialect(for: format),
+                    "\(id.rawValue) 的主格式 \(format.rawValue) 没有对应方言")
             }
         }
     }
@@ -62,8 +67,9 @@ final class EngineDescriptorConformanceTests: XCTestCase {
             let descriptor = EngineCatalog.descriptor(for: id)
             XCTAssertFalse(descriptor.capabilities.isEmpty, "\(id.rawValue) 没有能力位")
             // 内置引擎的端口都在 8000 段：默认值取 8000/8100/8200/8300/8400。
-            XCTAssertTrue((8_000..<9_000).contains(descriptor.defaultPort),
-                          "\(id.rawValue) 的默认端口 \(descriptor.defaultPort) 不在 8000 段")
+            XCTAssertTrue(
+                (8_000..<9_000).contains(descriptor.defaultPort),
+                "\(id.rawValue) 的默认端口 \(descriptor.defaultPort) 不在 8000 段")
             XCTAssertGreaterThan(descriptor.portRangeSize, 0)
             XCTAssertFalse(descriptor.portRange.isEmpty, "\(id.rawValue) 的端口区间为空")
             if let existing = ports[descriptor.defaultPort] {
@@ -96,8 +102,9 @@ final class EngineDescriptorConformanceTests: XCTestCase {
             }
             XCTAssertFalse(release.version.isEmpty, "\(id.rawValue) 的最新版本号为空")
             XCTAssertFalse(release.sha256.isEmpty, "\(id.rawValue) 的最新发布缺 sha256")
-            XCTAssertTrue(release.url.hasSuffix(".tar.gz"),
-                          "\(id.rawValue) 的下载地址不是 tar.gz：\(release.url)")
+            XCTAssertTrue(
+                release.url.hasSuffix(".tar.gz"),
+                "\(id.rawValue) 的下载地址不是 tar.gz：\(release.url)")
         }
     }
 
@@ -107,10 +114,12 @@ final class EngineDescriptorConformanceTests: XCTestCase {
     /// 打开封堵的办法只有一个：像内置引擎一样补上 descriptor + 调优表 + 解析表。
     func testUnknownEngineIDIsCaughtByTheSameAssertions() throws {
         let fake = EngineAdapterID("teleportation")
-        XCTAssertNil(EngineTuningProfile.registered(for: fake),
-                     "假 adapter 竟然能查到参数表项：表里混进了非 descriptor 的键？")
-        XCTAssertNil(EngineStatusDialects.primaryStatusFormat[fake],
-                     "假 adapter 竟然有主状态格式")
+        XCTAssertNil(
+            EngineTuningProfile.registered(for: fake),
+            "假 adapter 竟然能查到参数表项：表里混进了非 descriptor 的键？")
+        XCTAssertNil(
+            EngineStatusDialects.primaryStatusFormat[fake],
+            "假 adapter 竟然有主状态格式")
 
         guard let fakeID = EngineID(rawValue: "teleport") else {
             return XCTFail("EngineID 接受不了合法的小写 id")

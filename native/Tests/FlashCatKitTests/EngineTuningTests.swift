@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import XCTest
+
 @testable import FlashCatKit
 
 /// The disk tier these assertions ride on top of: the factory defaults turn it
@@ -17,8 +18,9 @@ final class EngineTuningTests: XCTestCase {
         for id in EngineCatalog.allIDs {
             // An all-nil tuning still inherits the factory disk-tier default;
             // strata advertises no tier at all, so it stays empty.
-            XCTAssertEqual(EngineTuning().arguments(for: id), cacheArgs(id),
-                           "unexpected arguments on \(id)")
+            XCTAssertEqual(
+                EngineTuning().arguments(for: id), cacheArgs(id),
+                "unexpected arguments on \(id)")
         }
         XCTAssertEqual(EngineTuning().arguments(for: .strata), [])
     }
@@ -30,9 +32,12 @@ final class EngineTuningTests: XCTestCase {
         tuning.languageOnly = true
         tuning.extraArguments = "--decode-share 0.5"
 
-        XCTAssertEqual(tuning.arguments(for: .splash),
-                       ["--max-memory", "24G", "--max-context", "256K",
-                        "--language-only"] + cacheArgs(.splash) + ["--decode-share", "0.5"])
+        XCTAssertEqual(
+            tuning.arguments(for: .splash),
+            [
+                "--max-memory", "24G", "--max-context", "256K",
+                "--language-only",
+            ] + cacheArgs(.splash) + ["--decode-share", "0.5"])
         // MTPLX/oMLX do not understand splash's memory flags.
         XCTAssertEqual(tuning.arguments(for: .mtplx), cacheArgs(.mtplx) + ["--decode-share", "0.5"])
         XCTAssertEqual(tuning.arguments(for: .omlx), cacheArgs(.omlx) + ["--decode-share", "0.5"])
@@ -43,35 +48,42 @@ final class EngineTuningTests: XCTestCase {
         tuning.mtp = false
         tuning.loadMtp = true
         tuning.mtpQuantBits = 4
-        XCTAssertEqual(tuning.arguments(for: .mtplx),
-                       ["--no-mtp", "--load-mtp", "--mtp-quant-bits", "4"] + cacheArgs(.mtplx))
+        XCTAssertEqual(
+            tuning.arguments(for: .mtplx),
+            ["--no-mtp", "--load-mtp", "--mtp-quant-bits", "4"] + cacheArgs(.mtplx))
 
         tuning.mtp = true
         tuning.loadMtp = false
-        XCTAssertEqual(tuning.arguments(for: .mtplx),
-                       ["--mtp", "--no-load-mtp", "--mtp-quant-bits", "4"] + cacheArgs(.mtplx))
+        XCTAssertEqual(
+            tuning.arguments(for: .mtplx),
+            ["--mtp", "--no-load-mtp", "--mtp-quant-bits", "4"] + cacheArgs(.mtplx))
     }
 
     func testOMLXPayloadNeverEnablesBothHeads() {
         var tuning = EngineTuning()
         tuning.mtp = true
         tuning.depth(3)
-        XCTAssertEqual(tuning.omlxSettings,
-                       ["mtp_enabled": .bool(true),
-                        "dflash_enabled": .bool(false),
-                        "mtp_fixed_depth": .int(3)])
+        XCTAssertEqual(
+            tuning.omlxSettings,
+            [
+                "mtp_enabled": .bool(true),
+                "dflash_enabled": .bool(false),
+                "mtp_fixed_depth": .int(3),
+            ])
 
         tuning.dflash = true
-        XCTAssertEqual(tuning.omlxSettings,
-                       ["dflash_enabled": .bool(true), "mtp_enabled": .bool(false)])
+        XCTAssertEqual(
+            tuning.omlxSettings,
+            ["dflash_enabled": .bool(true), "mtp_enabled": .bool(false)])
         XCTAssertTrue(tuning.omlxHeadsConflict)
 
         // Sanitizing resolves the conflict in DFlash's favour, matching the UI.
         let cleaned = tuning.sanitized()
         XCTAssertEqual(cleaned.dflash, true)
         XCTAssertEqual(cleaned.mtp, false)  // the conflicting flag is dropped
-        XCTAssertEqual(cleaned.omlxSettings,
-                       ["dflash_enabled": .bool(true), "mtp_enabled": .bool(false)])
+        XCTAssertEqual(
+            cleaned.omlxSettings,
+            ["dflash_enabled": .bool(true), "mtp_enabled": .bool(false)])
     }
 
     func testOMLXAdaptiveDepthSendsNull() {
@@ -92,9 +104,10 @@ final class EngineTuningTests: XCTestCase {
     func testDraftOverrideFallsBackToEngineTuningWhenAbsent() {
         var tuning = EngineTuning()
         tuning.mtp = true
-        XCTAssertEqual(tuning.omlxSettings(id: .omlx, draftOverride: nil),
-                       tuning.omlxSettings(id: .omlx, draftOverride: "  "),
-                       "a blank override is no override")
+        XCTAssertEqual(
+            tuning.omlxSettings(id: .omlx, draftOverride: nil),
+            tuning.omlxSettings(id: .omlx, draftOverride: "  "),
+            "a blank override is no override")
         // 空覆盖回落到引擎级调优；未设预算时不限制，只下发 enabled=false。
         let payload = tuning.omlxSettings(draftOverride: nil)
         XCTAssertEqual(payload?["thinking_budget_enabled"], .bool(false))
@@ -140,8 +153,9 @@ final class EngineTuningTests: XCTestCase {
 
     func testOMLXPushReadyPayloadCarriesTheThinkingBudget() {
         // 不限制（nil）也要显式下发 enabled=false，清掉之前推送过的按模型预算。
-        XCTAssertEqual(EngineTuning().omlxSettings(id: .omlx, draftOverride: nil),
-                       ["thinking_budget_enabled": .bool(false)])
+        XCTAssertEqual(
+            EngineTuning().omlxSettings(id: .omlx, draftOverride: nil),
+            ["thinking_budget_enabled": .bool(false)])
 
         var tuning = EngineTuning()
         tuning.mtp = true
@@ -167,8 +181,9 @@ final class EngineTuningTests: XCTestCase {
     func testSplashTakesTheNgramCacheSizeVerbatim() {
         var tuning = EngineTuning()
         tuning.pleMemory = " 2G "
-        XCTAssertEqual(tuning.arguments(for: .splash),
-                       ["--ple-memory", "2G"] + cacheArgs(.splash))
+        XCTAssertEqual(
+            tuning.arguments(for: .splash),
+            ["--ple-memory", "2G"] + cacheArgs(.splash))
         // Only splash reads it as a flag.
         XCTAssertEqual(tuning.arguments(for: .mtplx), cacheArgs(.mtplx))
         XCTAssertEqual(tuning.arguments(for: .omlx), cacheArgs(.omlx))
@@ -177,17 +192,20 @@ final class EngineTuningTests: XCTestCase {
     func testSplashMapsTheOffloadSwitchOntoPleMemory() {
         var tuning = EngineTuning()
         tuning.pleSSDOffload = true
-        XCTAssertEqual(tuning.arguments(for: .splash),
-                       ["--ple-memory", "auto"] + cacheArgs(.splash))
+        XCTAssertEqual(
+            tuning.arguments(for: .splash),
+            ["--ple-memory", "auto"] + cacheArgs(.splash))
 
         tuning.pleSSDOffload = false
-        XCTAssertEqual(tuning.arguments(for: .splash),
-                       ["--ple-memory", "off"] + cacheArgs(.splash))
+        XCTAssertEqual(
+            tuning.arguments(for: .splash),
+            ["--ple-memory", "off"] + cacheArgs(.splash))
 
         // An explicit size beats the switch, so the CLI never carries both.
         tuning.pleMemory = "4G"
-        XCTAssertEqual(tuning.arguments(for: .splash),
-                       ["--ple-memory", "4G"] + cacheArgs(.splash))
+        XCTAssertEqual(
+            tuning.arguments(for: .splash),
+            ["--ple-memory", "4G"] + cacheArgs(.splash))
     }
 
     func testOMLXPushesTheNgramOffloadAsItsOwnSetting() {
@@ -203,11 +221,14 @@ final class EngineTuningTests: XCTestCase {
         var tuning = EngineTuning()
         tuning.mtp = true
         tuning.pleSSDOffload = true
-        XCTAssertEqual(tuning.omlxSettings,
-                       ["mtp_enabled": .bool(true),
-                        "dflash_enabled": .bool(false),
-                        "mtp_fixed_depth": .null,
-                        "qwen4_ple_ssd_offload": .bool(true)])
+        XCTAssertEqual(
+            tuning.omlxSettings,
+            [
+                "mtp_enabled": .bool(true),
+                "dflash_enabled": .bool(false),
+                "mtp_fixed_depth": .null,
+                "qwen4_ple_ssd_offload": .bool(true),
+            ])
         XCTAssertFalse(tuning.omlxHeadsConflict)
     }
 
@@ -233,8 +254,9 @@ final class EngineTuningTests: XCTestCase {
 
         // Pack defaults reproduce the same answer through the fallback path.
         for id in EngineCatalog.allIDs {
-            XCTAssertEqual(EngineTuning.defaults(for: id).speculativeMode(for: id),
-                           EngineTuning().speculativeMode(for: id))
+            XCTAssertEqual(
+                EngineTuning.defaults(for: id).speculativeMode(for: id),
+                EngineTuning().speculativeMode(for: id))
         }
 
         // Splash only has DFlash2; turning it off leaves nothing.
@@ -290,8 +312,8 @@ final class EngineTuningTests: XCTestCase {
     }
 }
 
-private extension EngineTuning {
-    mutating func depth(_ value: Int) { mtpDepth = value }
+extension EngineTuning {
+    fileprivate mutating func depth(_ value: Int) { mtpDepth = value }
 }
 
 final class EngineTuningDefaultsTests: XCTestCase {
@@ -300,8 +322,9 @@ final class EngineTuningDefaultsTests: XCTestCase {
         let tuning = EngineTuning.defaults(for: .splash)
         XCTAssertEqual(tuning.dflash, true)
         XCTAssertEqual(tuning.pleSSDOffload, true)
-        XCTAssertEqual(tuning.arguments(for: .splash),
-                       ["--ple-memory", "auto"] + cacheArgs(.splash))
+        XCTAssertEqual(
+            tuning.arguments(for: .splash),
+            ["--ple-memory", "auto"] + cacheArgs(.splash))
         XCTAssertEqual(tuning.draftDirectory(automatic: "/models/draft"), "/models/draft")
     }
 
@@ -310,11 +333,14 @@ final class EngineTuningDefaultsTests: XCTestCase {
         XCTAssertEqual(tuning.mtp, true)
         XCTAssertEqual(tuning.dflash, false)
         XCTAssertEqual(tuning.pleSSDOffload, true)
-        XCTAssertEqual(tuning.omlxSettings,
-                       ["mtp_enabled": .bool(true),
-                        "dflash_enabled": .bool(false),
-                        "mtp_fixed_depth": .null,
-                        "qwen4_ple_ssd_offload": .bool(true)])
+        XCTAssertEqual(
+            tuning.omlxSettings,
+            [
+                "mtp_enabled": .bool(true),
+                "dflash_enabled": .bool(false),
+                "mtp_fixed_depth": .null,
+                "qwen4_ple_ssd_offload": .bool(true),
+            ])
         XCTAssertFalse(tuning.omlxHeadsConflict)
     }
 
@@ -326,8 +352,9 @@ final class EngineTuningDefaultsTests: XCTestCase {
         // 思考截断走环境变量，不占 CLI 参数位。
         XCTAssertEqual(tuning.arguments(for: .mtplx), ["--load-mtp"] + cacheArgs(.mtplx))
         for id in EngineCatalog.allIDs {
-            XCTAssertEqual(EngineTuning.defaults(for: id).sanitized(), EngineTuning.defaults(for: id),
-                           "defaults survive sanitizing on \(id)")
+            XCTAssertEqual(
+                EngineTuning.defaults(for: id).sanitized(), EngineTuning.defaults(for: id),
+                "defaults survive sanitizing on \(id)")
         }
     }
 }
@@ -338,8 +365,10 @@ final class EngineTuningMigrationTests: XCTestCase {
     /// used to decode as "leave it to the engine", whose default is *resident*.
     private let legacyDocument: [String: Any] = [
         "active": ["version": "omlx"],
-        "omlx": ["port": 8100,
-                 "tuning": ["dflash": false, "mtp": true]],
+        "omlx": [
+            "port": 8100,
+            "tuning": ["dflash": false, "mtp": true],
+        ],
         "splash": ["tuning": ["dflash": true, "mtp": false]],
         "mtplx": ["tuning": ["loadMtp": true]],
     ]
@@ -348,7 +377,8 @@ final class EngineTuningMigrationTests: XCTestCase {
     /// one tuning each migration pass touches.
     private func tuning(of engine: String, in document: [String: Any]) throws -> EngineTuning? {
         guard let configuration = document[engine] as? [String: Any],
-              let tuning = configuration["tuning"] else { return nil }
+            let tuning = configuration["tuning"]
+        else { return nil }
         let data = try JSONSerialization.data(withJSONObject: tuning)
         return try JSONDecoder().decode(EngineTuning.self, from: data)
     }
@@ -375,8 +405,10 @@ final class EngineTuningMigrationTests: XCTestCase {
 
     func testExplicitFalseAndMissingTuningsAreLeftAlone() throws {
         var document = legacyDocument
-        document["omlx"] = ["port": 8100,
-                            "tuning": ["dflash": false, "mtp": true, "pleSSDOffload": false]]
+        document["omlx"] = [
+            "port": 8100,
+            "tuning": ["dflash": false, "mtp": true, "pleSSDOffload": false],
+        ]
         document["splash"] = ["port": 8000]
 
         let migrated = EngineTuning.backfillPLEOffload(in: document)
@@ -390,8 +422,9 @@ final class EngineTuningMigrationTests: XCTestCase {
     func testBackfillIsIdempotent() throws {
         let once = EngineTuning.backfillPLEOffload(in: legacyDocument)
         let twice = EngineTuning.backfillPLEOffload(in: once)
-        XCTAssertEqual(try JSONSerialization.data(withJSONObject: twice),
-                       try JSONSerialization.data(withJSONObject: once))
+        XCTAssertEqual(
+            try JSONSerialization.data(withJSONObject: twice),
+            try JSONSerialization.data(withJSONObject: once))
     }
 }
 
@@ -411,8 +444,9 @@ final class PrefixCacheTuningTests: XCTestCase {
                 // shared root reaches it through a link, not an argument.
                 XCTAssertEqual(arguments, ["--prefix-cache-disk", "20GB"])
             default:
-                XCTAssertTrue(arguments.contains(FlashCatPaths.prefixCacheDirectory(id)),
-                              "\(id) should write under the shared root")
+                XCTAssertTrue(
+                    arguments.contains(FlashCatPaths.prefixCacheDirectory(id)),
+                    "\(id) should write under the shared root")
             }
         }
     }
@@ -434,8 +468,9 @@ final class PrefixCacheTuningTests: XCTestCase {
         var tuning = EngineTuning()
         tuning.prefixCacheDiskGB = 20
         for id in [EngineID.omlx, .mtplx] {
-            XCTAssertTrue(tuning.prefixCacheArguments(for: id).contains("20GB"),
-                          "\(id) should get a GB suffix")
+            XCTAssertTrue(
+                tuning.prefixCacheArguments(for: id).contains("20GB"),
+                "\(id) should get a GB suffix")
         }
         XCTAssertTrue(tuning.prefixCacheArguments(for: .mlxServe).contains("20GB"))
     }

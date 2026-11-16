@@ -109,9 +109,11 @@ public struct DecodeRateMeter {
     /// `finishedAt == nil` 只说明请求还没收尾，不等于这一拍有输出。
     public var lastTokenAt: Date? { lastAt }
 
-    public init(timeConstant: TimeInterval = 2.5,
-                holdTime: TimeInterval = 0.8,
-                minimumElapsed: TimeInterval = 0.35) {
+    public init(
+        timeConstant: TimeInterval = 2.5,
+        holdTime: TimeInterval = 0.8,
+        minimumElapsed: TimeInterval = 0.35
+    ) {
         self.timeConstant = max(0.1, timeConstant)
         self.holdTime = max(0, holdTime)
         self.minimumElapsed = max(0.05, minimumElapsed)

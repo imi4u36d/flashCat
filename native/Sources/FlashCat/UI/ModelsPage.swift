@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import SwiftUI
 import AppKit
 import FlashCatKit
+import SwiftUI
 
 /// 模型页：顶部平面分段 + 常驻搜索 + 操作带，下方自适应两列模型卡网格。
 struct ModelsPage: View {
@@ -28,13 +28,15 @@ struct ModelsPage: View {
             base = state.libraryEntries(for: id)
         }
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let filtered = text.isEmpty
+        let filtered =
+            text.isEmpty
             ? base
             : base.filter { "\($0.model.shortName) \($0.model.id)".lowercased().contains(text) }
         // 使用中的模型置顶，其次是已下载的，最后是待下载的；组内保持原顺序。
         return filtered.enumerated()
             .sorted { lhs, rhs in
-                let l = rank(lhs.element), r = rank(rhs.element)
+                let l = rank(lhs.element)
+                let r = rank(rhs.element)
                 return l == r ? lhs.offset < rhs.offset : l < r
             }
             .map(\.element)
@@ -66,11 +68,12 @@ struct ModelsPage: View {
 
                         LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
                             ForEach(entries, id: \.identity) { entry in
-                                ModelCard(state: state,
-                                          entry: entry,
-                                          selected: isSelected(entry),
-                                          device: device,
-                                          remove: { removeTarget = entry })
+                                ModelCard(
+                                    state: state,
+                                    entry: entry,
+                                    selected: isSelected(entry),
+                                    device: device,
+                                    remove: { removeTarget = entry })
                             }
                         }
                         if entries.isEmpty {
@@ -95,9 +98,12 @@ struct ModelsPage: View {
         .padding(.bottom, Console.contentBottomInset)
         .sheet(isPresented: $showingHub) { HubSheet(state: state, engine: scope.engine ?? engine) }
         .sheet(isPresented: $showingDownloads) { DownloadCenterSheet(state: state) }
-        .alert("删除 \(removeTarget?.model.shortName ?? "")？",
-               isPresented: Binding(get: { removeTarget != nil },
-                                    set: { if !$0 { removeTarget = nil } })) {
+        .alert(
+            "删除 \(removeTarget?.model.shortName ?? "")？",
+            isPresented: Binding(
+                get: { removeTarget != nil },
+                set: { if !$0 { removeTarget = nil } })
+        ) {
             Button("删除", role: .destructive) {
                 if let entry = removeTarget {
                     state.removeModel(entry.model.id, engine: entry.engine)
@@ -128,11 +134,12 @@ struct ModelsPage: View {
     }
 
     private var filterControl: some View {
-        DSFilterBar(selection: $scope,
-                    options: [(ModelScope.all, "全部")]
-                        + EngineCatalog.allIDs.map { (ModelScope.engine($0), $0.displayName) },
-                    query: $query,
-                    placeholder: "搜索模型")
+        DSFilterBar(
+            selection: $scope,
+            options: [(ModelScope.all, "全部")]
+                + EngineCatalog.allIDs.map { (ModelScope.engine($0), $0.displayName) },
+            query: $query,
+            placeholder: "搜索模型")
     }
 
     @ViewBuilder
@@ -155,8 +162,9 @@ struct ModelsPage: View {
 
             Button {
                 showingHub = true
-                state.searchHub(state.hubQuery, sort: state.hubSort.rawValue,
-                                filter: state.hubFilter.rawValue, page: 0)
+                state.searchHub(
+                    state.hubQuery, sort: state.hubSort.rawValue,
+                    filter: state.hubFilter.rawValue, page: 0)
             } label: {
                 Label(L10n.t("模型广场"), systemImage: "sparkle.magnifyingglass")
             }
@@ -203,8 +211,9 @@ private struct ModelCard: View {
     }
     private var activeFraction: Double? {
         guard let running = state.downloadingModel,
-              state.downloadingEngine == entry.engine,
-              ModelSharing.canonical(running) == ModelSharing.canonical(entry.id) else { return nil }
+            state.downloadingEngine == entry.engine,
+            ModelSharing.canonical(running) == ModelSharing.canonical(entry.id)
+        else { return nil }
         return state.downloadFraction ?? 0
     }
 
@@ -260,10 +269,12 @@ private struct ModelCard: View {
             }
         }
         .padding(16)
-        .dsSurface(radius: DS.Radius.lg,
-                   fill: DS.surface,
-                   stroke: selected ? DS.accent.opacity(0.45) : DS.line,
-                   hoverable: true)
+        .dsSurface(
+            radius: DS.Radius.lg,
+            fill: DS.surface,
+            stroke: selected ? DS.accent.opacity(0.45) : DS.line,
+            hoverable: true
+        )
         .contextMenu {
             if !model.path.isEmpty {
                 Button("在 Finder 中显示") {
@@ -309,7 +320,8 @@ private struct ModelCard: View {
     private var quantizationLabel: String? {
         if let quant = model.quantization, !quant.isEmpty { return quant }
         if let variant = entry.recommendation?.variant,
-           let quant = ModelQuantization.detect(in: variant) {
+            let quant = ModelQuantization.detect(in: variant)
+        {
             return quant
         }
         if let quant = ModelQuantization.detect(in: model.id) { return quant }
@@ -326,9 +338,10 @@ private struct ModelCard: View {
     }
 
     private var family: ModelFamily {
-        ModelFamily.resolve(id: model.id,
-                            hint: model.family,
-                            tags: entry.recommendation?.tags ?? [])
+        ModelFamily.resolve(
+            id: model.id,
+            hint: model.family,
+            tags: entry.recommendation?.tags ?? [])
     }
 
     private var header: some View {
@@ -377,9 +390,10 @@ private struct ModelCard: View {
     private var tagTexts: [String] {
         var values: [String] = []
         if let tags = entry.recommendation?.tags {
-            values.append(contentsOf: tags.filter {
-                ModelQuantization.detect(in: $0) == nil && !values.contains($0)
-            })
+            values.append(
+                contentsOf: tags.filter {
+                    ModelQuantization.detect(in: $0) == nil && !values.contains($0)
+                })
         }
         if entry.draftRepository != nil { values.append("DFlash2") }
         if ModelSharing.isShared(model.id) { values.append("共享") }
@@ -413,18 +427,20 @@ private struct ModelCard: View {
             Button {
                 state.pauseDownload()
             } label: {
-                Label(L10n.format("下载 %@", fraction.formatted(.percent.precision(.fractionLength(0)))),
-                      systemImage: "pause.fill")
+                Label(
+                    L10n.format("下载 %@", fraction.formatted(.percent.precision(.fractionLength(0)))),
+                    systemImage: "pause.fill")
             }
             .buttonStyle(.ds(.secondary, size: .small))
         } else if let task {
             Button {
                 state.resumeDownload(task)
             } label: {
-                Label(task.status == .paused
-                      ? L10n.format("继续 %@", (task.fraction ?? 0).formatted(.percent.precision(.fractionLength(0))))
-                      : L10n.t("重试"),
-                      systemImage: "play.fill")
+                Label(
+                    task.status == .paused
+                        ? L10n.format("继续 %@", (task.fraction ?? 0).formatted(.percent.precision(.fractionLength(0))))
+                        : L10n.t("重试"),
+                    systemImage: "play.fill")
             }
             .buttonStyle(.ds(.secondary, size: .small))
         } else if entry.installed {

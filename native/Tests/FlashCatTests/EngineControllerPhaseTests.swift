@@ -2,8 +2,9 @@
 // Copyright (c) 2026 wangzhuo
 
 import Darwin
-import XCTest
 import FlashCatKit
+import XCTest
+
 @testable import FlashCat
 
 /// `EngineController` 的生命周期测试。
@@ -63,43 +64,48 @@ final class EngineControllerPhaseTests: XCTestCase {
             let port = try Fixture.freePort()
 
             if let script {
-                let body = script
+                let body =
+                    script
                     .replacingOccurrences(of: "{root}", with: packRoot.path)
                     .replacingOccurrences(of: "{gate}", with: gate.path)
                 let url = packRoot.appendingPathComponent("serve.sh")
                 try ("#!/bin/sh\n" + body + "\n").write(to: url, atomically: true, encoding: .utf8)
                 // 可执行位是 `Process.run()` 能起它的前提。
-                try FileManager.default.setAttributes([.posixPermissions: 0o755],
-                                                     ofItemAtPath: url.path)
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o755],
+                    ofItemAtPath: url.path)
             }
 
-            let manifest = EngineManifest(id: Fixture.probeID,
-                                          name: "Phase Probe",
-                                          version: "0.0.1",
-                                          kind: .bundled,
-                                          entrypoint: "serve.sh",
-                                          launchProfiles: [
-                                            "default": EngineLaunchProfile(
-                                                args: ["--port", "{port}", "--model", "{model}"]),
-                                          ],
-                                          health: EngineHealthSpec(path: "/health"),
-                                          defaultPort: port,
-                                          modelSwitch: .restart,
-                                          capabilities: [.chat])
-            let installation = EngineInstallation(id: Fixture.probeID,
-                                                  manifest: manifest,
-                                                  root: packRoot)
+            let manifest = EngineManifest(
+                id: Fixture.probeID,
+                name: "Phase Probe",
+                version: "0.0.1",
+                kind: .bundled,
+                entrypoint: "serve.sh",
+                launchProfiles: [
+                    "default": EngineLaunchProfile(
+                        args: ["--port", "{port}", "--model", "{model}"])
+                ],
+                health: EngineHealthSpec(path: "/health"),
+                defaultPort: port,
+                modelSwitch: .restart,
+                capabilities: [.chat])
+            let installation = EngineInstallation(
+                id: Fixture.probeID,
+                manifest: manifest,
+                root: packRoot)
             let settings = AppSettings()
             previousModel = settings.model
             // `restart()` 不传 requestedModel，`launchPlan` 会退回设置里的模型
             // （引擎配置里没有 lastModel），所以这里得先喂一个。
             settings.setModel(Fixture.probeModel)
             self.settings = settings
-            controller = EngineController(id: Fixture.probeID,
-                                          installation: installation,
-                                          settings: settings,
-                                          catalog: ModelCatalog(),
-                                          port: port)
+            controller = EngineController(
+                id: Fixture.probeID,
+                installation: installation,
+                settings: settings,
+                catalog: ModelCatalog(),
+                port: port)
         }
 
         /// 停掉可能还活着的引擎，还原进程环境与设置，删掉临时目录。
@@ -171,31 +177,31 @@ final class EngineControllerPhaseTests: XCTestCase {
     /// 等闸门出现 → 自报就绪 → 常驻。`exec` 让进程直接变成 sleep：停止时
     /// SIGINT 打在它身上，不会留下一个孤儿 shell。
     private static let gatedReady = """
-    while [ ! -f "{gate}" ]; do sleep 0.1; done
-    echo 'Ready ·'
-    exec sleep 30
-    """
+        while [ ! -f "{gate}" ]; do sleep 0.1; done
+        echo 'Ready ·'
+        exec sleep 30
+        """
 
     /// 自报就绪后自己退出（退出码 0），用来测「就绪之后进程退出」。
     private static let readyThenExit = """
-    echo 'Ready ·'
-    sleep 0.3
-    exit 0
-    """
+        echo 'Ready ·'
+        sleep 0.3
+        exit 0
+        """
 
     /// 自报错误正文后异常退出，退出码 3。
     private static let errorThenExit = """
-    echo 'error: boom'
-    sleep 0.4
-    exit 3
-    """
+        echo 'error: boom'
+        sleep 0.4
+        exit 3
+        """
 
     /// 连 SIGINT 都不理的引擎：停止只能靠 SIGKILL 升级。
     private static let stubbornReady = """
-    trap '' INT
-    echo 'Ready ·'
-    while true; do sleep 0.2; done
-    """
+        trap '' INT
+        echo 'Ready ·'
+        while true; do sleep 0.2; done
+        """
 
     // MARK: - 用例
 
@@ -254,8 +260,9 @@ final class EngineControllerPhaseTests: XCTestCase {
         }
         XCTAssertFalse(controller.isRunning)
         XCTAssertEqual(controller.state, .stopped)
-        XCTAssertFalse(controller.logs.tail(60).contains { $0.text.contains("flashCat 启动") },
-                       "准备阶段被打断，进程根本不该被拉起")
+        XCTAssertFalse(
+            controller.logs.tail(60).contains { $0.text.contains("flashCat 启动") },
+            "准备阶段被打断，进程根本不该被拉起")
     }
 
     /// 进程已经拉起、还没就绪时点停止：进程要真的停下。
@@ -340,9 +347,10 @@ final class EngineControllerPhaseTests: XCTestCase {
         controller.markReady()
         XCTAssertEqual(controller.phase, .stopped)
         XCTAssertFalse(controller.isReady)
-        XCTAssertTrue(controller.logs.tail(20).contains {
-            $0.text.contains("忽略迟到的就绪信号")
-        }, "迟到的就绪信号应留下一条告警：日志页是这套系统唯一的排查入口")
+        XCTAssertTrue(
+            controller.logs.tail(20).contains {
+                $0.text.contains("忽略迟到的就绪信号")
+            }, "迟到的就绪信号应留下一条告警：日志页是这套系统唯一的排查入口")
     }
 
     /// 停止过程中到达的 Ready 不能把状态推回 ready：那是「已点退出、界面又亮
@@ -367,9 +375,10 @@ final class EngineControllerPhaseTests: XCTestCase {
             XCTFail("停止中不应被推回就绪：phase = \(controller.phase)")
         }
         XCTAssertEqual(controller.state, .stopping)
-        XCTAssertTrue(controller.logs.tail(20).contains {
-            $0.text.contains("忽略非法的状态迁移")
-        }, "被拒绝的迁移应留下告警，而不是悄悄接受")
+        XCTAssertTrue(
+            controller.logs.tail(20).contains {
+                $0.text.contains("忽略非法的状态迁移")
+            }, "被拒绝的迁移应留下告警，而不是悄悄接受")
 
         // 收尾：SIGINT 没用，靠 1 秒后的 SIGKILL 升级把它杀掉。
         let stopped = await controller.stopAndWait(grace: 1, timeout: 15)
@@ -441,12 +450,14 @@ private func isStopping(_ phase: EngineController.Phase) -> Bool {
 /// 测试要断言的是「变成了什么」。超时把当前状态和日志尾巴一起报出来，
 /// 免得失败信息只有一句「超时」。
 @MainActor
-private func awaitPhase(_ controller: EngineController,
-                        _ description: String,
-                        timeout: TimeInterval = 5,
-                        matches: (EngineController.Phase) -> Bool,
-                        file: StaticString = #filePath,
-                        line: UInt = #line) async {
+private func awaitPhase(
+    _ controller: EngineController,
+    _ description: String,
+    timeout: TimeInterval = 5,
+    matches: (EngineController.Phase) -> Bool,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) async {
     let deadline = Date().addingTimeInterval(timeout)
     while Date() < deadline {
         if matches(controller.phase) { return }
@@ -458,6 +469,7 @@ private func awaitPhase(_ controller: EngineController,
         }
     }
     let tail = controller.logs.tail(20).map(\.text).joined(separator: "\n")
-    XCTFail("等待「\(description)」超时：当前 phase = \(controller.phase)\n最近的日志：\n\(tail)",
-            file: file, line: line)
+    XCTFail(
+        "等待「\(description)」超时：当前 phase = \(controller.phase)\n最近的日志：\n\(tail)",
+        file: file, line: line)
 }

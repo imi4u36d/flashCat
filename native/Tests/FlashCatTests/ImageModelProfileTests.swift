@@ -1,45 +1,58 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import XCTest
 import FlashCatKit
+import XCTest
+
 @testable import FlashCat
 
 /// 分辨率预设与固定步数的判定。引擎把这两件事都藏在二进制里：预设表按
 /// `meta.architecture` 选，固定步数要看本地 `model_index.json` 的
 /// `sample_sigmas`，这里把两条规则钉住。
 final class ImageModelProfileTests: XCTestCase {
-    private func model(_ id: String,
-                       architecture: String? = nil,
-                       path: String? = nil) -> EngineModel {
-        EngineModel(id: id,
-                    path: path,
-                    architecture: architecture,
-                    capabilities: ["image"],
-                    engine: .mlxServe)
+    private func model(
+        _ id: String,
+        architecture: String? = nil,
+        path: String? = nil
+    ) -> EngineModel {
+        EngineModel(
+            id: id,
+            path: path,
+            architecture: architecture,
+            capabilities: ["image"],
+            engine: .mlxServe)
     }
 
     func testFamiliesComeFromArchitectureFirst() {
-        XCTAssertEqual(ImageModelProfile.family(
-            for: model("ddalcu/Qwen-Image-2.1-Turbo-MLX-Serve-8bit",
-                       architecture: "qwen_image21")), .qwen)
-        XCTAssertEqual(ImageModelProfile.family(
-            for: model("black-forest-labs/FLUX.2-klein", architecture: "flux2")), .flux)
-        XCTAssertEqual(ImageModelProfile.family(
-            for: model("krea/Krea-Image", architecture: "krea")), .krea)
-        XCTAssertEqual(ImageModelProfile.family(
-            for: model("whatever/mage-flow", architecture: "mage_flow")), .mage)
-        XCTAssertEqual(ImageModelProfile.family(
-            for: model("whatever/moss-image", architecture: "moss_image")), .moss)
+        XCTAssertEqual(
+            ImageModelProfile.family(
+                for: model(
+                    "ddalcu/Qwen-Image-2.1-Turbo-MLX-Serve-8bit",
+                    architecture: "qwen_image21")), .qwen)
+        XCTAssertEqual(
+            ImageModelProfile.family(
+                for: model("black-forest-labs/FLUX.2-klein", architecture: "flux2")), .flux)
+        XCTAssertEqual(
+            ImageModelProfile.family(
+                for: model("krea/Krea-Image", architecture: "krea")), .krea)
+        XCTAssertEqual(
+            ImageModelProfile.family(
+                for: model("whatever/mage-flow", architecture: "mage_flow")), .mage)
+        XCTAssertEqual(
+            ImageModelProfile.family(
+                for: model("whatever/moss-image", architecture: "moss_image")), .moss)
     }
 
     func testFamilyFallsBackToModelID() {
-        XCTAssertEqual(ImageModelProfile.family(
-            for: model("owner/Qwen-Image-2.1-MLX-Serve-8bit")), .qwen)
-        XCTAssertEqual(ImageModelProfile.family(
-            for: model("owner/flux2-klein-9b-base-q4")), .flux)
-        XCTAssertEqual(ImageModelProfile.family(
-            for: model("owner/some-chat-model", architecture: "llama")), .generic)
+        XCTAssertEqual(
+            ImageModelProfile.family(
+                for: model("owner/Qwen-Image-2.1-MLX-Serve-8bit")), .qwen)
+        XCTAssertEqual(
+            ImageModelProfile.family(
+                for: model("owner/flux2-klein-9b-base-q4")), .flux)
+        XCTAssertEqual(
+            ImageModelProfile.family(
+                for: model("owner/some-chat-model", architecture: "llama")), .generic)
     }
 
     func testPresetTablesMatchEngineFamilies() {
@@ -48,10 +61,12 @@ final class ImageModelProfileTests: XCTestCase {
         XCTAssertEqual(ImageModelProfile.magePresets.count, 11)
         XCTAssertEqual(ImageModelProfile.qwenPresets.count, 7)
         XCTAssertEqual(ImageModelProfile.mossPresets.count, 10)
-        XCTAssertEqual(ImageModelProfile(model: model("x", architecture: "flux2")).presets,
-                       ImageModelProfile.fluxPresets)
-        XCTAssertEqual(ImageModelProfile(model: model("x", architecture: "qwen_image")).presets,
-                       ImageModelProfile.qwenPresets)
+        XCTAssertEqual(
+            ImageModelProfile(model: model("x", architecture: "flux2")).presets,
+            ImageModelProfile.fluxPresets)
+        XCTAssertEqual(
+            ImageModelProfile(model: model("x", architecture: "qwen_image")).presets,
+            ImageModelProfile.qwenPresets)
     }
 
     func testMageIsFixedAtFourStepsAndRejectsCustomCanvas() {
@@ -69,9 +84,11 @@ final class ImageModelProfileTests: XCTestCase {
         let data = try JSONSerialization.data(withJSONObject: ["sample_sigmas": sigmas])
         try data.write(to: directory.appendingPathComponent("model_index.json"))
 
-        let profile = ImageModelProfile(model: model("owner/turbo",
-                                                     architecture: "qwen_image21",
-                                                     path: directory.path))
+        let profile = ImageModelProfile(
+            model: model(
+                "owner/turbo",
+                architecture: "qwen_image21",
+                path: directory.path))
         XCTAssertEqual(profile.fixedSteps, 8)
         XCTAssertTrue(profile.allowsCustomCanvas)
     }
@@ -79,7 +96,8 @@ final class ImageModelProfileTests: XCTestCase {
     func testLocalScanKeepsArchitectureAndPathForTurboModel() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("image-scan-\(UUID().uuidString)", isDirectory: true)
-        let modelDirectory = root
+        let modelDirectory =
+            root
             .appendingPathComponent("owner", isDirectory: true)
             .appendingPathComponent("Qwen-Image-2.1-Turbo-MLX-Serve-8bit", isDirectory: true)
         try FileManager.default.createDirectory(at: modelDirectory, withIntermediateDirectories: true)

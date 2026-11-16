@@ -54,13 +54,15 @@ public struct HubModel: Sendable, Equatable, Identifiable {
     public let paths: [String]
     public let sizes: [String: Int]
 
-    public init(id: String,
-                downloads: Int = 0,
-                libraryName: String? = nil,
-                pipelineTag: String? = nil,
-                tags: [String] = [],
-                paths: [String] = [],
-                sizes: [String: Int] = [:]) {
+    public init(
+        id: String,
+        downloads: Int = 0,
+        libraryName: String? = nil,
+        pipelineTag: String? = nil,
+        tags: [String] = [],
+        paths: [String] = [],
+        sizes: [String: Int] = [:]
+    ) {
         self.id = id
         self.downloads = downloads
         self.libraryName = libraryName
@@ -82,10 +84,11 @@ public struct HubModel: Sendable, Equatable, Identifiable {
     /// Bytes of the weights for a chosen GGUF variant, or the whole snapshot
     /// for the other layouts. `variant` is ignored outside GGUF repositories.
     public func weightBytes(ggufVariant variant: String? = nil) -> Int {
-        HubModelLayout.weightBytes(kind: kind,
-                                   paths: paths,
-                                   sizes: sizes,
-                                   ggufVariant: variant)
+        HubModelLayout.weightBytes(
+            kind: kind,
+            paths: paths,
+            sizes: sizes,
+            ggufVariant: variant)
     }
 
     /// The task's input and output modalities, when the Hub metadata names one.
@@ -127,12 +130,14 @@ public enum HubModelLayout {
         if library == "gguf"
             || tags.contains("gguf")
             || !rootGGUFs(paths).isEmpty
-            || !splitGGUFFolders(paths).isEmpty {
+            || !splitGGUFFolders(paths).isEmpty
+        {
             return .gguf
         }
         if tags.contains("mtplx")
             || lowered.contains("mtp.safetensors")
-            || lowered.contains("mtplx_runtime.json") {
+            || lowered.contains("mtplx_runtime.json")
+        {
             return .mtplx
         }
         if library == "mlx" || tags.contains("mlx") {
@@ -192,9 +197,11 @@ public enum HubModelLayout {
         if has("feature-extraction", "sentence-similarity") {
             return HubIOTypes(input: "文本", output: "向量")
         }
-        if has("text-generation", "text2text-generation", "summarization", "translation",
-               "fill-mask", "question-answering", "table-question-answering",
-               "token-classification", "text-classification") {
+        if has(
+            "text-generation", "text2text-generation", "summarization", "translation",
+            "fill-mask", "question-answering", "table-question-answering",
+            "token-classification", "text-classification")
+        {
             return HubIOTypes(input: "文本", output: "文本")
         }
         return nil
@@ -225,9 +232,10 @@ public enum HubModelLayout {
         var folders: [(String, [String])] = []
         for (variant, files) in parts.sorted(by: { $0.key < $1.key }) {
             guard let total = files.first?.total,
-                  files.allSatisfy({ $0.total == total }),
-                  Set(files.map(\.index)) == Set(1...total),
-                  files.count == total else { continue }
+                files.allSatisfy({ $0.total == total }),
+                Set(files.map(\.index)) == Set(1...total),
+                files.count == total
+            else { continue }
             folders.append((variant, files.sorted { $0.index < $1.index }.map(\.path)))
         }
         return folders
@@ -247,12 +255,13 @@ public enum HubModelLayout {
         let words = stem.split(separator: "-").map(String.init)
         // `NAME-00001-of-00002`: the part number, then `of`, then the count.
         guard words.count >= 3,
-              words[words.count - 2] == "of",
-              words[words.count - 3].count == 5, words[words.count - 3].allSatisfy(\.isNumber),
-              words[words.count - 1].count == 5, words[words.count - 1].allSatisfy(\.isNumber),
-              let index = Int(words[words.count - 3]),
-              let total = Int(words[words.count - 1]),
-              index >= 1, total >= 1, index <= total else { return nil }
+            words[words.count - 2] == "of",
+            words[words.count - 3].count == 5, words[words.count - 3].allSatisfy(\.isNumber),
+            words[words.count - 1].count == 5, words[words.count - 1].allSatisfy(\.isNumber),
+            let index = Int(words[words.count - 3]),
+            let total = Int(words[words.count - 1]),
+            index >= 1, total >= 1, index <= total
+        else { return nil }
         return (pieces[0], index, total)
     }
 
@@ -298,9 +307,11 @@ public enum HubModelLayout {
             }
             let token = rest.joined(separator: "-")
             guard used.insert(token).inserted else { continue }
-            variants.append(GGUFVariant(name: token,
-                                        bytes: sizes[path] ?? 0,
-                                        files: [path]))
+            variants.append(
+                GGUFVariant(
+                    name: token,
+                    bytes: sizes[path] ?? 0,
+                    files: [path]))
         }
         // One root GGUF and no split folders: the engine needs no variant, and
         // the shared prefix swallowing the whole name is the normal shape here.
@@ -349,10 +360,12 @@ public enum HubModelLayout {
 
     /// Weight bytes to download: the chosen GGUF, or every safetensors file for
     /// the other layouts. `mtp.safetensors` counts — MTPLX cannot serve without it.
-    public static func weightBytes(kind: HubModelKind,
-                                   paths: [String],
-                                   sizes: [String: Int],
-                                   ggufVariant variant: String?) -> Int {
+    public static func weightBytes(
+        kind: HubModelKind,
+        paths: [String],
+        sizes: [String: Int],
+        ggufVariant variant: String?
+    ) -> Int {
         switch kind {
         case .gguf:
             let variants = ggufVariants(paths: paths, sizes: sizes)
@@ -361,7 +374,8 @@ public enum HubModelLayout {
             }
             return variants.map(\.bytes).max() ?? 0
         case .mtplx, .mlx, .unmarked:
-            return paths
+            return
+                paths
                 .filter { $0.hasSuffix(".safetensors") }
                 .reduce(0) { $0 + (sizes[$1] ?? 0) }
         case .unknown:
@@ -403,8 +417,10 @@ public actor HubSearchClient {
     private let baseURL: URL
     private var cache: [String: HubModel] = [:]
 
-    public init(session: URLSession = .shared,
-                baseURL: URL = ConstantURL.make("https://huggingface.co")) {
+    public init(
+        session: URLSession = .shared,
+        baseURL: URL = ConstantURL.make("https://huggingface.co")
+    ) {
         self.session = session
         self.baseURL = baseURL
     }
@@ -415,8 +431,11 @@ public actor HubSearchClient {
     public func search(_ query: String, limit: Int = 20) async throws -> [HubModel] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
-        guard var components = URLComponents(url: baseURL.appendingPathComponent("api/models"),
-                                             resolvingAgainstBaseURL: false) else {
+        guard
+            var components = URLComponents(
+                url: baseURL.appendingPathComponent("api/models"),
+                resolvingAgainstBaseURL: false)
+        else {
             throw HubError.decoding
         }
         components.queryItems = [
@@ -439,15 +458,19 @@ public actor HubSearchClient {
     /// answer is cached because the page may redraw many times per search.
     public func model(_ repo: String) async throws -> HubModel {
         if let cached = cache[repo] { return cached }
-        guard var components = URLComponents(url: baseURL.appendingPathComponent("api/models/\(repo)"),
-                                             resolvingAgainstBaseURL: false) else {
+        guard
+            var components = URLComponents(
+                url: baseURL.appendingPathComponent("api/models/\(repo)"),
+                resolvingAgainstBaseURL: false)
+        else {
             throw HubError.decoding
         }
         components.queryItems = [URLQueryItem(name: "blobs", value: "true")]
         guard let url = components.url else { throw HubError.decoding }
         let data = try await get(url)
         guard let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let model = Self.model(from: raw) else {
+            let model = Self.model(from: raw)
+        else {
             throw HubError.decoding
         }
         cache[repo] = model
@@ -475,9 +498,10 @@ public actor HubSearchClient {
             }
             // `withTaskGroup` yields in completion order; the page keeps the
             // Hub's ranking, so the chunk is re-sorted back into it.
-            result.append(contentsOf: chunk.map { model in
-                enriched.first { $0.id == model.id } ?? model
-            })
+            result.append(
+                contentsOf: chunk.map { model in
+                    enriched.first { $0.id == model.id } ?? model
+                })
         }
         return result
     }
@@ -495,13 +519,14 @@ public actor HubSearchClient {
             guard let name = sibling["rfilename"] as? String, let size = sibling["size"] as? Int else { continue }
             sizes[name] = size
         }
-        return HubModel(id: id,
-                        downloads: (raw["downloads"] as? Int) ?? 0,
-                        libraryName: raw["library_name"] as? String,
-                        pipelineTag: raw["pipeline_tag"] as? String,
-                        tags: (raw["tags"] as? [String]) ?? [],
-                        paths: paths,
-                        sizes: sizes)
+        return HubModel(
+            id: id,
+            downloads: (raw["downloads"] as? Int) ?? 0,
+            libraryName: raw["library_name"] as? String,
+            pipelineTag: raw["pipeline_tag"] as? String,
+            tags: (raw["tags"] as? [String]) ?? [],
+            paths: paths,
+            sizes: sizes)
     }
 
     private func get(_ url: URL) async throws -> Data {

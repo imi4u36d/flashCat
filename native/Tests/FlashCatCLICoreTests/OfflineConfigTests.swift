@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
+import FlashCatKit
 import Foundation
 import XCTest
+
 @testable import FlashCatCLICore
-import FlashCatKit
 
 /// `OfflineConfig` 的测试只碰临时 UserDefaults 域和临时 `engines.json`：
 /// 它写的是「应用偏好」，用真实域跑测试会改坏开发机上的设置。
@@ -34,15 +35,17 @@ final class OfflineConfigTests: XCTestCase {
     }
 
     private func makeContext() -> CLIContext {
-        let local = LocalState(environment: [:], defaults: defaults,
-                               engineConfigurationFile: configurationFile)
-        return CLIContext(invocation: CLIInvocation(command: "config"),
-                          environment: [:],
-                          output: CLIOutput(),
-                          local: local,
-                          isTTY: false,
-                          stdinIsTTY: false,
-                          executable: "/usr/local/bin/flashcat")
+        let local = LocalState(
+            environment: [:], defaults: defaults,
+            engineConfigurationFile: configurationFile)
+        return CLIContext(
+            invocation: CLIInvocation(command: "config"),
+            environment: [:],
+            output: CLIOutput(),
+            local: local,
+            isTTY: false,
+            stdinIsTTY: false,
+            executable: "/usr/local/bin/flashcat")
     }
 
     private func writeEngines(_ object: [String: Any]) throws {
@@ -83,8 +86,9 @@ final class OfflineConfigTests: XCTestCase {
         let entries = OfflineConfig.entries(makeContext())
         let inputs = context.local.engineDocumentInputs()
         let omlx = try XCTUnwrap(inputs.first { $0.id == .omlx })
-        XCTAssertEqual(try entry(entries, "engines.omlx.port").value,
-                       ControlConfigGrammar.format(.int(ControlEngineDocuments.port(omlx))))
+        XCTAssertEqual(
+            try entry(entries, "engines.omlx.port").value,
+            ControlConfigGrammar.format(.int(ControlEngineDocuments.port(omlx))))
     }
 
     // MARK: 根端口

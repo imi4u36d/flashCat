@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
+import FlashCatKit
 import Foundation
 import XCTest
+
 @testable import FlashCatCLICore
-import FlashCatKit
 
 /// 命令表是「命令 / 选项 / 退出码」的唯一来源，所以这里测的是**投影没漂**：
 /// help 里列出的每个命令都有自己的帮助页、每个非零退出码都有说明、
@@ -18,31 +19,43 @@ final class CLICommandTableTests: XCTestCase {
         var lines: [String] { text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) }
     }
 
-    private func makeContext(command: String,
-                             subcommand: String? = nil,
-                             arguments: [String] = [],
-                             explicitCommand: Bool = true,
-                             capture: Capture) -> CLIContext {
-        let output = CLIOutput(json: false,
-                               quiet: false,
-                               color: false,
-                               verbose: false,
-                               stdout: { capture.text += $0; return true },
-                               stderr: { capture.text += $0; return true })
-        let local = LocalState(environment: [:],
-                               defaults: nil,
-                               engineConfigurationFile: NSTemporaryDirectory()
-                                   + "/flashcat-table-\(UUID().uuidString).json")
-        return CLIContext(invocation: CLIInvocation(command: command,
-                                                    subcommand: subcommand,
-                                                    arguments: arguments,
-                                                    explicitCommand: explicitCommand),
-                          environment: [:],
-                          output: output,
-                          local: local,
-                          isTTY: false,
-                          stdinIsTTY: false,
-                          executable: "/usr/local/bin/flashcat")
+    private func makeContext(
+        command: String,
+        subcommand: String? = nil,
+        arguments: [String] = [],
+        explicitCommand: Bool = true,
+        capture: Capture
+    ) -> CLIContext {
+        let output = CLIOutput(
+            json: false,
+            quiet: false,
+            color: false,
+            verbose: false,
+            stdout: {
+                capture.text += $0
+                return true
+            },
+            stderr: {
+                capture.text += $0
+                return true
+            })
+        let local = LocalState(
+            environment: [:],
+            defaults: nil,
+            engineConfigurationFile: NSTemporaryDirectory()
+                + "/flashcat-table-\(UUID().uuidString).json")
+        return CLIContext(
+            invocation: CLIInvocation(
+                command: command,
+                subcommand: subcommand,
+                arguments: arguments,
+                explicitCommand: explicitCommand),
+            environment: [:],
+            output: output,
+            local: local,
+            isTTY: false,
+            stdinIsTTY: false,
+            executable: "/usr/local/bin/flashcat")
     }
 
     /// 概览表的一行：命令名打在行首（`table` 会补齐列宽后再 trim，所以名字后面是空格）。
@@ -56,28 +69,35 @@ final class CLICommandTableTests: XCTestCase {
         let capture = Capture()
         HelpCommand.run(makeContext(command: "help", capture: capture))
         for command in CLICommandTable.commands {
-            XCTAssertTrue(hasRow(capture.lines, name: command.name),
-                          "help 概览里没有命令 \(command.name)")
-            XCTAssertTrue(capture.text.contains(command.summary),
-                          "help 概览里 \(command.name) 的说明没跟上表")
+            XCTAssertTrue(
+                hasRow(capture.lines, name: command.name),
+                "help 概览里没有命令 \(command.name)")
+            XCTAssertTrue(
+                capture.text.contains(command.summary),
+                "help 概览里 \(command.name) 的说明没跟上表")
         }
     }
 
     func testEveryCommandHasItsOwnHelpPage() {
         for command in CLICommandTable.commands {
             let capture = Capture()
-            HelpCommand.run(makeContext(command: "help",
-                                        arguments: [command.name],
-                                        capture: capture))
-            XCTAssertTrue(capture.text.contains(command.usage),
-                          "\(command.name) 的帮助页没打印用法行")
+            HelpCommand.run(
+                makeContext(
+                    command: "help",
+                    arguments: [command.name],
+                    capture: capture))
+            XCTAssertTrue(
+                capture.text.contains(command.usage),
+                "\(command.name) 的帮助页没打印用法行")
             for detail in command.details where !detail.isEmpty {
-                XCTAssertTrue(capture.text.contains(detail),
-                              "\(command.name) 的帮助页漏了说明：\(detail)")
+                XCTAssertTrue(
+                    capture.text.contains(detail),
+                    "\(command.name) 的帮助页漏了说明：\(detail)")
             }
             for option in command.options {
-                XCTAssertTrue(capture.text.contains(option.usageLabel),
-                              "\(command.name) 的帮助页漏了选项 \(option.usageLabel)")
+                XCTAssertTrue(
+                    capture.text.contains(option.usageLabel),
+                    "\(command.name) 的帮助页漏了选项 \(option.usageLabel)")
             }
         }
     }
@@ -87,16 +107,20 @@ final class CLICommandTableTests: XCTestCase {
         let overview = Capture()
         HelpCommand.run(makeContext(command: "help", capture: overview))
         for option in CLICommandTable.globalOptions {
-            XCTAssertTrue(overview.text.contains(option.usageLabel),
-                          "概览的全局选项里没有 \(option.usageLabel)")
+            XCTAssertTrue(
+                overview.text.contains(option.usageLabel),
+                "概览的全局选项里没有 \(option.usageLabel)")
         }
         for command in CLICommandTable.commands {
             let capture = Capture()
-            HelpCommand.run(makeContext(command: "help",
-                                        arguments: [command.name],
-                                        capture: capture))
-            XCTAssertTrue(capture.text.contains(CLICommandTable.globalOptions[0].compactLabel),
-                          "\(command.name) 的帮助页没列全局选项")
+            HelpCommand.run(
+                makeContext(
+                    command: "help",
+                    arguments: [command.name],
+                    capture: capture))
+            XCTAssertTrue(
+                capture.text.contains(CLICommandTable.globalOptions[0].compactLabel),
+                "\(command.name) 的帮助页没列全局选项")
         }
     }
 
@@ -109,8 +133,9 @@ final class CLICommandTableTests: XCTestCase {
                 XCTFail("别名 \(alias) 指向了不存在的命令 \(name)")
                 continue
             }
-            XCTAssertTrue(capture.text.contains(command.usage),
-                          "flashcat help \(alias) 没打到 \(name) 的帮助页")
+            XCTAssertTrue(
+                capture.text.contains(command.usage),
+                "flashcat help \(alias) 没打到 \(name) 的帮助页")
         }
     }
 
@@ -124,8 +149,9 @@ final class CLICommandTableTests: XCTestCase {
     // MARK: 退出码
 
     func testEveryExitCodeHasExactlyOneSpec() {
-        XCTAssertEqual(CLICommandTable.exitCodes.count, CLIExit.allCases.count,
-                       "退出码表与 CLIExit 的 case 数不一致")
+        XCTAssertEqual(
+            CLICommandTable.exitCodes.count, CLIExit.allCases.count,
+            "退出码表与 CLIExit 的 case 数不一致")
         for code in CLIExit.allCases {
             guard let spec = CLICommandTable.exitCodeSpec(for: code) else {
                 XCTFail("退出码 \(code.rawValue) 没有说明")
@@ -138,8 +164,9 @@ final class CLICommandTableTests: XCTestCase {
     /// 脚本读的是码字，不是文案：非零码必须每一枚都有说明。
     func testEveryNonZeroExitCodeExplainsItself() {
         for code in CLIExit.allCases where code != .success {
-            XCTAssertNotNil(CLICommandTable.summary(for: code),
-                            "非零退出码 \(code.rawValue) 在表里没有说明")
+            XCTAssertNotNil(
+                CLICommandTable.summary(for: code),
+                "非零退出码 \(code.rawValue) 在表里没有说明")
         }
     }
 
@@ -147,10 +174,12 @@ final class CLICommandTableTests: XCTestCase {
         let capture = Capture()
         HelpCommand.run(makeContext(command: "help", capture: capture))
         for spec in CLICommandTable.exitCodes {
-            XCTAssertTrue(hasRow(capture.lines, name: String(spec.code.rawValue)),
-                          "概览的退出码表里没有 \(spec.code.rawValue)")
-            XCTAssertTrue(capture.text.contains(spec.summary),
-                          "概览的退出码表里没有 \(spec.code.rawValue) 的说明")
+            XCTAssertTrue(
+                hasRow(capture.lines, name: String(spec.code.rawValue)),
+                "概览的退出码表里没有 \(spec.code.rawValue)")
+            XCTAssertTrue(
+                capture.text.contains(spec.summary),
+                "概览的退出码表里没有 \(spec.code.rawValue) 的说明")
         }
     }
 
@@ -160,8 +189,9 @@ final class CLICommandTableTests: XCTestCase {
             XCTAssertFalse(command.exitCodes.isEmpty, "\(command.name) 没声明退出码")
             XCTAssertTrue(command.exitCodes.contains(.success), "\(command.name) 缺成功码")
             for code in command.exitCodes {
-                XCTAssertNotNil(CLICommandTable.summary(for: code),
-                                "\(command.name) 列了没有说明的退出码 \(code.rawValue)")
+                XCTAssertNotNil(
+                    CLICommandTable.summary(for: code),
+                    "\(command.name) 列了没有说明的退出码 \(code.rawValue)")
             }
         }
     }
@@ -170,17 +200,20 @@ final class CLICommandTableTests: XCTestCase {
     func testHTTPStatusMappingComesFromTheExitCodeTable() {
         for spec in CLICommandTable.exitCodes {
             for status in spec.httpStatuses {
-                XCTAssertEqual(ControlClient.exitCode(status: status, code: nil), spec.code,
-                               "HTTP \(status) 应映射到退出码 \(spec.code.rawValue)")
+                XCTAssertEqual(
+                    ControlClient.exitCode(status: status, code: nil), spec.code,
+                    "HTTP \(status) 应映射到退出码 \(spec.code.rawValue)")
             }
             for code in spec.controlErrorCodes {
-                XCTAssertEqual(ControlClient.exitCode(status: 500, code: code), spec.code,
-                               "error.code=\(code) 应优先于 HTTP 状态")
+                XCTAssertEqual(
+                    ControlClient.exitCode(status: 500, code: code), spec.code,
+                    "error.code=\(code) 应优先于 HTTP 状态")
             }
         }
         XCTAssertEqual(ControlClient.exitCode(status: 204, code: nil), .success)
-        XCTAssertEqual(ControlClient.exitCode(status: 418, code: nil), .failure,
-                       "没有专门映射的状态应落到 .failure")
+        XCTAssertEqual(
+            ControlClient.exitCode(status: 418, code: nil), .failure,
+            "没有专门映射的状态应落到 .failure")
     }
 
     // MARK: 路由归属
@@ -228,8 +261,9 @@ final class CLICommandTableTests: XCTestCase {
 
     func testEveryControlRouteIsOwnedExactlyOnce() {
         let rows = CLICommandTable.routeOwnership
-        XCTAssertEqual(rows.count, Self.allRoutes.count,
-                       "路由归属表缺行或多行（现在 \(rows.count) 行）")
+        XCTAssertEqual(
+            rows.count, Self.allRoutes.count,
+            "路由归属表缺行或多行（现在 \(rows.count) 行）")
         for route in Self.allRoutes {
             let matches = rows.filter { $0.route == route }
             XCTAssertEqual(matches.count, 1, "路由 \(route) 登记了 \(matches.count) 次")
@@ -238,11 +272,13 @@ final class CLICommandTableTests: XCTestCase {
             XCTAssertEqual(row.method, expected.method, "路由 \(route) 的方法写错了")
             XCTAssertEqual(row.path, expected.path, "路由 \(route) 的路径写错了")
             // 反查：表里的样例路径必须真的解析回这条路由，防止手抄错 id 或拼错段。
-            XCTAssertEqual(ControlRoute.parse(method: row.method, path: row.path), route,
-                           "样例 \(row.method) \(row.path) 解析不回 \(route)")
+            XCTAssertEqual(
+                ControlRoute.parse(method: row.method, path: row.path), route,
+                "样例 \(row.method) \(row.path) 解析不回 \(route)")
             for command in row.commands {
-                XCTAssertNotNil(CLICommandTable.command(named: command),
-                                "路由 \(route) 归属的命令 \(command) 不在命令表里")
+                XCTAssertNotNil(
+                    CLICommandTable.command(named: command),
+                    "路由 \(route) 归属的命令 \(command) 不在命令表里")
             }
             XCTAssertFalse(row.summary.isEmpty, "路由 \(route) 没写归属说明")
         }
@@ -269,10 +305,12 @@ final class CLICommandTableTests: XCTestCase {
             "shared", "stream", "no-stream", "show-reasoning", "no-color", "system-wide",
             "force", "yes", "watch", "no-reload", "gateway", "control", "app",
         ]
-        XCTAssertTrue(legacyValues.isSubset(of: CLIArguments.valueOptions),
-                      "丢了取值选项：\(legacyValues.subtracting(CLIArguments.valueOptions))")
-        XCTAssertTrue(legacyFlags.isSubset(of: CLIArguments.booleanOptions),
-                      "丢了布尔选项：\(legacyFlags.subtracting(CLIArguments.booleanOptions))")
+        XCTAssertTrue(
+            legacyValues.isSubset(of: CLIArguments.valueOptions),
+            "丢了取值选项：\(legacyValues.subtracting(CLIArguments.valueOptions))")
+        XCTAssertTrue(
+            legacyFlags.isSubset(of: CLIArguments.booleanOptions),
+            "丢了布尔选项：\(legacyFlags.subtracting(CLIArguments.booleanOptions))")
         XCTAssertEqual(CLIArguments.listOptions, ["for"])
     }
 
@@ -285,8 +323,9 @@ final class CLICommandTableTests: XCTestCase {
         let capture = Capture()
         HelpCommand.run(makeContext(command: "help", capture: capture))
         for option in CLICommandTable.unlistedOptions {
-            XCTAssertFalse(capture.text.contains(option.dashedName),
-                           "\(option.dashedName) 是兼容保留项，不该出现在帮助里")
+            XCTAssertFalse(
+                capture.text.contains(option.dashedName),
+                "\(option.dashedName) 是兼容保留项，不该出现在帮助里")
         }
     }
 
@@ -303,8 +342,9 @@ final class CLICommandTableTests: XCTestCase {
             for subcommand in subcommands {
                 let invocation = try CLIArguments.parse([name, subcommand])
                 XCTAssertEqual(invocation.command, name)
-                XCTAssertEqual(invocation.subcommand, subcommand,
-                               "\(name) 的子命令 \(subcommand) 没被拆出来")
+                XCTAssertEqual(
+                    invocation.subcommand, subcommand,
+                    "\(name) 的子命令 \(subcommand) 没被拆出来")
             }
         }
     }
@@ -324,23 +364,28 @@ final class CLICommandTableTests: XCTestCase {
     func testCompletionScriptsAreProjectedFromTheTable() throws {
         for shell in ["zsh", "bash", "fish"] {
             let capture = Capture()
-            let code = try CompletionCommand.run(makeContext(command: "completion",
-                                                             subcommand: shell,
-                                                             capture: capture))
+            let code = try CompletionCommand.run(
+                makeContext(
+                    command: "completion",
+                    subcommand: shell,
+                    capture: capture))
             XCTAssertEqual(code, CLIExit.success.rawValue)
             for command in CLICommandTable.commands {
-                XCTAssertTrue(capture.text.contains(command.name),
-                              "\(shell) 补全里没有命令 \(command.name)")
+                XCTAssertTrue(
+                    capture.text.contains(command.name),
+                    "\(shell) 补全里没有命令 \(command.name)")
             }
             for (name, subcommands) in CLICommandTable.commandSubcommands {
                 for subcommand in subcommands {
-                    XCTAssertTrue(capture.text.contains(subcommand),
-                                  "\(shell) 补全里没有 \(name) 的子命令 \(subcommand)")
+                    XCTAssertTrue(
+                        capture.text.contains(subcommand),
+                        "\(shell) 补全里没有 \(name) 的子命令 \(subcommand)")
                 }
             }
             for option in CLICommandTable.listedOptions {
-                XCTAssertTrue(capture.text.contains(option.dashedName),
-                              "\(shell) 补全里没有选项 \(option.dashedName)")
+                XCTAssertTrue(
+                    capture.text.contains(option.dashedName),
+                    "\(shell) 补全里没有选项 \(option.dashedName)")
             }
         }
     }
@@ -348,11 +393,14 @@ final class CLICommandTableTests: XCTestCase {
     /// logs 组要单独钉一次：它是「补全清单」与「命令表」脱钩时的受害者。
     func testZshCompletionIncludesLogsGroup() throws {
         let capture = Capture()
-        _ = try CompletionCommand.run(makeContext(command: "completion",
-                                                 subcommand: "zsh",
-                                                 capture: capture))
-        XCTAssertTrue(capture.text.contains("    logs)"),
-                      "zsh 补全里没有 logs 组")
+        _ = try CompletionCommand.run(
+            makeContext(
+                command: "completion",
+                subcommand: "zsh",
+                capture: capture))
+        XCTAssertTrue(
+            capture.text.contains("    logs)"),
+            "zsh 补全里没有 logs 组")
         for subcommand in ["engine", "gateway", "control"] {
             XCTAssertTrue(capture.text.contains(subcommand), "zsh 补全里没有 logs \(subcommand)")
         }

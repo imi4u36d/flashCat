@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
 import FlashCatKit
+import Foundation
 
 /// A view over the files inside one installed Splash pack. Splash has the same
 /// lifecycle as every other pack: installation, versioning and entrypoint all
@@ -25,7 +25,8 @@ struct EngineRuntime {
 
     var version: String {
         guard let data = Self.readJSON(releaseFile) as? [String: Any],
-              let value = data["version"] as? String else { return "unknown" }
+            let value = data["version"] as? String
+        else { return "unknown" }
         return value
     }
 

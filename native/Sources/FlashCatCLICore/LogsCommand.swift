@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
 import FlashCatKit
+import Foundation
 
 public enum LogsCommand {
     public static func run(_ context: CLIContext, engineOverride: EngineID? = nil) async throws -> Int32 {
@@ -18,17 +18,20 @@ public enum LogsCommand {
         if !follow {
             do {
                 let location = try context.control
-                var query = [URLQueryItem(name: "source", value: source),
-                             URLQueryItem(name: "lines", value: String(limit))]
+                var query = [
+                    URLQueryItem(name: "source", value: source),
+                    URLQueryItem(name: "lines", value: String(limit)),
+                ]
                 if source == "engine" {
                     query.append(URLQueryItem(name: "engine", value: engine.rawValue))
                 }
                 if let level = context.invocation.option("level") {
                     query.append(URLQueryItem(name: "level", value: level))
                 }
-                let online: ControlLogDocument = try await location.client.get("/v1/logs",
-                                                                               query: query,
-                                                                               timeout: context.timeout)
+                let online: ControlLogDocument = try await location.client.get(
+                    "/v1/logs",
+                    query: query,
+                    timeout: context.timeout)
                 document = online
             } catch let error as CLIError where ControlFallback.shouldFallBack(error) {
                 // 应用没运行才退回读文件；401/504 说明应用在跑，静默读文件会让人误以为
@@ -51,8 +54,9 @@ public enum LogsCommand {
         // The file is the source of truth for follow mode: it keeps growing
         // even when the control request that started the tail has finished.
         guard FileManager.default.fileExists(atPath: path) else {
-            throw CLIError("日志文件还不存在：\(path)", exit: .notFound,
-                           hint: source == "engine" ? "引擎启动后才会写日志" : nil)
+            throw CLIError(
+                "日志文件还不存在：\(path)", exit: .notFound,
+                hint: source == "engine" ? "引擎启动后才会写日志" : nil)
         }
         var lines = tailLines(path, limit: limit)
         if !levels.isEmpty { lines = lines.filter { levels.contains(classify($0).rawValue) } }
@@ -84,7 +88,8 @@ public enum LogsCommand {
                     let chunk = Data(pending[..<newline])
                     pending.removeSubrange(...(newline))
                     guard let text = String(data: chunk, encoding: .utf8),
-                          !text.isEmpty else { continue }
+                        !text.isEmpty
+                    else { continue }
                     if !levels.isEmpty, !levels.contains(classify(text).rawValue) { continue }
                     emit(text, source: source, engine: engine, context: context, timestamp: timestamp)
                 }
@@ -97,8 +102,10 @@ public enum LogsCommand {
 
     // MARK: Source
 
-    private static func resolveSource(_ context: CLIContext,
-                                      override: EngineID?) throws -> (String, EngineID) {
+    private static func resolveSource(
+        _ context: CLIContext,
+        override: EngineID?
+    ) throws -> (String, EngineID) {
         if let engine = override { return ("engine", engine) }
         if let raw = context.invocation.option("engine") {
             guard let engine = EngineID(rawValue: raw) else {
@@ -121,25 +128,28 @@ public enum LogsCommand {
 
     private static func parseLevels(_ raw: String?) -> Set<String> {
         guard let raw, !raw.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
-        return Set(raw.split(separator: ",").map { token in
-            switch token.trimmingCharacters(in: .whitespaces).lowercased() {
-            case "warn", "warning": return "warning"
-            case "err", "error": return "error"
-            case "info": return "info"
-            case "system", "app": return "system"
-            case "success", "ready": return "success"
-            default: return token.trimmingCharacters(in: .whitespaces).lowercased()
-            }
-        })
+        return Set(
+            raw.split(separator: ",").map { token in
+                switch token.trimmingCharacters(in: .whitespaces).lowercased() {
+                case "warn", "warning": return "warning"
+                case "err", "error": return "error"
+                case "info": return "info"
+                case "system", "app": return "system"
+                case "success", "ready": return "success"
+                default: return token.trimmingCharacters(in: .whitespaces).lowercased()
+                }
+            })
     }
 
     // MARK: Output
 
-    private static func emit(_ text: String,
-                             source: String,
-                             engine: EngineID,
-                             context: CLIContext,
-                             timestamp: ISO8601DateFormatter) {
+    private static func emit(
+        _ text: String,
+        source: String,
+        engine: EngineID,
+        context: CLIContext,
+        timestamp: ISO8601DateFormatter
+    ) {
         let parsed = parse(text)
         if context.output.json {
             struct Line: Encodable {
@@ -154,10 +164,12 @@ public enum LogsCommand {
             // 前缀的行只能退回当前时刻。
             let stamp = parsed.clock ?? timestamp.string(from: Date())
             do {
-                let data = try encoder.encode(Line(date: stamp,
-                                                   level: classify(parsed.text).rawValue,
-                                                   text: parsed.text,
-                                                   engine: source == "engine" ? engine.rawValue : nil))
+                let data = try encoder.encode(
+                    Line(
+                        date: stamp,
+                        level: classify(parsed.text).rawValue,
+                        text: parsed.text,
+                        engine: source == "engine" ? engine.rawValue : nil))
                 if let line = String(data: data, encoding: .utf8) {
                     context.output.line(line)
                 }

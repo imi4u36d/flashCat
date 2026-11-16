@@ -2,8 +2,8 @@
 // Copyright (c) 2026 wangzhuo
 
 import Darwin
-import Foundation
 import FlashCatCLICore
+import Foundation
 
 /// Thin executable wrapper: all behavior lives in `FlashCatCLICore` so the
 /// parser, formatters and control client can be unit tested.

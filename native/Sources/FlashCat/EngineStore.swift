@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
 import FlashCatKit
+import Foundation
 
 /// One engine's persisted preferences. Keyed by `EngineID.rawValue` inside
 /// `engines.json` so a new engine can be added without a migration.
@@ -77,7 +77,8 @@ final class EngineStore {
     /// explicit switch (or the next launch) reads this key.
     var preferredEngine: EngineID {
         if let raw = ProcessInfo.processInfo.environment["FLASHCAT_ENGINE"],
-           let id = EngineID(rawValue: raw) {
+            let id = EngineID(rawValue: raw)
+        {
             return id
         }
         if let raw = configurations["default"]?.version, let id = EngineID(rawValue: raw) {
@@ -161,7 +162,8 @@ final class EngineStore {
 
     private func load() {
         guard let data = try? Data(contentsOf: fileURL),
-              let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
             return
         }
         // Old tuning documents predate newer knobs and must not read as "leave
@@ -189,20 +191,24 @@ final class EngineStore {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         var document = undecodable
         if let data = try? encoder.encode(configurations),
-           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        {
             for (key, value) in object { document[key] = value }
         }
         guard JSONSerialization.isValidJSONObject(document),
-              let data = try? JSONSerialization.data(withJSONObject: document, options: [.prettyPrinted, .sortedKeys]) else {
+            let data = try? JSONSerialization.data(withJSONObject: document, options: [.prettyPrinted, .sortedKeys])
+        else {
             return
         }
-        do { try data.write(to: fileURL, options: .atomic) }
-        catch { NSLog("flashCat: engines.json 写入失败：%@", error.localizedDescription) }
+        do { try data.write(to: fileURL, options: .atomic) } catch {
+            NSLog("flashCat: engines.json 写入失败：%@", error.localizedDescription)
+        }
     }
 
     private static func decode(_ raw: Any) -> EngineConfiguration? {
         guard JSONSerialization.isValidJSONObject(raw),
-              let data = try? JSONSerialization.data(withJSONObject: raw) else { return nil }
+            let data = try? JSONSerialization.data(withJSONObject: raw)
+        else { return nil }
         return try? JSONDecoder().decode(EngineConfiguration.self, from: data)
     }
 }
@@ -271,9 +277,11 @@ enum EngineModelStore {
                 try manager.removeItem(atPath: plan.link)
                 try moveDereferencing(plan.target, to: plan.link)
                 moved[plan.target] = plan.link
-                report.adopted.append(AdoptedModel(id: (plan.link as NSString).lastPathComponent,
-                                                   path: plan.link,
-                                                   bytes: bytes))
+                report.adopted.append(
+                    AdoptedModel(
+                        id: (plan.link as NSString).lastPathComponent,
+                        path: plan.link,
+                        bytes: bytes))
             } catch {
                 // Put the link back rather than leave the model unusable.
                 try? manager.createSymbolicLink(atPath: plan.link, withDestinationPath: plan.target)
@@ -320,13 +328,15 @@ enum EngineModelStore {
     /// `lstat` semantics: a link to a directory is not a directory here.
     static func isDirectory(_ path: String) -> Bool {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
-              let type = attributes[.type] as? FileAttributeType else { return false }
+            let type = attributes[.type] as? FileAttributeType
+        else { return false }
         return type == .typeDirectory
     }
 
     private static func isLink(_ path: String) -> Bool {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
-              let type = attributes[.type] as? FileAttributeType else { return false }
+            let type = attributes[.type] as? FileAttributeType
+        else { return false }
         return type == .typeSymbolicLink
     }
 
@@ -335,11 +345,13 @@ enum EngineModelStore {
     private static func realTarget(of path: String, moved: [String: String] = [:]) -> String? {
         let manager = FileManager.default
         guard let destination = try? manager.destinationOfSymbolicLink(atPath: path) else { return nil }
-        let absolute = destination.hasPrefix("/")
+        let absolute =
+            destination.hasPrefix("/")
             ? destination
             : (path as NSString).deletingLastPathComponent + "/" + destination
         let resolved = URL(fileURLWithPath: absolute).resolvingSymlinksInPath().path
-        let relocated = moved.keys
+        let relocated =
+            moved.keys
             .filter { resolved == $0 || resolved.hasPrefix($0 + "/") }
             .max { $0.count < $1.count }
             .flatMap { old in moved[old].map { $0 + String(resolved.dropFirst(old.count)) } } ?? resolved
@@ -391,8 +403,10 @@ enum EngineModelStore {
     /// Replace every link below `root` with the bytes it resolves to. A hard
     /// link keeps one copy of the same file on one disk; directories cannot be
     /// hard linked, so those are copied.
-    private static func inlineLinks(under root: String, moved: [String: String],
-                                    report: inout AdoptionReport) {
+    private static func inlineLinks(
+        under root: String, moved: [String: String],
+        report: inout AdoptionReport
+    ) {
         let manager = FileManager.default
         guard let enumerator = manager.enumerator(atPath: root) else { return }
         var links: [String] = []
@@ -440,8 +454,10 @@ enum EngineModelStore {
         // 普通目录跳过，图像模型根本不出现在模型菜单里。
         if manager.fileExists(atPath: path + "/model_index.json") { return true }
         guard manager.fileExists(atPath: path + "/config.json") else { return false }
-        let tokenizerFiles = ["tokenizer.json", "tokenizer_config.json", "chat_template.jinja",
-                              "merges.txt", "vocab.json", "tokenizer.model"]
+        let tokenizerFiles = [
+            "tokenizer.json", "tokenizer_config.json", "chat_template.jinja",
+            "merges.txt", "vocab.json", "tokenizer.model",
+        ]
         return tokenizerFiles.contains { manager.fileExists(atPath: path + "/" + $0) }
     }
 
@@ -481,10 +497,11 @@ enum EngineModelStore {
         // 同一个 config.json 只读一次、只解析一次：原先 contextWindow 与
         // architecture 各读一遍各解析一遍，单个模型就是 2 次文件读 + 2 次 JSON。
         let config = configFacts(path + "/config.json")
-        let value = ScanMeta(bytes: size(of: path),
-                             maximumContextTokens: config.window,
-                             architecture: config.architecture,
-                             quantization: config.quantization)
+        let value = ScanMeta(
+            bytes: size(of: path),
+            maximumContextTokens: config.window,
+            architecture: config.architecture,
+            quantization: config.quantization)
         metaLock.lock()
         metaCache[path] = (value, Date())
         metaLock.unlock()
@@ -500,11 +517,13 @@ enum EngineModelStore {
 
     private static func configFacts(_ path: String) -> (window: Int?, architecture: String?, quantization: String?) {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else {
             return (nil, nil, nil)
         }
         // 每条本地 config.json 都把窗口放在 text_config 下，draft 模型另有一份顶层副本。
-        let window = (json["max_position_embeddings"] as? Int)
+        let window =
+            (json["max_position_embeddings"] as? Int)
             ?? ((json["text_config"] as? [String: Any])?["max_position_embeddings"] as? Int)
         return (window, json["model_type"] as? String, quantization(in: json))
     }
@@ -515,7 +534,8 @@ enum EngineModelStore {
     private static func quantization(in json: [String: Any]) -> String? {
         for key in ["quantization", "quantization_config"] {
             if let value = json[key] as? [String: Any],
-               let bits = (value["bits"] as? NSNumber)?.intValue {
+                let bits = (value["bits"] as? NSNumber)?.intValue
+            {
                 return ModelQuantization.label(bits: bits)
             }
         }
@@ -535,8 +555,10 @@ enum EngineModelStore {
             // string, ~100 bytes), not the weights it points at — linked GGUF
             // folders would otherwise show up as a few KB. Resolve one hop.
             if attributes[.type] as? FileAttributeType == .typeSymbolicLink,
-               let target = try? manager.destinationOfSymbolicLink(atPath: full) {
-                let resolved = target.hasPrefix("/")
+                let target = try? manager.destinationOfSymbolicLink(atPath: full)
+            {
+                let resolved =
+                    target.hasPrefix("/")
                     ? target
                     : (path as NSString).appendingPathComponent(target)
                 if let targetSize = try? manager.attributesOfItem(atPath: resolved)[.size] as? Int {

@@ -48,8 +48,9 @@ public enum HelpCommand {
         out.line()
         out.line("用法：flashcat <命令> [参数] [选项]")
         out.line()
-        out.table(headers: ["命令", "说明"],
-                  rows: CLICommandTable.commands.map { [$0.name, $0.summary] })
+        out.table(
+            headers: ["命令", "说明"],
+            rows: CLICommandTable.commands.map { [$0.name, $0.summary] })
         out.line()
         out.line(out.bold("常用"))
         for example in examples {
@@ -57,14 +58,16 @@ public enum HelpCommand {
         }
         out.line()
         out.line(out.bold("全局选项"))
-        out.table(headers: ["选项", "说明"],
-                  rows: CLICommandTable.globalOptions.map { [$0.usageLabel, $0.summary] })
+        out.table(
+            headers: ["选项", "说明"],
+            rows: CLICommandTable.globalOptions.map { [$0.usageLabel, $0.summary] })
         out.line()
         out.line(out.bold("退出码"))
-        out.table(headers: ["退出码", "含义", "控制接口"],
-                  rows: CLICommandTable.exitCodes.map { spec in
-                      [String(spec.code.rawValue), spec.summary, controlShift(spec)]
-                  })
+        out.table(
+            headers: ["退出码", "含义", "控制接口"],
+            rows: CLICommandTable.exitCodes.map { spec in
+                [String(spec.code.rawValue), spec.summary, controlShift(spec)]
+            })
         out.line()
         out.line("提示：flashcat app open 启动应用；flashcat cli install 把命令放进 PATH。")
     }
@@ -99,18 +102,20 @@ public enum HelpCommand {
         if !command.options.isEmpty {
             out.line()
             out.line(out.bold("选项"))
-            out.table(headers: ["选项", "说明"],
-                      rows: command.options.map { [$0.usageLabel, $0.summary] })
+            out.table(
+                headers: ["选项", "说明"],
+                rows: command.options.map { [$0.usageLabel, $0.summary] })
         }
         out.line()
         out.line(out.bold("全局选项"))
         out.line("  " + CLICommandTable.globalOptions.map(\.compactLabel).joined(separator: "  "))
         out.line()
         out.line(out.bold("退出码"))
-        out.table(headers: ["退出码", "含义"],
-                  rows: command.exitCodes.map { spec in
-                      [String(spec.rawValue), CLICommandTable.summary(for: spec) ?? ""]
-                  })
+        out.table(
+            headers: ["退出码", "含义"],
+            rows: command.exitCodes.map { spec in
+                [String(spec.rawValue), CLICommandTable.summary(for: spec) ?? ""]
+            })
     }
 }
 
@@ -127,12 +132,14 @@ public enum VersionCommand {
                 let control: String?
                 let gateway: String?
             }
-            context.output.json(Body(name: "flashcat",
-                                     version: version,
-                                     build: build,
-                                     app: AppLocator.resolve(environment: context.environment)?.path,
-                                     control: controlURL(context),
-                                     gateway: "http://127.0.0.1:\(context.local.gatewayPort)"))
+            context.output.json(
+                Body(
+                    name: "flashcat",
+                    version: version,
+                    build: build,
+                    app: AppLocator.resolve(environment: context.environment)?.path,
+                    control: controlURL(context),
+                    gateway: "http://127.0.0.1:\(context.local.gatewayPort)"))
         } else {
             let suffix = build.map { " (\($0))" } ?? ""
             context.output.line("flashcat \(version)\(suffix)")

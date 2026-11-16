@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
 import FlashCatKit
+import Foundation
 
 public enum ChatCommand {
     public static func run(_ context: CLIContext) async throws -> Int32 {
@@ -15,15 +15,19 @@ public enum ChatCommand {
             "model": model,
             "stream": stream,
             "messages": [["role": "user", "content": prompt]],
-            "temperature": numberOption(context, "temperature", fallback: context.local.double("chat.temperature", fallback: 0.7)),
+            "temperature": numberOption(
+                context, "temperature", fallback: context.local.double("chat.temperature", fallback: 0.7)),
             "top_p": numberOption(context, "top-p", fallback: context.local.double("chat.topP", fallback: 0.95)),
         ]
-        let maxTokens = Int(context.invocation.option("max-tokens") ?? "") ?? context.local.integer("chat.maxTokens", fallback: 0)
+        let maxTokens =
+            Int(context.invocation.option("max-tokens") ?? "") ?? context.local.integer("chat.maxTokens", fallback: 0)
         if maxTokens > 0 { body["max_tokens"] = maxTokens }
         if stream { body["stream_options"] = ["include_usage": true] }
         if let system = context.invocation.option("system"), !system.isEmpty {
-            body["messages"] = [["role": "system", "content": system],
-                                ["role": "user", "content": prompt]]
+            body["messages"] = [
+                ["role": "system", "content": system],
+                ["role": "user", "content": prompt],
+            ]
         }
 
         guard let payload = try? JSONSerialization.data(withJSONObject: body) else {
@@ -69,11 +73,13 @@ public enum ChatCommand {
             return text
         }
         guard !context.stdinIsTTY || explicitStdin else {
-            throw CLIError("需要提示词", exit: .usage,
-                           hint: "例如 flashcat chat \"你好\"，或 echo 你好 | flashcat chat -")
+            throw CLIError(
+                "需要提示词", exit: .usage,
+                hint: "例如 flashcat chat \"你好\"，或 echo 你好 | flashcat chat -")
         }
         let data = FileHandle.standardInput.readDataToEndOfFile()
-        let text = String(data: data, encoding: .utf8)?
+        let text =
+            String(data: data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !text.isEmpty else { throw CLIError("stdin 里没有提示词", exit: .usage) }
         return text
@@ -85,19 +91,22 @@ public enum ChatCommand {
     /// port when the control interface is disabled.
     private static func resolveGateway(_ context: CLIContext) async throws -> URL {
         if let explicit = context.invocation.option("gateway-url") ?? context.environment["FLASHCAT_GATEWAY_URL"],
-           var url = URL(string: explicit) {
+            var url = URL(string: explicit)
+        {
             if url.path.hasSuffix("/v1") { url.deleteLastPathComponent() }
             guard portOpen(url.port ?? 80) else {
-                throw CLIError("网关不可达：\(explicit)", exit: .notRunning,
-                               hint: "先运行 flashcat app open 或 flashcat gateway start")
+                throw CLIError(
+                    "网关不可达：\(explicit)", exit: .notRunning,
+                    hint: "先运行 flashcat app open 或 flashcat gateway start")
             }
             return url
         }
         if let url = try await controlGatewayURL(context) { return url }
         let port = context.local.gatewayPort
         guard context.local.gatewayEnabled, portOpen(port) else {
-            throw CLIError("连不上本地网关（127.0.0.1:\(port)）", exit: .notRunning,
-                           hint: "先运行 flashcat app open；网关关闭时用 flashcat gateway start")
+            throw CLIError(
+                "连不上本地网关（127.0.0.1:\(port)）", exit: .notRunning,
+                hint: "先运行 flashcat app open；网关关闭时用 flashcat gateway start")
         }
         guard let url = URL(string: "http://127.0.0.1:\(port)") else {
             throw CLIError("网关地址无效", exit: .failure)
@@ -111,8 +120,9 @@ public enum ChatCommand {
     private static func controlGatewayURL(_ context: CLIContext) async throws -> URL? {
         do {
             let location = try context.control
-            let status: ControlStatus = try await location.client.get("/v1/status",
-                                                                      timeout: context.timeout)
+            let status: ControlStatus = try await location.client.get(
+                "/v1/status",
+                timeout: context.timeout)
             if status.gateway.running {
                 guard let url = URL(string: status.gateway.baseURL) else {
                     throw CLIError("网关地址无效", exit: .failure)
@@ -120,17 +130,20 @@ public enum ChatCommand {
                 return url
             }
             guard status.gateway.enabled else {
-                throw CLIError("API 网关已关闭", exit: .conflict,
-                               hint: "运行 flashcat gateway start 打开它")
+                throw CLIError(
+                    "API 网关已关闭", exit: .conflict,
+                    hint: "运行 flashcat gateway start 打开它")
             }
-            _ = try await location.client.postData("/v1/gateway/start",
-                                                   body: Data("{}".utf8),
-                                                   timeout: 10)
+            _ = try await location.client.postData(
+                "/v1/gateway/start",
+                body: Data("{}".utf8),
+                timeout: 10)
             let deadline = Date().addingTimeInterval(15)
             while Date() < deadline {
                 do {
-                    let again: ControlStatus = try await location.client.get("/v1/status",
-                                                                             timeout: 5)
+                    let again: ControlStatus = try await location.client.get(
+                        "/v1/status",
+                        timeout: 5)
                     if again.gateway.running, let url = URL(string: again.gateway.baseURL) {
                         return url
                     }
@@ -142,8 +155,9 @@ public enum ChatCommand {
                 }
                 try? await Task.sleep(nanoseconds: 250_000_000)
             }
-            throw CLIError("API 网关没有启动起来", exit: .timeout,
-                           hint: "看 flashcat logs --gateway")
+            throw CLIError(
+                "API 网关没有启动起来", exit: .timeout,
+                hint: "看 flashcat logs --gateway")
         } catch let error as CLIError where ControlFallback.shouldFallBack(error) {
             return nil
         }
@@ -161,9 +175,10 @@ public enum ChatCommand {
                 let location = try context.control
                 var query = [URLQueryItem(name: "all", value: "false")]
                 query.append(URLQueryItem(name: "engine", value: id.rawValue))
-                let models: [ControlModelSummary] = try await location.client.get("/v1/models",
-                                                                                  query: query,
-                                                                                  timeout: context.timeout)
+                let models: [ControlModelSummary] = try await location.client.get(
+                    "/v1/models",
+                    query: query,
+                    timeout: context.timeout)
                 if let first = models.first(where: { !$0.helper }) { return first.id }
             } catch let error as CLIError where ControlFallback.shouldFallBack(error) {
                 // 应用没运行：退回磁盘目录里挑一个已安装的模型。
@@ -175,8 +190,9 @@ public enum ChatCommand {
         }
         do {
             let location = try context.control
-            let status: ControlStatus = try await location.client.get("/v1/status",
-                                                                      timeout: context.timeout)
+            let status: ControlStatus = try await location.client.get(
+                "/v1/status",
+                timeout: context.timeout)
             if let model = status.engine?.model, !model.isEmpty { return model }
         } catch let error as CLIError where ControlFallback.shouldFallBack(error) {
             // 应用没运行：往下靠本地记录。
@@ -194,8 +210,9 @@ public enum ChatCommand {
             gatewayError = error
         }
         let hint = gatewayError.map { "网关列不出模型：\($0.localizedDescription)；" } ?? ""
-        throw CLIError("没有可用模型", exit: .notFound,
-                       hint: hint + "先运行 flashcat models download <repo> 或 flashcat models use <模型>")
+        throw CLIError(
+            "没有可用模型", exit: .notFound,
+            hint: hint + "先运行 flashcat models download <repo> 或 flashcat models use <模型>")
     }
 
     private struct OpenAIModels: Decodable {
@@ -233,10 +250,12 @@ public enum ChatCommand {
         return context.isTTY && !context.output.json
     }
 
-    private static func consumeStream(_ context: CLIContext,
-                                      request: URLRequest,
-                                      model: String,
-                                      started: Date) async throws -> ChatResult {
+    private static func consumeStream(
+        _ context: CLIContext,
+        request: URLRequest,
+        model: String,
+        started: Date
+    ) async throws -> ChatResult {
         var decoder = SSEAccumulator(model: model)
         let (bytes, response) = try await CLIHTTP.shared.bytes(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -272,22 +291,26 @@ public enum ChatCommand {
         return decoder.finish(started: started)
     }
 
-    private static func consumeJSON(_ context: CLIContext,
-                                    request: URLRequest,
-                                    model: String,
-                                    started: Date) async throws -> ChatResult {
+    private static func consumeJSON(
+        _ context: CLIContext,
+        request: URLRequest,
+        model: String,
+        started: Date
+    ) async throws -> ChatResult {
         let (data, response) = try await CLIHTTP.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             throw gatewayError(data, status: status)
         }
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = object["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any] else {
+            let choices = object["choices"] as? [[String: Any]],
+            let message = choices.first?["message"] as? [String: Any]
+        else {
             throw CLIError("网关返回了无法解析的响应")
         }
         let content = (message["content"] as? String) ?? ""
-        let reasoning = (message["reasoning_content"] as? String)
+        let reasoning =
+            (message["reasoning_content"] as? String)
             ?? (message["reasoning"] as? String) ?? ""
         if !context.output.json {
             if !content.isEmpty { context.output.write(content) }
@@ -295,17 +318,19 @@ public enum ChatCommand {
         let seconds = Date().timeIntervalSince(started)
         var usage: Usage?
         if let raw = object["usage"] as? [String: Any] {
-            usage = Usage(promptTokens: raw["prompt_tokens"] as? Int,
-                          completionTokens: raw["completion_tokens"] as? Int)
+            usage = Usage(
+                promptTokens: raw["prompt_tokens"] as? Int,
+                completionTokens: raw["completion_tokens"] as? Int)
         }
         let completion = usage?.completionTokens
-        return ChatResult(model: model,
-                          content: content,
-                          reasoning: reasoning,
-                          finishReason: choices.first?["finish_reason"] as? String,
-                          usage: usage,
-                          seconds: seconds,
-                          tokensPerSecond: completion.map { Double($0) / max(seconds, 0.001) })
+        return ChatResult(
+            model: model,
+            content: content,
+            reasoning: reasoning,
+            finishReason: choices.first?["finish_reason"] as? String,
+            usage: usage,
+            seconds: seconds,
+            tokensPerSecond: completion.map { Double($0) / max(seconds, 0.001) })
     }
 
     private static func gatewayError(_ data: Data, status: Int) -> CLIError {
@@ -318,8 +343,9 @@ public enum ChatCommand {
             }
         }
         let text = String(data: data, encoding: .utf8) ?? ""
-        return CLIError("网关返回 HTTP \(status)\(text.isEmpty ? "" : "：\(text)")",
-                        exit: status == 404 ? .notFound : .failure)
+        return CLIError(
+            "网关返回 HTTP \(status)\(text.isEmpty ? "" : "：\(text)")",
+            exit: status == 404 ? .notFound : .failure)
     }
 
     private static func statsLine(_ result: ChatResult) -> String {
@@ -362,7 +388,8 @@ public struct SSEAccumulator {
         let payload = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
         if payload == "[DONE]" { return [] }
         guard let data = payload.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
             return []
         }
         if let error = object["error"] as? [String: Any] {
@@ -374,14 +401,16 @@ public struct SSEAccumulator {
             completionTokens = usage["completion_tokens"] as? Int
         }
         guard let choices = object["choices"] as? [[String: Any]],
-              let choice = choices.first else { return [] }
+            let choice = choices.first
+        else { return [] }
         if let reason = choice["finish_reason"] as? String, !reason.isEmpty {
             finishReason = reason
         }
         guard let delta = choice["delta"] as? [String: Any] else { return [] }
         var events: [Event] = []
         if let text = (delta["reasoning_content"] as? String) ?? (delta["reasoning"] as? String),
-           !text.isEmpty {
+            !text.isEmpty
+        {
             reasoning += text
             events.append(.reasoning(text))
         }
@@ -394,16 +423,17 @@ public struct SSEAccumulator {
 
     public func finish(started: Date) -> ChatCommand.ChatResult {
         let seconds = Date().timeIntervalSince(started)
-        return ChatCommand.ChatResult(model: model,
-                                      content: content,
-                                      reasoning: reasoning,
-                                      finishReason: finishReason,
-                                      usage: ChatCommand.Usage(promptTokens: promptTokens,
-                                                               completionTokens: completionTokens),
-                                      seconds: seconds,
-                                      tokensPerSecond: completionTokens.map {
-                                          Double($0) / max(seconds, 0.001)
-                                      })
+        return ChatCommand.ChatResult(
+            model: model,
+            content: content,
+            reasoning: reasoning,
+            finishReason: finishReason,
+            usage: ChatCommand.Usage(
+                promptTokens: promptTokens,
+                completionTokens: completionTokens),
+            seconds: seconds,
+            tokensPerSecond: completionTokens.map {
+                Double($0) / max(seconds, 0.001)
+            })
     }
 }
-

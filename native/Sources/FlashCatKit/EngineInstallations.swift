@@ -17,7 +17,8 @@ public enum EngineInstallations {
     public static func userRoots() -> [String] {
         var roots: [String] = []
         if let override = ProcessInfo.processInfo.environment["FLASHCAT_ENGINE_PACKS_DIR"],
-           !override.isEmpty {
+            !override.isEmpty
+        {
             roots.append(override)
         }
         roots.append(FlashCatPaths.enginesDirectory)
@@ -68,16 +69,19 @@ public enum EngineInstallations {
                 guard found[version] == nil else { continue }
                 let directory = engineRoot + "/" + version
                 guard let installation = EngineInstallation.load(root: URL(fileURLWithPath: directory)),
-                      installation.id == id else { continue }
+                    installation.id == id
+                else { continue }
                 found[version] = installation
             }
         }
         return found.values.sorted { EngineVersionOrder.isNewer($0.manifest.version, than: $1.manifest.version) }
     }
 
-    public static func newest(_ id: EngineID,
-                              version: String?,
-                              extraRoots: [String] = []) -> EngineInstallation? {
+    public static func newest(
+        _ id: EngineID,
+        version: String?,
+        extraRoots: [String] = []
+    ) -> EngineInstallation? {
         let all = installed(id, extraRoots: extraRoots)
         guard let version else { return all.first }
         return all.first { $0.manifest.version == version }

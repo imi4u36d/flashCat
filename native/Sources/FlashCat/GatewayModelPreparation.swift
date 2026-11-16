@@ -13,9 +13,9 @@ enum GatewayModelPreparationError: Error, Equatable {
     var message: String {
         switch self {
         case .modelNotFound(let message),
-             .badRequest(let message),
-             .unavailable(let message),
-             .failed(let message):
+            .badRequest(let message),
+            .unavailable(let message),
+            .failed(let message):
             return message
         }
     }

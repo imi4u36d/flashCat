@@ -79,21 +79,23 @@ public struct EngineTuning: Codable, Equatable, Sendable {
     /// 数，下发时按引擎再拼。
     public var prefixCacheDiskGB: Int?
 
-    public init(mtp: Bool? = nil,
-                mtpDepth: Int? = nil,
-                loadMtp: Bool? = nil,
-                mtpQuantBits: Int? = nil,
-                dflash: Bool? = nil,
-                draftModel: String? = nil,
-                maxMemory: String? = nil,
-                maxContext: String? = nil,
-                languageOnly: Bool? = nil,
-                idleReleaseOff: Bool? = nil,
-                pleMemory: String? = nil,
-                pleSSDOffload: Bool? = nil,
-                thinkingBudget: Int? = nil,
-                extraArguments: String? = nil,
-                prefixCacheDiskGB: Int? = nil) {
+    public init(
+        mtp: Bool? = nil,
+        mtpDepth: Int? = nil,
+        loadMtp: Bool? = nil,
+        mtpQuantBits: Int? = nil,
+        dflash: Bool? = nil,
+        draftModel: String? = nil,
+        maxMemory: String? = nil,
+        maxContext: String? = nil,
+        languageOnly: Bool? = nil,
+        idleReleaseOff: Bool? = nil,
+        pleMemory: String? = nil,
+        pleSSDOffload: Bool? = nil,
+        thinkingBudget: Int? = nil,
+        extraArguments: String? = nil,
+        prefixCacheDiskGB: Int? = nil
+    ) {
         self.mtp = mtp
         self.mtpDepth = mtpDepth
         self.loadMtp = loadMtp
@@ -263,7 +265,6 @@ public struct EngineTuning: Codable, Equatable, Sendable {
         return value
     }
 
-
     /// Split a free-form argument string the way the settings page always has:
     /// whitespace separates, single or double quotes group.
     public static func splitArguments(_ text: String?) -> [String] {
@@ -277,7 +278,10 @@ public struct EngineTuning: Codable, Equatable, Sendable {
             } else if character == "\"" || character == "'" {
                 quote = character
             } else if character.isWhitespace {
-                if !current.isEmpty { result.append(current); current = "" }
+                if !current.isEmpty {
+                    result.append(current)
+                    current = ""
+                }
             } else {
                 current.append(character)
             }
@@ -303,8 +307,9 @@ public struct EngineTuning: Codable, Equatable, Sendable {
         // checkpoint 无条件挂载），所以这里按 descriptor 遍历，而不是写死 id。
         for id in EngineCatalog.allIDs where EngineTuningProfile.resolved(for: id).backfillsPLEOffload {
             guard var configuration = result[id.rawValue] as? [String: Any],
-                  var tuning = configuration["tuning"] as? [String: Any],
-                  tuning["pleSSDOffload"] == nil else { continue }
+                var tuning = configuration["tuning"] as? [String: Any],
+                tuning["pleSSDOffload"] == nil
+            else { continue }
             tuning["pleSSDOffload"] = true
             configuration["tuning"] = tuning
             result[id.rawValue] = configuration
@@ -368,20 +373,23 @@ struct EngineTuningProfile: Sendable {
     /// 这个引擎的旧配置要不要补写 `pleSSDOffload` 缺省值。
     let backfillsPLEOffload: Bool
 
-    init(defaults: EngineTuning = EngineTuning(),
-         mtpWhenUnset: Bool = false,
-         speculative: (@Sendable (Bool, Bool) -> SpeculativeMode)? = nil,
-         prefixCacheOff: [String] = [],
-         prefixCacheOn: (@Sendable (String, Int) -> [String])? = nil,
-         knobs: (@Sendable (EngineTuning) -> [String])? = nil,
-         backfillsPLEOffload: Bool = false) {
+    init(
+        defaults: EngineTuning = EngineTuning(),
+        mtpWhenUnset: Bool = false,
+        speculative: (@Sendable (Bool, Bool) -> SpeculativeMode)? = nil,
+        prefixCacheOff: [String] = [],
+        prefixCacheOn: (@Sendable (String, Int) -> [String])? = nil,
+        knobs: (@Sendable (EngineTuning) -> [String])? = nil,
+        backfillsPLEOffload: Bool = false
+    ) {
         self.defaults = defaults
         self.mtpWhenUnset = mtpWhenUnset
         // 没单独声明的引擎按「DFlash2 优先、其次 MTP」合成：两个都没开就等于没有
         // 投机解码，这是最保守的读法。
-        self.speculative = speculative ?? { dflash, mtp in
-            dflash ? .dflash : (mtp ? .mtp : .off)
-        }
+        self.speculative =
+            speculative ?? { dflash, mtp in
+                dflash ? .dflash : (mtp ? .mtp : .off)
+            }
         self.prefixCacheOff = prefixCacheOff
         self.prefixCacheOn = prefixCacheOn ?? { _, _ in [] }
         self.knobs = knobs ?? { _ in [] }
@@ -407,9 +415,11 @@ struct EngineTuningProfile: Sendable {
             prefixCacheOn: { directory, gigabytes in
                 // Splash 的解析器只认裸 `G`；`--persistent-cache` 是让 SSD 层跨
                 // 重启保留的那一档，`--cache-dir` 把它挪出系统临时目录。
-                ["--max-cache-disk", "\(gigabytes)G",
-                 "--persistent-cache",
-                 "--cache-dir", directory]
+                [
+                    "--max-cache-disk", "\(gigabytes)G",
+                    "--persistent-cache",
+                    "--cache-dir", directory,
+                ]
             },
             knobs: { tuning in
                 var arguments: [String] = []
@@ -434,8 +444,10 @@ struct EngineTuningProfile: Sendable {
             prefixCacheOff: ["--no-cache"],
             prefixCacheOn: { directory, gigabytes in
                 // oMLX 的 paged cache 在目录未设置时是完全关掉的。
-                ["--paged-ssd-cache-dir", directory,
-                 "--paged-ssd-cache-max-size", "\(gigabytes)GB"]
+                [
+                    "--paged-ssd-cache-dir", directory,
+                    "--paged-ssd-cache-max-size", "\(gigabytes)GB",
+                ]
             },
             backfillsPLEOffload: true),
         .mtplx: EngineTuningProfile(
@@ -446,9 +458,11 @@ struct EngineTuningProfile: Sendable {
             speculative: { _, mtp in mtp ? .mtp : .off },
             prefixCacheOff: ["--ssd-session-cache", "off"],
             prefixCacheOn: { directory, gigabytes in
-                ["--ssd-session-cache", "on",
-                 "--ssd-session-cache-dir", directory,
-                 "--ssd-session-cache-max-size", "\(gigabytes)GB"]
+                [
+                    "--ssd-session-cache", "on",
+                    "--ssd-session-cache-dir", directory,
+                    "--ssd-session-cache-max-size", "\(gigabytes)GB",
+                ]
             },
             knobs: { tuning in
                 var arguments: [String] = []

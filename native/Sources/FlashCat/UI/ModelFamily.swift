@@ -144,12 +144,14 @@ struct ModelFamilyIcon: View {
     var size: CGFloat = 30
 
     var body: some View {
-        ArcadeIcon(symbol: family.symbol,
-                   colors: family.colors,
-                   brandAsset: family.brandAsset,
-                   size: size,
-                   glyphScale: 0.46,
-                   glow: false)
-            .accessibilityLabel(family.name)
+        ArcadeIcon(
+            symbol: family.symbol,
+            colors: family.colors,
+            brandAsset: family.brandAsset,
+            size: size,
+            glyphScale: 0.46,
+            glow: false
+        )
+        .accessibilityLabel(family.name)
     }
 }

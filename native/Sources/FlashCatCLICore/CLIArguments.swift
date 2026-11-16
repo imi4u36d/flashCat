@@ -16,12 +16,14 @@ public struct CLIInvocation: Equatable, Sendable {
     /// bare invocation should print the overview, not status help.
     public var explicitCommand: Bool
 
-    public init(command: String,
-                subcommand: String? = nil,
-                arguments: [String] = [],
-                options: [String: String] = [:],
-                flags: Set<String> = [],
-                explicitCommand: Bool = false) {
+    public init(
+        command: String,
+        subcommand: String? = nil,
+        arguments: [String] = [],
+        options: [String: String] = [:],
+        flags: Set<String> = [],
+        explicitCommand: Bool = false
+    ) {
         self.command = command
         self.subcommand = subcommand
         self.arguments = arguments
@@ -223,12 +225,15 @@ public enum CLIArguments {
         }
     }
 
-    private static func makeInvocation(options: [String: String],
-                                       flags: Set<String>,
-                                       positionals: [String]) -> CLIInvocation {
+    private static func makeInvocation(
+        options: [String: String],
+        flags: Set<String>,
+        positionals: [String]
+    ) -> CLIInvocation {
         guard !positionals.isEmpty else {
-            return CLIInvocation(command: "status", options: options, flags: flags,
-                                 explicitCommand: false)
+            return CLIInvocation(
+                command: "status", options: options, flags: flags,
+                explicitCommand: false)
         }
         var command = positionals[0]
         var rest = Array(positionals.dropFirst())
@@ -237,30 +242,35 @@ public enum CLIArguments {
         }
         // Top-level aliases that are really a subcommand of `engines`.
         if command == "start" || command == "stop" || command == "restart" || command == "use" {
-            return CLIInvocation(command: "engines", subcommand: command,
-                                arguments: rest, options: options, flags: flags,
-                                explicitCommand: true)
+            return CLIInvocation(
+                command: "engines", subcommand: command,
+                arguments: rest, options: options, flags: flags,
+                explicitCommand: true)
         }
         if command == "ls" {
-            return CLIInvocation(command: "models", subcommand: "list",
-                                arguments: rest, options: options, flags: flags,
-                                explicitCommand: true)
+            return CLIInvocation(
+                command: "models", subcommand: "list",
+                arguments: rest, options: options, flags: flags,
+                explicitCommand: true)
         }
         var subcommand: String?
         if let group = groups[command], let first = rest.first, group.contains(first) {
             subcommand = first
             rest.removeFirst()
         }
-        return CLIInvocation(command: command, subcommand: subcommand,
-                            arguments: rest, options: options, flags: flags,
-                            explicitCommand: true)
+        return CLIInvocation(
+            command: command, subcommand: subcommand,
+            arguments: rest, options: options, flags: flags,
+            explicitCommand: true)
     }
 
     /// Validate and record one value option. List options accumulate so a
     /// repeated `--for` is additive rather than a silent overwrite.
-    private static func store(_ value: String,
-                              for key: String,
-                              in options: inout [String: String]) -> CLIUsageError? {
+    private static func store(
+        _ value: String,
+        for key: String,
+        in options: inout [String: String]
+    ) -> CLIUsageError? {
         if numericOptions.contains(key), Double(value) == nil {
             return .badValue("选项 --\(key) 需要数字，收到：\(value)")
         }

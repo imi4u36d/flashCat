@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import Foundation
 import FlashCatKit
+import Foundation
 
 /// One Hugging Face repository as the model page can offer it: the engine that
 /// may serve it, the size the download actually costs, and — for a GGUF
@@ -70,29 +70,32 @@ struct HubSearchResult: Identifiable {
     }
 
     func targeting(_ engine: EngineID) -> HubSearchResult {
-        HubSearchResult(id: id, repo: repo, engine: engine, engines: engines,
-                        kind: kind, bytes: bytes, memoryGB: memoryGB,
-                        estimated: estimated, downloads: downloads, io: io,
-                        options: options, summary: summary, tags: tags)
+        HubSearchResult(
+            id: id, repo: repo, engine: engine, engines: engines,
+            kind: kind, bytes: bytes, memoryGB: memoryGB,
+            estimated: estimated, downloads: downloads, io: io,
+            options: options, summary: summary, tags: tags)
     }
 
     /// The same row with another quant of the same repository chosen.
     func choosing(_ quant: String?) -> HubSearchResult {
         guard let option = options.first(where: { $0.name == quant }) ?? options.last else { return self }
         let id = option.name.map { repo + ":" + $0 } ?? repo
-        return HubSearchResult(id: id, repo: repo, engine: engine, engines: engines,
-                               kind: kind,
-                               bytes: option.bytes, memoryGB: option.memoryGB,
-                               estimated: option.estimated, downloads: downloads,
-                               io: io,
-                               options: options, summary: summary, tags: tags)
+        return HubSearchResult(
+            id: id, repo: repo, engine: engine, engines: engines,
+            kind: kind,
+            bytes: option.bytes, memoryGB: option.memoryGB,
+            estimated: option.estimated, downloads: downloads,
+            io: io,
+            options: options, summary: summary, tags: tags)
     }
 
     /// The catalog's measured floor wins only when the repository *and* the
     /// quant both match: 64 GB is right for `Q2_0` and nonsense for `Q8_0`.
     static func memoryFloor(id: String, bytes: Int) -> (value: Int, estimated: Bool) {
         if let row = ModelRecommendations.recommendation(for: id), row.minimumMemory > 0,
-           variant(of: row.id) == variant(of: id) {
+            variant(of: row.id) == variant(of: id)
+        {
             return (row.minimumMemory, false)
         }
         return (HubModelLayout.estimatedMemoryGB(bytes: bytes), true)
@@ -142,14 +145,18 @@ struct HubSearchState {
         if variants.isEmpty {
             let bytes = model.weightBytes(ggufVariant: nil)
             let floor = HubSearchResult.memoryFloor(id: repo, bytes: bytes)
-            options = [HubSearchResult.Quant(name: nil, bytes: bytes,
-                                             memoryGB: floor.value, estimated: floor.estimated)]
+            options = [
+                HubSearchResult.Quant(
+                    name: nil, bytes: bytes,
+                    memoryGB: floor.value, estimated: floor.estimated)
+            ]
         } else {
             options = variants.map { variant in
                 let id = variant.name.map { repo + ":" + $0 } ?? repo
                 let floor = HubSearchResult.memoryFloor(id: id, bytes: variant.bytes)
-                return HubSearchResult.Quant(name: variant.name, bytes: variant.bytes,
-                                             memoryGB: floor.value, estimated: floor.estimated)
+                return HubSearchResult.Quant(
+                    name: variant.name, bytes: variant.bytes,
+                    memoryGB: floor.value, estimated: floor.estimated)
             }
         }
         // A row without a single known size is worse than no row: it would show
@@ -159,11 +166,12 @@ struct HubSearchState {
         let sized = options.filter { $0.bytes > 0 }
         guard let start = sized.min(by: { $0.bytes < $1.bytes }) else { return nil }
         let row = ModelRecommendations.recommendation(for: repo)
-        return HubSearchResult(id: start.name.map { repo + ":" + $0 } ?? repo,
-                               repo: repo, engine: engine, engines: engines, kind: model.kind,
-                               bytes: start.bytes, memoryGB: start.memoryGB,
-                               estimated: start.estimated, downloads: model.downloads,
-                               io: model.ioTypes?.label,
-                               options: sized, summary: row?.summary, tags: row?.tags ?? [])
+        return HubSearchResult(
+            id: start.name.map { repo + ":" + $0 } ?? repo,
+            repo: repo, engine: engine, engines: engines, kind: model.kind,
+            bytes: start.bytes, memoryGB: start.memoryGB,
+            estimated: start.estimated, downloads: model.downloads,
+            io: model.ioTypes?.label,
+            options: sized, summary: row?.summary, tags: row?.tags ?? [])
     }
 }

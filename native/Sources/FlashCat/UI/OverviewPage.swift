@@ -78,6 +78,7 @@ struct OverviewPage: View {
                 decodeChart
                     .frame(height: 240)
                 gatewayCard
+                runtimeCard
                 recentRequests
                     .frame(minHeight: 200)
             }
@@ -93,7 +94,12 @@ struct OverviewPage: View {
     }
 
     private func wideLayout(_ proxy: GeometryProxy) -> some View {
-        let middleHeight = max(220, min(300, proxy.size.height - 460))
+        let topInset = Console.scrollTopInset(sidebarShown: state.showsSidebar)
+        // 为页头、5 格指标条与 3 段间距预留大致高度，让中间双栏与底部请求表自然吃满视口。
+        let reservedUpperHeight: CGFloat = topInset + Console.contentBottomInset + 56 + 86 + sectionGap * 3
+        let availableBody = max(452, proxy.size.height - reservedUpperHeight)
+        let middleHeight = max(256, min(300, floor(availableBody * 0.52)))
+        let recentMinHeight = max(196, availableBody - middleHeight)
 
         return ScrollView {
             VStack(alignment: .leading, spacing: sectionGap) {
@@ -102,15 +108,19 @@ struct OverviewPage: View {
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(alignment: .top, spacing: sectionGap) {
                     decodeChart
-                    gatewayCard
-                        .frame(width: sideColumnWidth)
+                    VStack(spacing: sectionGap) {
+                        gatewayCard
+                        runtimeCard
+                            .frame(maxHeight: .infinity)
+                    }
+                    .frame(width: sideColumnWidth)
                 }
                 .frame(height: middleHeight)
                 recentRequests
-                    .frame(minHeight: 196)
+                    .frame(minHeight: recentMinHeight)
             }
             .padding(.horizontal, Console.contentPadding)
-            .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
+            .padding(.top, topInset)
             .padding(.bottom, Console.contentBottomInset)
         }
         .scrollIndicators(.never)
@@ -182,14 +192,14 @@ struct OverviewPage: View {
                             Text(L10n.t(state.isRunning ? "停止引擎" : "启动引擎"))
                         }
                     }
-                    .buttonStyle(.ds(state.isRunning ? .danger : .secondary))
+                    .buttonStyle(.ds(state.isRunning ? .danger : .primary))
                     .disabled(state.isSwitchingModel)
 
-                    ModelPickerButton(state: state) {
+                    ModelPickerButton(state: state, kind: .secondary) {
                         DSMenuTriggerLabel(
                             title: "切换模型",
                             systemImage: "square.stack.3d.up.fill",
-                            kind: .primary,
+                            kind: .secondary,
                             size: .regular
                         )
                     }
@@ -198,9 +208,8 @@ struct OverviewPage: View {
             }
             .fixedSize()
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .dsSurface(radius: DS.Radius.lg)
+        .padding(.horizontal, 2)
+        .padding(.vertical, 2)
     }
 
     // MARK: Connected 5-Cell KPI Strip
@@ -268,7 +277,7 @@ struct OverviewPage: View {
             EmptyView()
         } bottom: {
             DSMeter(value: contextProgress, tint: DS.accent)
-                .padding(.vertical, 2)
+                .opacity(contextProgress > 0 ? 1 : 0.45)
         }
     }
 
@@ -309,7 +318,7 @@ struct OverviewPage: View {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(value)
                     .font(DS.Font.number(24, weight: .semibold))
-                    .foregroundStyle(DS.text)
+                    .foregroundStyle(value == "—" ? DS.text4 : DS.text)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                     .contentTransition(.numericText())
@@ -324,6 +333,7 @@ struct OverviewPage: View {
             }
 
             bottom()
+                .frame(height: 5, alignment: .center)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -385,6 +395,9 @@ struct OverviewPage: View {
                                 .multilineTextAlignment(.center)
                                 .frame(maxWidth: 320)
                         }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(DS.surface.opacity(0.92), in: DS.rect(DS.Radius.sm))
                     }
                 } else {
                     Chart {
@@ -449,26 +462,27 @@ struct OverviewPage: View {
 
     private var chartGrid: some View {
         GeometryReader { proxy in
-            let step: CGFloat = 88
+            let cols = max(4, Int((proxy.size.width / 88).rounded()))
+            let rows = max(3, Int((proxy.size.height / 44).rounded()))
+            let dx = proxy.size.width / CGFloat(cols)
+            let dy = proxy.size.height / CGFloat(rows)
             Path { path in
-                var x: CGFloat = 0
-                while x <= proxy.size.width {
+                for col in 0...cols {
+                    let x = CGFloat(col) * dx
                     path.move(to: CGPoint(x: x, y: 0))
                     path.addLine(to: CGPoint(x: x, y: proxy.size.height))
-                    x += step
                 }
-                var y: CGFloat = 0
-                while y <= proxy.size.height {
+                for row in 0...rows {
+                    let y = CGFloat(row) * dy
                     path.move(to: CGPoint(x: 0, y: y))
                     path.addLine(to: CGPoint(x: proxy.size.width, y: y))
-                    y += step / 2
                 }
             }
             .stroke(DS.line, lineWidth: 1)
         }
     }
 
-    // MARK: Gateway
+    // MARK: Gateway & Runtime
 
     private var gatewayCard: some View {
         DSPanel(title: "API 网关", subtitle: "OpenAI + Claude") {
@@ -492,19 +506,38 @@ struct OverviewPage: View {
                         .padding(.horizontal, 14)
                         .padding(.bottom, 8)
                 }
-
-                DSDivider()
-
-                VStack(spacing: 6) {
-                    telemetryRow(label: "引擎端口", value: "127.0.0.1:\(state.port)")
-                    telemetryRow(label: "内存压力", value: stats?.memoryPressureText ?? "—")
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-
-                Spacer(minLength: 0)
             }
         }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var runtimeCard: some View {
+        DSPanel(title: "运行时", subtitle: state.activeEngine.displayName) {
+            DSChip(
+                text: state.isRunning ? "运行中" : "已停止",
+                dot: state.canChat ? DS.ok : (state.isModelBusy ? DS.warn : DS.text4),
+                live: state.canChat)
+        } content: {
+            VStack(spacing: 0) {
+                telemetryRow(label: "引擎端口", value: "127.0.0.1:\(state.port)")
+                DSDivider()
+                telemetryRow(label: "内存压力", value: memorySummaryText)
+                DSDivider()
+                telemetryRow(label: "温度", value: stats?.thermalText ?? "—")
+            }
+            .padding(.horizontal, 14)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var memorySummaryText: String {
+        if let bytes = stats?.memoryBytes, bytes > 0 {
+            if let pressure = stats?.memoryPressure, !pressure.isEmpty {
+                return "\(Format.memory(bytes)) · \(stats?.memoryPressureText ?? "")"
+            }
+            return Format.memory(bytes)
+        }
+        return stats?.memoryPressureText ?? "—"
     }
 
     private func endpointRow(name: String, url: String) -> some View {
@@ -526,20 +559,21 @@ struct OverviewPage: View {
                 state.copy(url, label: "\(name) 接口地址已复制")
             }
         }
-        .padding(.vertical, 9)
+        .padding(.vertical, 7)
     }
 
     private func telemetryRow(label: String, value: String) -> some View {
         HStack {
             Text(L10n.t(label))
-                .font(DS.Font.xs)
+                .font(DS.Font.sm)
                 .foregroundStyle(DS.text3)
             Spacer(minLength: 8)
             Text(verbatim: value)
                 .font(DS.Font.mono(11))
-                .foregroundStyle(DS.text2)
+                .foregroundStyle(value == "—" ? DS.text4 : DS.text2)
                 .lineLimit(1)
         }
+        .frame(minHeight: 30, maxHeight: .infinity)
     }
 
     // MARK: Recent Requests

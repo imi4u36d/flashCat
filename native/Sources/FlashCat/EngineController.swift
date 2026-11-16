@@ -51,7 +51,12 @@ final class EngineController {
     /// the app has nothing to prepare and the launch goes ahead as asked.
     var prepareForStart: (@MainActor (ModelInfo?) async -> StartPreparation)?
 
-    private(set) var state: ServerState = .stopped
+    /// 唯一的生命周期状态。所有写点都经过 `transition(to:)`：状态机只有一处
+    /// 真相，越界的迁移也只有一处能拦（见 `isTransitionAllowed`）。
+    private(set) var phase: Phase = .idle
+    /// 对外可见的五态，由 `phase` 派生。名字与语义和原来的存储属性一致，调用方
+    /// （`AppState`、`ControlServer`、菜单栏）一行都不用改。
+    var state: ServerState { phase.serverState }
     /// Engine-neutral view of the engine's own status document.
     private(set) var status: EngineStatus?
     /// Splash-shaped view for the existing dashboards.
@@ -59,7 +64,9 @@ final class EngineController {
     private(set) var port: Int
     private(set) var model: String = ""
     private(set) var failureMessage: String?
-    private(set) var busySince: Date?
+    /// 「已等待」的起点。原来是独立存储的 `Date?`，只由生命周期写点维护，谁清过
+    /// 它全靠约定；现在它跟着 `phase` 走，读的人（`busySeconds`）不必再关心。
+    private var busySince: Date? { phase.busySince }
     /// 正在搬权重的起点。`busySince` 是进程的起点：引擎已经跑了几个小时、模型又被
     /// 重新加载时，用它算「加载权重」的秒数会给出几个小时。只在加载期间非 nil。
     private var hotLoadSince: Date?
@@ -75,7 +82,6 @@ final class EngineController {
     /// 一份基线；换进程时清掉，否则会把上一轮的计数当起点。
     private var liveRates = EngineLiveRates()
     private var pollInFlight = false
-    private var isStopping = false
     private var lastError: String?
     /// Moves `.starting` out of limbo when the engine neither binds its port nor
     /// exits. Nothing else does: the poller only ever promotes to `.ready`.
@@ -120,9 +126,153 @@ final class EngineController {
         self.logs = LogStore(path: EnginePaths.logFile(id))
     }
 
+    /// 「有进程」和「能聊天」是两件事：`.failed` 也可能带着一个还活着的进程
+    /// （启动超时、健康检查一直不过），那时仍然要让读者点得到「停止」。
     var isRunning: Bool { process != nil }
-    var isReady: Bool { state == .ready }
+    var isReady: Bool { phase == .ready }
     var isInstalled: Bool { true }
+
+    // MARK: phase
+
+    /// 一次运行会经过的全部阶段。
+    ///
+    /// 这些信息原来散在 `state`、`isStopping`、`preparing`、`terminating`、
+    /// `busySince` 五个互相牵制的值里、二十多处写点，互斥关系全靠约定：写得出来
+    /// 的组合里有「正在停」和「还在启」同时为真，只有界面看得见。收成一个值之后
+    /// 同一时刻只可能在一处，越界的迁移由 `isTransitionAllowed` 拦下并留日志。
+    enum Phase: Equatable, Sendable {
+        /// 控制器建好、还没被要求启动过。对外和 `.stopped` 同义。
+        case idle
+        /// 运行时包正在安装。保留位：装包发生在控制器创建之前，正常流程不会
+        /// 进来；留着是为了让状态机对「引擎还没装好」这一阶段有话说。
+        case installing
+        /// 从点下启动到引擎自报就绪之间。`since` 是「已等待」的起点：预下载
+        /// draft、等端口都算同一次等待，否则界面上的计时会先归零再从头数。
+        case starting(since: Date)
+        /// 进程在跑、健康检查也通了，但权重还没搬完。保留位：对外的五态里
+        /// 没有 loading（`ServerState` 刻意只给读者五个词），热加载引擎的这段
+        /// 准备目前由 `startupStage`/`weightLoadSeconds` 报，生产路径暂不进入。
+        case loading
+        /// 可以聊天。
+        case ready
+        /// 已经发过 SIGINT（超时再升级成 SIGKILL），等进程树退干净。
+        case stopping(since: Date)
+        /// 没有进程，也没有错误。
+        case stopped
+        /// 进程不会提供服务了：拉不起来、异常退出或启动超时。`reason` 是给读者
+        /// 看的正文（退出码之外的那一句话）。
+        case failed(reason: String?)
+        /// 用户在退出应用，`prepareForTermination` 已经收过信号。
+        case terminating
+
+        /// 对外可见的五态。界面、CLI、菜单栏都只认这个。
+        var serverState: ServerState {
+            switch self {
+            case .idle, .stopped: return .stopped
+            case .installing, .starting, .loading: return .starting
+            case .ready: return .ready
+            case .stopping, .terminating: return .stopping
+            case .failed: return .failed
+            }
+        }
+
+        /// 「已等待」的起点，nil 表示没有正在计时的等待。
+        var busySince: Date? {
+            switch self {
+            case .starting(let since), .stopping(let since): return since
+            case .idle, .installing, .loading, .ready, .stopped, .failed, .terminating:
+                return nil
+            }
+        }
+    }
+
+    /// 状态迁移的唯一入口。
+    ///
+    /// 返回这次迁移是否被接受，调用方靠它决定要不要继续往下走。同一阶段的重复
+    /// 通知直接吞掉：`poll()` 每秒都会喊一次就绪，那不是一次迁移。
+    ///
+    /// 这里**不**调 `onChange`：发布要发生在一次事件的改动都写完之后
+    /// （`process`、`failureMessage`、日志），否则界面会先看到「已就绪」，
+    /// 再看到失败正文。
+    @discardableResult
+    private func transition(to next: Phase,
+                            file: StaticString = #fileID,
+                            line: UInt = #line) -> Bool {
+        guard next != phase else { return false }
+        guard isTransitionAllowed(from: phase, to: next) else {
+            // 悄悄接受是这类 bug 最难查的地方：状态自己走到不该到的位置，
+            // 界面上只表现为「点了没反应」。留在日志里，排查至少有线索。
+            logs.append("==> 忽略非法的状态迁移：\(phase) → \(next)（\(file):\(line)）",
+                        level: .warning)
+            return false
+        }
+        phase = next
+        return true
+    }
+
+    /// 迁移表。写成「允许什么」而不是「禁止什么」：阶段只有九个，允许的组合少
+    /// 得多，读一遍就能看出某次写入合不合法。
+    private func isTransitionAllowed(from current: Phase, to next: Phase) -> Bool {
+        switch next {
+        case .ready:
+            // 就绪必须有一个活着的进程撑着。这条是上一轮那个竞态的根：进程已经
+            // 退出、`Ready ·` 才被读进来（读线程与退出回调都排在主队列上，先后
+            // 没有保证），于是 `isRunning` 为假而 `isReady` 为真，聊天请求打到
+            // 一个已经关掉的回环端口。从 `.stopping`/`.terminating` 进来同样要
+            // 拒：那意味着退出过程中界面又亮起「可聊天」。
+            guard process != nil else { return false }
+            switch current {
+            case .starting, .loading: return true
+            default: return false
+            }
+        case .starting:
+            // 一次新的启动只能在没有进程、也没有在退出的时候开始：否则两个启动
+            // 会抢同一个控制器，后一个覆盖前一个的 `process`，前一个的退出被
+            // `finished === process` 静默丢掉。
+            guard process == nil else { return false }
+            switch current {
+            case .stopping, .terminating: return false
+            default: return true
+            }
+        case .stopping:
+            // 没有进程就没有「正在停」：那只是已经停了。退出流程已经接管时也
+            // 不许改写：`.terminating` 是 `markReady` 判断迟到信号的依据。
+            guard process != nil else { return false }
+            switch current {
+            case .terminating: return false
+            default: return true
+            }
+        case .failed:
+            return true
+        case .stopped:
+            // 收敛点：任何阶段都可能退到一个干净的「已停止」。
+            return true
+        case .terminating:
+            return true
+        case .idle, .installing, .loading:
+            // 生产路径不进入这三个值（见 `Phase` 上的注释），所以不该有迁移走到
+            // 这里；真要进来，说明有新代码在乱写，留日志比放行好。
+            return false
+        }
+    }
+
+    /// 正在启动。第二只引擎会覆盖第一个的 `process`，前一个的退出被
+    /// `finished === process` 静默丢掉，所以启动期间控制器是独占的。
+    private var isLaunching: Bool {
+        if case .starting = phase { return true }
+        return false
+    }
+
+    private var isStopping: Bool {
+        if case .stopping = phase { return true }
+        return false
+    }
+
+    /// 退出流程已经接管。`markReady` 的守卫靠它挡住「退出中又亮起可聊天」。
+    private var isTerminating: Bool {
+        if case .terminating = phase { return true }
+        return false
+    }
 
     var manifest: EngineManifest { installation.manifest }
     var descriptor: EngineDescriptor { installation.descriptor }
@@ -211,10 +361,6 @@ final class EngineController {
 
     // MARK: start / stop
 
-    /// A start that is still preparing (fetching the model's DFlash2 draft)
-    /// owns the controller: a second click must not launch a second engine
-    /// behind it, and must not be told the launch failed either.
-    private var preparing = false
     /// Bumped by every `stop()`, so a launch that was waiting on a preparation
     /// can tell that the user changed their mind and must not start after all.
     private var stopRequests = 0
@@ -222,33 +368,28 @@ final class EngineController {
     /// `localModel` only matters for splash, whose serve script takes an
     /// assembly/target pair. Other engines take a model identifier.
     func start(localModel: ModelInfo? = nil, requestedModel: String? = nil) async {
-        if process != nil || preparing { return }
+        // A start that is still preparing (fetching the model's DFlash2 draft)
+        // owns the controller: a second click must not launch a second engine
+        // behind it, and must not be told the launch failed either.
+        guard process == nil, !isLaunching, !isTerminating else { return }
+        let attempt = stopRequests
         // 预约要覆盖整个启动过程，不能只盖准备阶段：`claimPort` 为了回收上一次
         // 遗留的引擎可能等上 90 秒，这段时间里第二次点击（或 CLI 的并发启动）
         // 必须看到「正在启动」，否则两个 `start()` 会各起一个进程，后一个覆盖
         // 前一个的 `process`，前一个的退出被 `finished === process` 静默丢掉。
-        preparing = true
-        defer { preparing = false }
-        let attempt = stopRequests
-        // 「已等待」从点下启动这一刻起表。准备阶段（下载 draft 草稿、等端口）
-        // 也算同一次等待：之前要等进程真的拉起来才记起点，几 GB 的预下载全程
-        // 显示「已等待 0:00」，之后又开始从零数，计数器看起来像坏了。
-        busySince = Date()
+        // 起点也记在这里：「已等待」从点下启动这一刻起表，准备阶段（下载 draft
+        // 草稿、等端口）也算同一次等待——之前要等进程真的拉起来才记起点，几 GB
+        // 的预下载全程显示「已等待 0:00」，之后又开始从零数，计数器像坏了。
+        guard transition(to: .starting(since: Date())) else { return }
+        onChange()
         var localModel = localModel
         if let prepareForStart {
-            // The preparation can take minutes (a draft is a few GB), so the
-            // click has to look taken instead of ignored.
-            state = .starting
-            onChange()
             switch await prepareForStart(localModel) {
             case .ready(let refreshed):
                 // Stopped while the preparation ran: the engines page already
-                // said 已停止 and must stay that way. 没有进程在跑，等待计时
-                // 也到此为止，下一次启动重新起表。
-                guard attempt == stopRequests else {
-                    busySince = nil
-                    return
-                }
+                // said 已停止 and must stay that way. `stop()` 已经把阶段收成
+                // 「已停止」，这次启动不能再装作没发生过，把进程拉起来。
+                guard attempt == stopRequests else { return }
                 localModel = refreshed ?? localModel
             case .failed(let message):
                 // Nothing was launched, so the engines page must show why the
@@ -264,16 +405,15 @@ final class EngineController {
         desiredModel = plan.model
         runModel = localModel
         guard let claimed = await claimPort(plan.model) else {
-            state = .failed
-            busySince = nil
-            onChange()
+            // 端口申请不上时 `claimPort` 已经把原因写进 `failureMessage`；
+            // 这里只负责把状态和正文一起收进 failed。
+            fail(failureMessage ?? "无法为 \(id.displayName) 申请端口")
             return
         }
         // 等端口的这段时间里用户点了停止：`stop()` 已经把状态改成「已停止」，
         // 这次启动不能再装作没发生过，把进程拉起来。
         guard attempt == stopRequests else {
-            busySince = nil
-            state = .stopped
+            transition(to: .stopped)
             onChange()
             return
         }
@@ -309,26 +449,23 @@ final class EngineController {
                 writePidFile(pid)
                 spawnWatchdog(enginePid: pid)
             }
-            state = .starting
             failureMessage = nil
             stats = nil
             status = nil
             liveRates.reset()
-            isStopping = false
-            // 起点在 start() 开头已经记过：这里再记一次会把预下载和等端口的
-            // 那几分钟抹掉，「已等待」当着读者的面跳回 0:00。
-            if busySince == nil { busySince = Date() }
+            // 阶段还是 start() 开头那个 `.starting`：从这里到 `task.run()` 之间
+            // 没有 await，中途插不进 `stop()`，所以不必再迁一次（再迁一次会把
+            // 起点刷成现在，「已等待」就把预下载和等端口的那几分钟丢了）。
             startReader(stdout, index: 0)
             startReader(stderr, index: 1)
             startPolling()
             startStartupDeadline(for: task)
             onChange()
         } catch {
+            // `process` 还没赋值（赋值在 `run()` 之后），所以这里失败一定没有
+            // 留下半启动的进程；正文与阶段由 `fail` 一起写。
             logs.close()
-            state = .failed
-            busySince = nil
-            failureMessage = "无法启动服务：\(error)"
-            onChange()
+            fail("无法启动服务：\(error)")
         }
     }
 
@@ -475,19 +612,36 @@ final class EngineController {
     /// 就绪即撤掉启动看门狗。它只为「这一次启动」计时；跑完之后还挂着的话，
     /// 之后一次热切换（`state` 又回到 `.starting`，`process` 还是同一个）会在
     /// 计时器到期时被误判成启动超时，把一个健康的引擎标成失败。
-    private func markReady() {
+    ///
+    /// 还要确认进程仍在：`Ready ·` 那行日志由读线程经主队列送进来，而
+    /// `processExited` 的 terminationHandler 也排在主队列上，两者的先后没有保证。
+    /// 引擎快速崩退时，退出回调可能先到——进程已经清空，随后到达的 Ready 行再把
+    /// `state` 改成 `.ready`。`isReady` 只看 state、`isRunning` 只看 process，于是
+    /// 两个都为真、`AppState.canChat` 放行，请求会打到一个已经关掉的回环端口，
+    /// 读的人看到的是「连接失败」而不是「引擎退出了」。
+    // internal 而不是 private：这是读线程那行 `Ready ·` 落到状态机上的唯一入口，
+    // 测试要能在进程已经清空之后单独喂它一次，验证迟到信号被丢掉
+    // （`EngineControllerPhaseTests.testLateReadySignalIsDropped`）。
+    func markReady() {
         startupWatchdog?.cancel()
         startupWatchdog = nil
-        guard state != .ready else { return }
-        state = .ready
+        guard process != nil, !isTerminating else {
+            // 迟到的就绪信号直接丢掉，并留一行日志：日志页是这套系统唯一的
+            // 排查入口，这条竞态真发生时得有人能看见它是怎么被处理的。
+            logs.append("==> 忽略迟到的就绪信号（进程已退出）", level: .warning)
+            return
+        }
+        // 「什么算就绪」交给迁移表：重复的就绪不是一次迁移（`poll()` 每秒都会
+        // 喊一次），停止中的就绪会被拦下并留一条告警。
+        guard transition(to: .ready) else { return }
         onChange()
     }
 
     private func fail(_ message: String) {
-        state = .failed
+        // 正文先进 `failureMessage` 再迁阶段：界面上「异常 + 原因」是一个东西，
+        // 分两次写会让读者看到一帧只有「异常」的界面。
         failureMessage = message
-        // 失败后没有东西再「等待」了：留着起点，下一次启动还会继承这段旧时间。
-        if process == nil { busySince = nil }
+        transition(to: .failed(reason: message))
         onChange()
     }
 
@@ -516,18 +670,18 @@ final class EngineController {
         // no longer applies: the next start must load its model again.
         lastHotLoad = nil
         stopRequests += 1
+        // 退出流程已经在收尾：再走一遍只会重复打信号，还会把 `.terminating`
+        // 改写成 `.stopping`，`markReady` 判断迟到信号就失去了依据。
+        if isTerminating { return }
         if process == nil {
-            state = .stopped
-            // 已经不在跑了（典型是点「停止」时还在准备阶段）：等待计时收掉，
-            // 否则下一次启动的「已等待」会从这一次点下启动的时间算起。
-            busySince = nil
+            // 已经不在跑了（典型是点「停止」时还在准备阶段）：阶段收成
+            // 「已停止」，等待计时也跟着结束，下一次启动重新起表。
+            transition(to: .stopped)
             onChange()
             return
         }
         if isStopping { return }
-        isStopping = true
-        state = .stopping
-        busySince = Date()
+        transition(to: .stopping(since: Date()))
         logs.append("==> 正在停止服务…", level: .system)
         onChange()
 
@@ -565,8 +719,10 @@ final class EngineController {
     func restart(localModel: ModelInfo? = nil) async {
         if isRunning {
             guard await stopAndWait() else {
-                state = .failed
+                // 进程可能还活着，所以先写正文再迁阶段：读者点完「重启」看到
+                // 的第一句话就是这次为什么没重启。
                 failureMessage = "旧服务（端口 \(port)）未能退出，已取消重启"
+                transition(to: .failed(reason: failureMessage))
                 onChange()
                 return
             }
@@ -663,9 +819,6 @@ final class EngineController {
     /// engines resident. Now the quit path is: signal, await a short grace
     /// off the main actor, then kill whatever ignored the signal.
     ///
-    /// Idempotent: both halves may run twice on one quit.
-    private var terminating = false
-
     /// First half: snapshot the tree and ask it to stop.
     ///
     /// Returns whether anything was signalled. The quit path uses it to skip
@@ -673,8 +826,7 @@ final class EngineController {
     /// is exactly the kind of fixed delay that makes quitting feel broken.
     @discardableResult
     func prepareForTermination() -> Bool {
-        guard !terminating else { return false }
-        terminating = true
+        guard !isTerminating else { return false }
         pollTimer?.invalidate()
         pollTimer = nil
         startupWatchdog?.cancel()
@@ -684,6 +836,11 @@ final class EngineController {
             let tree = snapshotProcessTree(pid)
             terminationTree = tree
             tree.signal(SIGINT)
+            // 退出也是状态机的一个阶段：进程还活着，但已经不该被当成「能聊天」，
+            // 也不能被迟到的 `Ready ·` 拉回 ready。只在真有进程时迁——空闲的
+            // 控制器保持 `.stopped`，免得退出瞬间把「这个引擎本来没在跑」这件事
+            // 说成「正在停止」。
+            transition(to: .terminating)
             signalled = true
         }
         removePidFile()
@@ -905,19 +1062,19 @@ final class EngineController {
         stats = nil
         status = nil
         liveRates.reset()
-        busySince = nil
+        // 停止要先读一次：三行之后 `transition` 就把阶段改掉了，那时候再问
+        // 「是不是读者点的停止」已经没人记得。
         let wasStopping = isStopping
-        isStopping = false
         if wasStopping {
             logs.append("==> 服务已停止", level: .system)
-            state = .stopped
+            transition(to: .stopped)
         } else if finished.terminationStatus == 0 {
-            state = .stopped
+            transition(to: .stopped)
         } else {
-            state = .failed
             let message = lastError ?? "服务异常退出（退出码 \(finished.terminationStatus)）"
             failureMessage = message
             logs.append("==> \(message)", level: .system)
+            transition(to: .failed(reason: message))
         }
         onChange()
     }
@@ -955,15 +1112,19 @@ final class EngineController {
     }
 
     private func appendLog(_ line: String) {
-        if line.contains("Ready ·") {
+        switch EngineLogSignal.detect(line) {
+        case .ready:
             lastError = nil
-            if state == .starting {
-                markReady()
-            }
-        } else if line.contains("Error ·") || line.lowercased().hasPrefix("error:") {
-            // flashcat_serve.py reports preparation failures as "error: ..." on
-            // stderr; keep them for the help text instead of a bare exit code.
-            lastError = line
+            // 不再自己判断「是不是在启动中」：判定收进 `markReady` 的守卫与迁移
+            // 表，停止中、已停止的迟到就绪也会走同一条路留一条告警，而重复就绪
+            // 因为阶段没变被静默吞掉。
+            markReady()
+        case .error(let message):
+            // flashcat_serve.py 的准备失败走 stderr 的 "error: ..."，留作失败提示，
+            // 比只给一个退出码有用。存正文而不是整行：提示框里不该带 "error:" 前缀。
+            lastError = message
+        case .none:
+            break
         }
         logs.append(line)
     }

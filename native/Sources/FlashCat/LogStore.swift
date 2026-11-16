@@ -1,4 +1,5 @@
 import Foundation
+import FlashCatKit
 
 enum LogLevel: String {
     case info = "info"
@@ -191,9 +192,15 @@ final class LogStore {
     }
 
     static func classify(_ text: String) -> LogLevel {
-        if text.contains("Error ·") || text.lowercased().contains("error:") { return .error }
-        if text.lowercased().contains("warning") || text.lowercased().contains("warn ·") { return .warning }
-        if text.contains("Ready ·") { return .success }
+        // 引擎的两种状态 marker 只认 `EngineLogSignal` 那一份定义：这里以前也各写了一遍
+        // `contains("Error ·")` / `"Ready ·"`，marker 一改就要满仓找。
+        switch EngineLogSignal.detect(text) {
+        case .error: return .error
+        case .ready: return .success
+        case .none: break
+        }
+        let lower = text.lowercased()
+        if lower.contains("warning") || lower.contains("warn ·") { return .warning }
         if text.hasPrefix("==> flashCat") || text.hasPrefix("==> ") { return .system }
         return .info
     }

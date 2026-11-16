@@ -228,60 +228,71 @@ final class GatewayController: ObservableObject {
             dialect: "openai",
             promptTokens: TokenEstimator.promptTokens(messages: openaiPayload?["messages"]))
         if wantsStream {
-            guard let response = await GatewayUpstream.postStreaming(port: upstream.port,
-                                                                     path: request.path,
-                                                                     body: request.body) else {
+            let response: GatewayUpstream.StreamResponse
+            switch await GatewayUpstream.postStreaming(port: upstream.port,
+                                                       path: request.path,
+                                                       body: request.body) {
+            case .success(let streamed):
+                response = streamed
+            case .failure(let error):
                 GatewayMeter.shared.finish(meterID, failed: true)
-                return Self.errorResponse(GatewayAPIError.overloaded("无法连接引擎（127.0.0.1:\(upstream.port)）"),
-                                          anthropic: false)
+                return Self.upstreamFailureResponse(error, anthropic: false)
             }
             if response.status >= 300 {
                 GatewayMeter.shared.finish(meterID, failed: true)
                 return await Self.drainAsResponse(response)
             }
             return GatewayResponse.sse { session in
-                var ended = false
-                do {
-                    for try await line in response.bytes.lines {
-                        if session.isClosed { break }
-                        let trimmed = line.trimmingCharacters(in: .whitespaces)
-                        if trimmed.isEmpty { continue }
-                        if trimmed == "data: [DONE]" || trimmed == "[DONE]" {
-                            _ = session.write("data: [DONE]\n\n")
-                            ended = true
-                            break
+                // 生产者可能从任意一行早退（`session.write` 返回 false 表示客户端
+                // 已断开），也可能在上游断流时退出；收尾交给 withStreamMetering
+                // 的 defer，这一路才会在概览里落定。
+                await Self.withStreamMetering(GatewayMeter.shared, id: meterID) {
+                    var ended = false
+                    do {
+                        for try await line in response.bytes.lines {
+                            if session.isClosed { break }
+                            let trimmed = line.trimmingCharacters(in: .whitespaces)
+                            if trimmed.isEmpty { continue }
+                            if trimmed == "data: [DONE]" || trimmed == "[DONE]" {
+                                _ = session.write("data: [DONE]\n\n")
+                                ended = true
+                                break
+                            }
+                            // 顺手解析每一片：既算实时速率，也接住末片的 usage。
+                            if let data = GatewayUpstream.dataPayload(ofLine: trimmed),
+                               let chunk = Self.parseObject(Data(data.utf8)) {
+                                GatewayMeter.shared.ingest(meterID, chunk: chunk)
+                            }
+                            _ = session.write(trimmed + "\n\n")
                         }
-                        // 顺手解析每一片：既算实时速率，也接住末片的 usage。
-                        if let data = GatewayUpstream.dataPayload(ofLine: trimmed),
-                           let chunk = Self.parseObject(Data(data.utf8)) {
-                            GatewayMeter.shared.ingest(meterID, chunk: chunk)
-                        }
-                        _ = session.write(trimmed + "\n\n")
+                    } catch {
+                        // Upstream vanished: the client sees the stream end.
                     }
-                } catch {
-                    // Upstream vanished: the client sees the stream end.
+                    GatewayMeter.shared.finish(meterID)
+                    if !ended { _ = session.write("data: [DONE]\n\n") }
+                    session.close()
                 }
-                GatewayMeter.shared.finish(meterID)
-                if !ended { _ = session.write("data: [DONE]\n\n") }
-                session.close()
             }
         }
 
-        guard let response = await GatewayUpstream.postJSON(port: upstream.port,
-                                                            path: request.path,
-                                                            body: request.body) else {
+        let buffered: GatewayUpstream.BufferedResponse
+        switch await GatewayUpstream.postJSON(port: upstream.port,
+                                             path: request.path,
+                                             body: request.body) {
+        case .success(let response):
+            buffered = response
+        case .failure(let error):
             GatewayMeter.shared.finish(meterID, failed: true)
-            return Self.errorResponse(GatewayAPIError.overloaded("无法连接引擎（127.0.0.1:\(upstream.port)）"),
-                                      anthropic: false)
+            return Self.upstreamFailureResponse(error, anthropic: false)
         }
-        if (200..<300).contains(response.status) {
-            GatewayMeter.shared.ingestResponse(meterID, body: response.body)
+        if (200..<300).contains(buffered.status) {
+            GatewayMeter.shared.ingestResponse(meterID, body: buffered.body)
         } else {
             GatewayMeter.shared.finish(meterID, failed: true)
         }
         var out = GatewayResponse()
-        out.status = response.status == 0 ? 502 : response.status
-        out.body = response.body
+        out.status = buffered.status == 0 ? 502 : buffered.status
+        out.body = buffered.body
         return out
     }
 
@@ -317,69 +328,81 @@ final class GatewayController: ObservableObject {
             return Self.errorResponse(GatewayAPIError.overloaded("推理引擎未运行，请先在 flashCat 中启动服务"),
                                       anthropic: true)
         }
+        // 只算一次：旧实现给 meter 和 StreamTranslator 各算了一遍，
+        // `countInputTokens` 要遍历全部 messages，长对话上直接翻倍。
+        let inputTokens = AnthropicCodec.countInputTokens(payload)
         let meterID = GatewayMeter.shared.begin(model: model,
                                                dialect: "claude",
-                                               promptTokens: AnthropicCodec.countInputTokens(payload))
+                                               promptTokens: inputTokens)
 
         if stream {
-            let inputTokens = AnthropicCodec.countInputTokens(payload)
-            guard let response = await GatewayUpstream.postStreaming(port: upstream.port,
-                                                                     path: "/v1/chat/completions",
-                                                                     body: openaiBody) else {
+            let response: GatewayUpstream.StreamResponse
+            switch await GatewayUpstream.postStreaming(port: upstream.port,
+                                                       path: "/v1/chat/completions",
+                                                       body: openaiBody) {
+            case .success(let streamed):
+                response = streamed
+            case .failure(let error):
                 GatewayMeter.shared.finish(meterID, failed: true)
-                return Self.errorResponse(GatewayAPIError.overloaded("无法连接引擎（127.0.0.1:\(upstream.port)）"),
-                                          anthropic: true)
+                return Self.upstreamFailureResponse(error, anthropic: true)
             }
             if response.status >= 300 {
                 GatewayMeter.shared.finish(meterID, failed: true)
                 return await Self.drainAsAnthropicError(response)
             }
             return GatewayResponse.sse { session in
-                let translator = AnthropicCodec.StreamTranslator(model: model, inputTokens: inputTokens)
-                for frame in translator.startEvents() where !session.write(frame) { return }
-                do {
-                    for try await line in response.bytes.lines {
-                        if session.isClosed { break }
-                        guard let payload = GatewayUpstream.dataPayload(ofLine: line),
-                              let chunk = Self.parseObject(Data(payload.utf8)) else { continue }
-                        GatewayMeter.shared.ingest(meterID, chunk: chunk)
-                        for frame in translator.consume(chunk: chunk)
-                        where !session.write(frame) { return }
+                // 三个 `where !session.write(frame) { return }` 都是早退路径：
+                // 没有 withStreamMetering 时它们会把这一路永远留在「在跑」。
+                await Self.withStreamMetering(GatewayMeter.shared, id: meterID) {
+                    let translator = AnthropicCodec.StreamTranslator(model: model, inputTokens: inputTokens)
+                    for frame in translator.startEvents() where !session.write(frame) { return }
+                    do {
+                        for try await line in response.bytes.lines {
+                            if session.isClosed { break }
+                            guard let payload = GatewayUpstream.dataPayload(ofLine: line),
+                                  let chunk = Self.parseObject(Data(payload.utf8)) else { continue }
+                            GatewayMeter.shared.ingest(meterID, chunk: chunk)
+                            for frame in translator.consume(chunk: chunk)
+                            where !session.write(frame) { return }
+                        }
+                    } catch {
+                        // Upstream vanished mid-stream: finishEvents below closes
+                        // what is open so the client sees a well-formed message.
                     }
-                } catch {
-                    // Upstream vanished mid-stream: finishEvents below closes
-                    // what is open so the client sees a well-formed message.
+                    GatewayMeter.shared.finish(meterID)
+                    for frame in translator.finishEvents() where !session.write(frame) { return }
+                    session.close()
                 }
-                GatewayMeter.shared.finish(meterID)
-                for frame in translator.finishEvents() where !session.write(frame) { return }
-                session.close()
             }
         }
 
-        guard let response = await GatewayUpstream.postJSON(port: upstream.port,
-                                                            path: "/v1/chat/completions",
-                                                            body: openaiBody) else {
+        let buffered: GatewayUpstream.BufferedResponse
+        switch await GatewayUpstream.postJSON(port: upstream.port,
+                                             path: "/v1/chat/completions",
+                                             body: openaiBody) {
+        case .success(let response):
+            buffered = response
+        case .failure(let error):
             GatewayMeter.shared.finish(meterID, failed: true)
-            return Self.errorResponse(GatewayAPIError.overloaded("无法连接引擎（127.0.0.1:\(upstream.port)）"),
-                                      anthropic: true)
+            return Self.upstreamFailureResponse(error, anthropic: true)
         }
-        guard (200..<300).contains(response.status) else {
+        guard (200..<300).contains(buffered.status) else {
             GatewayMeter.shared.finish(meterID, failed: true)
             var out = GatewayResponse()
-            out.status = response.status == 0 ? 502 : response.status
+            out.status = buffered.status == 0 ? 502 : buffered.status
             out.body = Data((try? JSONSerialization.data(
-                withJSONObject: AnthropicCodec.errorEnvelope(from: response.body,
-                                                             upstreamStatus: response.status)))
+                withJSONObject: AnthropicCodec.errorEnvelope(from: buffered.body,
+                                                             upstreamStatus: buffered.status)))
                 ?? Data(#"{"type":"error","error":{"type":"api_error","message":"engine error"}}"#.utf8))
             return out
         }
-        guard let openaiResponse = Self.parseObject(response.body) else {
+        guard let openaiResponse = Self.parseObject(buffered.body) else {
             GatewayMeter.shared.finish(meterID, failed: true)
             return Self.errorResponse(GatewayAPIError(status: 502, type: "api_error",
                                                       message: "引擎返回了无法解析的响应"),
                                       anthropic: true)
         }
-        GatewayMeter.shared.ingestResponse(meterID, body: response.body)
+        GatewayMeter.shared.ingestResponse(meterID, body: buffered.body)
         return GatewayResponse.json(AnthropicCodec.translateResponse(openaiResponse))
     }
 
@@ -387,6 +410,57 @@ final class GatewayController: ObservableObject {
 
     private struct EngineSnapshot {
         let port: Int
+    }
+
+    /// 流式应答的收尾边界。
+    ///
+    /// 生产者随时可能从任意一行早退（`session.write` 返回 false 表示客户端已
+    /// 断开），也可能在上游断流时退出。旧实现是
+    /// `for frame in … where !session.write(frame) { return }` 直接 return，
+    /// `GatewayMeter.finish` 永远不执行：这一路在概览里永远是「在跑」——曲线
+    /// 不冻结、`latestContext()` 一直把它算进去，会话表满了 32 条之后还会把
+    /// 真正在跑的请求挤掉。`finish` 自身幂等（见 GatewayMeter.finish 里
+    /// `finishedAt == nil` 的判断），所以把收尾放进 `defer` 是安全的。
+    nonisolated static func withStreamMetering(_ meter: GatewayMeter,
+                                              id: Int,
+                                              _ produce: () async -> Void) async {
+        defer { meter.finish(id) }
+        await produce()
+    }
+
+    /// 上游失败要同时做两件事：回一个能区分的状态码，并写进网关日志。
+    ///
+    /// 旧实现把「引擎没起」「等超时」「连接断了」统统回成 503 且一个字不落日志，
+    /// 用户只能看到 503，然后从「是不是模型太大」开始猜。现在 503 = 引擎不可达
+    /// （可重试）、504 = 引擎在跑但太慢、502 = 请求没走通。
+    nonisolated private static func upstreamFailureResponse(_ error: GatewayUpstreamError,
+                                                            anthropic: Bool) -> GatewayResponse {
+        logUpstreamFailure(error)
+        let apiError: GatewayAPIError
+        switch error {
+        case .notReachable:
+            // 引擎没起来属于「暂时不可用」，沿用 overloaded_error：SDK 默认把它
+            // 当成可重试的过载，而不是请求写错了。
+            apiError = GatewayAPIError.overloaded(error.logMessage)
+        case .timedOut:
+            apiError = GatewayAPIError(status: 504,
+                                       type: anthropic ? "api_error" : "upstream",
+                                       message: error.logMessage)
+        case .transport:
+            apiError = GatewayAPIError(status: 502,
+                                       type: anthropic ? "api_error" : "upstream",
+                                       message: error.logMessage)
+        }
+        return errorResponse(apiError, anthropic: anthropic)
+    }
+
+    /// `LogStore.append` 自己带锁、不要求主 actor，但 `logs` 挂在 @MainActor 的
+    /// 单例上，这里 hop 一次再写；日志写晚一拍没有关系。
+    nonisolated private static func logUpstreamFailure(_ error: GatewayUpstreamError) {
+        let line = "==> \(error.logMessage)"
+        Task { @MainActor in
+            GatewayController.shared.logs.append(line, level: .error)
+        }
     }
 
     nonisolated private static func parseObject(_ data: Data) -> [String: Any]? {

@@ -1,0 +1,33 @@
+[package]
+name = "flashcat"
+version = "0.2.0"
+description = "FlashCat — local inference workbench"
+authors = ["FlashCat"]
+edition = "2021"
+rust-version = "1.77"
+publish = false
+
+[lib]
+# staticlib/cdylib 是 iOS / Android 需要的产物形态，桌面端只用 rlib。
+name = "flashcat_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
+# 移动端目前不需要额外依赖；本地推理后端接入时在这里挂 llama.cpp 绑定。
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

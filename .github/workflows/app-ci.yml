@@ -1,0 +1,85 @@
+name: App CI
+
+# 前端与 Tauri 外壳的快速门禁。Swift 那套在 ci.yml，两者互不影响：
+# 这个工作流的全部输入都在 web/ 下，跑完只要两分钟。
+
+on:
+  push:
+    branches: [main]
+    paths: ["web/**", ".github/workflows/app-*.yml"]
+  pull_request:
+    paths: ["web/**", ".github/workflows/app-*.yml"]
+
+concurrency:
+  group: app-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: web
+
+jobs:
+  web:
+    name: Typecheck & build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # `pnpm build` 本身就是 `tsc --noEmit && vite build`，类型错误会在这里挂掉。
+      - name: Build
+        run: pnpm build
+
+  shell:
+    name: Cargo check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: web/src-tauri
+
+      - name: Linux webkit deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf libxdo-dev libssl-dev build-essential
+
+      - name: Install & build frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Cargo check
+        working-directory: web/src-tauri
+        run: cargo check --locked

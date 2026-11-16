@@ -43,3 +43,9 @@ vendor/*.sha256
 
 # Bootstrap-cached tools (standalone uv downloaded by the engine pack scripts)
 .tools/
+
+# pnpm 本地内容寻址仓库（web/ 目录安装依赖时产生）
+.pnpm-store/
+
+# 编辑器/工具本地状态
+.zcode/

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- 自绘外壳：状态栏/导航栏透明，内容直接铺到系统栏下面，
+         顶部与底部的安全区由 CSS 的 env(safe-area-inset-*) 负责。 -->
+    <style name="Theme.flashcat" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/flashcat_canvas</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <!-- 深色底配浅色图标 -->
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:enforceStatusBarContrast">false</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+    </style>
+</resources>

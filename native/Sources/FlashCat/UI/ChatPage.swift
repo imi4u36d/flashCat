@@ -113,31 +113,38 @@ struct ChatPage: View {
 
     // MARK: Header
 
+    private var currentThreadTitle: String? {
+        chat.threads.first(where: { $0.id == state.currentThreadID })?.title
+    }
+
     private var header: some View {
         HStack(spacing: 10) {
             DSMenu(size: .small) {
                 DSMenuTriggerLabel(
-                    title: state.selectedModel.isEmpty ? "选择模型" : state.shortModelName(state.selectedModel),
-                    systemImage: "sparkles",
+                    title: currentThreadTitle ?? L10n.t("新对话"),
+                    systemImage: "bubble.left.and.bubble.right",
                     imageTint: DS.accent,
-                    badge: state.activeModelSupportsVideo ? "视频" : (state.activeModelSupportsImage ? "图像" : nil),
                     size: .small
                 )
+                .frame(maxWidth: 260, alignment: .leading)
             } content: {
-                ForEach(EngineCatalog.allIDs.filter { state.engineIsInstalled($0) }, id: \.self) { id in
-                    let models = state.engineModels(for: id)
-                        .filter { !$0.hidden && !$0.helper && !ModelLibraryEntry.isDraftModel($0.id) }
-                    if !models.isEmpty {
-                        Section(id.displayName) {
-                            ForEach(models) { model in
-                                Button {
-                                    state.applyModelFromAnyEngine(model.id, engine: id)
-                                } label: {
-                                    if model.id == state.selectedModel, id == state.activeEngine {
-                                        Label(state.shortModelName(model.id), systemImage: "checkmark")
-                                    } else {
-                                        Text(state.shortModelName(model.id))
-                                    }
+                Button {
+                    state.newConversation()
+                } label: {
+                    Label(L10n.t("新对话"), systemImage: "square.and.pencil")
+                }
+
+                if !chat.threads.isEmpty {
+                    Divider()
+                    Section(L10n.t("最近对话")) {
+                        ForEach(chat.threads.prefix(20)) { thread in
+                            Button {
+                                state.openThread(thread)
+                            } label: {
+                                if thread.id == state.currentThreadID {
+                                    Label(thread.title, systemImage: "checkmark")
+                                } else {
+                                    Text(thread.title)
                                 }
                             }
                         }
@@ -145,22 +152,7 @@ struct ChatPage: View {
                 }
             }
             .disabled(chat.generating)
-
-            if state.activeModelSupportsVideo {
-                Text(L10n.t("提示词 → 视频"))
-                    .font(DS.Font.mono(11))
-                    .foregroundStyle(DS.text3)
-            } else if state.activeModelSupportsImage {
-                Text(L10n.t("提示词 → 图像"))
-                    .font(DS.Font.mono(11))
-                    .foregroundStyle(DS.text3)
-            } else {
-                Text(
-                    "\(Format.tokens(state.contextUsedTokens)) / \(state.contextWindowCeiling.map { Format.tokensShort($0) } ?? "—")"
-                )
-                .font(DS.Font.mono(11))
-                .foregroundStyle(DS.text3)
-            }
+            .help(L10n.t("最近对话"))
 
             Spacer(minLength: 0)
 
@@ -394,22 +386,170 @@ struct ChatPage: View {
         atBottom = true
     }
 
-    /// 空会话：品牌徽记 + 问候语 + 当前引擎与模型胶囊，压在输入卡上方的视觉中心。
-    private var emptyState: some View {
-        VStack(spacing: 14) {
-            BrandMark(size: 38)
-            Text("需要我为你做些什么?")
-                .font(DS.Font.title)
-                .tracking(-0.35)
-                .foregroundStyle(DS.text)
-                .multilineTextAlignment(.center)
-            DSChip(
-                text:
-                    "\(state.activeEngine.displayName) · \(state.selectedModel.isEmpty ? L10n.t("未选择模型") : state.shortModelName(state.selectedModel))",
-                dot: state.canChat ? DS.ok : (state.isModelBusy ? DS.warn : DS.text4),
-                live: state.canChat)
+    private struct StarterPrompt: Identifiable {
+        let id: String
+        let icon: String
+        let color: Color
+        let label: String
+        let prompt: String
+    }
+
+    private var starterPrompts: [StarterPrompt] {
+        if supportsVideo {
+            return [
+                StarterPrompt(
+                    id: "video.cinema",
+                    icon: "film",
+                    color: DS.accent,
+                    label: "电影感镜头",
+                    prompt: "航拍云海中的雪山日出，金色光线缓慢掠过山脊"),
+                StarterPrompt(
+                    id: "video.macro",
+                    icon: "video",
+                    color: DS.info,
+                    label: "微距动态",
+                    prompt: "雨滴落在透明玻璃窗上缓缓滑落，城市霓虹散景"),
+            ]
         }
-        .padding(.bottom, 96)
+        if supportsImage {
+            return [
+                StarterPrompt(
+                    id: "image.concept",
+                    icon: "wand.and.stars",
+                    color: DS.accent,
+                    label: "概念插画",
+                    prompt: "极简玻璃质感的小猫雕塑，柔和清晨自然光，微距摄影"),
+                StarterPrompt(
+                    id: "image.arch",
+                    icon: "camera.aperture",
+                    color: DS.info,
+                    label: "建筑光影",
+                    prompt: "现代清水混凝土美术馆中庭，穿透天窗的丁达尔光线"),
+            ]
+        }
+        return [
+            StarterPrompt(
+                id: "text.code",
+                icon: "chevron.left.forwardslash.chevron.right",
+                color: DS.accent,
+                label: "编写代码",
+                prompt: "帮我写一个 SwiftUI 玻璃材质卡片组件，带悬停微动效"),
+            StarterPrompt(
+                id: "text.explain",
+                icon: "lightbulb",
+                color: DS.warn,
+                label: "概念拆解",
+                prompt: "用通俗易懂的比喻解释 Transformer 的注意力机制"),
+            StarterPrompt(
+                id: "text.summary",
+                icon: "doc.text.magnifyingglass",
+                color: DS.info,
+                label: "内容总结",
+                prompt: "帮我提炼下面这段文字的核心观点与行动项"),
+            StarterPrompt(
+                id: "text.polish",
+                icon: "pencil.and.outline",
+                color: DS.ok,
+                label: "文本润色",
+                prompt: "把这段技术说明改写得更精炼、清晰且有条理"),
+        ]
+    }
+
+    /// 空会话：品牌光晕徽记 + 问候语 + 场景化快捷提示卡 + 最近对话快速接续。
+    private var emptyState: some View {
+        VStack(spacing: 20) {
+            VStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(DS.accent.opacity(0.14))
+                        .frame(width: 92, height: 92)
+                        .blur(radius: 22)
+                    BrandMark(size: 44)
+                }
+
+                Text(L10n.t("需要我为你做些什么?"))
+                    .font(DS.Font.title)
+                    .tracking(-0.35)
+                    .foregroundStyle(DS.text)
+                    .multilineTextAlignment(.center)
+
+                DSChip(
+                    text:
+                        "\(state.activeEngine.displayName) · \(state.selectedModel.isEmpty ? L10n.t("未选择模型") : state.shortModelName(state.selectedModel))",
+                    dot: state.canChat ? DS.ok : (state.isModelBusy ? DS.warn : DS.text4),
+                    live: state.canChat)
+            }
+
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(minimum: 180), spacing: 10),
+                    GridItem(.flexible(minimum: 180), spacing: 10),
+                ],
+                spacing: 10
+            ) {
+                ForEach(starterPrompts) { item in
+                    Button {
+                        draft = L10n.t(item.prompt)
+                        composerFocused = true
+                    } label: {
+                        HStack(spacing: 10) {
+                            IconTile(symbol: item.icon, color: item.color, size: 28)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(L10n.t(item.label))
+                                    .font(DS.Font.sm.weight(.semibold))
+                                    .foregroundStyle(DS.text)
+                                    .lineLimit(1)
+                                Text(L10n.t(item.prompt))
+                                    .font(DS.Font.xs)
+                                    .foregroundStyle(DS.text3)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .dsSurface(radius: DS.Radius.lg, hoverable: true)
+                        .contentShape(DS.rect(DS.Radius.lg))
+                    }
+                    .buttonStyle(DSPressStyle(scale: 0.985))
+                }
+            }
+            .frame(maxWidth: min(560, max(360, columnWidth - 80)))
+
+            if !chat.threads.isEmpty {
+                HStack(spacing: 8) {
+                    Text(L10n.t("最近对话"))
+                        .font(DS.Font.xs)
+                        .foregroundStyle(DS.text3)
+                    ForEach(chat.threads.prefix(3)) { thread in
+                        Button {
+                            state.openThread(thread)
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "bubble.left")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(DS.text3)
+                                Text(thread.title)
+                                    .font(DS.Font.xs.weight(.medium))
+                                    .foregroundStyle(DS.text2)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
+                            .padding(.horizontal, 10)
+                            .frame(maxWidth: 150)
+                            .frame(height: 24)
+                            .dsSurface(radius: 12, hoverable: true)
+                            .contentShape(Capsule())
+                        }
+                        .buttonStyle(DSPressStyle(scale: 0.97))
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 32)
+        .padding(.bottom, 108)
     }
 
     // MARK: Column resize handle
@@ -566,6 +706,9 @@ struct ChatPage: View {
                                 lastSeed: lastImageSeed)
                         }
                     }
+
+                    contextReadout
+                        .padding(.leading, 2)
 
                     // 文本模型的「画」开关：开着就把画图工具挂进请求，模型自己决定
                     // 画几张、写什么分镜。默认开，关掉后模型只写字。
@@ -831,6 +974,29 @@ struct ChatPage: View {
     /// 最近一张图用的 seed：参数面板里给一个「用上次」的快捷入口。
     private var lastImageSeed: Int? {
         chat.messages.last(where: { $0.imageSeed != nil })?.imageSeed
+    }
+
+    @ViewBuilder
+    private var contextReadout: some View {
+        if state.activeModelSupportsVideo {
+            Text(L10n.t("提示词 → 视频"))
+                .font(DS.Font.mono(11))
+                .foregroundStyle(DS.text3)
+                .fixedSize()
+        } else if state.activeModelSupportsImage {
+            Text(L10n.t("提示词 → 图像"))
+                .font(DS.Font.mono(11))
+                .foregroundStyle(DS.text3)
+                .fixedSize()
+        } else {
+            Text(
+                "\(Format.tokens(state.contextUsedTokens)) / \(state.contextWindowCeiling.map { Format.tokensShort($0) } ?? "—")"
+            )
+            .font(DS.Font.mono(11))
+            .foregroundStyle(DS.text3)
+            .monospacedDigit()
+            .fixedSize()
+        }
     }
 
     private func pickImage(for slot: VideoFrameSlot?) {

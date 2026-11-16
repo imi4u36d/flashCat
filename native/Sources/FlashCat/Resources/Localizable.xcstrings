@@ -71,6 +71,16 @@
         }
       }
     },
+    "%@ · %@（下次启动）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · %@ (next launch)"
+          }
+        }
+      }
+    },
     "%@ · %lld GB 统一内存": {
       "localizations": {
         "en": {
@@ -591,26 +601,6 @@
         }
       }
     },
-    "图像模型常驻": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Keep the image model resident"
-          }
-        }
-      }
-    },
-    "画完图后图像模型留在显存里，下一轮生图不必重新加载；内存不够时引擎仍会自己换出": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Keep the image model in memory after drawing so the next round does not reload it; the engine still swaps it out when memory runs low."
-          }
-        }
-      }
-    },
     "QQ 群号": {
       "localizations": {
         "en": {
@@ -717,6 +707,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "≈%@–%@ GB memory"
+          }
+        }
+      }
+    },
+    "「%@」已在后台生成完成": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"%@\" finished generating in the background"
+          }
+        }
+      }
+    },
+    "「%@」里的 %lld 条消息会一并删除，无法恢复。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "\"%@\" has %lld messages. They are deleted with it and cannot be recovered."
           }
         }
       }
@@ -1311,6 +1321,16 @@
         }
       }
     },
+    "内容总结": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Summarize"
+          }
+        }
+      }
+    },
     "准备": {
       "localizations": {
         "en": {
@@ -1387,6 +1407,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Switch Engine?"
+          }
+        }
+      }
+    },
+    "切换日志来源": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switch Log Source"
           }
         }
       }
@@ -1471,6 +1501,26 @@
         }
       }
     },
+    "删除这段对话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete Chat"
+          }
+        }
+      }
+    },
+    "删除这段对话？": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete this chat?"
+          }
+        }
+      }
+    },
     "加入 QQ 群，和其他 flashCat 用户一起聊": {
       "localizations": {
         "en": {
@@ -1547,6 +1597,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Partial downloads are marked .flashcat-incomplete and never appear in the model library"
+          }
+        }
+      }
+    },
+    "协议": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Protocol"
           }
         }
       }
@@ -1751,46 +1811,6 @@
         }
       }
     },
-    "命令面板": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Command Palette"
-          }
-        }
-      }
-    },
-    "协议": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Protocol"
-          }
-        }
-      }
-    },
-    "按请求": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Per-request"
-          }
-        }
-      }
-    },
-    "模型启动以来平均": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Average since model start"
-          }
-        }
-      }
-    },
     "命令行工具": {
       "localizations": {
         "en": {
@@ -1831,6 +1851,16 @@
         }
       }
     },
+    "命令面板": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Command Palette"
+          }
+        }
+      }
+    },
     "回到最新": {
       "localizations": {
         "en": {
@@ -1867,6 +1897,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Fixed endpoint; clients do not need changes"
+          }
+        }
+      }
+    },
+    "图像模型常驻": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep the image model resident"
           }
         }
       }
@@ -2081,16 +2121,6 @@
         }
       }
     },
-    "实验": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Lab"
-          }
-        }
-      }
-    },
     "完成": {
       "localizations": {
         "en": {
@@ -2127,6 +2157,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Live speed"
+          }
+        }
+      }
+    },
+    "实验": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lab"
           }
         }
       }
@@ -2311,16 +2351,6 @@
         }
       }
     },
-    "「%@」已在后台生成完成": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\"%@\" finished generating in the background"
-          }
-        }
-      }
-    },
     "已删除对话「%@」": {
       "localizations": {
         "en": {
@@ -2441,6 +2471,16 @@
         }
       }
     },
+    "已把 %@ 设为 %@ 的默认模型，下次启动生效；当前运行的 %@ 不受影响": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Set %@ as the default model for %@; it takes effect on next launch and %@ keeps running."
+          }
+        }
+      }
+    },
     "已把 %lld 个模型搬进 flashCat 的模型目录，不再依赖外部目录": {
       "localizations": {
         "en": {
@@ -2501,6 +2541,26 @@
         }
       }
     },
+    "帮我写一个 SwiftUI 玻璃材质卡片组件，带悬停微动效": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Build a SwiftUI Liquid Glass card component with subtle hover motion"
+          }
+        }
+      }
+    },
+    "帮我提炼下面这段文字的核心观点与行动项": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Extract key takeaways and action items from the following text"
+          }
+        }
+      }
+    },
     "常驻权重": {
       "localizations": {
         "en": {
@@ -2527,6 +2587,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Apply"
+          }
+        }
+      }
+    },
+    "建筑光影": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Architecture Light"
           }
         }
       }
@@ -2747,6 +2817,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Idle"
+          }
+        }
+      }
+    },
+    "微距动态": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Macro Motion"
           }
         }
       }
@@ -2981,12 +3061,32 @@
         }
       }
     },
+    "把这段技术说明改写得更精炼、清晰且有条理": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rewrite this technical note to be tighter, clearer, and well-structured"
+          }
+        }
+      }
+    },
     "折叠边栏": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Collapse Sidebar"
+          }
+        }
+      }
+    },
+    "按请求": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Per-request"
           }
         }
       }
@@ -3241,6 +3341,16 @@
         }
       }
     },
+    "文本润色": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Polish Writing"
+          }
+        }
+      }
+    },
     "新对话": {
       "localizations": {
         "en": {
@@ -3357,6 +3467,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Pause"
+          }
+        }
+      }
+    },
+    "暂无请求": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No requests"
           }
         }
       }
@@ -3651,6 +3771,16 @@
         }
       }
     },
+    "极简玻璃质感的小猫雕塑，柔和清晨自然光，微距摄影": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minimalist glass cat sculpture, soft morning natural light, macro photography"
+          }
+        }
+      }
+    },
     "极高": {
       "localizations": {
         "en": {
@@ -3741,6 +3871,26 @@
         }
       }
     },
+    "概念拆解": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Explain Concept"
+          }
+        }
+      }
+    },
+    "概念插画": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Concept Art"
+          }
+        }
+      }
+    },
     "概览": {
       "localizations": {
         "en": {
@@ -3797,6 +3947,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Model Card"
+          }
+        }
+      }
+    },
+    "模型启动以来平均": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Average since model start"
           }
         }
       }
@@ -4001,16 +4161,6 @@
         }
       }
     },
-    "切换日志来源": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Switch Log Source"
-          }
-        }
-      }
-    },
     "清空通知历史": {
       "localizations": {
         "en": {
@@ -4091,6 +4241,16 @@
         }
       }
     },
+    "现代清水混凝土美术馆中庭，穿透天窗的丁达尔光线": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modern bare concrete museum atrium with Tyndall light beams through skylights"
+          }
+        }
+      }
+    },
     "生成中": {
       "localizations": {
         "en": {
@@ -4127,6 +4287,36 @@
           "stringUnit": {
             "state": "translated",
             "value": "Explain the advantages of local LLMs in three sentences"
+          }
+        }
+      }
+    },
+    "用通俗易懂的比喻解释 Transformer 的注意力机制": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Explain Transformer self-attention with a clear everyday analogy"
+          }
+        }
+      }
+    },
+    "电影感镜头": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cinema Shot"
+          }
+        }
+      }
+    },
+    "画完图后图像模型留在显存里，下一轮生图不必重新加载；内存不够时引擎仍会自己换出": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep the image model in memory after drawing so the next round does not reload it; the engine still swaps it out when memory runs low."
           }
         }
       }
@@ -4281,6 +4471,16 @@
         }
       }
     },
+    "等待样本": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for samples"
+          }
+        }
+      }
+    },
     "等待首个 token…": {
       "localizations": {
         "en": {
@@ -4361,6 +4561,16 @@
         }
       }
     },
+    "缓存命中率": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cache Hit Rate"
+          }
+        }
+      }
+    },
     "缓存目录已保存": {
       "localizations": {
         "en": {
@@ -4371,12 +4581,12 @@
         }
       }
     },
-    "缓存命中率": {
+    "编写代码": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Cache Hit Rate"
+            "value": "Write Code"
           }
         }
       }
@@ -4427,6 +4637,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Adaptive"
+          }
+        }
+      }
+    },
+    "航拍云海中的雪山日出，金色光线缓慢掠过山脊": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aerial snow-capped mountain sunrise above clouds, golden light sweeping the ridge"
           }
         }
       }
@@ -4911,6 +5131,26 @@
         }
       }
     },
+    "雨滴落在透明玻璃窗上缓缓滑落，城市霓虹散景": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Raindrops sliding slowly down a glass window with city neon bokeh"
+          }
+        }
+      }
+    },
+    "非流式请求无逐秒曲线": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No per-second curve for non-streaming requests"
+          }
+        }
+      }
+    },
     "页面": {
       "localizations": {
         "en": {
@@ -5077,86 +5317,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Default Model"
-          }
-        }
-      }
-    },
-    "已把 %@ 设为 %@ 的默认模型，下次启动生效；当前运行的 %@ 不受影响": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Set %@ as the default model for %@; it takes effect on next launch and %@ keeps running."
-          }
-        }
-      }
-    },
-    "%@ · %@（下次启动）": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ · %@ (next launch)"
-          }
-        }
-      }
-    },
-    "删除这段对话": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Delete Chat"
-          }
-        }
-      }
-    },
-    "删除这段对话？": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Delete this chat?"
-          }
-        }
-      }
-    },
-    "「%@」里的 %lld 条消息会一并删除，无法恢复。": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "\"%@\" has %lld messages. They are deleted with it and cannot be recovered."
-          }
-        }
-      }
-    },
-    "等待样本": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Waiting for samples"
-          }
-        }
-      }
-    },
-    "暂无请求": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No requests"
-          }
-        }
-      }
-    },
-    "非流式请求无逐秒曲线": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No per-second curve for non-streaming requests"
           }
         }
       }

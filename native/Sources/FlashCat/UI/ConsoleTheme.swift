@@ -4,12 +4,11 @@
 import AppKit
 import SwiftUI
 
-// MARK: - Console palette (matches the shipped WebUI's visual language)
+// MARK: - Console palette (compatibility aliases)
 //
-// The WebUI is the visual source of truth: a cool, very light glass canvas,
-// white translucent cards with 20 pt corners, pink accent (#D1487A), soft blue
-// shadows, and 13–15 pt type. These tokens replace the older warm "instrument"
-// palette for the console pages; the menu bar panel keeps `Native`.
+// 控制台页面还在引用的旧 token 名。取值全部来自 `DS`
+// （UI/DesignSystem.swift）；粉强调、玻璃卡片与 20 pt 圆角是 1.5.x 的
+// 语言，1.6.0 起由 DS 统一接管。新代码直接用 `DS`。
 
 extension Color {
     init(console hex: UInt32, opacity: Double = 1) {

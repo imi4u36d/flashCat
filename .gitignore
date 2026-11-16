@@ -23,8 +23,10 @@ __pycache__/
 # Editor workspace settings
 .vscode/
 
-# Internal scratch (screenshots, one-off notes). Design docs under docs/reviews
-# and docs/specs ARE tracked: an open-source project's specs are an asset.
+# Internal scratch (screenshots, one-off notes, local builds and .bak files).
+# Design docs under docs/reviews and docs/specs ARE tracked: an open-source
+# project's specs are an asset.
+.scratch/
 docs/scratch/
 *.screenshot.png
 

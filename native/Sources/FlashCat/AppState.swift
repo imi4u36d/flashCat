@@ -32,7 +32,7 @@ enum Page: String, CaseIterable, Identifiable {
         }
     }
 
-    /// 主工作区七页：实验室紧跟在设置后面。
+    /// 主工作区七页：实验紧跟在设置后面。
     static let workspace: [Page] = [.overview, .chat, .models, .engines, .logs, .settings, .lab]
 }
 

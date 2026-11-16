@@ -14,7 +14,7 @@ parent: flashcat-app
 SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用户动作直接调用
 `AppState` 的方法。没有 `WKWebView`、没有 HTML/CSS/JS、没有序列化桥、没有打包产物。
 
-页面：概览、对话、模型、引擎、日志、设置、实验室，以及首次启动的硬件推荐 / 引擎安装页。
+页面：概览、对话、模型、引擎、日志、设置、实验，以及首次启动的硬件推荐 / 引擎安装页。
 
 ## 目录
 
@@ -29,7 +29,7 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 | `UI/ModelCardText.swift` | Hugging Face 模型卡的 Markdown 清洗 |
 | `UI/CommandPalette.swift` | 命令面板：页面跳转与常用动作（鼠标操作） |
 | `UI/OverviewPage.swift` | 引擎状态、当前模型、六项实时指标、吞吐曲线、上下文与接口 |
-| `UI/ChatPage.swift` | 会话、流式消息、思考块、Markdown 正文、输入框与生成参数 |
+| `UI/ChatPage.swift` | 会话、对话切换器、空态提示卡、流式消息、思考块、Markdown 正文、输入框与生成参数 |
 | `UI/MarkdownView.swift` | 对话正文的块级 Markdown 渲染（标题/列表/表格/代码/引用） |
 | `UI/ModelsPage.swift` | 引擎栏、筛选、模型卡、下载/使用/删除、草稿与共享授权 |
 | `UI/ModelsPage.swift` 内的 `ModelCard` | 单张模型卡的动作与进度 |
@@ -37,14 +37,16 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 | `UI/DownloadCenterSheet.swift` | 下载任务：进度、暂停、继续、清理半成品 |
 | `UI/EnginesPage.swift` | 五台引擎的安装、启停、切换、上游版本与运行时删除 |
 | `UI/EngineConfigSheet.swift` | 单台引擎的端口与调优开关 |
-| `UI/LogsPage.swift` | 实时日志、级别过滤、搜索、暂停、复制、清空 |
+| `UI/LogsPage.swift` | 日志：默认合并全部引擎、来源切换、级别过滤、搜索、暂停、复制、清空 |
+| `LogFeed.swift` | 多引擎日志尾巴合并、来源标签与按引擎指纹的增量裁剪 |
 | `UI/SettingsPage.swift` | 外观、服务、网关、命令行接口、生成默认值、存储与关于 |
-| `UI/LabPage.swift` | 实验室：图片 / 视频分页网格、翻页、缩略图预取与详情入口 |
+| `UI/LabPage.swift` | 实验：图片 / 视频分页网格、翻页、缩略图预取与详情入口 |
 | `UI/GalleryDetailSheet.swift` | 生成结果详情：大图、视频播放、参数与提示词复用 |
 | `UI/ChatColumn.swift` | 对话列宽换算：拖动上下限、落盘夹取与气泡 / 输入卡派生 |
 | `UI/VideoPlayback.swift` | 用 QuickTime 打开生成视频，失败退回默认应用 |
 | `UI/LaunchPage.swift` | 首次启动的硬件推荐与引擎安装 |
-| `Design.swift` / `Theme.swift` | 设计 token、组件与外观（`Native` / `AppAppearance`） |
+| `UI/DesignSystem.swift` | 唯一设计源 `DS`：色阶、字号、圆角、动效与基础控件（`Native` / `Console` 只是兼容别名） |
+| `Design.swift` / `Theme.swift` | 旧 token 的兼容别名与浅色 / 深色解析（`Native` / `AppAppearance`） |
 
 ## 窗口 chrome
 
@@ -103,9 +105,10 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
   标序号，单张仍按原来的大图显示。「正在画第 2/3 张 · 去噪 8/20」这类阶段写在占位气泡里，
   和图像 / 视频链路的进度占同一个位置；停止按钮一并掐断换模型与画图的整条链路。
 
-## 实验室
+## 实验
 
-- **第七页。** 侧栏「设置」之后是「实验室」（`flask`），顶部玻璃分段在「图片 / 视频」
+- **第七页。** 侧栏「设置」之后是「实验」（`flask`；英文界面叫 Lab），顶部玻璃分段在
+   「图片 / 视频」
   之间切换。两个库都只认 assistant 消息里落盘的结果，用户拖进输入卡的底图与首帧图
   不会混进来。
 - **一屏一页。** 网格不滚动：按可视尺寸算出每页列数 × 行数（`LabGridLayout`），翻页器

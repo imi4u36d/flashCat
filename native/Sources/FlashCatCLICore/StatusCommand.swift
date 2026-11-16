@@ -7,8 +7,17 @@ public enum StatusCommand {
         let watch = context.invocation.flag("watch")
         let interval = max(0.2, Double(context.invocation.option("interval") ?? "1") ?? 1)
         var finalExit = CLIExit.success.rawValue
+        var warned = false
         repeat {
             let snapshot = await snapshot(context)
+            // 警告只在第一轮打到 stderr：`--watch` 每轮重画整屏，同一行反复刷会把
+            // 真正的状态挤掉；`--json` 时它已经在 payload 的 `warnings` 里，不必再打。
+            if !warned, !context.output.json {
+                for warning in snapshot.report.warnings {
+                    context.output.warning(warning)
+                }
+            }
+            warned = true
             if context.output.json {
                 context.output.json(snapshot.report)
             } else {
@@ -38,6 +47,9 @@ public enum StatusCommand {
         public var downloads: [ControlDownloadSummary]
         public var offline: Bool
         public var error: String?
+        /// 说清哪些本地材料没读成（目前只有损坏的 engines.json）。它不影响
+        /// `running` / 退出码：既有契约不能因为一行警告而变。
+        public var warnings: [String]
     }
 
     private struct Snapshot {
@@ -59,7 +71,10 @@ public enum StatusCommand {
                                            gateway: status.gateway,
                                            downloads: status.downloads,
                                            offline: false,
-                                           error: nil),
+                                           error: nil,
+                                           // 在线时这份文档来自应用自己的状态，
+                                           // CLI 侧那份 engines.json 坏没坏都不影响结论。
+                                           warnings: []),
                             offlineReason: nil,
                             exit: .success)
         } catch let error as CLIError {
@@ -74,26 +89,10 @@ public enum StatusCommand {
 
     private static func offlineReport(_ context: CLIContext, reason: String) -> Report {
         let local = context.local
-        let configuration = local.engineConfiguration
-        let engines = EngineCatalog.allIDs.map { id -> ControlEngineState in
-            let installed = local.newest(id)
-            let versions = local.installed(id).map(\.version)
-            let active = id == local.activeEngine
-            let model = active
-                ? (local.selectedModel.isEmpty ? (configuration.lastModel[id.rawValue] ?? "") : local.selectedModel)
-                : (configuration.lastModel[id.rawValue] ?? "")
-            return ControlEngineState(id: id.rawValue,
-                                      name: id.displayName,
-                                      version: installed?.version ?? "—",
-                                      installedVersions: versions,
-                                      isActive: active,
-                                      isInstalled: installed != nil,
-                                      state: "stopped",
-                                      port: configuration.port[id.rawValue] ?? id.defaultPort,
-                                      model: model,
-                                      stage: "",
-                                      capabilities: id.descriptor.capabilities.map(\.rawValue).sorted())
-        }
+        // 离线报告完全由磁盘拼出来，所以 engines.json 读不动的理由必须一起带上：
+        // 否则「没有任何引擎」看起来就像事实，而不是一份读坏的文件的后果。
+        let readout = local.engineConfigurationReadout()
+        let engines = ControlEngineDocuments.engines(local.engineDocumentInputs())
         let gateway = ControlGatewayState(enabled: local.gatewayEnabled,
                                           running: local.gatewayEnabled && portOpen(local.gatewayPort),
                                           port: local.gatewayPort,
@@ -103,12 +102,13 @@ public enum StatusCommand {
         return Report(running: false,
                       appRunning: appRunning,
                       app: nil,
-                      engine: engines.first { $0.isActive },
+                      engine: ControlEngineDocuments.primary(engines),
                       engines: engines,
                       gateway: gateway,
                       downloads: localDownloads(),
                       offline: true,
-                      error: reason)
+                      error: reason,
+                      warnings: readout.warning.map { [$0] } ?? [])
     }
 
     private static func localDownloads() -> [ControlDownloadSummary] {

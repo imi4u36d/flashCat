@@ -318,20 +318,6 @@ extension ControlServer {
         let write: ((String) throws -> Void)?
     }
 
-    enum ConfigError: Error, LocalizedError {
-        case invalidKey(String)
-        case readOnly(String)
-        case invalidValue(String)
-
-        var errorDescription: String? {
-            switch self {
-            case .invalidKey(let key): return "未知设置项：\(key)"
-            case .readOnly(let key): return "\(key) 是只读项"
-            case .invalidValue(let message): return message
-            }
-        }
-    }
-
     func configEntries() -> [ControlConfigEntry] {
         configBindings().map { binding in
             ControlConfigEntry(kind: binding.kind,
@@ -351,6 +337,9 @@ extension ControlServer {
         }
         do {
             try write(body.value)
+        } catch let error as ControlConfigError {
+            // Kit 的错误带 kind，HTTP 状态码由壳层决定（Kit 不认 HTTP）。
+            return Self.failure(Self.httpStatus(for: error.kind), ControlErrorCode.badRequest, error.message)
         } catch {
             return Self.failure(400, ControlErrorCode.badRequest,
                                 (error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
@@ -363,6 +352,14 @@ extension ControlServer {
                                             mutable: true))
     }
 
+    private static func httpStatus(for kind: ControlConfigError.Kind) -> Int {
+        switch kind {
+        case .conflict: return 409
+        case .notFound: return 404
+        case .usage, .readOnly: return 400
+        }
+    }
+
     private func configBindings() -> [ConfigBinding] {
         let state = AppState.shared
         let settings = state.settings
@@ -371,20 +368,20 @@ extension ControlServer {
         func bool(_ key: String, _ title: String, get: @escaping () -> Bool,
                   set: @escaping (Bool) -> Void) -> ConfigBinding {
             ConfigBinding(key: key, title: title, kind: "bool", mutable: true,
-                          read: { get() ? "true" : "false" },
-                          write: { try set(Self.parseBool($0, key: key)) })
+                          read: { ControlConfigGrammar.format(.bool(get())) },
+                          write: { try set(ControlConfigGrammar.bool($0, key: key)) })
         }
         func int(_ key: String, _ title: String, range: ClosedRange<Int>,
                  get: @escaping () -> Int, set: @escaping (Int) -> Void) -> ConfigBinding {
             ConfigBinding(key: key, title: title, kind: "int", mutable: true,
-                          read: { String(get()) },
-                          write: { try set(Self.parseInt($0, key: key, range: range)) })
+                          read: { ControlConfigGrammar.format(.int(get())) },
+                          write: { try set(ControlConfigGrammar.int($0, key: key, range: range)) })
         }
         func double(_ key: String, _ title: String, range: ClosedRange<Double>,
                     get: @escaping () -> Double, set: @escaping (Double) -> Void) -> ConfigBinding {
             ConfigBinding(key: key, title: title, kind: "double", mutable: true,
-                          read: { String(format: "%.2f", get()) },
-                          write: { try set(Self.parseDouble($0, key: key, range: range)) })
+                          read: { ControlConfigGrammar.format(.double(get())) },
+                          write: { try set(ControlConfigGrammar.double($0, key: key, range: range)) })
         }
         func text(_ key: String, _ title: String, get: @escaping () -> String,
                   set: @escaping (String) -> Void) -> ConfigBinding {
@@ -394,20 +391,11 @@ extension ControlServer {
 
         var items: [ConfigBinding] = [
             ConfigBinding(key: "appearance", title: "外观", kind: "enum", mutable: true,
-                          read: {
-                              switch state.theme.mode {
-                              case .system: return "system"
-                              case .light: return "light"
-                              case .dark: return "dark"
-                              }
-                          },
+                          read: { ControlConfigGrammar.appearanceToken(state.theme.mode.rawValue) },
                           write: { value in
-                              switch value.lowercased() {
-                              case "system": state.theme.set(.system)
-                              case "light": state.theme.set(.light)
-                              case "dark": state.theme.set(.dark)
-                              default: throw ConfigError.invalidValue("appearance 只能是 system / light / dark")
-                              }
+                              let raw = try ControlConfigGrammar.appearance(value)
+                              // grammar 只产出 0/1/2；fallback 只为避免强解包。
+                              state.theme.set(AppAppearance(rawValue: raw) ?? .system)
                           }),
             bool("autoStart", "随应用启动引擎", get: { settings.autoStart },
                  set: { settings.setAutoStart($0) }),
@@ -442,41 +430,29 @@ extension ControlServer {
                          state.applyControlSettings()
                     }
                 }),
-            int("port", "默认引擎端口", range: 1024...65535,
-                get: { settings.port }, set: { settings.setPort($0) }),
+            int("port", "默认引擎端口", range: ControlConfigGrammar.portRange,
+                get: { ControlConfigGrammar.port(settings.port, fallback: 8000) },
+                set: { settings.setPort($0) }),
             ConfigBinding(key: "model", title: "当前模型", kind: "string", mutable: false,
                           read: { state.selectedModel }, write: nil),
             ConfigBinding(key: "thinkingMode", title: "思考模式", kind: "enum", mutable: true,
-                          read: {
-                              switch settings.thinkingMode {
-                              case .automatic: return "auto"
-                              case .off: return "off"
-                              case .on: return "on"
-                              }
-                          },
+                          read: { ControlConfigGrammar.thinkingModeToken(settings.thinkingMode.rawValue) },
                           write: { value in
-                              switch value.lowercased() {
-                              case "auto", "automatic": settings.setThinkingMode(.automatic)
-                              case "off", "none": settings.setThinkingMode(.off)
-                              case "on": settings.setThinkingMode(.on)
-                              default: throw ConfigError.invalidValue("thinkingMode 只能是 auto / off / on")
-                              }
+                              // grammar 是唯一解析点，在线与离线命令都接受 auto/automatic/none/off/on。
+                              let raw = try ControlConfigGrammar.thinkingMode(value)
+                              settings.setThinkingMode(ThinkingMode(rawValue: raw) ?? .automatic)
                           }),
             ConfigBinding(key: "reasoningEffort", title: "推理等级", kind: "enum", mutable: true,
-                          read: { settings.reasoningEffort.token },
+                          read: { ControlConfigGrammar.reasoningEffortToken(settings.reasoningEffort.rawValue) },
                           write: { value in
-                              guard let effort = ReasoningEffort.allCases.first(where: {
-                                  $0.token == value.lowercased()
-                              }) else {
-                                  throw ConfigError.invalidValue("reasoningEffort 只能是 low / medium / high / xhigh")
-                              }
-                              settings.setReasoningEffort(effort)
+                              let raw = try ControlConfigGrammar.reasoningEffort(value)
+                              settings.setReasoningEffort(ReasoningEffort.stored(raw))
                           }),
             double("temperature", "温度", range: 0...2,
                    get: { settings.temperature }, set: { settings.setTemperature($0) }),
             double("topP", "Top P", range: 0...1,
                    get: { settings.topP }, set: { settings.setTopP($0) }),
-            int("maxTokens", "最大输出", range: 0...1_000_000,
+            int("maxTokens", "最大输出", range: ControlConfigGrammar.maxTokensRange,
                 get: { settings.maxTokens }, set: { settings.setMaxTokens($0) }),
             text("systemPrompt", "系统提示", get: { settings.systemPrompt },
                  set: { settings.setSystemPrompt($0) }),
@@ -509,37 +485,18 @@ extension ControlServer {
                 kind: "int",
                 mutable: true,
                 read: {
-                    String(EngineStore.shared.configuration(for: id).port ?? id.defaultPort)
+                    let configuration = EngineStore.shared.configuration(for: id)
+                    // 配置里存 0 或没存都表示「用默认端口」；这里必须归一，否则 CLI 会显示 0。
+                    return ControlConfigGrammar.format(
+                        .int(ControlConfigGrammar.port(configuration.port, fallback: id.defaultPort)))
                 },
                 write: { value in
-                    let port = try Self.parseInt(value, key: "engines.\(id.rawValue).port",
-                                                 range: 1024...65535)
+                    let port = try ControlConfigGrammar.int(value, key: "engines.\(id.rawValue).port",
+                                                             range: ControlConfigGrammar.portRange)
                     state.switchEnginePort(id, port: port)
                 }))
         }
         return items
-    }
-
-    private static func parseBool(_ raw: String, key: String) throws -> Bool {
-        switch raw.trimmingCharacters(in: .whitespaces).lowercased() {
-        case "true", "1", "yes", "on": return true
-        case "false", "0", "no", "off": return false
-        default: throw ConfigError.invalidValue("\(key) 需要 true / false")
-        }
-    }
-
-    private static func parseInt(_ raw: String, key: String, range: ClosedRange<Int>) throws -> Int {
-        guard let value = Int(raw.trimmingCharacters(in: .whitespaces)), range.contains(value) else {
-            throw ConfigError.invalidValue("\(key) 需要 \(range.lowerBound)…\(range.upperBound) 的整数")
-        }
-        return value
-    }
-
-    private static func parseDouble(_ raw: String, key: String, range: ClosedRange<Double>) throws -> Double {
-        guard let value = Double(raw.trimmingCharacters(in: .whitespaces)), range.contains(value) else {
-            throw ConfigError.invalidValue("\(key) 需要 \(range.lowerBound)…\(range.upperBound) 的数字")
-        }
-        return value
     }
 
     // MARK: Doctor

@@ -37,10 +37,9 @@ public enum EnginesCommand {
         do {
             let location = try context.control
             engines = try await location.client.get("/v1/engines", timeout: context.timeout)
-        } catch let error as CLIError where error.exit == .notRunning {
-            // Only "the app is not there" justifies the disk view. A token,
-            // timeout or socket error must surface: printing a stale offline
-            // list with exit 0 would hide the real problem.
+        } catch let error as CLIError where ControlFallback.shouldFallBack(error) {
+            // 判据收敛在 ControlFallback：「应用没在运行」才给磁盘视图；令牌、超时、
+            // 连接错误必须冒出来，否则一份陈旧的离线列表 + exit 0 会把真正的问题藏掉。
             engines = offlineEngines(context)
         }
         if context.output.json {
@@ -62,22 +61,9 @@ public enum EnginesCommand {
     }
 
     private static func offlineEngines(_ context: CLIContext) -> [ControlEngineState] {
-        let local = context.local
-        let configuration = local.engineConfiguration
-        return EngineCatalog.allIDs.map { id in
-            let installed = local.newest(id)
-            return ControlEngineState(id: id.rawValue,
-                                      name: id.displayName,
-                                      version: installed?.version ?? "—",
-                                      installedVersions: local.installed(id).map(\.version),
-                                      isActive: id == local.activeEngine,
-                                      isInstalled: installed != nil,
-                                      state: "stopped",
-                                      port: configuration.port[id.rawValue] ?? id.defaultPort,
-                                      model: configuration.lastModel[id.rawValue] ?? "",
-                                      stage: "",
-                                      capabilities: id.descriptor.capabilities.map(\.rawValue).sorted())
-        }
+        // 与 `status --offline` 共用 Kit 的文档构造函数：以前这里少一步
+        // 「active 引擎优先用 selectedModel」的回退，两个命令对同一状态给出不同结果。
+        ControlEngineDocuments.engines(context.local.engineDocumentInputs())
     }
 
     // MARK: Start / stop / restart / use
@@ -205,19 +191,18 @@ public enum EnginesCommand {
                            exit: .conflict,
                            hint: "应用 bundle 和 checkout 里的 pack 由构建/签名管理")
         }
-        if let location = try? context.control {
-            let engines: [ControlEngineState]
-            do {
-                engines = try await location.client.get("/v1/engines", timeout: context.timeout)
-            } catch let error as CLIError where error.exit == .notRunning {
-                engines = []
-            }
-            // 只有「应用确实没在跑」才跳过这个检查。401 / 超时当成「没在跑」，
-            // 等于在活的进程底下删掉它的 pack。
+        do {
+            let location = try context.control
+            let engines: [ControlEngineState] = try await location.client.get(
+                "/v1/engines", timeout: context.timeout)
+            // 401 / 超时当成「没在跑」等于在活的进程底下删掉它的 pack，所以它们
+            // 必须抛出去；只有 `.notRunning` 才允许跳过这个检查。
             if let running = engines.first(where: { $0.id == id.rawValue && $0.isRunning }) {
                 throw CLIError("\(running.name) 正在运行，先停止再卸载", exit: .conflict,
                                hint: "flashcat engines stop \(id.rawValue)")
             }
+        } catch let error as CLIError where ControlFallback.shouldFallBack(error) {
+            // 应用没在运行：没有进程能正在跑这个 pack，跳过运行中检查。
         }
         guard try context.confirm("删除 \(id.displayName) \(target.version)（\(target.root.path)）？") else {
             context.output.note("已取消")
@@ -266,13 +251,22 @@ public enum EnginesCommand {
         }
 
         let value: Int
-        if let location = try? context.control,
-           let document: ControlConfigDocument = try? await location.client.get("/v1/config",
-                                                                                timeout: context.timeout),
-           let entry = document.entries.first(where: { $0.key == key }) {
-            value = Int(entry.value) ?? id.defaultPort
-        } else {
-            value = context.local.engineConfiguration.port[id.rawValue] ?? id.defaultPort
+        do {
+            let location = try context.control
+            let document: ControlConfigDocument = try await location.client.get(
+                "/v1/config", timeout: context.timeout)
+            if let raw = document.entries.first(where: { $0.key == key })?.value, let port = Int(raw) {
+                value = ControlConfigGrammar.port(port, fallback: id.defaultPort)
+            } else {
+                // 在线文档里没有这一项（老版本应用）时，本地 engines.json 才是唯一线索。
+                value = ControlConfigGrammar.port(context.local.engineConfiguration.port[id.rawValue],
+                                                  fallback: id.defaultPort)
+            }
+        } catch let error as CLIError where ControlFallback.shouldFallBack(error) {
+            // 只有应用没在运行时才读本地；401 / 超时用本地旧值冒充「当前端口」会让
+            // 用户以为改端口失败是语法问题。
+            value = ControlConfigGrammar.port(context.local.engineConfiguration.port[id.rawValue],
+                                              fallback: id.defaultPort)
         }
         if context.output.json {
             struct Body: Encodable {
@@ -351,11 +345,24 @@ public enum EnginesCommand {
         return nil
     }
 
+    /// 安装/卸载后让正在运行的应用重建索引，这一步是装饰性的：应用没跑、令牌过期、
+    /// 请求失败都不该把已经成功的安装变成失败，所以刻意 best-effort，不向上抛。
     private static func reloadApp(_ context: CLIContext) async {
         guard !context.invocation.flag("no-reload") else { return }
-        guard let location = try? context.control else { return }
-        _ = try? await location.client.postData("/v1/engines/reload", body: Data("{}".utf8),
-                                                timeout: 10)
+        guard let location = try? context.control else {
+            // 没有 control.json 说明应用没在运行：没有可重载的对象，属预期而非错误。
+            return
+        }
+        do {
+            _ = try await location.client.postData("/v1/engines/reload", body: Data("{}".utf8),
+                                                   timeout: 10)
+        } catch {
+            // 重载失败不影响安装结果；应用下次启动会自己重建索引。留一行 verbose 线索，
+            // 免得「装完没立刻刷新」变成无从排查的怪现象。
+            if context.output.verbose {
+                context.output.note("重载引擎索引失败（不影响安装）：\(error)")
+            }
+        }
     }
 
     /// Pick the installed version to act on. `versions` is newest-first, so a

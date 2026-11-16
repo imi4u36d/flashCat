@@ -18,10 +18,20 @@ public enum ConfigCommand {
     // MARK: Online
 
     private static func list(_ context: CLIContext) async throws -> Int32 {
-        let entries = try await readEntries(context)
+        let readout = try await readEntries(context)
+        let entries = readout.entries
         if context.output.json {
-            context.output.json(ControlConfigDocument(entries: entries))
+            // `entries` 的形状不变，`warnings` 是新增键：旧脚本读 `.entries` 照常工作，
+            // 而把「engines.json 读坏了」写进 stdout 的 JSON 里，才不会只留在 stderr。
+            struct Document: Encodable {
+                let entries: [ControlConfigEntry]
+                let warnings: [String]
+            }
+            context.output.json(Document(entries: entries, warnings: readout.warnings))
         } else {
+            for warning in readout.warnings {
+                context.output.warning(warning)
+            }
             context.output.table(headers: ["KEY", "VALUE", "TYPE", "TITLE"],
                                  rows: entries.map { [$0.key, $0.value, $0.kind, $0.title] },
                                  empty: "没有设置项")
@@ -33,7 +43,12 @@ public enum ConfigCommand {
         guard let key = context.invocation.arguments.first else {
             throw CLIError("需要设置项名称", exit: .usage)
         }
-        let entries = try await readEntries(context)
+        let readout = try await readEntries(context)
+        let entries = readout.entries
+        // 单值输出没法再挂一个兄弟键，警告只能走 stderr；退出码不受影响。
+        for warning in readout.warnings {
+            context.output.warning(warning)
+        }
         guard let entry = entries.first(where: { $0.key == key }) else {
             throw CLIError("未知设置项：\(key)", exit: .notFound,
                            hint: "运行 flashcat config list 查看全部键")
@@ -53,20 +68,19 @@ public enum ConfigCommand {
         }
         let key = context.invocation.arguments[0]
         let value = context.invocation.arguments[1]
-        if let location = try? context.control {
-            do {
-                let entry: ControlConfigEntry = try await location.client.post(
-                    "/v1/config", body: ControlConfigSet(key: key, value: value), timeout: context.timeout)
-                if context.output.json {
-                    context.output.json(entry)
-                } else {
-                    context.output.success("\(key) = \(entry.value)")
-                }
-                return CLIExit.success.rawValue
-            } catch let error as CLIError where error.exit == .notRunning {
-                // The runtime file outlived the app; fall through to the
-                // offline writer instead of failing a pure setting.
+        do {
+            let location = try context.control
+            let entry: ControlConfigEntry = try await location.client.post(
+                "/v1/config", body: ControlConfigSet(key: key, value: value), timeout: context.timeout)
+            if context.output.json {
+                context.output.json(entry)
+            } else {
+                context.output.success("\(key) = \(entry.value)")
             }
+            return CLIExit.success.rawValue
+        } catch let error as CLIError where ControlFallback.shouldFallBack(error) {
+            // 只有「应用没在运行」才写离线配置。`--control-port` 写错、401、超时说明
+            // 应用在跑或参数有问题，把这些折叠成离线写入会让一次失败的设置 exit 0。
         }
         try OfflineConfig.set(key: key, value: value, context: context)
         let entries = OfflineConfig.entries(context)
@@ -87,49 +101,56 @@ public enum ConfigCommand {
         guard let key = context.invocation.arguments.first else {
             throw CLIError("需要设置项名称", exit: .usage)
         }
-        let entries = try await readEntries(context)
-        guard let entry = entries.first(where: { $0.key == key }) else {
+        let readout = try await readEntries(context)
+        for warning in readout.warnings {
+            context.output.warning(warning)
+        }
+        guard let entry = readout.entries.first(where: { $0.key == key }) else {
             throw CLIError("未知设置项：\(key)", exit: .notFound)
         }
         guard entry.kind == "string" else {
             throw CLIError("\(key) 不是字符串设置项，不能清空；请显式 set 一个值", exit: .usage)
         }
-        if let location = try? context.control {
-            do {
-                let updated: ControlConfigEntry = try await location.client.post(
-                    "/v1/config", body: ControlConfigSet(key: key, value: ""), timeout: context.timeout)
-                if context.output.json {
-                    context.output.json(updated)
-                } else {
-                    context.output.success("\(key) = ")
-                }
-                return CLIExit.success.rawValue
-            } catch let error as CLIError where error.exit == .notRunning {
-                // Fall through to the offline writer.
+        do {
+            let location = try context.control
+            let updated: ControlConfigEntry = try await location.client.post(
+                "/v1/config", body: ControlConfigSet(key: key, value: ""), timeout: context.timeout)
+            if context.output.json {
+                context.output.json(updated)
+            } else {
+                context.output.success("\(key) = ")
             }
+            return CLIExit.success.rawValue
+        } catch let error as CLIError where ControlFallback.shouldFallBack(error) {
+            // 与 `set` 同一条判据：应用没在运行才退到离线清空。
         }
         try OfflineConfig.set(key: key, value: "", context: context)
         context.output.success("\(key) = ")
         return CLIExit.success.rawValue
     }
 
-    private static func readEntries(_ context: CLIContext) async throws -> [ControlConfigEntry] {
-        if let location = try? context.control {
-            do {
-                let document: ControlConfigDocument = try await location.client.get(
-                    "/v1/config", timeout: context.timeout)
-                return document.entries
-            } catch let error as CLIError where error.exit == .notRunning {
-                // 应用没在跑：磁盘上的配置就是当下的事实。
-            }
-            // 401 / 超时 / 后端 500 不能「降级成磁盘上的旧值」——那会把一个
-            // 出错的运行时报成一份看起来正常的配置。
+    /// 一次读取的结果。`warnings` 只可能在离线路径上有值：在线文档由应用给出，
+    /// 磁盘上那份 engines.json 坏没坏不影响它。
+    private struct Entries {
+        var entries: [ControlConfigEntry]
+        var warnings: [String]
+    }
+
+    private static func readEntries(_ context: CLIContext) async throws -> Entries {
+        do {
+            let location = try context.control
+            let document: ControlConfigDocument = try await location.client.get(
+                "/v1/config", timeout: context.timeout)
+            return Entries(entries: document.entries, warnings: [])
+        } catch let error as CLIError where ControlFallback.shouldFallBack(error) {
+            // 应用没在跑：磁盘上的配置就是当下的事实。401 / 超时 / 后端 500 不能
+            // 「降级成磁盘上的旧值」——那会把一个出错的运行时报成一份正常的配置。
         }
-        if LocalState.engineConfigurationIsUnreadable() {
-            context.output.warning("engines.json 无法解析，引擎相关的值读不到；文件路径："
-                                   + FlashCatPaths.engineConfigurationFile)
-        }
-        return OfflineConfig.entries(context)
+        // 离线值全部从磁盘拼，读不动的理由必须一起带出去，否则一份读坏的
+        // engines.json 只会表现成「所有引擎端口都是默认值」这种假事实。
+        let readout = context.local.engineConfigurationReadout()
+        return Entries(entries: OfflineConfig.entries(context),
+                       warnings: readout.warning.map { [$0] } ?? [])
     }
 
     // MARK: Path
@@ -158,169 +179,148 @@ public enum ConfigCommand {
 /// deliberately smaller than the server's live list: keys whose change needs a
 /// running app (gateway restart, launch agent, engine port reload) are rejected
 /// with a hint instead of being written into a file the app will not reread.
+///
+/// 读与写的语法都来自 `ControlConfigGrammar`：在线文档和这份离线文档曾经各有一套
+/// 解析器，结果 `thinkingMode none` 在离线时被拒、`port` 的归一规则也各写一份。
 enum OfflineConfig {
     static func entries(_ context: CLIContext) -> [ControlConfigEntry] {
         let local = context.local
-        let defaults = UserDefaults(suiteName: FlashCatPaths.preferencesDomain)
-        func string(_ key: String, fallback: String = "") -> String {
-            defaults?.string(forKey: key) ?? fallback
-        }
-        func int(_ key: String, fallback: Int) -> Int {
-            (defaults?.object(forKey: key) as? NSNumber)?.intValue ?? fallback
-        }
-        func double(_ key: String, fallback: Double) -> Double {
-            (defaults?.object(forKey: key) as? NSNumber)?.doubleValue ?? fallback
-        }
-        func bool(_ key: String, fallback: Bool) -> Bool {
-            guard defaults?.object(forKey: key) != nil else { return fallback }
-            return defaults?.bool(forKey: key) ?? fallback
-        }
-
-        let appearance: String
-        switch int("appearance", fallback: 0) {
-        case 1: appearance = "light"
-        case 2: appearance = "dark"
-        default: appearance = "system"
-        }
-        let thinking: String
-        switch int("thinkingMode", fallback: 0) {
-        case 1: thinking = "off"
-        case 2: thinking = "on"
-        default: thinking = "auto"
-        }
-        let reasoning = ["low", "medium", "high", "xhigh"][
-            min(max(int("reasoningEffort", fallback: 2) - 1, 0), 3)
-        ]
+        let appearance = ControlConfigGrammar.appearanceToken(local.integer("appearance", fallback: 0))
+        let thinking = ControlConfigGrammar.thinkingModeToken(local.integer("thinkingMode", fallback: 0))
+        let reasoning = ControlConfigGrammar.reasoningEffortToken(local.integer("reasoningEffort", fallback: 2))
 
         var rows: [ControlConfigEntry] = [
             entry("appearance", "外观", "enum", appearance),
-            entry("autoStart", "随应用启动引擎", "bool", CLIFormat.bool(bool("autoStart", fallback: false))),
+            entry("autoStart", "随应用启动引擎", "bool",
+                  ControlConfigGrammar.format(.bool(local.bool("autoStart", fallback: false)))),
             // 这几项由应用持有（要同步 LaunchAgent / 启停监听），离线写不进去，
             // 所以如实报 mutable:false，而不是先答应再 exit 6。
-            entry("launchAtLogin", "登录时启动", "bool", CLIFormat.bool(bool("launchAtLogin", fallback: false)), mutable: false),
-            entry("gatewayEnabled", "API 网关", "bool", CLIFormat.bool(local.gatewayEnabled), mutable: false),
-            entry("gatewayPort", "API 网关端口", "int", String(local.gatewayPort), mutable: false),
-            entry("controlAPIEnabled", "命令行接口", "bool", CLIFormat.bool(local.controlEnabled), mutable: false),
-            entry("controlPort", "命令行接口端口", "int", String(local.controlPort), mutable: false),
-            // 0 是「还没写过」，在线文档会归一成 8000；离线也照同一个口径报，
-            // 否则同一条命令在线离线读出两个端口。
-            entry("port", "默认引擎端口", "int", String(normalizedPort(int("port", fallback: 8000)))),
+            entry("launchAtLogin", "登录时启动", "bool",
+                  ControlConfigGrammar.format(.bool(local.bool("launchAtLogin", fallback: false))),
+                  mutable: false),
+            entry("gatewayEnabled", "API 网关", "bool",
+                  ControlConfigGrammar.format(.bool(local.gatewayEnabled)), mutable: false),
+            entry("gatewayPort", "API 网关端口", "int",
+                  ControlConfigGrammar.format(.int(local.gatewayPort)), mutable: false),
+            entry("controlAPIEnabled", "命令行接口", "bool",
+                  ControlConfigGrammar.format(.bool(local.controlEnabled)), mutable: false),
+            entry("controlPort", "命令行接口端口", "int",
+                  ControlConfigGrammar.format(.int(local.controlPort)), mutable: false),
+            // 0 是「还没写过」，规则由 grammar 归一；离线与在线必须报同一个端口。
+            entry("port", "默认引擎端口", "int",
+                  ControlConfigGrammar.format(.int(
+                      ControlConfigGrammar.port(local.integer("port", fallback: 8000), fallback: 8000)))),
             entry("model", "当前模型", "string", local.selectedModel, mutable: false),
             entry("thinkingMode", "思考模式", "enum", thinking),
             entry("reasoningEffort", "推理等级", "enum", reasoning),
-            entry("temperature", "温度", "double", String(format: "%.2f", double("chat.temperature", fallback: 0.7))),
-            entry("topP", "Top P", "double", String(format: "%.2f", double("chat.topP", fallback: 0.95))),
-            entry("maxTokens", "最大输出", "int", String(int("chat.maxTokens", fallback: 0))),
-            entry("systemPrompt", "系统提示", "string", string("chat.system")),
-            entry("hfCache", "下载缓存目录", "string", string("hfCache")),
-            entry("maxMemory", "最大内存参数", "string", string("maxMemory")),
-            entry("maxContext", "最大上下文参数", "string", string("maxContext")),
-            entry("extraArgs", "额外启动参数", "string", string("extraArgs")),
-            entry("idleReleaseOff", "常驻权重", "bool", CLIFormat.bool(bool("idleReleaseOff", fallback: false))),
-            entry("languageOnly", "纯文本", "bool", CLIFormat.bool(bool("languageOnly", fallback: false))),
-            entry("hfEndpoint", "Hugging Face 端点", "string", string("hfEndpoint")),
-            entry("hfToken", "Hugging Face Token", "string", string("hfToken")),
+            entry("temperature", "温度", "double",
+                  ControlConfigGrammar.format(.double(local.double("chat.temperature", fallback: 0.7)))),
+            entry("topP", "Top P", "double",
+                  ControlConfigGrammar.format(.double(local.double("chat.topP", fallback: 0.95)))),
+            entry("maxTokens", "最大输出", "int",
+                  ControlConfigGrammar.format(.int(local.integer("chat.maxTokens", fallback: 0)))),
+            entry("systemPrompt", "系统提示", "string", local.string("chat.system") ?? ""),
+            entry("hfCache", "下载缓存目录", "string", local.string("hfCache") ?? ""),
+            entry("maxMemory", "最大内存参数", "string", local.string("maxMemory") ?? ""),
+            entry("maxContext", "最大上下文参数", "string", local.string("maxContext") ?? ""),
+            entry("extraArgs", "额外启动参数", "string", local.string("extraArgs") ?? ""),
+            entry("idleReleaseOff", "常驻权重", "bool",
+                  ControlConfigGrammar.format(.bool(local.bool("idleReleaseOff", fallback: false)))),
+            entry("languageOnly", "纯文本", "bool",
+                  ControlConfigGrammar.format(.bool(local.bool("languageOnly", fallback: false)))),
+            entry("hfEndpoint", "Hugging Face 端点", "string", local.string("hfEndpoint") ?? ""),
+            entry("hfToken", "Hugging Face Token", "string", local.string("hfToken") ?? ""),
         ]
+        let configuration = local.engineConfiguration
         for id in EngineCatalog.allIDs {
+            // 没配置过引擎端口时 `engines.json` 里没有这一项，归一到该引擎自己的默认端口。
+            // 以前统一写死 8000，omlx 会显示成 8000，和 App 里的 8100 不一致。
+            let port = ControlConfigGrammar.port(configuration.port[id.rawValue], fallback: id.defaultPort)
             rows.append(entry("engines.\(id.rawValue).port",
                               "\(id.displayName) 端口",
                               "int",
-                              String(normalizedPort(local.engineConfiguration.port[id.rawValue] ?? id.defaultPort)),
+                              ControlConfigGrammar.format(.int(port)),
                               mutable: false))
         }
         return rows
     }
 
     static func set(key: String, value: String, context: CLIContext) throws {
-        guard let defaults = UserDefaults(suiteName: FlashCatPaths.preferencesDomain) else {
+        let local = context.local
+        guard local.preferencesAvailable else {
             throw CLIError("无法打开应用偏好设置", exit: .failure)
         }
-        func bool() throws -> Bool {
-            switch value.lowercased() {
-            case "true", "1", "yes", "on": return true
-            case "false", "0", "no", "off": return false
-            default: throw CLIError("\(key) 需要 true / false", exit: .usage)
-            }
+        do {
+            try write(key: key, value: value, local: local)
+        } catch let error as ControlConfigError {
+            throw Self.cliError(error)
         }
-        func int(_ range: ClosedRange<Int>) throws -> Int {
-            guard let parsed = Int(value), range.contains(parsed) else {
-                throw CLIError("\(key) 需要 \(range.lowerBound)…\(range.upperBound) 的整数", exit: .usage)
-            }
-            return parsed
-        }
-        func double(_ range: ClosedRange<Double>) throws -> Double {
-            guard let parsed = Double(value), range.contains(parsed) else {
-                throw CLIError("\(key) 需要 \(range.lowerBound)…\(range.upperBound) 的数字", exit: .usage)
-            }
-            return parsed
-        }
-
-        switch key {
-        case "appearance":
-            let raw: Int
-            switch value.lowercased() {
-            case "system": raw = 0
-            case "light": raw = 1
-            case "dark": raw = 2
-            default: throw CLIError("appearance 只能是 system / light / dark", exit: .usage)
-            }
-            defaults.set(raw, forKey: "appearance")
-        case "autoStart": defaults.set(try bool(), forKey: "autoStart")
-        case "thinkingMode":
-            let raw: Int
-            switch value.lowercased() {
-            case "auto", "automatic": raw = 0
-            case "off": raw = 1
-            case "on": raw = 2
-            default: throw CLIError("thinkingMode 只能是 auto / off / on", exit: .usage)
-            }
-            defaults.set(raw, forKey: "thinkingMode")
-        case "reasoningEffort":
-            let raw: Int
-            switch value.lowercased() {
-            case "low": raw = 1
-            case "medium": raw = 2
-            case "high": raw = 3
-            case "xhigh": raw = 4
-            default: throw CLIError("reasoningEffort 只能是 low / medium / high / xhigh", exit: .usage)
-            }
-            defaults.set(raw, forKey: "reasoningEffort")
-        case "temperature": defaults.set(try double(0...2), forKey: "chat.temperature")
-        case "topP": defaults.set(try double(0...1), forKey: "chat.topP")
-        case "maxTokens": defaults.set(try int(0...1_000_000), forKey: "chat.maxTokens")
-        case "systemPrompt": defaults.set(value, forKey: "chat.system")
-        case "hfCache": defaults.set(value, forKey: "hfCache")
-        case "maxMemory": defaults.set(value, forKey: "maxMemory")
-        case "maxContext": defaults.set(value, forKey: "maxContext")
-        case "extraArgs": defaults.set(value, forKey: "extraArgs")
-        case "idleReleaseOff": defaults.set(try bool(), forKey: "idleReleaseOff")
-        case "languageOnly": defaults.set(try bool(), forKey: "languageOnly")
-        case "hfEndpoint": defaults.set(value, forKey: "hfEndpoint")
-        case "hfToken": defaults.set(value, forKey: "hfToken")
-        case "port": defaults.set(try int(1024...65535), forKey: "port")
-        case "model":
-            throw CLIError("model 是只读项；用 flashcat models use <模型>", exit: .usage)
-        case "launchAtLogin":
-            throw CLIError("launchAtLogin 需要应用在运行（要同步 LaunchAgent）", exit: .conflict,
-                           hint: "先 flashcat app open，再设置")
-        case "gatewayEnabled", "gatewayPort", "controlAPIEnabled", "controlPort":
-            throw CLIError("\(key) 需要应用在运行才能立即生效", exit: .conflict,
-                           hint: "先 flashcat app open，再设置")
-        default:
-            if key.hasPrefix("engines."), key.hasSuffix(".port") {
-                throw CLIError("引擎端口需要应用在运行", exit: .conflict,
-                               hint: "先 flashcat app open；或直接改 \(FlashCatPaths.engineConfigurationFile)")
-            }
-            throw CLIError("未知设置项：\(key)", exit: .notFound,
-                           hint: "运行 flashcat config list 查看全部键")
-        }
-        _ = context
-        defaults.synchronize()
+        local.flushPreferences()
     }
 
-    /// `0` 与负数都表示「没配置」，对外统一显示默认端口。
-    private static func normalizedPort(_ value: Int) -> Int {
-        value > 0 ? value : 8000
+    /// 所有解析与拒绝理由都来自 Kit：CLI 只决定退出码，不再自己解释一遍语法。
+    private static func write(key: String, value: String, local: LocalState) throws {
+        switch key {
+        case "appearance":
+            local.setPreference(try ControlConfigGrammar.appearance(value), forKey: "appearance")
+        case "autoStart":
+            local.setPreference(try ControlConfigGrammar.bool(value, key: key), forKey: "autoStart")
+        case "thinkingMode":
+            local.setPreference(try ControlConfigGrammar.thinkingMode(value), forKey: "thinkingMode")
+        case "reasoningEffort":
+            local.setPreference(try ControlConfigGrammar.reasoningEffort(value), forKey: "reasoningEffort")
+        case "temperature":
+            local.setPreference(try ControlConfigGrammar.double(value, key: key, range: 0...2),
+                                forKey: "chat.temperature")
+        case "topP":
+            local.setPreference(try ControlConfigGrammar.double(value, key: key, range: 0...1),
+                                forKey: "chat.topP")
+        case "maxTokens":
+            local.setPreference(try ControlConfigGrammar.int(value, key: key,
+                                                             range: ControlConfigGrammar.maxTokensRange),
+                                forKey: "chat.maxTokens")
+        case "systemPrompt": local.setPreference(value, forKey: "chat.system")
+        case "hfCache": local.setPreference(value, forKey: "hfCache")
+        case "maxMemory": local.setPreference(value, forKey: "maxMemory")
+        case "maxContext": local.setPreference(value, forKey: "maxContext")
+        case "extraArgs": local.setPreference(value, forKey: "extraArgs")
+        case "idleReleaseOff":
+            local.setPreference(try ControlConfigGrammar.bool(value, key: key), forKey: "idleReleaseOff")
+        case "languageOnly":
+            local.setPreference(try ControlConfigGrammar.bool(value, key: key), forKey: "languageOnly")
+        case "hfEndpoint": local.setPreference(value, forKey: "hfEndpoint")
+        case "hfToken": local.setPreference(value, forKey: "hfToken")
+        case "port":
+            local.setPreference(try ControlConfigGrammar.int(value, key: key,
+                                                             range: ControlConfigGrammar.portRange),
+                                forKey: "port")
+        case "model":
+            throw ControlConfigError("model 是只读项；用 flashcat models use <模型>", kind: .readOnly)
+        case "launchAtLogin":
+            throw ControlConfigError("launchAtLogin 需要应用在运行（要同步 LaunchAgent）", kind: .conflict,
+                                     hint: "先 flashcat app open，再设置")
+        case "gatewayEnabled", "gatewayPort", "controlAPIEnabled", "controlPort":
+            throw ControlConfigError("\(key) 需要应用在运行才能立即生效", kind: .conflict,
+                                     hint: "先 flashcat app open，再设置")
+        default:
+            if key.hasPrefix("engines."), key.hasSuffix(".port") {
+                throw ControlConfigError("引擎端口需要应用在运行", kind: .conflict,
+                                         hint: "先 flashcat app open；或直接改 \(local.engineConfigurationFile)")
+            }
+            throw ControlConfigError("未知设置项：\(key)", kind: .notFound,
+                                     hint: "运行 flashcat config list 查看全部键")
+        }
+    }
+
+    /// Kit 的错误只描述「为什么」，退出码是 CLI 的约定，在这里映射。
+    private static func cliError(_ error: ControlConfigError) -> CLIError {
+        let exit: CLIExit
+        switch error.kind {
+        case .usage, .readOnly: exit = .usage
+        case .conflict: exit = .conflict
+        case .notFound: exit = .notFound
+        }
+        return CLIError(error.message, exit: exit, hint: error.hint)
     }
 
     private static func entry(_ key: String, _ title: String, _ kind: String,

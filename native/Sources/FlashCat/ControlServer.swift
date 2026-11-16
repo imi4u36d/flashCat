@@ -285,51 +285,38 @@ final class ControlServer {
     func statusDocument() -> ControlStatus {
         let engines = engineDocuments()
         return ControlStatus(app: appInfo,
-                             engine: engines.first { $0.isActive } ?? engines.first,
+                             engine: ControlEngineDocuments.primary(engines),
                              engines: engines,
                              gateway: gatewayState,
                              downloads: downloadDocuments())
     }
 
-    private func engineDocuments() -> [ControlEngineState] {
+    /// 壳层只负责取数：文档长什么样由 `ControlEngineDocuments` 决定。CLI 的离线
+    /// 文档走同一个函数，否则「active 引擎的模型用哪个」这类规则会各写一份。
+    private func engineDocumentInputs() -> [ControlEngineDocumentInput] {
         let state = AppState.shared
         return EngineCatalog.allIDs.map { id in
             let installed = EngineInstallations.newest(id, version: nil)
             let controller = state.engines?.controller(id)
-            let versions = EngineInstallations.installed(id).map(\.version)
-            let active = state.activeEngine == id
-            let model: String
-            if active {
-                model = state.selectedModel
-            } else {
-                model = EngineStore.shared.configuration(for: id).lastModel ?? ""
-            }
-            let pid = controller?.stats?.instancePid
-            let uptime = controller?.status?.uptimeSeconds.map { Int($0) }
-            return ControlEngineState(id: id.rawValue,
-                                      name: id.displayName,
-                                      version: installed?.version ?? "—",
-                                      installedVersions: versions,
-                                      isActive: active,
-                                      isInstalled: installed != nil,
-                                      state: Self.runState(controller?.state),
-                                      port: controller?.port ?? id.defaultPort,
-                                      model: model,
-                                      stage: controller?.startupStage ?? "",
-                                      uptimeSeconds: uptime,
-                                      pid: pid,
-                                      capabilities: id.descriptor.capabilities.map(\.rawValue).sorted())
+            let configuration = EngineStore.shared.configuration(for: id)
+            return ControlEngineDocumentInput(
+                id: id,
+                installedVersion: installed?.version,
+                installedVersions: EngineInstallations.installed(id).map(\.version),
+                isActive: state.activeEngine == id,
+                phase: ControlEnginePhase(controller?.state),
+                configuredPort: configuration.port,
+                boundPort: controller?.port,
+                selectedModel: state.selectedModel,
+                lastModel: configuration.lastModel,
+                stage: controller?.startupStage ?? "",
+                uptimeSeconds: controller?.status?.uptimeSeconds.map { Int($0) },
+                pid: controller?.stats?.instancePid)
         }
     }
 
-    private static func runState(_ state: ServerState?) -> String {
-        switch state {
-        case .starting: return "starting"
-        case .ready: return "ready"
-        case .stopping: return "stopping"
-        case .failed: return "failed"
-        case .stopped, .none: return "stopped"
-        }
+    private func engineDocuments() -> [ControlEngineState] {
+        ControlEngineDocuments.engines(engineDocumentInputs())
     }
 
     // MARK: Engine actions
@@ -437,5 +424,19 @@ final class ControlServer {
             try? await Task.sleep(nanoseconds: 200_000_000)
         }
         return false
+    }
+}
+
+/// 壳层的 `ServerState` 没有 `loading`：`ServerState.init(EngineRunState)` 已经把
+/// 启动与加载折成同一个阶段。这里是唯一的折叠点，Kit 文档仍保留 `loading` 这一档。
+private extension ControlEnginePhase {
+    init(_ state: ServerState?) {
+        switch state {
+        case .starting: self = .starting
+        case .ready: self = .ready
+        case .stopping: self = .stopping
+        case .failed: self = .failed
+        case .stopped, .none: self = .stopped
+        }
     }
 }

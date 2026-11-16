@@ -88,7 +88,7 @@ pub struct ChatRequest {
 
 /// 流式事件。`kind` 是判别式，前端 `switch (e.kind)` 即可。
 #[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Delta {
     #[serde(rename = "thinking")]
     Thinking { run_id: String, delta: String },

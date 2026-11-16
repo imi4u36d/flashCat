@@ -49,6 +49,22 @@ if ("__TAURI_INTERNALS__" in window) document.documentElement.dataset.shell = "t
 document.documentElement.dataset.platform = platform;
 if (mobile) document.documentElement.dataset.mobile = "true";
 
+/* 键盘占位：Android 的 edge-to-edge 与 iOS 的 WebView 都不会替我们压缩布局，
+   键盘只是盖在上面。visualViewport 是唯一能拿到「被键盘吃掉多少」的地方，
+   量出来写进 --kb，移动端布局据此让出高度。 */
+function trackKeyboard() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const sync = () => {
+    const kb = Math.max(0, Math.min(420, window.innerHeight - vv.height - vv.offsetTop));
+    document.documentElement.style.setProperty("--kb", `${Math.round(kb)}px`);
+  };
+  vv.addEventListener("resize", sync);
+  vv.addEventListener("scroll", sync);
+  sync();
+}
+trackKeyboard();
+
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <App />

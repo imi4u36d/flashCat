@@ -176,6 +176,41 @@ Windows 的包**只能**在 Windows 上构建（Tauri 不支持交叉编译到 M
 iOS 真机包需要开发证书与描述文件，本地首次跑 `pnpm tauri ios dev` 由 Xcode 自动签名，
 CI 里则要配 `APPLE_CERTIFICATE` / `APPLE_PROVISIONING_PROFILE` 一类 secrets。
 
+## 一个协议上的坑（已踩）
+
+Rust 侧 `Delta` 是带 tag 的枚举：
+
+```rust
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum Delta { Text { run_id: String, delta: String }, ... }
+```
+
+容器级的 `rename_all` 只改变**变体名**（`Text` → `text`），**不改字段名**。
+少了 `rename_all_fields` 时 JSON 里是 `run_id`，而前端读 `d.runId` 得到 `undefined`：
+
+- 第一条 delta 把 `runId` 记成 `undefined`，看起来还能继续；
+- 等 `chat_start` 的 Promise 解析、把真实的 `runId` 写回去之后，**后续每一条 delta
+  都会因为 `runId` 不匹配被丢掉**——界面就停在「生成中 · 0 tok」，不报错。
+
+这类「静默丢事件」在没有 devtools 的手机上极难看出来，所以现在 `chat.ts` 里
+不匹配时会 `console.warn` 一次。写事件协议时，字段名的 camelCase 一定要用
+`rename_all_fields`（或逐字段 `#[serde(rename)]`）显式声明。
+
+## 日志
+
+被 LaunchServices 拉起的 `.app`、以及手机端，都没有能看 stdout 的终端，所以日志同时落盘：
+
+| 平台 | 路径 |
+| --- | --- |
+| macOS | `~/Library/Logs/dev.flashcat.desktop/flashcat.log` |
+| iOS | 沙盒 `Library/Logs/flashcat.log` |
+| Android | `files/logs/flashcat.log`（`adb shell run-as dev.flashcat.desktop cat files/logs/flashcat.log`）|
+
+一次正常启动应该看到四行：`boot …` → `page Started` → `page Finished` → `shell ready · <platform>/<arch> · v… · backend=… state=…`。
+少了 `page Finished` 说明前端资源没进包（`frontendDist` 或 CSP 的问题），
+少了 `shell ready` 说明 IPC 没通（命令没注册 / capability 没放行）。
+桌面端只想看一次：`pnpm tauri dev` 的标准输出里也有同样的行。
+
 ## 现在是假的
 
 - **推理**：`MockBackend` 是定时器，不是模型。接真后端时实现 `Backend::generate` 即可，

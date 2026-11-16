@@ -49,6 +49,7 @@ export function useChatEngine(seed: Message[], transport: Transport = "auto") {
   ).current;
 
   const active = useRef<Active | null>(null);
+  const mismatch = useRef(false);
   const timer = useRef<number | null>(null);
   const generatingRef = useRef(false);
   generatingRef.current = generating;
@@ -79,7 +80,16 @@ export function useChatEngine(seed: Message[], transport: Transport = "auto") {
         if (!a) return;
         // 首个 delta 可能早于 chat_start 的返回值，这里以事件里的 runId 为准。
         if (a.runId === null) a.runId = d.runId;
-        if (a.runId !== d.runId) return;
+        if (a.runId !== d.runId) {
+          // 静默丢弃过一次：Rust 侧 Delta 的字段没做 camelCase，d.runId 是 undefined，
+          // 结果「chat_start 先返回 → 之后每个 delta 都被判定为别人的 run」。
+          // 以后协议再对不上，至少留一条能搜到的线索。
+          if (!mismatch.current) {
+            mismatch.current = true;
+            console.warn("chat:delta 的 runId 与当前回复不一致，已忽略", d.runId, a.runId);
+          }
+          return;
+        }
 
         switch (d.kind) {
           case "thinking":

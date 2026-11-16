@@ -1247,11 +1247,14 @@ html[data-mobile="true"] {
   --sidebar-w: 0px;
 }
 
-/* 没有窗口红绿灯，也就没有外层圆角、描边与投影 */
+/* 没有窗口红绿灯，也就没有外层圆角、描边与投影。
+   键盘弹起时整壳让出 --kb，否则输入框会被盖住（见 main.tsx 的 trackKeyboard）。 */
 html[data-mobile="true"] .app {
   grid-template-columns: 1fr;
   border-radius: 0;
   box-shadow: none;
+  height: calc(100% - var(--kb, 0px));
+  transition: height 0.18s var(--ease-snappy, ease-out);
 }
 html[data-mobile="true"] .app::before {
   display: none;

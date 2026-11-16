@@ -65,6 +65,7 @@ pub fn chat_start(
 ) -> Result<String, String> {
     let (run, rx) = engine.start(req)?;
     let run_id = run.id.clone();
+    crate::logfile::line("INFO", &format!("chat start run={run_id}"));
 
     let handle = app.clone();
     let id = run_id.clone();
@@ -72,9 +73,15 @@ pub fn chat_start(
         .name(format!("chat-forward-{id}"))
         .spawn(move || {
             // 通道关闭即生成线程结束；转发线程随之退出并摘掉注册表条目。
+            let mut count = 0usize;
             for delta in rx {
-                let _ = handle.emit("chat:delta", &delta);
+                if let Err(err) = handle.emit("chat:delta", &delta) {
+                    crate::logfile::line("ERROR", &format!("chat emit failed: {err}"));
+                    break;
+                }
+                count += 1;
             }
+            crate::logfile::line("INFO", &format!("chat end run={id} deltas={count}"));
             if let Some(engine) = handle.try_state::<Engine>() {
                 engine.release(&id);
             }
@@ -94,7 +101,7 @@ pub fn log_frontend(level: String, message: String) {
         "debug" => "DEBUG",
         _ => "INFO",
     };
-    println!("[{tag}] {message}");
+    crate::logfile::line(tag, &message);
 }
 
 #[tauri::command]

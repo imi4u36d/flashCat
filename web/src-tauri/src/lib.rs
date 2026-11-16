@@ -11,17 +11,37 @@
 
 mod commands;
 mod engine;
+mod logfile;
 mod model;
 
 use engine::Engine;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         // 页面加载是「WebView 起来了、CSP 没打死资源」的唯一可靠信号。
-        .on_page_load(|_, payload| {
-            println!("[page] {:?} {}", payload.event(), payload.url());
+        .setup(|app| {
+            // 桌面端被人从 Finder 拉起来时 stdout 是 /dev/null，日志必须落盘。
+            if let Ok(dir) = app.path().app_log_dir() {
+                logfile::init(dir);
+            }
+            logfile::line(
+                "INFO",
+                &format!(
+                    "boot {} {} platform={} mobile={}",
+                    app.package_info().name,
+                    app.package_info().version,
+                    model::PLATFORM,
+                    model::IS_MOBILE
+                ),
+            );
+            Ok(())
+        })
+        .on_page_load(|window, payload| {
+            logfile::line("INFO", &format!("page {:?} {}", payload.event(), payload.url()));
+            let _ = window;
         })
         .manage(Engine::new())
         .invoke_handler(tauri::generate_handler![

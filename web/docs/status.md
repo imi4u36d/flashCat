@@ -13,7 +13,7 @@
 
 产物都在 `web/release/`（已 gitignore，不进仓库）。
 
-| Linux arm64 | `release/FlashCat_0.3.4_arm64.deb` | colima(ubuntu:24.04) 容器内构建；`dpkg-deb -I` 校验元数据；再在同一容器 `dpkg -i` + `xvfb-run flashcat` 实跑：`page Started/Finished tauri://localhost` 与 `shell ready · linux/aarch64 · v0.3.4 · backend=mock`（容器里没放 gguf，故走 mock） |
+| Linux arm64 | `release/FlashCat_0.3.4_arm64.deb` | colima(ubuntu:24.04) 容器内构建；`dpkg-deb -I` 校验元数据；再在同一容器 `dpkg -i` + `xvfb-run flashcat` 实跑：`page Started/Finished tauri://localhost` 与 `shell ready · linux/aarch64 · v0.3.4 · backend=mock`（容器里没放 gguf，故走 mock）。另在容器里放入 Qwen3-0.6B 权重复跑：`engine llama.cpp models=1`、`shell ready · backend=llama.cpp`、`warm ok … in 151ms`，说明 llama.cpp 在 Linux arm64 上能加载权重；容器内无窗口管理器可驱动输入，**端到端出字未在 Linux 上实测** |
 
 ## 未交付
 

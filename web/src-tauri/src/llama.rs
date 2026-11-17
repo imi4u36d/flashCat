@@ -95,7 +95,7 @@ impl LlamaChatBackend {
                     }
                     card.source = path
                         .parent()
-                        .map(|p| shorten_path(p))
+                        .map(shorten_path)
                         .unwrap_or_default();
                     cards.push(card);
                 }
@@ -185,9 +185,6 @@ fn gpu_layers() -> u32 {
     }
 }
 
-/// 从文件名推断元信息。GGUF 头里有更准的 `general.name` / 量化类型，
-/// 但那要在加载后读；列表页不该为了排序去开 400MB 的文件，所以先用文件名。
-
 /// 递归找 `.gguf`，最多三层（`flashCat/models/<引擎>/<模型>/x.gguf` 这种布局）。
 fn walk_gguf(dir: &Path, depth: usize) -> Vec<PathBuf> {
     let mut found = Vec::new();
@@ -246,6 +243,8 @@ fn display_name(path: &Path) -> String {
         .to_string()
 }
 
+/// 从文件名推断元信息。GGUF 头里有更准的 `general.name` / 量化类型，
+/// 但那要在加载后读；列表页不该为了排序去开 400MB 的文件，所以先用文件名。
 fn card_for(path: &Path) -> Option<ModelCard> {
     let stem = path.file_stem()?.to_str()?.to_string();
     let size = std::fs::metadata(path).ok().map(|m| m.len()).unwrap_or(0);

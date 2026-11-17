@@ -6,6 +6,8 @@
 
 ![对话](docs/preview/01-chat-dark.png)
 
+> 交付到哪一步、哪些平台验证过、还差什么：**[docs/status.md](docs/status.md)**。
+
 ## 跑起来
 
 ```bash

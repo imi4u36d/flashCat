@@ -95,7 +95,7 @@ src/
 
 > Windows / Linux 的包需要各自平台上编译（Tauri 不能从 macOS 交叉编译），
 > 一步步的依赖与出包命令在 **[docs/build-windows-linux.md](docs/build-windows-linux.md)**。
-> 一键脚本：`powershell -ExecutionPolicy Bypass -File scripts\\build-windows.ps1`（加 `-Lite` 先排打包链路）。
+> 一键脚本：`powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1`（加 `-Lite` 先排打包链路）。
 > 想先验证打包链路、暂时跳过 llama.cpp 的 C++ 工具链：`pnpm tauri build -- --no-default-features`
 >（出的是演示后端的包，体积小一半，界面会提示「未装权重」）。
 

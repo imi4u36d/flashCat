@@ -202,11 +202,27 @@ fn walk_gguf(dir: &Path, depth: usize) -> Vec<PathBuf> {
             }
             continue;
         }
-        if path.extension().is_some_and(|x| x.eq_ignore_ascii_case("gguf")) {
+        if path.extension().is_some_and(|x| x.eq_ignore_ascii_case("gguf")) && is_loadable(&path) {
             found.push(path);
         }
     }
     found
+}
+
+/// 多分片权重只有第一片能直接加载（llama.cpp 会自己顺藤摸瓜）；
+/// `mmproj` 是视觉投影器，单独选它跑不了对话。这两类都不该出现在「模型」列表里。
+fn is_loadable(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    let lower = name.to_ascii_lowercase();
+    if lower.starts_with("mmproj") {
+        return false;
+    }
+    match lower.split("-of-").collect::<Vec<_>>().as_slice() {
+        [head, _tail] => head.ends_with("-00001"),
+        _ => true,
+    }
 }
 
 /// 列表里显示目录用：把家目录换成 `~`，太长的保留尾部。

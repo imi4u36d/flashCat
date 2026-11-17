@@ -38,7 +38,7 @@ function Bubble({ m, live }: { m: Message; live: Live }) {
 
   if (m.role === "user") {
     return (
-      <div className="msg" data-role="user">
+      <div className="msg" data-role="user" data-msg-id={m.id}>
         <div className="msg-meta">
           <span>你</span>
         </div>
@@ -51,7 +51,7 @@ function Bubble({ m, live }: { m: Message; live: Live }) {
   const ms = m.stats?.ms ?? 0;
 
   return (
-    <div className="msg" data-role="assistant">
+    <div className="msg" data-role="assistant" data-msg-id={m.id}>
       <div className="msg-meta">
         <span className="who">{m.streaming ? "生成中" : "flashCat"}</span>
         {m.streaming ? (
@@ -95,6 +95,54 @@ export function Chat({
   const [draft, setDraft] = useState("");
   const threadRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+
+  /* 长按消息 → 复制。手机上这是最基础的文本操作，没有它就只能整段截图。
+     用事件代理而不是给每个气泡挂定时器：一次 touchstart 只起一个计时器，
+     手指一动（touchmove 超过 10px）就取消，滚动不会误触。 */
+  const [press, setPress] = useState<{ text: string } | null>(null);
+  const pressTimer = useRef<number | null>(null);
+  const pressAt = useRef<{ x: number; y: number } | null>(null);
+
+  const clearPress = () => {
+    if (pressTimer.current !== null) {
+      window.clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
+    pressAt.current = null;
+  };
+
+  const onTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    const id = (e.target as HTMLElement).closest<HTMLElement>("[data-msg-id]")?.dataset.msgId;
+    const m = messages.find((x) => x.id === id);
+    if (!m || !m.text) return;
+    clearPress();
+    const t = e.touches[0];
+    pressAt.current = { x: t.clientX, y: t.clientY };
+    pressTimer.current = window.setTimeout(() => setPress({ text: m.text }), 450);
+  };
+
+  const onTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    const from = pressAt.current;
+    const t = e.touches[0];
+    if (from && Math.hypot(t.clientX - from.x, t.clientY - from.y) > 10) clearPress();
+  };
+
+  const copyText = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // WebView 里 clipboard 权限可能被拒：退回老办法，同步且一定生效
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+    }
+    setPress(null);
+  };
 
   useLayoutEffect(() => {
     const el = threadRef.current;
@@ -142,12 +190,49 @@ export function Chat({
       </div>
 
       <div className="thread scroll" ref={threadRef}>
-        <div className="thread-inner">
+        <div
+          className="thread-inner"
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={clearPress}
+          onTouchCancel={clearPress}
+          onContextMenu={(e) => {
+            // 桌面右键也给同一个入口，不必分两套 UI
+            const id = (e.target as HTMLElement).closest<HTMLElement>("[data-msg-id]")?.dataset.msgId;
+            const m = messages.find((x) => x.id === id);
+            if (!m?.text) return;
+            e.preventDefault();
+            setPress({ text: m.text });
+          }}
+        >
           {messages.map((m) => (
             <Bubble key={m.id} m={m} live={live} />
           ))}
         </div>
       </div>
+
+      {press ? (
+        <div className="sheet-scrim" onClick={() => setPress(null)}>
+          <div className="sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="sheet-grabber" />
+            <div className="sheet-title">
+              <strong>消息</strong>
+              <span>{press.text.length} 字</span>
+            </div>
+            <button className="sheet-item" type="button" onClick={() => void copyText(press.text)}>
+              复制文字
+            </button>
+            <button
+              className="sheet-item"
+              data-tone="danger"
+              type="button"
+              onClick={() => setPress(null)}
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="composer-wrap">
         <div className="composer">

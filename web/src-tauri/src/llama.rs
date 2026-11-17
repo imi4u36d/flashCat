@@ -435,7 +435,7 @@ fn decode_into(
     // 桌面给足，反正用户随时能停。
     let default_max = if IS_MOBILE { 192 } else { 512 };
     let max_tokens = req.max_tokens.unwrap_or(default_max).min(4096) as usize;
-    let n_vocab = model.n_vocab() as i32;
+    let n_vocab = model.n_vocab();
     let mut sampler = LlamaSampler::chain_simple([
         LlamaSampler::penalties(n_vocab, 64, 1.1, 0.0, 0.0),
         LlamaSampler::top_k(40),

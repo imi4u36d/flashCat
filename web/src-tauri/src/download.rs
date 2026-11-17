@@ -204,3 +204,38 @@ fn run(
     std::fs::rename(part, final_path).map_err(|e| format!("改名失败：{e}"))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::safe_name;
+
+    #[test]
+    fn accepts_plain_gguf_names() {
+        assert!(safe_name("Qwen3-0.6B-Q4_K_M.gguf").is_ok());
+        assert!(safe_name("a.gguf").is_ok());
+    }
+
+    /// 文件名最终会拼进目录，任何带路径分隔符的输入都是目录穿越。
+    #[test]
+    fn rejects_paths_and_traversal() {
+        assert!(safe_name("../evil.gguf").is_err());
+        assert!(safe_name("a/b.gguf").is_err());
+        assert!(safe_name("a\\b.gguf").is_err());
+        assert!(safe_name(".hidden.gguf").is_err());
+    }
+
+    /// 后缀是唯一的类型校验：别的扩展名会被 llama.cpp 当权重打开然后失败。
+    #[test]
+    fn rejects_wrong_extension_and_empty() {
+        assert!(safe_name("model.bin").is_err());
+        assert!(safe_name("model").is_err());
+        assert!(safe_name("").is_err());
+        assert!(safe_name("model.gguf.part").is_err());
+    }
+
+    #[test]
+    fn rejects_absurdly_long_names() {
+        let long = format!("{}.gguf", "a".repeat(200));
+        assert!(safe_name(&long).is_err());
+    }
+}

@@ -46,3 +46,8 @@ vendor/*.sha256
 
 # 编辑器/工具本地状态
 .zcode/
+
+# pnpm 的内容寻址仓库（前端工具链的本地缓存，166 MB / 2300+ 文件）
+# c686b0a 那次 revert 把它误提交了进来，这个条目防止再犯。
+.pnpm-store/
+node_modules/

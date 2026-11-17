@@ -20,6 +20,16 @@ enum DownloadEvent {
     case shareRequested(repo: String, engines: [EngineID])
 }
 
+/// How a download ended, for the callers that wait on one instead of
+/// watching the download center.
+enum DownloadOutcome {
+    /// Every byte arrived and the model is installed.
+    case finished
+    /// The user paused or cancelled it; nothing is wrong, it just is not there.
+    case cancelled
+    case failed(String)
+}
+
 /// 下载中心：一个下载子进程、一条进度、一份持久化的任务行列表。
 ///
 /// 它只负责「传输」——起进程、读字节、暂停/续传/取消、记任务行。「什么时候该

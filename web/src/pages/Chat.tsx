@@ -72,8 +72,11 @@ function Bubble({ m, live }: { m: Message; live: Live }) {
   );
 }
 
+// 触摸设备判定：Android WebView 的 pointer 媒体查询不一定报 coarse，
+// 但 maxTouchPoints 一直是准的（模拟器与真机都算触摸）
 const COARSE =
-  typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
+  typeof window !== "undefined" &&
+  (navigator.maxTouchPoints > 0 || window.matchMedia("(pointer: coarse)").matches);
 
 export function Chat({
   messages,

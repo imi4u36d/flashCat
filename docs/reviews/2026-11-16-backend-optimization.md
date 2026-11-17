@@ -26,7 +26,7 @@
 
 `EngineController`、`EngineManager`、`AppState` **零测试**。这是本轮所有"不敢改"的共同原因。
 
-**本轮之后（最终，2026-11-17 第三轮收口）**：`AppState.swift` **795** 行 / `@Published` **0**（全部搬进 9 个 store，见第十一节）；`native/` 共 **201** 个 Swift 文件全部带 SPDX 头；测试 **650** 条（477 → 650）；`swift format lint --strict` 零输出；18 个提交（其中 2 个是纯机械的格式化与 SPDX）。
+**本轮之后（最终，2026-11-17 第三轮收口）**：`AppState.swift` **795** 行 / `@Published` **0**（全部搬进 9 个 store，见第十一节）；`native/` 共 **201** 个 Swift 文件全部带 SPDX 头；测试 **661** 条（477 → 661）；`swift format lint --strict` 零输出；19 个提交（其中 2 个是纯机械的格式化与 SPDX）。
 
 ---
 
@@ -438,7 +438,7 @@ AppState (795 行, 0 个 @Published)
 
 - `swift build --build-tests` → Build complete，`Sources/` 零警告（只剩既有 `Tests/FlashCatTests/ImageToolTests.swift` 的 3 条 `#UnnecessaryEffectMarker`）。
 - `swift format lint --strict --recursive Sources Tests` → 零输出。
-- `swift test` → **FlashCatTests 240 / FlashCatKitTests 314 / FlashCatCLICoreTests 96 = 650**，0 failure（4 skipped 为既有环境跳过）。
+- `swift test` → **FlashCatTests 251 / FlashCatKitTests 314 / FlashCatCLICoreTests 96 = 661**，0 failure（合并 ModelScope 工作线后 App 侧多 11 条）。
 - `swift build -Xswiftc -strict-concurrency=complete` → warning 计数 **0**（基线 0）。
 - 四刀期间 `native/Sources/FlashCat/UI/`、`Tests/`、`MenuBarPanel.swift`、`Design.swift`、`Theme.swift`、`StatusBarController.swift` 全程零改动。
 
@@ -447,7 +447,7 @@ AppState (795 行, 0 个 @Published)
 1. **`EngineCoordinator` 用了 `weak var host: AppState?`**（`EngineCoordinator.swift:30`，约 100 处 `host?.`），是四刀里唯一反向引用的文件。理由：那批代码双向读写 AppState 的转发属性，用 `Hooks` 闭包会膨胀成几十个。**下一步**：抽 `@MainActor protocol EngineCoordinatorHost`（属性集合由协议声明），既去掉反向引用，又能脱离 AppState 单测。
 2. **新增的四个编排对象没有独立单元测试**：`ChatRunner`/`ModelOps`/`ServiceCoordinator`/`EngineCoordinator` 的行为目前只由 240 条 App 集成测试兜住。搬完之后它们已经可以脱离 `AppState` 构造，值得按 `EngineControllerPhaseTests` 的样子补（`ChatRunner` 用假 `ChatClient` 跑一轮流式、`ModelOps` 用假 `EngineCoordinator` 跑一次 `useModel`）。
 3. **`AppState` 仍持有 328 行转发面**（`指标转发` 50 + `纯函数转发` 70 + 各段一行转发约 210）。这是"View 与既有测试的稳定接口"，要再瘦必须改订阅方式（让视图直接订阅 store），属产品决策。
-4. **`.pnpm-store/v11` 被误提交进 git**：**2321 个文件 / 166 MB**（`git ls-files | grep -c node_modules` 命中 2321，全部是 `.pnpm-store/v11/files/*`），由 `c686b0a revert(app)` 带入，`.gitignore` 里也没有对应条目。建议 `git rm -r --cached .pnpm-store` + `.gitignore` 加 `.pnpm-store/`（历史里的 blob 需 `git filter-repo` 才能清掉，属独立一轮）。
+4. ~~`.pnpm-store` 被误提交进 git~~ **已修（`3c51937`）**：那次 revert 带进来的是 **4780 个文件**（`node_modules` 只占 2321，另有 pnpm 的 `projects/` 元数据），共 166 MB，`.gitignore` 也没有对应条目。已 `git rm -r --cached` + 忽略 `.pnpm-store/`、`node_modules/`：仓库跟踪文件从 **5054 → 288**，`native/` 247、`scripts/` 22。**历史里的 blob 还在**（`.git` 仍 108 MB），要清得 `git filter-repo --path .pnpm-store --invert-paths` 再让所有人重新克隆，属独立一轮。
 
 ### 11.6 第三轮的验收口径（替换第九节里过时的那条）
 
@@ -472,3 +472,11 @@ grep -rn '\$state\.' native/Sources/FlashCat/UI | wc -l               # 期望 0
 | 18 | `bd22c5f` refactor(appstate) | 收口成装配根（1496 → 795） |
 
 四刀合计：`+4812 / −3802`，新增 11 个文件，`AppState.swift` 净减 **3460 行**（4255 → 795）。
+
+### 11.8 合并到 main 的记录
+
+main 检出目录里一直有另一条工作线在跑（ModelScope 第二个模型源 + 背景主题改版）。这次按上次的约定先把现场提交成 `d1b360c wip: …`，再 `git merge --no-ff` 我的分支（`8fdfd59`）：**只有一个文件冲突**（`AppState.swift`），因为对面的改动落在被拆走的那些方法里。
+
+处理原则是「保留拆分后的结构，把对面的语义改动逐条接到新家」，而不是把旧的四千行搬回来：`downloadShared` 的 `source`/`include` 参数与 plan 构造落到 `ModelOps`，完成文案改在 `ModelOps.publishShared`，hub 的 `source` 转发签名由 `HubStore` 新版自动合入。顺带修掉对面新代码里 `ModelScopeClient.search` 的 `URLComponents(string:)!`（`NeverForceUnwrap` 已是硬门禁）。
+
+合并后跑：Build complete、`swift format lint --strict` 零输出、测试 251/314/96 全绿、`-strict-concurrency=complete` 计数 0。

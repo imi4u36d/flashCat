@@ -26,7 +26,7 @@
 
 `EngineController`、`EngineManager`、`AppState` **零测试**。这是本轮所有"不敢改"的共同原因。
 
-**本轮之后（最终）**：`AppState.swift` **4208** 行 / `@Published` **8**；`native/` 共 **61766** 行、**201** 个 Swift 文件全部带 SPDX 头；测试 **636** 条（477 → 636）；`swift format lint --strict` 零输出；14 个提交（其中 2 个是纯机械的格式化与 SPDX）。
+**本轮之后（最终，2026-11-17 第三轮收口）**：`AppState.swift` **795** 行 / `@Published` **0**（全部搬进 9 个 store，见第十一节）；`native/` 共 **201** 个 Swift 文件全部带 SPDX 头；测试 **650** 条（477 → 650）；`swift format lint --strict` 零输出；18 个提交（其中 2 个是纯机械的格式化与 SPDX）。
 
 ---
 
@@ -358,7 +358,7 @@
 
 | 2026-11-11 的验收项 | 本轮状态 |
 | --- | --- |
-| `AppState.swift` < 400 行、`@Published` < 12 | **半达标**：`grep -c '^    @Published'` = **8**（低于 12）；行数 5014 → **4208**，仍未 < 400。剩下的是 `// MARK: chat` 一段（流式生成、工具调用、取消/重试与模型热切换，约 1560 行），拆它要先把聊天循环与 `EngineController` 的状态边解耦，属独立一轮 |
+| `AppState.swift` < 400 行、`@Published` < 12 | **已推平到装配根**（第三轮 T13~T16）：`grep -c '^    @Published'` = **0**（63 → 8 → 0），行数 5014 → 4255 → **795**。剩下的 795 行里约 330 行是点名保留的稳定转发面（`指标转发` / `纯函数转发` / 各段一行转发），自有内容约 470 行；再往 400 压要让 View 改订阅方式，属产品决策而非重构 |
 | `EngineSession` / `ChatSession` / `DownloadCenter` 各有独立测试文件 | **部分达成**：三者都已是独立 store（`EngineSessionStore.swift` 41 行、`ChatSessionStore.swift` 28 行、`DownloadCenter.swift` 605 行），行为由既有 226 条 App 测试兜住（含 `ChatStopTests`、`ChatCancellationTests`、`EnginePreferenceTests`、`ModelLibraryTests`），但 store 级独立测试文件还没建 |
 | 取消不靠字符串 | **达标**：`grep -rn 'contains("cancel"\|contains("取消")' native/Sources/` = **0**；判据只剩 `error.isCancellation`（`ChatError` / `ImageClientError` / `VideoClientError` 三型都有 `enum Kind`）。残余的 `"已取消"` 全是构造点上已显式给出 `kind: .cancelled` 的用户可见文案；`UI/LogsPage.swift:331` 的 `localizedCaseInsensitiveContains` 是日志搜索，与取消无关 |
 | `EngineController` 只有一个 `phase` 属性 | **达标**：`private(set) var phase: Phase`，26 条生命周期写语句收敛成 1 条，`state` / `isReady` / `isStopping` / `isLaunching` / `busySince` 全部派生，调用方零改动，新增 10 条测试 |
@@ -374,9 +374,9 @@
 
 ---
 
-## 十、提交清单
+## 十、提交清单（第一轮 + 第二轮）
 
-全部改动已提交，工作树干净（`git status --porcelain` 无输出）。14 个提交按模块切开，每个都能单独回滚：
+前 14 个提交按模块切开，每个都能单独回滚（第三轮 4 个提交见第十一节末尾）：
 
 | # | 提交 | 内容 |
 | --- | --- | --- |
@@ -396,3 +396,79 @@
 | 14 | `24bee4b` ci | swift-format 从 advisory 升为硬门禁 |
 
 规模（相对 `352b763`）：**212 个路径**、`+19529 / −9401`、**32 个新文件**；其中语义改动 93 个路径（`+11163 / −4370`），格式化 188 个文件，SPDX 201 个文件。测试方法 **477 → 636**。
+
+---
+
+## 十一、第三轮：把 AppState 拆成装配根（2026-11-17，T13~T16）
+
+### 11.1 起点与判断错误
+
+第一轮把 `AppState` 从 **63** 个 `@Published` 拆到 **8** 个（六个 store + `MetricsStore`），看上去"数据已经分家"，但合并另一条工作线（日志页改版）后实测仍是 **4255 行 / 162 个 func**。原因是那一轮切的是**数据归属**，没有切**方法归属**——行数的主体是方法：`// MARK: chat` 343 + `对话里主动画图` 175 + `工具调用` 1151 = **1669 行（39%）**，另有 `lifecycle` 285、`service` 251、`models` 249、`derived` 258。
+
+第三轮按"方法归属"切四刀，每刀一个提交、每刀独立验证，切完 `AppState` 只剩装配。四刀都由子代理执行，我逐刀复验后提交。
+
+### 11.2 四刀的结果
+
+| 刀 | 新文件 | 行数 | 搬走什么 | AppState 行数 | 提交 |
+| --- | --- | --- | --- | --- | --- |
+| ① 对话编排 | `ChatRunner.swift` | 1904 | `// MARK: chat`、`对话里主动画图`、工具调用循环（含 `send` 七个重载、`cancelGeneration`、`regenerate`、`runImageTool`、`sendImage`/`sendVideo`） | 4255 → 2600 | `cc65e14` |
+| ② 引擎编排 | `EngineCoordinator.swift` | 835 | `lifecycle`（`syncController`/`bootstrap`/`adoptEngine`/`reloadModels`）、`engines`（安装/切换/端口/模型扫描）、`API gateway model preparation`、`model switch progress` | 2600 → 1897 | `42bad12` |
+| ③ 模型编排 | `ModelOps.swift` | 685 | `hardware`（硬件推荐）、`model library`（清单缓存）、`draft assignments`（草稿语义 `useModel`）、`models`（下载/删除/共享）、`download center` 事件处理 | 1897 → 1496 | `dec3772` |
+| ④ 收口 | `ServiceCoordinator.swift` 426 / `UIStateStore.swift` 130 / `ContextWindowTracker.swift` 120 / `LogFeedService.swift` 104 / `AppState+Wiring.swift` 112 / `ProcessOutput.swift` 67 / `AppState+Gateway.swift` 44 / `Page.swift` 33 | 1136 | `service`（装模型/切模型/起停服务与派生）、`toasts`/`sidebar`/`notice`/`island*`/`section`、`logs`/`logsRevision`、上下文窗口推导、网关地址、`TailReader`/`LineSplitter`、`enum Page` | 1496 → **795** | `bd22c5f` |
+
+最终形态：
+
+```
+AppState (795 行, 0 个 @Published)
+ ├─ 9 个 store：EngineSessionStore / ChatStore / ChatSessionStore / ModelLibraryStore
+ │              HubStore / MetricsStore / DownloadCenter / UIStateStore / LogFeedService
+ ├─ 4 个编排：ChatRunner / EngineCoordinator / ModelOps / ServiceCoordinator
+ └─ init 只做「建对象 → 接线 → 加 objectWillChange 桥」
+```
+
+`@Published` 的分布（`grep -c '^    @Published'`）：`AppState` **0**；`HubStore` 15、`MetricsStore` 12、`EngineInstallCenter` 10、`ModelLibraryStore` 9、`EngineSessionStore` 9、`UIStateStore` 7、`DownloadCenter` 5、`ChatStore` 5、`ChatSessionStore` 4、`GatewayController` 3、`BackgroundSettings` 3、`Theme` 2、`LogFeedService` 2、`StatusBarController` 1。
+
+### 11.3 三条接线纪律（这次真正守住了）
+
+1. **UI 零改动**：四刀全程 `git diff --stat -- native/Sources/FlashCat/UI native/Tests` 为空。视图仍然 `@ObservedObject var state` 读 `state.xxx`，`@Published` 搬走后靠 `objectWillChange` 桥（`makeBridge(_:)` 在 `AppState.swift` 里 8 行接完 8 个 store）。
+2. **不认单例**：`ChatRunner`/`ModelOps`/`ServiceCoordinator` 都是 `@MainActor final class` + init 注入 + `Hooks` 闭包（`ChatRunner` 16 个、`ModelOps` 13 个），文件里不出现 `AppState.shared`。唯一例外是 `LogFeedService.swift:85` 的 `recordHistoryWriteFailure`——`ChatHistory` 的 `onWriteFailure` 闭包在 `history` 还是 `let` 时就要构造，只能走静态入口，属既有写法原样搬移。
+3. **搬运保真**：`ChatRunner` 的 1669 行与原文件逐字节比对后只有 **16 处**差异（11 × `notice = …` → `hooks.setNotice(…)`、3 × `section = .chat` → `hooks.showChat()`、2 × `logs.append(…)+refreshLogs()` → `hooks.logWarning(…)`）；`ModelOps` 的 473 行有 **469 行逐字一致**，4 行差异全是有意改写。
+
+### 11.4 验证（每刀都跑，最后一刀后复跑）
+
+- `swift build --build-tests` → Build complete，`Sources/` 零警告（只剩既有 `Tests/FlashCatTests/ImageToolTests.swift` 的 3 条 `#UnnecessaryEffectMarker`）。
+- `swift format lint --strict --recursive Sources Tests` → 零输出。
+- `swift test` → **FlashCatTests 240 / FlashCatKitTests 314 / FlashCatCLICoreTests 96 = 650**，0 failure（4 skipped 为既有环境跳过）。
+- `swift build -Xswiftc -strict-concurrency=complete` → warning 计数 **0**（基线 0）。
+- 四刀期间 `native/Sources/FlashCat/UI/`、`Tests/`、`MenuBarPanel.swift`、`Design.swift`、`Theme.swift`、`StatusBarController.swift` 全程零改动。
+
+### 11.5 遗留的技术债（下一位接手的人必须知道）
+
+1. **`EngineCoordinator` 用了 `weak var host: AppState?`**（`EngineCoordinator.swift:30`，约 100 处 `host?.`），是四刀里唯一反向引用的文件。理由：那批代码双向读写 AppState 的转发属性，用 `Hooks` 闭包会膨胀成几十个。**下一步**：抽 `@MainActor protocol EngineCoordinatorHost`（属性集合由协议声明），既去掉反向引用，又能脱离 AppState 单测。
+2. **新增的四个编排对象没有独立单元测试**：`ChatRunner`/`ModelOps`/`ServiceCoordinator`/`EngineCoordinator` 的行为目前只由 240 条 App 集成测试兜住。搬完之后它们已经可以脱离 `AppState` 构造，值得按 `EngineControllerPhaseTests` 的样子补（`ChatRunner` 用假 `ChatClient` 跑一轮流式、`ModelOps` 用假 `EngineCoordinator` 跑一次 `useModel`）。
+3. **`AppState` 仍持有 328 行转发面**（`指标转发` 50 + `纯函数转发` 70 + 各段一行转发约 210）。这是"View 与既有测试的稳定接口"，要再瘦必须改订阅方式（让视图直接订阅 store），属产品决策。
+4. **`.pnpm-store/v11` 被误提交进 git**：**2321 个文件 / 166 MB**（`git ls-files | grep -c node_modules` 命中 2321，全部是 `.pnpm-store/v11/files/*`），由 `c686b0a revert(app)` 带入，`.gitignore` 里也没有对应条目。建议 `git rm -r --cached .pnpm-store` + `.gitignore` 加 `.pnpm-store/`（历史里的 blob 需 `git filter-repo` 才能清掉，属独立一轮）。
+
+### 11.6 第三轮的验收口径（替换第九节里过时的那条）
+
+```bash
+# 装配根：@Published 必须是 0
+grep -c '^    @Published' native/Sources/FlashCat/AppState.swift     # 期望 0
+# 行数预算：795 是当前值，任何人加回方法都应当显式说明
+wc -l native/Sources/FlashCat/AppState.swift                          # 预算 ≤ 900
+# 不允许新增反向引用（只有 EngineCoordinator 那条已知技术债）
+grep -rn 'AppState\.shared' native/Sources/FlashCat --include=*.swift | grep -v LogFeedService
+# 视图订阅方式未变（仍是 @ObservedObject 读 state.x）
+grep -rn '\$state\.' native/Sources/FlashCat/UI | wc -l               # 期望 0
+```
+
+### 11.7 第三轮的 4 个提交
+
+| # | 提交 | 内容 |
+| --- | --- | --- |
+| 15 | `cc65e14` refactor(appstate) | 对话编排与工具调用搬到 `ChatRunner`（4255 → 2600） |
+| 16 | `42bad12` refactor(appstate) | 引擎编排搬到 `EngineCoordinator`（2600 → 1897） |
+| 17 | `dec3772` refactor(appstate) | 模型编排搬到 `ModelOps`（1897 → 1496） |
+| 18 | `bd22c5f` refactor(appstate) | 收口成装配根（1496 → 795） |
+
+四刀合计：`+4812 / −3802`，新增 11 个文件，`AppState.swift` 净减 **3460 行**（4255 → 795）。

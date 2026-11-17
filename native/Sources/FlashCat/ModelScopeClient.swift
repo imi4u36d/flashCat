@@ -27,7 +27,11 @@ enum ModelScopeClient {
         page: Int
     ) async throws -> ModelScopePage {
         let text = searchText(query: query, filter: filter)
-        var components = URLComponents(string: endpoint + "/openapi/v1/models")!
+        // 常量域名拼出来的地址不会失败，但项目禁 `NeverForceUnwrap`：真拼不出来时
+        // 按「地址造不出来」报错，比在用户机器上崩掉好。
+        guard var components = URLComponents(string: endpoint + "/openapi/v1/models") else {
+            throw ModelScopeError.message("ModelScope 搜索地址拼不出来")
+        }
         var items = [
             URLQueryItem(name: "search", value: text),
             URLQueryItem(name: "page_number", value: String(max(0, page) + 1)),
@@ -43,7 +47,8 @@ enum ModelScopeClient {
 
         let payload: ListPayload = try await decode(url)
         let raw = payload.data?.models ?? []
-        let models = raw
+        let models =
+            raw
             .filter { !($0.gated ?? false) }
             .map { model(from: $0, files: [], readme: nil) }
             .filter { model in

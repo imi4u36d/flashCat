@@ -21,6 +21,7 @@ pub fn app_info(app: AppHandle, engine: State<'_, Engine>) -> AppInfo {
         arch: std::env::consts::ARCH,
         mobile: IS_MOBILE,
         model_dir: engine.model_dir(),
+        demo: std::env::var_os("FLASHCAT_DEMO").is_some(),
     }
 }
 

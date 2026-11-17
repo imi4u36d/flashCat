@@ -11,6 +11,7 @@ export type AppInfo = {
   arch: string;
   mobile: boolean;
   modelDir: string | null;
+  demo: boolean;
 };
 
 export type SystemInfo = { cpuCount: number; platform: Platform; accelerator: string };

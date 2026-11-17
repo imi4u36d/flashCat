@@ -40,7 +40,11 @@ type Active = {
   started: number;
 };
 
-export function useChatEngine(seed: Message[], transport: Transport = "auto") {
+export function useChatEngine(
+  seed: Message[],
+  transport: Transport = "auto",
+  demoFlag = false
+) {
   const [messages, setMessages] = useState<Message[]>(seed);
   const [generating, setGenerating] = useState(false);
   const [live, setLive] = useState<Live>({ tokens: 0, ms: 0 });
@@ -215,9 +219,9 @@ export function useChatEngine(seed: Message[], transport: Transport = "auto") {
     [clearTimer, messages, native, patch]
   );
 
-  // 自检：`VITE_DEMO=1` 时自动发一句，让「有没有真出字」能只看日志判断
-  // （桌面窗口截图受 TCC 限制、移动端没有 devtools）。
-  const demo = import.meta.env.VITE_DEMO;
+  // 自检：进程带 `FLASHCAT_DEMO=1` 时自动发一句，让「有没有真出字」只看日志就能判断
+  // （桌面窗口截图受 TCC 限制、移动端没有 devtools、Linux 容器里没有窗口管理器）。
+  const demo = import.meta.env.VITE_DEMO || demoFlag;
   useEffect(() => {
     if (!native || !demo) return;
     const t = window.setTimeout(() => send("用一句话说明你是谁"), 900);

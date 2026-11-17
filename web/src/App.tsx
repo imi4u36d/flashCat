@@ -234,7 +234,7 @@ export default function App() {
   const [theme, setTheme] = useState<"dark" | "light">(() =>
     document.documentElement.dataset.theme === "light" ? "light" : "dark"
   );
-  const chat = useChatEngine(seedMessages);
+  const chat = useChatEngine(seedMessages, undefined, info?.demo ?? false);
 
   const navigate = (p: Page) => {
     // 手机上只有三页：其余页面是桌面运维视角，落到它们时退回对话，

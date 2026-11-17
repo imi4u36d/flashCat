@@ -17,6 +17,9 @@ pub struct AppInfo {
     pub mobile: bool,
     /// 权重目录（绝对路径）。用户需要知道把 .gguf 放哪。
     pub model_dir: Option<String>,
+    /// 自检模式：进程环境变量 `FLASHCAT_DEMO` 存在时为真，前端会自动发一句。
+    /// 用它而不是编译期开关，是因为打包后的二进制也要能被验证。
+    pub demo: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

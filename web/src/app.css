@@ -1398,6 +1398,11 @@ html[data-mobile="true"] .mid {
 html[data-mobile="true"] .chart {
   min-height: 150px;
 }
+/* 手机上表格放不下 8 列：只留「模型 / 大小 / 状态 / 操作」，其余靠滚动没意义。 */
+html[data-mobile="true"] .col-opt {
+  display: none;
+}
+
 html[data-mobile="true"] .table {
   display: block;
   overflow-x: auto;

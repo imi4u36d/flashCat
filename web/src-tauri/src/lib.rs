@@ -10,6 +10,7 @@
 //! 实现并在 `Engine::new` 里换掉，前端与命令层不动。
 
 mod commands;
+mod download;
 mod engine;
 mod llama;
 mod logfile;
@@ -33,6 +34,7 @@ pub fn run() {
                 let _ = std::fs::create_dir_all(dir);
             }
             app.manage(Engine::new(model_dir));
+            app.manage(std::sync::Arc::new(download::Downloads::default()));
             logfile::line(
                 "INFO",
                 &format!(
@@ -58,6 +60,10 @@ pub fn run() {
             commands::chat_cancel,
             commands::log_frontend,
             commands::engine_warm,
+            commands::download_model,
+            commands::cancel_download,
+            commands::select_model,
+            commands::delete_model,
         ])
         .run(tauri::generate_context!())
         .expect("FlashCat 启动失败");

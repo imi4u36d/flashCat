@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "./icons";
 import type { IconName } from "./icons";
@@ -217,6 +217,16 @@ export default function App() {
       .catch((e) => void bridge.log("error", `bootstrap failed: ${String(e)}`));
   }, [shell]);
 
+  /** 下载/加载/删除之后重新取一份清单：模型页不做本地乐观更新，
+      以 Rust 侧扫描结果为准（磁盘才是唯一事实）。 */
+  const refreshModels = useCallback(() => {
+    if (!shell) return;
+    void Promise.all([bridge.status(), bridge.models()]).then(([s, m]) => {
+      setStatus(s);
+      setModels(m);
+    });
+  }, [shell]);
+
   // 开发期：?demo=stream 自动发一轮，用来无头核对流式中的思考块 / 光标 / 结算读数
   useEffect(() => {
     if (q.get("demo") !== "stream") return;
@@ -241,7 +251,7 @@ export default function App() {
       />
     );
   } else if (page === "models") {
-    body = <Models info={info} models={models} status={status} />;
+    body = <Models info={info} models={models} status={status} onChanged={refreshModels} />;
   } else {
     body = <Placeholder page={page} />;
   }

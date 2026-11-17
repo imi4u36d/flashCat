@@ -63,6 +63,16 @@ export type Delta =
   | { kind: "done"; runId: string }
   | { kind: "error"; runId: string; message: string };
 
+/** 下载进度事件（`model:download`），四端同一形状。 */
+export type DownloadProgress = {
+  name: string;
+  received: number;
+  total: number;
+  done: boolean;
+  cancelled: boolean;
+  error: string | null;
+};
+
 export const isTauri = (): boolean =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -89,6 +99,18 @@ export const bridge = {
   },
 
   chatCancel: (runId: string) => ipc<boolean>("chat_cancel", { runId }),
+
+  /** 应用内下载权重：手机上这是唯一能把模型放进去的路径。 */
+  download: (url: string, name: string) => ipc<void>("download_model", { url, name }),
+  cancelDownload: () => ipc<boolean>("cancel_download"),
+  selectModel: (id: string) => ipc<void>("select_model", { id }),
+  deleteModel: (id: string) => ipc<void>("delete_model", { id }),
+
+  onDownload: async (cb: (p: DownloadProgress) => void): Promise<() => void> => {
+    const { listen } = await import("@tauri-apps/api/event");
+    const un = await listen<DownloadProgress>("model:download", (e) => cb(e.payload));
+    return un;
+  },
 
   /** 前端日志回传：移动端没有 devtools，出错时只能靠它把话传到 stdout / 系统日志。 */
   log: (level: "debug" | "info" | "warn" | "error", message: string) =>

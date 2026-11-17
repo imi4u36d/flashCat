@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 给 release APK 签名并 zipalign，产出一个能直接 adb install 的包。
 #
-#   ./scripts/sign-android.sh                     # 用 build/outputs/apk/release 里最新的未签名包
+#   ./scripts/sign-android.sh                     # 用 build/outputs/apk 下最新的未签名包
 #   ./scripts/sign-android.sh path/to/app.apk     # 指定输入
 #   OUT=dist/FlashCat.apk ./scripts/sign-android.sh
 #
@@ -28,7 +28,8 @@ apksigner="$build_tools/apksigner"
 
 in="${1:-}"
 if [[ -z "$in" ]]; then
-  in="$(find "$android_dir/app/build/outputs/apk/release" -name '*.apk' -print0 2>/dev/null |
+  # apk 目录下有 universal/ 与 arm64/ 等子目录，按时间取最新的未签名包。
+  in="$(find "$android_dir/app/build/outputs/apk" -name '*-unsigned.apk' -print0 2>/dev/null |
     xargs -0 ls -t 2>/dev/null | head -1)"
 fi
 if [[ -z "$in" || ! -f "$in" ]]; then
@@ -39,6 +40,7 @@ fi
 name="$(basename "$in" .apk)"
 name="${name%-unsigned}"
 out="${OUT:-$android_dir/app/build/outputs/apk/release/$name-signed.apk}"
+mkdir -p "$(dirname "$out")"
 tmp="$(mktemp -t flashcat-align).apk"
 
 echo "→ 对齐 $in"

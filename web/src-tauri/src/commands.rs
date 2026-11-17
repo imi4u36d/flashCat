@@ -5,6 +5,7 @@
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::download::{self, Downloads};
 use crate::engine::Engine;
 use crate::model::{
     AppInfo, ChatRequest, EngineStatus, ModelCard, SystemInfo, IS_MOBILE, PLATFORM,
@@ -140,4 +141,33 @@ pub fn engine_warm(engine: State<'_, Engine>) {
 #[tauri::command]
 pub fn chat_cancel(engine: State<'_, Engine>, run_id: String) -> bool {
     engine.cancel(&run_id)
+}
+
+/// 应用内下载权重：手机装完 APK 没有 adb，这是用户拿到模型的唯一路径。
+#[tauri::command]
+pub fn download_model(
+    app: AppHandle,
+    engine: State<'_, Engine>,
+    downloads: State<'_, std::sync::Arc<Downloads>>,
+    url: String,
+    name: String,
+) -> Result<(), String> {
+    let dir = engine.dir().ok_or_else(|| "取不到权重目录".to_string())?;
+    download::start(app, &dir, &url, &name, downloads.inner().clone())
+}
+
+#[tauri::command]
+pub fn cancel_download(downloads: State<'_, std::sync::Arc<Downloads>>) -> bool {
+    downloads.cancel()
+}
+
+/// 切换权重：下载完立刻能用，而不是重启才生效。
+#[tauri::command]
+pub fn select_model(engine: State<'_, Engine>, id: String) -> Result<(), String> {
+    engine.select_model(&id)
+}
+
+#[tauri::command]
+pub fn delete_model(engine: State<'_, Engine>, id: String) -> Result<(), String> {
+    engine.delete_model(&id)
 }

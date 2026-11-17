@@ -44,6 +44,16 @@ pub trait Backend: Send + Sync {
     /// 预热：把权重读进内存。手机上是十几秒的磁盘 IO，放在首条消息里
     /// 就是「点了发送半天没反应」，所以让前端在空闲时先做掉。默认无操作。
     fn warm(&self) {}
+
+    /// 切换当前使用的权重（下载完立刻能用，而不是「重启才生效」）。
+    fn select(&self, _id: &str) -> Result<(), String> {
+        Err("当前后端不支持切换模型".to_string())
+    }
+
+    /// 删除一个权重文件。下载错了/放错了要能就地清理。
+    fn delete(&self, _id: &str) -> Result<(), String> {
+        Err("当前后端不支持删除权重".to_string())
+    }
 }
 
 /// 运行注册表：负责 run_id 分配、取消、超量拒绝。
@@ -104,6 +114,22 @@ impl Engine {
 
     pub fn warm(&self) {
         self.backend.warm()
+    }
+
+    /// 切换当前权重并预热；失败时保持原状。
+    pub fn select_model(&self, id: &str) -> Result<(), String> {
+        self.backend.select(id)?;
+        self.backend.warm();
+        Ok(())
+    }
+
+    pub fn delete_model(&self, id: &str) -> Result<(), String> {
+        self.backend.delete(id)
+    }
+
+    /// 真实路径版本（下载命令要往里写文件）。
+    pub fn dir(&self) -> Option<std::path::PathBuf> {
+        self.model_dir.clone()
     }
 
     /// 权重目录：设置页/模型页要把它显示出来，否则用户不知道该把 gguf 放哪。

@@ -59,6 +59,8 @@ pub struct LlamaChatBackend {
     /// 只缓存「当前这一个」模型：换模型时旧的 Arc 自然释放，不需要淘汰策略。
     /// `Arc<Mutex<…>>` 是为了让生成线程能独立持有它，不必回借 `self`。
     loaded: Arc<Mutex<Option<Arc<Loaded>>>>,
+    /// 用户显式选中的权重 id；None 表示按名字取第一个。
+    active: Arc<Mutex<Option<String>>>,
 }
 
 struct Loaded {
@@ -72,7 +74,12 @@ impl LlamaChatBackend {
     /// 这时返回 `Err`，由 `Engine` 决定回落到 mock 还是直接报错。
     pub fn new(dir: PathBuf) -> Result<Self, String> {
         let backend = LlamaBackend::init().map_err(|e| format!("llama.cpp 初始化失败：{e}"))?;
-        Ok(Self { dir, backend: Arc::new(backend), loaded: Arc::new(Mutex::new(None)) })
+        Ok(Self {
+            dir,
+            backend: Arc::new(backend),
+            loaded: Arc::new(Mutex::new(None)),
+            active: Arc::new(Mutex::new(None)),
+        })
     }
 
     fn scan(&self) -> Vec<ModelCard> {
@@ -107,10 +114,26 @@ impl LlamaChatBackend {
     }
 
     fn default_model(&self) -> Option<PathBuf> {
-        self.scan()
-            .into_iter()
-            .next()
-            .and_then(|c| self.dir.join(format!("{}.gguf", c.id)).canonicalize().ok())
+        let cards = self.scan();
+        let active = self.active.lock().ok().and_then(|g| g.clone());
+        // 选中的模型被删了/改名了就退回第一个，不要因此起不来。
+        let card = active
+            .as_ref()
+            .and_then(|id| cards.iter().find(|c| &c.id == id))
+            .or_else(|| cards.first())?;
+        self.path_of(&card.id)
+    }
+
+    fn path_of(&self, id: &str) -> Option<PathBuf> {
+        self.dir
+            .read_dir()
+            .ok()?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .find(|p| {
+                p.extension().is_some_and(|x| x.eq_ignore_ascii_case("gguf"))
+                    && p.file_stem().and_then(|s| s.to_str()) == Some(id)
+            })
     }
 
     /// 当前已加载的模型（状态查询用）。
@@ -222,19 +245,59 @@ impl Backend for LlamaChatBackend {
                 tokens_per_sec: None,
                 quantization: Some(l.card.quantization.clone()),
             },
-            None => EngineStatus {
-                backend: self.name().to_string(),
-                state: if self.scan().is_empty() { EngineState::Idle } else { EngineState::Ready },
-                model_id: self.scan().first().map(|c| c.id.clone()),
-                resident_mb: 0,
-                tokens_per_sec: None,
-                quantization: None,
-            },
+            None => {
+                // 还没加载也要把「会用哪个权重」说清楚：模型页与灵动岛都读这条，
+                // 只给 id 不给量化会显示成「未加载」，和实际状态不符。
+                let cards = self.scan();
+                let active = self.active.lock().ok().and_then(|g| g.clone());
+                let chosen = active
+                    .as_ref()
+                    .and_then(|id| cards.iter().find(|c| &c.id == id))
+                    .or_else(|| cards.first());
+                EngineStatus {
+                    backend: self.name().to_string(),
+                    state: if cards.is_empty() { EngineState::Idle } else { EngineState::Ready },
+                    model_id: chosen.map(|c| c.id.clone()),
+                    resident_mb: chosen.map(|c| c.size_mb).unwrap_or(0),
+                    tokens_per_sec: None,
+                    quantization: chosen.map(|c| c.quantization.clone()),
+                }
+            }
         }
     }
 
     fn models(&self) -> Vec<ModelCard> {
         self.scan()
+    }
+
+    fn select(&self, id: &str) -> Result<(), String> {
+        if self.path_of(id).is_none() {
+            return Err(format!("找不到权重 {id}"));
+        }
+        if let Ok(mut guard) = self.active.lock() {
+            *guard = Some(id.to_string());
+        }
+        // 换模型就把旧权重卸掉，否则手机上会同时占两份内存。
+        if let Ok(mut slot) = self.loaded.lock() {
+            *slot = None;
+        }
+        Ok(())
+    }
+
+    fn delete(&self, id: &str) -> Result<(), String> {
+        let path = self.path_of(id).ok_or_else(|| format!("找不到权重 {id}"))?;
+        if self.current().is_some_and(|l| l.path == path) {
+            if let Ok(mut slot) = self.loaded.lock() {
+                *slot = None;
+            }
+        }
+        std::fs::remove_file(&path).map_err(|e| format!("删除失败：{e}"))?;
+        if self.active.lock().map(|g| g.as_deref() == Some(id)).unwrap_or(false) {
+            if let Ok(mut guard) = self.active.lock() {
+                *guard = None;
+            }
+        }
+        Ok(())
     }
 
     fn warm(&self) {

@@ -109,6 +109,7 @@ pnpm tauri android dev         # 装到已连接的设备/模拟器
 
 pnpm tauri ios init            # 一次性：生成 gen/apple（需要 pod）
 pnpm tauri ios build --debug --target aarch64-sim
+pnpm tauri ios build --target aarch64 --export-method debugging   # 真机 IPA
 pnpm tauri ios dev             # 真机调（首次会提示选签名团队）
 ```
 
@@ -120,7 +121,7 @@ pnpm tauri ios dev             # 真机调（首次会提示选签名团队）
 | Windows | `src-tauri/target/release/bundle/nsis/*-setup.exe`、`bundle/msi/*.msi` |
 | Linux | `src-tauri/target/release/bundle/deb/*.deb`、`bundle/appimage/*.AppImage` |
 | Android | `src-tauri/gen/android/app/build/outputs/apk/**/*.apk` |
-| iOS | `src-tauri/gen/apple/build/**/*.app`（模拟器）/ 真机要 `--export-method development` |
+| iOS | `src-tauri/gen/apple/build/arm64-sim/FlashCat.app`（模拟器）、`build/arm64/FlashCat.ipa`（真机） |
 
 Android 出**可分发**的包（release + 签名）：
 
@@ -132,7 +133,20 @@ pnpm tauri android build --apk --target aarch64
 
 签名材料放 `~/.flashcat-keys/env.sh`（`FLASHCAT_KS` / `FLASHCAT_KS_ALIAS` / `FLASHCAT_KS_PASS`），
 脚本读不到就退回 debug 签名（能装，但不能上架）。**keystore 与口令都不要进仓库**。
-体积参考：debug 132MB（未 strip 的 `.so`），release 签名后约 6MB。
+体积参考：debug 132MB（未 strip 的 `.so`），release 签名后约 20MB（含 llama.cpp + rustls 静态链）。
+
+**装到 iPhone**（真机签名在这次已经理顺，坑都记在 `release/INSTALL.md`）：
+
+```bash
+pnpm tauri ios build --target aarch64 --export-method debugging
+xcrun devicectl device install app --device <UDID> src-tauri/gen/apple/build/arm64/FlashCat.ipa
+```
+
+首次启动前要在手机上「设置 → 通用 → VPN 与设备管理」信任开发证书，否则报
+`invalid code signature … profile has not been explicitly trusted`。免费团队签的包 7 天过期。
+**不要直接调 `xcodebuild`**：Tauri 的 `Build Rust Code` 阶段依赖 `tauri ios build` 写下的
+`gen/apple/.tauri/cli-options-server.json`，绕过它会报 `failed to read … cli-options-server.json`；
+`--device` 之类的参数也不要透传（会被塞进 `cargo build`，报 `unexpected argument '--destination'`）。
 
 ## 移动端
 
@@ -228,9 +242,17 @@ pub enum Delta { Text { run_id: String, delta: String }, ... }
 | Linux / Windows | `$XDG_DATA_HOME` / `%APPDATA%` 下的 `dev.flashcat.desktop/models/` |
 
 文件名决定卡片上的量化与参数量（`Qwen3-0.6B-Q4_K_M.gguf` → 家族 Qwen3、0.6B、Q4_K_M），
-所以**别改名成 `model.gguf`**。模型页会把扫到的清单、总占用和目录原样列出来。
+所以**别改名成 `model.gguf`**。模型页会把扫到的清单、总占用和目录原样列出来，
+每行都能「加载 / 删除」（`select_model` / `delete_model`）。
 
-推权重的两种土办法（真机请走应用内导入，见「下一步」）：
+**应用内下载**（推荐，手机端唯一不折腾的路径）：模型页「下载模型」里有两档预设
+（Qwen3 0.6B / 1.7B，Q4_K_M），点一下就在应用里下载、落盘、自动切换。
+实现是 `src-tauri/src/download.rs`：一条阻塞线程 + `model:download` 事件（200ms 或 8MB 节流），
+先写 `<name>.gguf.part`、完整且长度对得上才 `rename`——中断不会留下一个「看着能用、
+加载时才炸」的半个文件；同一时刻只允许一个下载，`cancel_download` 会把 `.part` 删掉。
+只接受 `https://`，文件名禁止带路径。
+
+命令行推权重（调试用）：
 
 ```bash
 # Android 模拟器
@@ -276,9 +298,7 @@ Apple ID，`xcodebuild` 报 `No Accounts` / `No profiles for 'dev.flashcat.deskt
 
 ## 下一步
 
-1. **模型下载器**：HF 直链 + 断点续传 + sha256 校验 + 首次启动引导。现在要手动 `adb push`，
-   这不是能交给用户的操作。
-2. **模型切换**：现在只用扫描到的第一个；要给「加载 / 换模型 / 卸载」三个动作。
-3. **KV 复用**：多轮对话每轮都在重新 prefill，把 session 留在 `Loaded` 里能再省一半首字。
-4. 概览接真实指标（吞吐、TTFT、常驻内存），日志页接 `tracing` 环形缓冲。
-5. Windows 的首个可用包走 CI，本地不折腾。
+1. **KV 复用**：多轮对话每轮都在重新 prefill，把 session 留在 `Loaded` 里能再省一半首字。
+2. **下载器补齐**：断点续传、sha256 校验、多源镜像、首次启动引导页。
+3. 概览接真实指标（吞吐、TTFT、常驻内存），日志页接 `tracing` 环形缓冲。
+4. Windows / Linux 的首个可用包走 CI（`.github/workflows/app-release.yml` 已写好）。

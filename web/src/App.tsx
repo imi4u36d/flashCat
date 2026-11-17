@@ -320,6 +320,8 @@ export default function App() {
         onNewThread={chat.reset}
         model={models.find((m) => m.id === status?.modelId) ?? models[0] ?? null}
         onHistory={mobile ? () => setSidebar(true) : undefined}
+        needsModel={status?.backend === "mock" && models.length === 0}
+        onGetModel={() => navigate("models")}
       />
     );
   } else if (page === "models") {

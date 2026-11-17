@@ -81,6 +81,8 @@ export function Chat({
   onNewThread,
   onHistory,
   model,
+  needsModel = false,
+  onGetModel,
 }: {
   messages: Message[];
   generating: boolean;
@@ -91,6 +93,9 @@ export function Chat({
   onHistory?: () => void;
   /** 当前加载的权重；没有后端或没装权重时是 null（输入卡的 chips 显示「—」）。 */
   model: ModelCard | null;
+  /** 目录里一个权重都没有：此时后端是演示用的 mock，输出不是模型算的。 */
+  needsModel?: boolean;
+  onGetModel?: () => void;
 }) {
   const [draft, setDraft] = useState("");
   const threadRef = useRef<HTMLDivElement>(null);
@@ -188,6 +193,19 @@ export function Chat({
           </button>
         </div>
       </div>
+
+      {needsModel ? (
+        <div className="notice">
+          <span>
+            未装权重，当前是<strong>演示输出</strong>
+          </span>
+          {onGetModel ? (
+            <button className="btn" type="button" onClick={onGetModel}>
+              去下载
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="thread scroll" ref={threadRef}>
         <div

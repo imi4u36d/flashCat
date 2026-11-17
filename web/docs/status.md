@@ -29,7 +29,13 @@
 
 ## 已知限制
 
-- llama.cpp 只吃 GGUF；旧库里的 mlx / safetensors 权重列在模型页「旧库里的其它权重」里，但**不能直接加载**。转换向导尚未实现。
+- llama.cpp 只吃 GGUF；旧库里的 mlx / safetensors 权重列在模型页「旧库里的其它权重」里，但**不能直接加载**。
+  实测结论：这些是 MLX 打包的**量化**权重（`config.json` 里逐层 `{"bits": 8, "group_size": 128, "mode": "affine"}`，
+  模型名还带 `3bpw`/`6bpw`），`model_type` 也是 `qwen4_exp` 这类新架构，层名含
+  `linear_attn.in_proj_qkv/z/a/b`、`mlp.shared_expert.*`、`mtp.layers.0.*`。
+  llama.cpp 的 `convert_hf_to_gguf.py` 不能直接读；要先反量化成 fp16 再转，且新架构大概率没有对应实现。
+  **所以不做转换向导**：成本高、成功率低，转不动时用户更困惑。要让旧库可直接用，只能是保留旧引擎（MLX 运行时），
+  那是另一条产品线，不在本次范围内。
 - Android 模拟器无 GPU 加速，实测 1.2 tok/s 属于极端值，不代表真机。
 - iOS 模拟器关闭 Metal（`gpu_layers=0`），否则首次每帧编 shader 会卡几分钟。
 

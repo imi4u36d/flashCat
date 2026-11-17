@@ -96,9 +96,7 @@ final class AppState: ObservableObject {
     @Published var logs: [LogLine] = []
     /// 日志页读它：合并视图覆盖所有引擎，别的引擎写新行时 `logs` 不会发布，
     /// 靠这一拍让页面重新取一份。活动引擎的写入仍走 `logs`。
-    @Published private(set) var logsRevision = 0
-    /// 上一拍参与指纹的非活动引擎存储，见 `syncController`。
-    private var logFeedToken: [Int] = []
+    @Published var logsRevision = 0
     /// 本机模型库：清单、公共目录里的仓库、当前浏览的引擎，以及硬件推荐。
     /// 这里只留 get/set 转发——扫盘时机属于编排（下载完成、授权变更、引擎装卸
     /// 都要顺手通知别人），所以仍由 AppState 决定。
@@ -139,15 +137,6 @@ final class AppState: ObservableObject {
         get { modelLibrary.tuningRevision }
         set { modelLibrary.tuningRevision = newValue }
     }
-    /// 上面那个计数器的心跳；模型不忙时它不发任何东西，界面不白白每秒重绘。
-    private var lifecycleClock: Timer?
-    /// 每次切换领一个号，只有当代的结尾允许改「切换中」状态。被接管或被取消的
-    /// 旧任务回来时代数已经不同，它就静默退出：既不会抹掉新切换的状态，也没人
-    /// 能把界面永久留在「切换中」。
-    private var switchGeneration = 0
-    /// 切换进行中又选了一个本引擎的模型：排到这次切换之后，只保留最后一次。
-    /// 以前这里直接丢弃，读者看到的是「点了没反应」。
-    private var queuedSwitchModel: String?
     /// 对话页自己的会话状态（待删线程、图像工具开关）同样独立成 store，
     /// 这里保留同名转发。
     let chatSession = ChatSessionStore()
@@ -248,20 +237,6 @@ final class AppState: ObservableObject {
 
     private var toastWork: DispatchWorkItem?
     private var supplementInFlight = false
-    /// The single task that owns a model switch. Nothing else may touch the
-    /// engine while it runs — the old weights must be confirmed gone before the
-    /// new ones allocate.
-    private var switchTask: Task<Void, Never>?
-    /// Serialises API-triggered model preparation. The visible switcher has its
-    /// own task/generation state, while two HTTP clients may arrive together;
-    /// chaining here keeps the second request from issuing a second load while
-    /// the first is still unloading or starting an engine.
-    private var gatewayPreparationTail: Task<Void, Never>?
-    /// Active engine as of the last pack install/uninstall callback. When an
-    /// uninstall removes the engine in use, `rebuild()` silently falls back to
-    /// another pack (or to none); comparing against this snapshot is how the
-    /// models page and the selected model are pointed at the new reality.
-    private var installsObservedEngine: EngineID?
 
     let settings = AppSettings()
     /// Owns the day/night skin choice and applies it to AppKit.
@@ -280,9 +255,12 @@ final class AppState: ObservableObject {
     let gateway = GatewayController.shared
     /// The loopback command channel used by the bundled `flashcat` CLI.
     let control = ControlServer()
-    var engines: EngineManager?
+    /// 引擎管理器归 `EngineCoordinator` 所有：装卸、切换都在那边重建控制器列表。
+    var engines: EngineManager? { engineCoordinator.engines }
     /// Pack installs shown on the engines page; owns its own installer actor.
     let installs = EngineInstallCenter()
+    /// 引擎编排：启停、装卸联动、模型热切换、网关模型准备。界面读的状态仍从这里转发。
+    let engineCoordinator: EngineCoordinator
     var controller: EngineController? { engines?.active }
     var activeEngine: EngineID { engines?.activeID ?? .splash }
     var availableEngines: [EngineID] { engines?.installedIDs ?? [] }
@@ -317,6 +295,10 @@ final class AppState: ObservableObject {
         })
         theme = ThemeController(settings: settings)
         showsSidebar = UserDefaults.standard.object(forKey: "sidebarVisible") as? Bool ?? true
+        // 只拿装配对象，状态一律走 `host` 转发：两边各存一份是这类拆分最容易留的坑。
+        engineCoordinator = EngineCoordinator(
+            settings: settings, installs: installs, control: control, gateway: gateway,
+            metrics: metrics, downloads: downloads)
         // 对话编排搬进 `ChatRunner`：依赖交过去，要回到 AppState 办的事用闭包接上。
         runner = ChatRunner(
             chat: chat, session: chatSession, engineSession: engineSession, settings: settings,
@@ -337,7 +319,7 @@ final class AppState: ObservableObject {
                 return await self.prepareModelForGateway(model, allowingGeneration: allowing)
             },
             modelIsResident: { [weak self] model, controller in
-                self?.gatewayModelIsResident(model, in: controller) ?? false
+                self?.engineCoordinator.gatewayModelIsResident(model, in: controller) ?? false
             },
             setNotice: { [weak self] message in self?.notice = message },
             toast: { [weak self] message, kind, transient in
@@ -397,6 +379,9 @@ final class AppState: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor [weak self] in self?.tuningRevision += 1 }
         }
+        // 编排层是装配链的最后一环：等 hook 和桥都接好再把 `self` 交过去，
+        // 否则构造期间的回调会摸到一个还没装配完的 AppState。
+        engineCoordinator.host = self
     }
 
     // MARK: derived
@@ -407,15 +392,16 @@ final class AppState: ObservableObject {
     /// 这里跟 EngineModelStore.meta 用同一档 20s 缓存，避免把扫描塞进推送热路径。
     private var contextWindowCache: (key: String, value: Int?, at: Date)?
 
-    /// 模型目录扫描的短缓存。`engineModels(for:)` / `libraryEntries(for:)` 会被
-    /// 侧栏计数、模型页、选择器等视图在每次重绘时调用；以前每秒的指标刷新都会
-    /// 触发多次目录枚举与 JSON 读取。这里缓存 1 秒，下载/删除/重新加载时立即失效。
-    private static let modelListTTL: TimeInterval = 1.0
-    private var engineModelsCache: [EngineID: (models: [EngineModel], at: Date)] = [:]
+    /// 模型目录扫描的短缓存。`libraryEntries(for:)` 会被侧栏计数、模型页、
+    /// 选择器等视图在每次重绘时调用；以前每秒的指标刷新都会触发多次目录枚举
+    /// 与 JSON 读取。这里缓存 1 秒，下载/删除/重新加载时立即失效。
+    /// 引擎侧那份同名缓存在 `EngineCoordinator` 手里，共用这一档 TTL。
+    static let modelListTTL: TimeInterval = 1.0
     private var libraryEntriesCache: [EngineID: (entries: [ModelLibraryEntry], at: Date)] = [:]
 
-    private func invalidateModelCaches() {
-        engineModelsCache.removeAll()
+    /// 两处扫描缓存一起失效：引擎那份归 `EngineCoordinator`，模型库这份还在这。
+    func invalidateModelCaches() {
+        engineCoordinator.invalidateModelCache()
         libraryEntriesCache.removeAll()
     }
 
@@ -464,7 +450,7 @@ final class AppState: ObservableObject {
     /// 写入点放在「重新扫盘」这类真实的状态变化里，而不是 `modelContextWindow`
     /// 的读取路径上——那个方法每帧都会被界面问到，顺手写 UserDefaults 意味着
     /// 重绘即改用户设置。这里只在确实知道值时写，且值没变就不重复写。
-    private func rememberContextWindows() {
+    func rememberContextWindows() {
         let engine = activeEngine
         for model in engineModels(for: engine) {
             guard let window = model.maximumContextTokens, window > 0 else { continue }
@@ -476,7 +462,7 @@ final class AppState: ObservableObject {
     }
 
     /// 引擎报出本次窗口的那一刻记下来。同样只在状态变化时写。
-    private func rememberReportedWindow() {
+    func rememberReportedWindow() {
         guard let reported = stats?.maximumContextTokens, reported > 0,
             !selectedModel.isEmpty
         else { return }
@@ -810,284 +796,48 @@ final class AppState: ObservableObject {
         return EngineStore.shared.tuning(for: activeEngine).speculativeMode(for: activeEngine)
     }
 
-    // MARK: lifecycle
+    // MARK: engine orchestration
 
-    /// 引擎启动、加载权重、热切换期间每秒推一格 `lifecycleTick`。
-    ///
-    /// 这些时段的文案里带着 `已等待 m:ss`，而秒数是从时钟算出来的，不挂在任何
-    /// `@Published` 字段上；同步函数为了避免空闲时整页每秒重绘，只在数值真的变化
-    /// 时才发布。引擎安静搬权重的几分钟里两者一撞，灵动岛、概览和菜单栏的秒数就
-    /// 一起停住，看起来和卡死没区别。这个节拍器只在 `isModelBusy` 时发布，空闲时
-    /// 一声不响。
-    ///
-    /// 用 `.common` 模式：默认模式的定时器在弹窗、菜单或拖拽时停止，而启动失败的
-    /// 提示正好是弹窗，等待时长会停在那一刻。
-    private func installLifecycleClock() {
-        lifecycleClock?.invalidate()
-        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self, self.isModelBusy else { return }
-                self.lifecycleTick &+= 1
-            }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        lifecycleClock = timer
+    /// 引擎编排搬进了 `EngineCoordinator`，这里每个入口只留一行转发：视图、
+    /// 菜单栏和 CLI 读的仍是 `state.xxx`，行为与搬之前一致。
+    func bootstrap() { engineCoordinator.bootstrap() }
+
+    func applyControlSettings() { engineCoordinator.applyControlSettings() }
+
+    func adoptEngine(_ id: EngineID) { engineCoordinator.adoptEngine(id) }
+
+    func reloadModels() { engineCoordinator.reloadModels() }
+
+    func engineIsInstalled(_ id: EngineID) -> Bool { engineCoordinator.engineIsInstalled(id) }
+
+    func requestEngineInstall(_ id: EngineID) { engineCoordinator.requestEngineInstall(id) }
+
+    func confirmEngineInstall() { engineCoordinator.confirmEngineInstall() }
+
+    func cancelEngineInstall() { engineCoordinator.cancelEngineInstall() }
+
+    @discardableResult
+    func switchEngine(_ id: EngineID, start: Bool = true) async -> Bool {
+        await engineCoordinator.switchEngine(id, start: start)
     }
 
-    private func syncController() {
-        // 每秒轮询都会走到这里。引擎空闲时状态与指标往往原封不动，无条件赋值
-        // `@Published` 会让整页每秒重绘一次；只在真的变化时才发布。
-        let nextState = controller?.state ?? .stopped
-        if serverState != nextState { serverState = nextState }
-        let nextStats = controller?.stats
-        if stats != nextStats {
-            stats = nextStats
-            // 引擎刚刚报出（或改口）本次窗口：顺手记住是显式的写入点，
-            // 不让读取处去写 UserDefaults。
-            rememberReportedWindow()
-        }
-        if let store = controller?.logs, store.latestId != logs.last?.id {
-            logs = store.snapshot(limit: 4000)
-        } else if controller == nil, !logs.isEmpty {
-            logs = []
-        }
+    func switchEnginePort(_ id: EngineID, port: Int) { engineCoordinator.switchEnginePort(id, port: port) }
 
-        // 「全部日志」还并着非活动引擎的尾巴：那些写入不经过 `logs`（它只盯
-        // 活动引擎），所以用其余存储的 latestId 组成指纹。只有真的长出新行才
-        // 发布，空闲时不白白重绘日志页。
-        let activeStore = controller?.logs
-        let logToken = (engines?.available ?? [])
-            .filter { $0.logs !== activeStore }
-            .map { $0.logs.latestId }
-        if logToken != logFeedToken {
-            logFeedToken = logToken
-            logsRevision &+= 1
-        }
+    func engineModels() -> [EngineModel] { engineCoordinator.engineModels() }
 
-        let now = Date()
-        // 指标那一半（网关聚合 / 曲线 / 接受率）搬进了 store，仍然按 **1 秒一拍**
-        // 发布：引擎轮询是 1s，应用内对话的分片回调只喂对话页直播条，不再顺带刷新
-        // 概览。`@Published` 只在数值真的变化时发布，空闲时不重绘；这里只负责把
-        // 这一拍的引擎状态递进去。
-        metrics.tick(now: now, stats: stats, isRunning: isRunning, activeEngine: activeEngine)
+    func engineModels(for id: EngineID) -> [EngineModel] { engineCoordinator.engineModels(for: id) }
 
-        if switchingModel != nil { syncSwitchStage() }
+    func prepareModelForGateway(
+        _ requestedModel: String?,
+        allowingGeneration: Bool = false
+    ) async -> GatewayModelPreparationError? {
+        await engineCoordinator.prepareModelForGateway(
+            requestedModel, allowingGeneration: allowingGeneration)
     }
 
-    func bootstrap() {
-        // 先让等待时长的心跳跑起来：下面的 autoStart 可能立刻拉起引擎，
-        // 而「已等待 0:01」从第一秒就该开始走。
-        installLifecycleClock()
+    func abortModelSwitch() { engineCoordinator.abortModelSwitch() }
 
-        let service = ModelCatalogService()
-        let migration = service.migrateLegacyDirectories()
-        if !migration.isEmpty {
-            let moved = migration.moved + migration.archived
-            toast(L10n.format("已把 %lld 项旧模型数据迁入 Application Support/flashCat", moved))
-        }
-        Paths.ensureDirectory(Paths.modelsDirectory)
-
-        // 旧版本用软链接把 ~/.omlx、~/.mtplx 的权重挂进模型目录；现在模型必须
-        // 真正待在自己的目录里，启动时把链接换成权重本身，并清掉失效链接。
-        var adopted = 0
-        for engine in EngineCatalog.allIDs {
-            adopted += EngineModelStore.adoptExistingWeights(engine).adopted.count
-        }
-        if adopted > 0 {
-            toast(L10n.format("已把 %lld 个模型搬进 flashCat 的模型目录，不再依赖外部目录", adopted))
-        }
-
-        // 授权表是公共目录的真相：启动时按它把各引擎目录里的链接对齐。
-        ModelSharing.synchronize()
-
-        catalog = service.load()
-        if catalog.machine.isEmpty {
-            selectedModel = settings.model
-        } else if settings.model.isEmpty, let first = catalog.machine.first {
-            selectedModel = first.id
-            settings.setModel(selectedModel)
-        } else {
-            selectedModel = settings.model
-        }
-        messages = conversation.load()
-        // 旧版本留下的重复线程只在启动时清理一次，之后都走缓存。
-        threads = history.load(pruneLegacy: true)
-
-        attachEngines()
-        // A crashed or force-quit session can leave an engine resident with its
-        // weights; clear those before anything of this session starts.
-        engines?.sweepOrphanEngines()
-        syncController()
-
-        // Work out (or recall) what this Mac should run before the launch page
-        // takes over: the first-run page and the launch page both ask "which
-        // engine", and the recommendation is what answers it.
-        settleRecommendation()
-
-        // The CLI needs a status endpoint even on a fresh install, so the
-        // command channel comes up before the launch-page early return.
-        startControlServerIfNeeded()
-
-        // Nothing installed yet: the launch page takes over and picks an engine.
-        guard !needsEngineSetup else {
-            selectedModel = ""
-            return
-        }
-
-        // Model folders are per engine and filled above; adopt whatever this
-        // engine already has so the models page opens on something usable.
-        libraryEngine = activeEngine
-        // Model ids do not carry across engines: a remembered id is only kept
-        // when this engine can actually serve it, otherwise the folder's own
-        // models win.
-        adoptSavedModel(for: activeEngine)
-
-        applyGatewaySettings()
-        // 模型广场的「已下载」要在第一次打开前就有结论：跟着启动算一次。
-        refreshLocalRepos()
-
-        if settings.autoStart && !selectedModel.isEmpty {
-            startService()
-        }
-    }
-
-    /// Start the CLI control channel when it is enabled and not already up.
-    /// Called from `bootstrap` and from the settings page after the toggle or
-    /// port changes.
-    func startControlServerIfNeeded() {
-        guard settings.controlAPIEnabled, !control.isRunning else { return }
-        let port = UInt16(settings.controlPort)
-        Task { [control] in
-            await control.start(preferredPort: port)
-        }
-    }
-
-    /// Apply the control-interface settings without requiring a relaunch.
-    func applyControlSettings() {
-        guard settings.controlAPIEnabled else {
-            control.stop()
-            return
-        }
-        let port = UInt16(settings.controlPort)
-        if control.isRunning, control.port == port { return }
-        Task { [control] in
-            await control.restart(port: port)
-        }
-    }
-
-    /// Point the manager at the installed packs. Installation is the only thing
-    /// that changes the controller list, so every engine becomes a controller
-    /// here — splash included.
-    private func attachEngines() {
-        let manager = EngineManager(settings: settings, catalog: catalog)
-        manager.onChange = { [weak self] in self?.syncController() }
-        // Splash launches run through here: a model installed without its
-        // DFlash2 draft gets it fetched before the engine starts.
-        manager.prepareForStart = { [weak self] model in
-            guard let self else { return .ready(model) }
-            return await self.ensureSplashDraft(model)
-        }
-        engines = manager
-        // A finished install/uninstall changes which packs exist, so rebuild the
-        // controllers and refresh whatever the models page is showing.
-        installsObservedEngine = manager.activeID
-        installs.configure(onChange: { [weak self] in
-            guard let self else { return }
-            self.engines?.rebuild()
-            // 卸载正在使用的引擎会让 rebuild 悄悄回落到另一个包（或一个不剩）。
-            // 活动引擎因此变化时，模型页和选中模型必须跟上，不能指向已删除的包。
-            defer { self.installsObservedEngine = self.activeEngine }
-            if self.needsEngineSetup {
-                self.selectedModel = ""
-                self.libraryEngine = .splash
-            } else if self.installsObservedEngine != self.activeEngine {
-                self.libraryEngine = self.activeEngine
-                self.adoptSavedModel(for: self.activeEngine)
-            }
-            // 有了引擎，首次运行的推荐页就不再成立：它既不能被这张页盖住
-            // 一个已经装好的引擎，也不能在没给出答案的情况下一直挂着。
-            if !self.needsEngineSetup { self.dismissRecommendationPage() }
-            self.reloadModels()
-            self.syncController()
-            self.objectWillChange.send()
-        })
-        // 引擎安装/构建的成功与失败通过全局气泡弹出。
-        installs.onToast = { [weak self] message in
-            self?.toast(message)
-        }
-    }
-
-    /// Make a freshly installed engine the one this app runs.
-    func adoptEngine(_ id: EngineID) {
-        EngineStore.shared.update(id) { $0.enabled = true }
-        EngineStore.shared.rememberActive(id)
-        engines?.rebuild(preferring: id)
-        EngineModelStore.adoptExistingWeights(id)
-        reloadModels()
-        adoptSavedModel(for: id)
-        syncController()
-        showsLaunchPage = false
-        // Adopting means a pack is on disk: the first-run question is answered by
-        // the install itself, so the page must not stay up over a working engine
-        // (it is a one-time question either way).
-        dismissRecommendationPage()
-        // The first-run page may have asked for an engine *and* its model. The
-        // downloader needs the pack on disk, so the model download waits for
-        // this moment instead of failing with "还没有安装…引擎".
-        if let pending = pendingRecommendedDownload {
-            pendingRecommendedDownload = nil
-            if pending.engine == id {
-                let model = pending.model
-                DispatchQueue.main.async { [weak self] in
-                    self?.downloadModel(model, engine: id)
-                }
-            }
-            // Another engine arrived first: `EngineInstallCenter.onInstalled` is
-            // a single slot, so the recommended engine's install can no longer
-            // report back and the latch can never be honoured. Drop it (a stale
-            // latch would fire a multi-GB download on some later install the
-            // user never re-confirmed) rather than leave it armed.
-        }
-        objectWillChange.send()
-    }
-
-    /// 本机已经有这些仓库：公共目录里的 + 各引擎模型目录里的权重。
-    /// 模型广场和手填下载都按它判「已下载」，所以启动时（`bootstrap`）也要扫
-    /// 一次——只挂在 `reloadModels` 上会等引擎安装/下载/授权变化才第一次算，
-    /// 刚开app 时广场会全是「下载」。
-    /// 三次目录扫描的 stat 走 `EngineModelStore` 的 meta 缓存，只有新增目录才真读盘。
-    func refreshLocalRepos() {
-        var local = Set(sharedRepos.map { ModelSharing.canonical($0) })
-        for id in EngineCatalog.allIDs {
-            for model in LocalEngineModels.scan(
-                engine: id,
-                directory: EnginePaths.modelsDirectory(id))
-            {
-                local.insert(ModelSharing.canonical(model.id))
-            }
-        }
-        localModelRepos = local.sorted()
-    }
-
-    func reloadModels() {
-        // 授权表是真相，磁盘上的链接跟着它走：启动、下载完成、授权变更都从这里过。
-        ModelSharing.invalidateCaches()
-        invalidateModelCaches()
-        ModelSharing.synchronize()
-        // 公共目录里已经有哪些仓库：模型广场用它标「已在本机」。跟着
-        // reloadModels 走（不挂在每两秒的指标轮询里），磁盘不会被反复扫。
-        sharedRepos = ModelSharing.scan().map { $0.id }
-        refreshLocalRepos()
-        catalog = ModelCatalogService().load()
-        controller?.updateCatalog(catalog)
-        if selectedModel.isEmpty, let first = catalog.machine.first {
-            selectedModel = first.id
-            settings.setModel(first.id)
-        }
-        // 扫盘之后是唯一「确定知道每个模型窗口」的时刻：在这里落盘记住，
-        // 读取处就不必再写 UserDefaults。
-        rememberContextWindows()
-    }
+    func shortModelName(_ id: String) -> String { engineCoordinator.shortModelName(id) }
 
     // MARK: hardware
 
@@ -1124,7 +874,7 @@ final class AppState: ObservableObject {
     /// Puts away the first-run page without answering it — used when an engine
     /// arrives by other means (engines page, another install finishing), so the
     /// page can never outlive its precondition and hide the launch page.
-    private func dismissRecommendationPage() {
+    func dismissRecommendationPage() {
         guard showsRecommendationPage else { return }
         showsRecommendationPage = false
         settings.setHardwareRecommendationSeen(true)
@@ -1159,163 +909,6 @@ final class AppState: ObservableObject {
     /// multi-gigabyte model download the user did not ask for again.
     func engineInstallFailed(_ engine: EngineID) {
         if pendingRecommendedDownload?.engine == engine { pendingRecommendedDownload = nil }
-    }
-
-    // MARK: engines
-
-    /// An engine counts as installed only when its pack produced a controller.
-    func engineIsInstalled(_ id: EngineID) -> Bool {
-        engines?.controller(id) != nil
-    }
-
-    /// Ask for the missing engine instead of pretending the switch happened:
-    /// `EngineManager.activate` no-ops without a controller, so a plain switch
-    /// would leave the old engine running under a success toast.
-    func requestEngineInstall(_ id: EngineID) {
-        pendingEngineInstall = id
-    }
-
-    func confirmEngineInstall() {
-        pendingEngineInstall = nil
-        section = .settings
-    }
-
-    func cancelEngineInstall() {
-        pendingEngineInstall = nil
-    }
-
-    /// Only one engine runs at a time: two MLX engines would fight for the same
-    /// unified memory, so switching stops the old one first — and waits for it
-    /// to really exit before the new engine is allowed to load anything.
-    ///
-    /// `start` keeps "switch" meaning "serve this engine": the destination is
-    /// started even when the previous one was idle, so a switch never leaves the
-    /// reader staring at a stopped engine. Callers that have a download to finish
-    /// first (the library sheet) pass `false` and start after it.
-    @discardableResult
-    func switchEngine(_ id: EngineID, start: Bool = true) async -> Bool {
-        guard let engines, id != engines.activeID else { return false }
-        // 换引擎本身就是重启进程：正在进行的切换（包括跨引擎跳过去的那一半）
-        // 已经没有意义，直接作废。以前这里 toast 一句就 return，读者再点最多
-        // 的选择都没反应，而那个被跳过的切换还在原地挂着。
-        if isSwitchingModel { retireModelSwitch() }
-        // A pending「切换模型？」sheet names the old engine's weights; it can
-        // no longer be confirmed once the engine under it changed.
-        confirmingModelSwitch = nil
-        guard engines.controller(id) != nil else {
-            requestEngineInstall(id)
-            return false
-        }
-        let activated = await engines.activate(id)
-        // The pack disappeared (or the handoff was cancelled) while the old
-        // engine was stopping: do not point the library at an engine we are not
-        // actually running.
-        guard activated || activeEngine == id else {
-            requestEngineInstall(id)
-            return false
-        }
-        libraryEngine = id
-        reloadModels()
-        // Switching to an engine must not keep the previous engine's model id:
-        // the remembered one only survives if this engine can serve it.
-        adoptSavedModel(for: id)
-        syncController()
-        if start, !selectedModel.isEmpty { startService() }
-        toast(L10n.format("已切换到 %@", id.displayName), transient: true)
-        return true
-    }
-
-    /// Change the port an engine listens on. Only the stored preference moves
-    /// while it is idle; a running engine keeps its port until restarted.
-    func switchEnginePort(_ id: EngineID, port: Int) {
-        guard let engines, let controller = engines.controller(id) else { return }
-        guard controller.port != port else { return }
-        EngineStore.shared.update(id) { $0.port = port }
-        if id == activeEngine, !isRunning {
-            controller.updatePort(port)
-        }
-        syncController()
-    }
-
-    /// Models the active engine can actually see: splash reads its catalog,
-    /// the others read the flashCat folder that holds links to the weights.
-    func engineModels() -> [EngineModel] { engineModels(for: activeEngine) }
-
-    /// Same list, for an engine that is not (yet) the active one — switching
-    /// engines has to know what the destination can serve before it commits.
-    func engineModels(for id: EngineID) -> [EngineModel] {
-        if let hit = engineModelsCache[id],
-            Date().timeIntervalSince(hit.at) < Self.modelListTTL
-        {
-            return hit.models
-        }
-        let models = scanEngineModels(for: id)
-        engineModelsCache[id] = (models, Date())
-        return models
-    }
-
-    private func scanEngineModels(for id: EngineID) -> [EngineModel] {
-        // A half-downloaded snapshot already carries config.json and a
-        // tokenizer, which is enough for the scan to call it a servable model.
-        // Every download-center row means its folder is not finished (success
-        // removes the row), so hide those folders from the library until the
-        // downloader is done — the card then keeps showing live progress on
-        // the suggestion row instead of flipping to a "使用" button.
-        let unfinished = Set(downloadTasks.map { ModelSharing.canonical($0.model) })
-        let shared = sharedModels(for: id)
-            .filter { !unfinished.contains(ModelSharing.canonical($0.id)) }
-        if id.adapter == .splash {
-            // 公共目录里的权重已经在 catalog.local 里（load 会把 ModelSharing.scan()
-            // 并进来），这里只过滤没下完的，不再追加一遍。
-            return catalog.machine
-                .filter { ModelSharing.visible($0.id, engine: .splash) }
-                .filter { !unfinished.contains(ModelSharing.canonical($0.id)) }
-                .map {
-                    // Splash 的视觉能力来自独立的 mmproj 投影（GGUF 旁边的
-                    // mmproj-*.gguf），目录扫描看不到；不补这个能力位，视觉
-                    // 模型在对话页会被当成纯文本模型，画完图也不回传像素。
-                    let vision =
-                        $0.mmprojPath != nil
-                        || LocalEngineModels.capabilities(at: $0.path).contains("vision")
-                        || LocalEngineModels.capabilities(at: $0.targetName).contains("vision")
-                    return EngineModel(
-                        id: $0.id, path: $0.path, bytes: $0.bytes,
-                        maximumContextTokens: nil, loaded: false, loading: false,
-                        kind: nil, capabilities: vision ? ["chat", "vision"] : [],
-                        hidden: false, helper: false, engine: .splash)
-                }
-        }
-        let scanned = LocalEngineModels.scan(engine: id, directory: EnginePaths.modelsDirectory(id))
-        // Flat-layout packs (oMLX, MTPLX, Strata) scan as `owner--repo` while
-        // the download task is keyed by `owner/repo`. Canonicalise both sides
-        // or the partial folder slips through and the card flips to "使用"
-        // before the transfer is done.
-        return scanned.filter { !unfinished.contains(ModelSharing.canonical($0.id)) } + shared
-    }
-
-    /// 公共目录里授权给这个引擎的权重。oMLX / MTPLX 目录里也有它们，但那是
-    /// 软链，`LocalEngineModels.scan` 会跳过——模型页的真相来自这里。
-    private func sharedModels(for engine: EngineID) -> [EngineModel] {
-        ModelSharing.scan()
-            .filter { ModelSharing.engines(for: $0.id).contains(engine) }
-            .map { model in
-                // Splash 认 `owner/repo`，两个 pack 认扁平目录名——启动时交给引擎
-                // 的就是这个 id，不能用另一种写法。
-                let id =
-                    engine.adapter == .splash || engine.descriptor.modelLayout == .nested
-                    ? model.id
-                    : ModelInstaller.folderName(for: model.id)
-                let vision =
-                    model.mmprojPath != nil
-                    || LocalEngineModels.capabilities(at: model.targetName).contains("vision")
-                return EngineModel(
-                    id: id,
-                    path: model.targetName,
-                    bytes: model.bytes,
-                    maximumContextTokens: nil, loaded: false, loading: false,
-                    kind: nil, capabilities: vision ? ["chat", "vision"] : [],
-                    hidden: false, helper: false, engine: engine)
-            }
     }
 
     // MARK: model library
@@ -1486,178 +1079,6 @@ final class AppState: ObservableObject {
 
     func cancelLibraryUse() { pendingLibraryUse = nil }
 
-    // MARK: API gateway model preparation
-
-    /// Make the model named by an API request the one that is actually loaded.
-    ///
-    /// This is deliberately separate from `applyModel`: API clients cannot
-    /// answer a confirmation sheet, and a request that names a different model
-    /// must not be silently served by the currently resident one. The method
-    /// resolves ownership across every installed engine, performs the engine
-    /// handoff when needed, starts a stopped engine, and waits until the engine
-    /// reports the requested weights resident.
-    ///
-    /// `nil` means the requested (or currently selected) model is ready.
-    /// - Parameter allowingGeneration: 应用内图像生成用。它自己已经把
-    ///   `generating` 置真，但换模型正是这次生成要做的事，不能因此拒绝自己。
-    func prepareModelForGateway(
-        _ requestedModel: String?,
-        allowingGeneration: Bool = false
-    ) async -> GatewayModelPreparationError? {
-        let previous = gatewayPreparationTail
-        let operation = Task { @MainActor [weak self] () -> GatewayModelPreparationError? in
-            await previous?.value
-            guard let self else { return .unavailable("flashCat 状态不可用") }
-            return await self.prepareModelForGatewayExclusively(
-                requestedModel, allowingGeneration: allowingGeneration)
-        }
-        gatewayPreparationTail = Task { _ = await operation.value }
-        return await operation.value
-    }
-
-    private func prepareModelForGatewayExclusively(
-        _ requestedModel: String?,
-        allowingGeneration: Bool
-    )
-        async -> GatewayModelPreparationError?
-    {
-        guard !needsEngineSetup, let engines else {
-            return .unavailable("还没有安装推理引擎，请先在 flashCat 中安装并启动一个引擎")
-        }
-
-        // A model picked in the UI may still be loading. Wait for that switch
-        // instead of issuing a competing load against an engine that is in the
-        // middle of unloading its previous weights.
-        let switchWaitDeadline = Date().addingTimeInterval(max(activeEngine.startupTimeout, 30))
-        while isSwitchingModel, Date() < switchWaitDeadline {
-            if Task.isCancelled { return .failed("模型准备已取消") }
-            try? await Task.sleep(nanoseconds: 200_000_000)
-        }
-        if isSwitchingModel {
-            return .unavailable("模型仍在切换中，请稍后重试")
-        }
-
-        var orderedEngines = [activeEngine]
-        orderedEngines.append(contentsOf: availableEngines.filter { $0 != activeEngine })
-        let modelsByEngine = Dictionary(
-            uniqueKeysWithValues: orderedEngines.map { engine in
-                (engine, engineModels(for: engine).map(\.id))
-            })
-
-        let route: GatewayModelRoute
-        let wanted = requestedModel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if wanted.isEmpty {
-            let activeModels = modelsByEngine[activeEngine] ?? []
-            guard
-                let fallback = EngineModelSelection.resolve(
-                    saved: selectedModel,
-                    available: activeModels)
-            else {
-                return .badRequest("请求没有 model 字段，flashCat 也没有可用的默认模型")
-            }
-            route = GatewayModelRoute(model: fallback, engine: activeEngine)
-        } else {
-            guard
-                let resolved = GatewayModelRouting.resolve(
-                    requestedModel: wanted,
-                    orderedEngines: orderedEngines,
-                    modelsByEngine: modelsByEngine)
-            else {
-                return .modelNotFound("没有已安装的模型 \(wanted)")
-            }
-            route = resolved
-        }
-
-        guard let destination = engines.controller(route.engine) else {
-            return .unavailable("\(route.engine.displayName) 没有可用的运行时")
-        }
-
-        // Changing weights under a running in-app generation would abort that
-        // response. If the request needs no physical model change it can share
-        // the resident model; otherwise report back rather than corrupting the
-        // current chat.
-        let alreadyActive = route.engine == activeEngine
-        let alreadyResident = gatewayModelIsResident(route.model, in: destination)
-        let requiresWork = !alreadyActive || !destination.isRunning || !alreadyResident
-        if generating, requiresWork, !allowingGeneration {
-            return .unavailable("flashCat 正在生成回复，暂时不能切换模型")
-        }
-        if requiresWork || selectedModel != route.model {
-            gateway.logs.append(
-                "==> API 请求模型 \(route.model) · \(route.engine.displayName)",
-                level: .system)
-        }
-
-        if !alreadyActive {
-            let activated = await engines.activate(route.engine)
-            guard activated || activeEngine == route.engine else {
-                return .failed("切换到 \(route.engine.displayName) 失败")
-            }
-            libraryEngine = route.engine
-            reloadModels()
-            syncController()
-        }
-
-        // Avoid rewriting UserDefaults and the engine configuration on every
-        // request when the requested model is already selected and resident.
-        if selectedModel != route.model {
-            selectModel(route.model)
-        }
-        let savedModel = EngineStore.shared.configuration(for: route.engine).lastModel
-        if savedModel != route.model {
-            engines.setModel(route.model, for: route.engine)
-        }
-        syncController()
-
-        guard let controller = self.controller, controller.id == route.engine else {
-            return .unavailable("\(route.engine.displayName) 没有可用的运行时")
-        }
-
-        if !controller.isRunning {
-            await controller.start(localModel: selectedModelInfo, requestedModel: route.model)
-        } else if !gatewayModelIsResident(route.model, in: controller),
-            controller.model != route.model
-        {
-            // A running engine with other weights resident: use the same
-            // unload-confirm-load path as the switcher. Hot engines do this in
-            // place; restart engines stop the process first.
-            let outcome = await controller.switchModel(route.model) { _ in
-                // The controller already writes the unload/load stages to its
-                // own log. Do not borrow the UI switcher's `switchStage`: that
-                // field is owned and cleared by `beginModelSwitch`, and setting
-                // it here would leave a stale stage in the status line.
-            }
-            if case .failed(let reason) = outcome {
-                return .failed(reason)
-            }
-        }
-
-        let ready = await controller.waitForSwitchReady(
-            route.model,
-            timeout: route.engine.startupTimeout)
-        syncController()
-        guard ready else {
-            let reason =
-                controller.failureMessage
-                ?? "\(route.engine.displayName) 未能在预期时间内加载 \(route.model)"
-            return .failed(reason)
-        }
-        if requiresWork {
-            gateway.logs.append(
-                "==> API 模型已就绪 · \(route.model) · 端口 \(controller.port)",
-                level: .system)
-        }
-        return nil
-    }
-
-    /// Whether the controller's own telemetry says these exact weights are
-    /// resident. During a cold start there is no status document yet, so the
-    /// caller also checks `controller.model` and waits for the load to finish.
-    private func gatewayModelIsResident(_ target: String, in controller: EngineController) -> Bool {
-        guard let status = controller.status else { return false }
-        return status.model == target || status.loadedModels.contains(target)
-    }
-
     // MARK: service
 
     /// Resolve the model this engine should start on. Model ids are engine
@@ -1666,7 +1087,7 @@ final class AppState: ObservableObject {
     /// link names in their own folder. A remembered id from another engine, or
     /// one whose weights have gone, would 404 on every request, so it is
     /// replaced by a model the engine really has and the store is repaired.
-    private func adoptSavedModel(for id: EngineID) {
+    func adoptSavedModel(for id: EngineID) {
         let models = engineModels(for: id)
         let saved = EngineStore.shared.configuration(for: id).lastModel
         guard let chosen = EngineModelSelection.resolve(saved: saved, available: models.map(\.id)) else {
@@ -1756,22 +1177,22 @@ final class AppState: ObservableObject {
         // 跨引擎的新选择必须立刻生效：上一次切换（可能是另一台引擎上几分钟的
         // 权重加载）在这里作废，而不是排队等它结束——排队就是「点了新模型，
         // 界面还停在旧的那一次切换里」。
-        retireModelSwitch()
+        engineCoordinator.retireModelSwitch()
         confirmingModelSwitch = nil
-        let generation = switchGeneration
+        let generation = engineCoordinator.currentSwitchGeneration
         // 停着的时候不再只换选择：跨引擎选模型同样意味着「现在就跑它」，
         // 所以界面直接进入「启动引擎」。
         switchingModel = model
         switchStage = wasRunning ? "停止旧引擎" : "启动引擎"
 
-        switchTask = Task { [weak self] in
+        engineCoordinator.switchTask = Task { [weak self] in
             guard let self else { return }
             // 只在这里换引擎：等旧引擎真的退出，再让新引擎加载权重。
             let activated = await engines.activate(engine)
             // 被更新的选择接管了：状态与引擎都归那一代，这里静默退出。
-            guard generation == self.switchGeneration else { return }
+            guard generation == self.engineCoordinator.currentSwitchGeneration else { return }
             guard activated || self.activeEngine == engine else {
-                self.settleModelSwitch(
+                self.engineCoordinator.settleModelSwitch(
                     generation: generation,
                     outcome: .failed("\(engine.displayName) 没有可用的控制器"))
                 return
@@ -1781,11 +1202,11 @@ final class AppState: ObservableObject {
             // The picked model wins over the engine's remembered one.
             self.selectModel(model)
             engines.setModel(model, for: engine)
-            self.syncController()
+            self.engineCoordinator.syncController()
 
             self.switchStage = "加载新模型"
             guard let controller = self.controller else {
-                self.settleModelSwitch(
+                self.engineCoordinator.settleModelSwitch(
                     generation: generation,
                     outcome: .failed("\(engine.displayName) 没有可用的控制器"))
                 return
@@ -1794,7 +1215,7 @@ final class AppState: ObservableObject {
             // 等「真的加载完」而不是「HTTP 壳子绿了」，否则界面会在权重刚
             // 开始搬的时候就退出「切换中」（见 waitForSwitchReady 里的日志）。
             let ready = await controller.waitForSwitchReady(model, timeout: engine.startupTimeout)
-            self.settleModelSwitch(
+            self.engineCoordinator.settleModelSwitch(
                 generation: generation,
                 outcome: ready
                     ? .ready
@@ -1811,7 +1232,7 @@ final class AppState: ObservableObject {
         if target == selectedModel {
             // 选回正在切的那一个（或已生效的那一个）= 没必要再动；如果刚才排过
             // 一次别的选择，这次点击就是「改主意」，把队列清掉。
-            if isSwitchingModel { queuedSwitchModel = nil }
+            if isSwitchingModel { engineCoordinator.queuedSwitchModel = nil }
             return
         }
         guard !generating else {
@@ -1822,7 +1243,7 @@ final class AppState: ObservableObject {
             // 同引擎的第二次选择不能打断已经在跑的加载（EngineController 单飞），
             // 排到这次切换之后；队列只留最后一次，读者连点三下就是最后一下生效。
             if target != switchingModel {
-                queuedSwitchModel = target
+                engineCoordinator.queuedSwitchModel = target
                 // 排队只是「你的点击没丢」的一过性回执：不留在通知历史里。
                 toast(
                     L10n.format("正在切换模型，完成后自动切到 %@", shortModelName(target)),
@@ -1871,7 +1292,7 @@ final class AppState: ObservableObject {
         if activeEngine != .splash {
             engines?.setModel(target, for: activeEngine)
         }
-        beginModelSwitch(to: target)
+        engineCoordinator.beginModelSwitch(to: target)
     }
 
     func startService() {
@@ -1893,7 +1314,7 @@ final class AppState: ObservableObject {
     }
 
     func stopService() {
-        cancelModelSwitch()
+        engineCoordinator.cancelModelSwitch()
         controller?.stop()
     }
 
@@ -1907,130 +1328,6 @@ final class AppState: ObservableObject {
 
     func restartService() {
         Task { await controller?.restart(localModel: selectedModelInfo) }
-    }
-
-    // MARK: model switch progress
-
-    /// One task drives the whole swap — stop/unload, confirm the old weights are
-    /// gone, then load — and reports back when it is really done. The previous
-    /// design fired a process restart from the view model and a hot load from
-    /// here at the same time, which is what wedged the engine mid-switch.
-    ///
-    /// 切换等于「让它现在就用这份权重」：引擎停着时不是只记住选择，而是直接用
-    /// 新权重启动。以前这里只 toast「已切换」，读者看到引擎一直停着，以为切换
-    /// 没生效。
-    private func beginModelSwitch(to id: String) {
-        // 上一次切换（比如跨引擎跳过来的那一次加载）先作废，这一次从头开始。
-        retireModelSwitch()
-        let generation = switchGeneration
-        let wasRunning = isRunning
-        switchingModel = id
-        switchStage = wasRunning ? "准备切换" : "启动引擎"
-        switchTask = Task { [weak self] in
-            guard let self, let controller = self.controller else {
-                self?.settleModelSwitch(
-                    generation: generation,
-                    outcome: .failed("\(self?.activeEngine.displayName ?? "引擎") 没有可用的控制器"))
-                return
-            }
-            guard wasRunning else {
-                await controller.start(localModel: self.selectedModelInfo, requestedModel: id)
-                let ready = await controller.waitForSwitchReady(id, timeout: self.activeEngine.startupTimeout)
-                self.settleModelSwitch(
-                    generation: generation,
-                    outcome: ready
-                        ? .ready
-                        : .failed(controller.failureMessage ?? "\(self.activeEngine.displayName) 未能在预期时间内就绪"))
-                return
-            }
-            let outcome = await controller.switchModel(id) { stage in
-                // 被接管之后就不要再往新切换的阶段行里写了。
-                guard generation == self.switchGeneration else { return }
-                self.switchStage = stage
-            }
-            self.settleModelSwitch(generation: generation, outcome: outcome)
-        }
-    }
-
-    /// 上一次切换作废：取消任务、推进代数、清掉「切换中」。跨引擎再选、换引擎、
-    /// 用户主动放弃都走这里。以前这些入口要么静默 return，要么只 cancel 任务而
-    /// 把状态交给一个再也不会回来的结尾去清——界面就永久停在「切换中」，只能
-    /// 重启应用。
-    private func retireModelSwitch() {
-        switchTask?.cancel()
-        switchTask = nil
-        switchGeneration &+= 1
-        switchingModel = nil
-        switchStage = ""
-        // 排队的模型 id 只属于这台引擎；换引擎/被接管之后它就指向另一份权重
-        // 目录里的名字，留着只会在下一次收起时把别人的模型当成这台引擎的。
-        queuedSwitchModel = nil
-    }
-
-    /// 切换的唯一出口。先核对代数：被接管/被取消的旧任务到这里就静默退出，
-    /// 既不会抹掉新切换的状态，也不会把自己忘在「切换中」。当代的结尾负责清
-    /// 状态，并把排队的那次选择接着做掉。
-    private func settleModelSwitch(generation: Int, outcome: EngineController.ModelSwitchOutcome) {
-        guard generation == switchGeneration else { return }
-        switchTask = nil
-        finishModelSwitch(outcome: outcome)
-        guard let next = queuedSwitchModel else { return }
-        queuedSwitchModel = nil
-        beginModelSwitch(to: next)
-    }
-
-    /// 切换中读者的退路：放弃这次等待，状态交回引擎自己的启动阶段（进度、
-    /// 已等待秒数、日志都还在推进）。引擎继续在后台加载，不打断已经搬了
-    /// 一半的权重。
-    func abortModelSwitch() {
-        guard switchingModel != nil else { return }
-        let engine = activeEngine
-        queuedSwitchModel = nil
-        retireModelSwitch()
-        // 退路回执，不是需要回头再看的状态：加载仍在后台推进，阶段行会说。
-        toast(
-            L10n.format("已取消等待 · %@ 仍在后台加载", engine.displayName),
-            kind: .warning,
-            transient: true)
-    }
-
-    /// Keep the stage line honest if the engine moves on its own between stages.
-    private func syncSwitchStage() {
-        guard switchingModel != nil, switchStage.isEmpty else { return }
-        switchStage = serverState == .ready ? "加载新模型" : "停止旧模型"
-    }
-
-    private func finishModelSwitch(outcome: EngineController.ModelSwitchOutcome) {
-        guard switchingModel != nil else { return }
-        switchingModel = nil
-        switchStage = ""
-        switch outcome {
-        case .ready:
-            // 换模型是读者自己点的那一下的结果，看到「运行中」就够了：
-            // 这条只闪一下，不写进通知历史。
-            toast(
-                L10n.format("模型已就绪 · %@", shortModelName(selectedModel)),
-                kind: .success,
-                transient: true)
-        case .failed(let reason):
-            notice = reason
-            toast("模型切换失败，请查看日志")
-        }
-    }
-
-    private func cancelModelSwitch() {
-        queuedSwitchModel = nil
-        retireModelSwitch()
-    }
-
-    /// Display name for a model id: the repository's own name, not a made-up
-    /// product alias. Engines that keep weights in a flat `owner--repo` folder
-    /// are canonicalised first so toasts do not print the storage form.
-    func shortModelName(_ id: String) -> String {
-        let value = id.trimmingCharacters(in: .whitespaces)
-        if value.isEmpty { return "—" }
-        let canonical = value.replacingOccurrences(of: "--", with: "/")
-        return canonical.split(separator: "/").last.map(String.init) ?? canonical
     }
 
     // MARK: logs

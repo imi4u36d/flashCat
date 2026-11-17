@@ -53,8 +53,8 @@ final class EngineCoordinator {
     private var installsObservedEngine: EngineID?
     /// 上一拍参与指纹的非活动引擎存储，见 `syncController`。
     private var logFeedToken: [Int] = []
-    /// 模型目录扫描的短缓存（与 `AppState` 的模型库缓存同一档 TTL，见
-    /// `AppState.modelListTTL`）：这里只缓存 `engineModels(for:)` 的结果。
+    /// 模型目录扫描的短缓存（与 `ModelOps` 的模型库缓存同一档 TTL，见
+    /// `ModelOps.modelListTTL`）：这里只缓存 `engineModels(for:)` 的结果。
     private var modelsCache: [EngineID: (models: [EngineModel], at: Date)] = [:]
 
     init(
@@ -461,7 +461,7 @@ final class EngineCoordinator {
     /// engines has to know what the destination can serve before it commits.
     func engineModels(for id: EngineID) -> [EngineModel] {
         if let hit = modelsCache[id],
-            Date().timeIntervalSince(hit.at) < AppState.modelListTTL
+            Date().timeIntervalSince(hit.at) < ModelOps.modelListTTL
         {
             return hit.models
         }

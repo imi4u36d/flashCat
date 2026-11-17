@@ -236,7 +236,6 @@ final class AppState: ObservableObject {
     var repoProbeRepo: String { hub.repoProbeRepo }
 
     private var toastWork: DispatchWorkItem?
-    private var supplementInFlight = false
 
     let settings = AppSettings()
     /// Owns the day/night skin choice and applies it to AppKit.
@@ -261,6 +260,8 @@ final class AppState: ObservableObject {
     let installs = EngineInstallCenter()
     /// 引擎编排：启停、装卸联动、模型热切换、网关模型准备。界面读的状态仍从这里转发。
     let engineCoordinator: EngineCoordinator
+    /// 模型与下载编排：硬件推荐、模型库清单、安装 / 应用 / 下载的连锁动作。
+    let modelOps: ModelOps
     var controller: EngineController? { engines?.active }
     var activeEngine: EngineID { engines?.activeID ?? .splash }
     var availableEngines: [EngineID] { engines?.installedIDs ?? [] }
@@ -299,6 +300,9 @@ final class AppState: ObservableObject {
         engineCoordinator = EngineCoordinator(
             settings: settings, installs: installs, control: control, gateway: gateway,
             metrics: metrics, downloads: downloads)
+        modelOps = ModelOps(
+            settings: settings, downloads: downloads, modelLibrary: modelLibrary,
+            engineCoordinator: engineCoordinator)
         // 对话编排搬进 `ChatRunner`：依赖交过去，要回到 AppState 办的事用闭包接上。
         runner = ChatRunner(
             chat: chat, session: chatSession, engineSession: engineSession, settings: settings,
@@ -346,7 +350,32 @@ final class AppState: ObservableObject {
             reloadModels: { [weak self] in self?.reloadModels() },
             modelInventoryChanged: { [weak self] in self?.invalidateModelCaches() }
         )
-        downloads.onEvent = { [weak self] event in self?.handle(event) }
+        // 模型/下载编排搬进 `ModelOps`：状态仍在 store 里，要回到 AppState 办的
+        // 事（停引擎、切模型、弹提示、写日志、退出前收后端）用闭包接上，谁也不
+        // 持有对方。
+        modelOps.hooks = ModelOps.Hooks(
+            activeEngine: { [weak self] in self?.activeEngine ?? .splash },
+            selectedModel: { [weak self] in self?.selectedModel ?? "" },
+            setSelectedModel: { [weak self] model in self?.selectedModel = model },
+            needsEngineSetup: { [weak self] in self?.needsEngineSetup ?? true },
+            stopService: { [weak self] in self?.stopService() },
+            adoptSavedModel: { [weak self] engine in self?.adoptSavedModel(for: engine) },
+            applyModel: { [weak self] model in self?.applyModel(model) },
+            applyModelFromAnyEngine: { [weak self] model, engine in
+                self?.applyModelFromAnyEngine(model, engine: engine)
+            },
+            notice: { [weak self] in self?.notice },
+            setNotice: { [weak self] message in self?.notice = message },
+            toast: { [weak self] message, kind, transient in
+                self?.toast(message, kind: kind, transient: transient)
+            },
+            appendLog: { [weak self] line, engine in self?.append(log: line, engine: engine) },
+            stopBackends: { [weak self] in
+                self?.gateway.stop()
+                self?.control.stop()
+            }
+        )
+        downloads.onEvent = { [weak self] event in self?.modelOps.handle(event) }
         // 指标搬进 `MetricsStore` 之后，视图仍然只订阅 AppState；不把 store 的发布
         // 桥回来，数值会在变而页面不重绘。放在 init 末尾：前面的赋值不该触发重绘。
         metricsBridge = metrics.objectWillChange.sink { [weak self] _ in
@@ -392,17 +421,11 @@ final class AppState: ObservableObject {
     /// 这里跟 EngineModelStore.meta 用同一档 20s 缓存，避免把扫描塞进推送热路径。
     private var contextWindowCache: (key: String, value: Int?, at: Date)?
 
-    /// 模型目录扫描的短缓存。`libraryEntries(for:)` 会被侧栏计数、模型页、
-    /// 选择器等视图在每次重绘时调用；以前每秒的指标刷新都会触发多次目录枚举
-    /// 与 JSON 读取。这里缓存 1 秒，下载/删除/重新加载时立即失效。
-    /// 引擎侧那份同名缓存在 `EngineCoordinator` 手里，共用这一档 TTL。
-    static let modelListTTL: TimeInterval = 1.0
-    private var libraryEntriesCache: [EngineID: (entries: [ModelLibraryEntry], at: Date)] = [:]
-
-    /// 两处扫描缓存一起失效：引擎那份归 `EngineCoordinator`，模型库这份还在这。
+    /// 两处扫描缓存一起失效：引擎那份归 `EngineCoordinator`，模型库那份归
+    /// `ModelOps`（`libraryEntries(for:)` 的 1 秒短缓存）。
     func invalidateModelCaches() {
         engineCoordinator.invalidateModelCache()
-        libraryEntriesCache.removeAll()
+        modelOps.invalidateLibraryCache()
     }
 
     /// 模型**自身**支持的上下文（config.json 的 max_position_embeddings），
@@ -841,121 +864,31 @@ final class AppState: ObservableObject {
 
     // MARK: hardware
 
-    /// Work out (once) what this Mac should run, and open the first-run page
-    /// while nothing is installed yet.
-    ///
-    /// The answer is stored after the first run and only recomputed on request:
-    /// a recommendation that moved between launches would drag the model page's
-    /// ★ tag off a pack the user already started downloading.
-    func settleRecommendation() {
-        if let stored = settings.hardwareRecommendation {
-            hardwareRecommendation = stored
-        } else {
-            recomputeRecommendation()
-        }
-        // Someone who already had engines before this feature existed keeps
-        // their models: they get the tags silently, not a page telling them to
-        // start over. Writing `seen` here is also what stops an upgraded user
-        // whose packs later go missing from landing on a first-run page.
-        guard needsEngineSetup else {
-            settings.setHardwareRecommendationSeen(true)
-            return
-        }
-        guard !settings.hardwareRecommendationSeen else { return }
-        showsRecommendationPage = true
-    }
+    /// 硬件推荐搬进了 `ModelOps`：那边认识 `ModelLibraryStore` 与 `AppSettings`。
+    /// 启动页与模型页读的仍是这几个入口，所以这里只留一行转发。
+    func settleRecommendation() { modelOps.settleRecommendation() }
 
-    private func recomputeRecommendation() {
-        let recommendation = HardwareAdvisor.recommend(machine: DeviceProfile.current().machine)
-        hardwareRecommendation = recommendation
-        settings.setHardwareRecommendation(recommendation)
-    }
+    func dismissRecommendationPage() { modelOps.dismissRecommendationPage() }
 
-    /// Puts away the first-run page without answering it — used when an engine
-    /// arrives by other means (engines page, another install finishing), so the
-    /// page can never outlive its precondition and hide the launch page.
-    func dismissRecommendationPage() {
-        guard showsRecommendationPage else { return }
-        showsRecommendationPage = false
-        settings.setHardwareRecommendationSeen(true)
-    }
+    func dismissRecommendation(engine: EngineID?) { modelOps.dismissRecommendation(engine: engine) }
 
-    /// Answer the first-run page. The engine install itself is started by the
-    /// shell (it owns `EngineInstallCenter`); this records what the answer was,
-    /// so `adoptEngine` can download the recommended model once the pack lands.
-    func dismissRecommendation(engine: EngineID?) {
-        showsRecommendationPage = false
-        settings.setHardwareRecommendationSeen(true)
-        guard let engine, let pick = hardwareRecommendation?.pick(for: engine) else { return }
-        pendingRecommendedDownload = (engine: engine, model: pick.model)
-    }
-
-    /// The recommendation tag the model page puts on a catalog entry, if this
-    /// Mac was told to run that entry on that engine.
-    ///
-    /// Compared through `ModelLibraryEntry.normalized`, not by string equality:
-    /// an installed pack's id is the flat folder name (`owner--repo`) and the
-    /// `:VARIANT` suffix is dropped on disk, so a raw compare would lose the tag
-    /// exactly when the recommended model is the one that is installed.
     func recommendationTag(for id: String, engine: EngineID) -> String? {
-        guard let pick = hardwareRecommendation?.pick(for: engine),
-            ModelLibraryEntry.normalized(pick.model) == ModelLibraryEntry.normalized(id)
-        else { return nil }
-        return L10n.format("推荐 · %@", pick.reason)
+        modelOps.recommendationTag(for: id, engine: engine)
     }
 
-    /// An install that failed voids whatever the first-run page armed for it:
-    /// a later install of the same engine must not silently start a
-    /// multi-gigabyte model download the user did not ask for again.
-    func engineInstallFailed(_ engine: EngineID) {
-        if pendingRecommendedDownload?.engine == engine { pendingRecommendedDownload = nil }
-    }
+    func engineInstallFailed(_ engine: EngineID) { modelOps.engineInstallFailed(engine) }
 
     // MARK: model library
 
-    /// The catalog rows tagged for this engine: Splash gets the Flash-Next
-    /// GGUF, oMLX the MLX and oQ builds, MTPLX only its own packs.
+    /// 清单与推荐的行计算搬进了 `ModelOps`（1 秒短缓存也跟着搬）。当前浏览的
+    /// 引擎仍留在 store 上，所以这里只转两行；`browseEngine` 还要清 Hub 搜索，
+    /// 留着。
     func libraryRecommendations(for engine: EngineID) -> [ModelRecommendation] {
-        ModelRecommendations.list(for: engine)
+        modelOps.libraryRecommendations(for: engine)
     }
 
-    /// Installed weights plus the engine's suggestions as one grid — the same
-    /// rows whether or not that engine is installed, running or holding a model.
     func libraryEntries(for engine: EngineID) -> [ModelLibraryEntry] {
-        if let hit = libraryEntriesCache[engine],
-            Date().timeIntervalSince(hit.at) < Self.modelListTTL
-        {
-            return hit.entries
-        }
-        let entries = buildLibraryEntries(for: engine)
-        libraryEntriesCache[engine] = (entries, Date())
-        return entries
-    }
-
-    private func buildLibraryEntries(for engine: EngineID) -> [ModelLibraryEntry] {
-        let installed: [ModelInfo]
-        if engine.adapter == .splash {
-            installed = catalog.machine.filter { ModelSharing.visible($0.id, engine: .splash) }
-        } else {
-            installed = engineModels(for: engine).map { model in
-                let path = model.path ?? (EnginePaths.modelsDirectory(engine) + "/" + model.id)
-                return ModelInfo(
-                    id: model.id,
-                    path: path,
-                    bytes: model.bytes ?? 0,
-                    origin: .local,
-                    targetName: "",
-                    quantization: ModelQuantization.detect(in: model.id)
-                        ?? EngineModelStore.meta(of: path).quantization)
-            }
-        }
-        return ModelLibrary.entries(
-            installed: installed,
-            engine: engine,
-            recommendations: libraryRecommendations(for: engine)
-        ) { id in
-            engine.adapter == .splash ? self.catalog.draftRepository(id, family: nil) : nil
-        }
+        modelOps.libraryEntries(for: engine)
     }
 
     func browseEngine(_ id: EngineID) {
@@ -986,98 +919,23 @@ final class AppState: ObservableObject {
 
     // MARK: draft assignments
 
-    /// The DFlash2 draft assigned to one model, or nil when it follows the
-    /// engine-level tuning. Reading `tuningRevision` keeps card views that show
-    /// the pairing alive for SwiftUI.
+    /// 辅助模型（DFlash2）的绑定与「用这个模型」的连锁动作搬进了 `ModelOps`：
+    /// 它们最后都落到下载、切引擎、停引擎上，和模型那一段是同一件事。
     func draftAssignment(for engine: EngineID, model: String) -> String? {
-        _ = tuningRevision
-        return EngineStore.shared.draftAssignment(for: engine, model: model)
+        modelOps.draftAssignment(for: engine, model: model)
     }
 
-    /// Every locally installed draft head an engine could pair with a main model.
-    func installedDraftIds(for engine: EngineID) -> [String] {
-        engineModels(for: engine).map(\.id).filter(ModelLibraryEntry.isDraftModel).sorted()
-    }
+    func installedDraftIds(for engine: EngineID) -> [String] { modelOps.installedDraftIds(for: engine) }
 
-    /// Bind a draft from a main model's card menu. When this engine is live the
-    /// settings are pushed again and the resident model reloads, so the pairing
-    /// takes effect without touching the launch page.
     func setDraftAssignment(_ draft: String?, engine: EngineID, model: String) {
-        EngineStore.shared.setDraftAssignment(draft, engine: engine, model: model)
-        if let draft, !draft.isEmpty {
-            toast(
-                L10n.format("已为 %@ 指定辅助模型 %@", shortModelName(model), shortModelName(draft)),
-                transient: true)
-        } else {
-            toast(
-                L10n.format("已清除 %@ 的辅助模型，跟随引擎设置", shortModelName(model)),
-                transient: true)
-        }
-        if engine == activeEngine, controller?.isRunning == true {
-            Task { [weak self] in
-                await self?.controller?.reapplyTuning()
-            }
-        }
+        modelOps.setDraftAssignment(draft, engine: engine, model: model)
     }
 
-    /// The card's one action. A model is bound to the engine that serves its
-    /// format, so using one from another engine is a switch, not a model
-    /// change. Weights already on disk hop silently; only a download — a
-    /// bigger commitment than a switch — still asks first.
-    func useModel(_ id: String, engine: EngineID) {
-        // Weights on disk do not imply a runtime: the library is browsable for
-        // an engine that is not installed, but using one of its models has to
-        // install the engine first or the switch below would be a no-op.
-        guard engineIsInstalled(engine) else {
-            requestEngineInstall(engine)
-            return
-        }
-        let installed = engineModels(for: engine).contains { $0.id == id }
-        if engine != activeEngine {
-            if installed {
-                applyModelFromAnyEngine(id, engine: engine)
-            } else {
-                pendingLibraryUse = LibraryUseRequest(engine: engine, model: id, needsDownload: true)
-            }
-            return
-        }
-        if installed {
-            applyModel(id)
-        } else {
-            downloadModel(id, engine: engine)
-        }
-    }
+    func useModel(_ id: String, engine: EngineID) { modelOps.useModel(id, engine: engine) }
 
-    func confirmLibraryUse() {
-        guard let request = pendingLibraryUse else { return }
-        pendingLibraryUse = nil
-        // The engine handoff is async (it waits for the old process to let go of
-        // its weights), so the download / model pick follows it in the same task
-        // instead of assuming the switch already happened.
-        Task { [weak self] in
-            guard let self else { return }
-            // A failed switch (engine uninstalled between dialog and confirm,
-            // say) must not leave a download pointed at a runtime that is not
-            // there.
-            guard self.engineIsInstalled(request.engine) else {
-                self.requestEngineInstall(request.engine)
-                return
-            }
-            // Don't start the destination's old weights: either the download
-            // follows, or applyModel starts the picked model itself.
-            let switched = await self.switchEngine(request.engine, start: false)
-            // Only follow the handoff when it landed on the requested engine;
-            // a failed activation must not point a download at another runtime.
-            guard switched || self.activeEngine == request.engine else { return }
-            if request.needsDownload {
-                self.downloadModel(request.model, engine: request.engine)
-            } else {
-                self.applyModel(request.model)
-            }
-        }
-    }
+    func confirmLibraryUse() { modelOps.confirmLibraryUse() }
 
-    func cancelLibraryUse() { pendingLibraryUse = nil }
+    func cancelLibraryUse() { modelOps.cancelLibraryUse() }
 
     // MARK: service
 
@@ -1417,307 +1275,48 @@ final class AppState: ObservableObject {
 
     // MARK: models
 
-    func deleteModel(_ model: ModelInfo) {
-        do {
-            try ModelCatalogService().deleteLocal(model)
-            reloadModels()
-            if selectedModel == model.id {
-                selectedModel = catalog.machine.first?.id ?? ""
-                settings.setModel(selectedModel)
-            }
-            toast(L10n.format("已删除 %@", model.id))
-        } catch {
-            notice = "删除失败：\((error as? ModelCatalogService.CatalogError)?.message ?? error.localizedDescription)"
-        }
-    }
+    /// 模型的安装、删除、下载与切换连锁搬进了 `ModelOps`。视图、本地控制通道
+    /// （`ControlServer+Documents`）和 `EngineCoordinator` 调的还是 `state.xxx`，
+    /// 签名一个都没动。
+    func deleteModel(_ model: ModelInfo) { modelOps.deleteModel(model) }
 
-    /// Remove a model from one engine's folder. The weights live in flashCat's
-    /// own directory now, so this deletes them — the caller asks first.
-    func removeModel(_ id: String, engine: EngineID) {
-        // 公共目录里的权重只有一份：删它要连带收回授权、拆掉各引擎的链接。
-        if ModelSharing.isShared(id) {
-            removeShared(id)
-            return
-        }
-        guard engine != .splash else {
-            if let model = catalog.machine.first(where: { $0.id == id }) {
-                // 正在服务的那份权重删掉后不能留着旧选择：先停引擎，再删，
-                // 让下一次启动重新解析模型。
-                if engine == activeEngine, selectedModel == id { stopService() }
-                deleteModel(model)
-            }
-            return
-        }
-        // 正在服务的那份权重删掉后不能只换个选择：进程里还驻留着它，
-        // 界面和引擎会各说各话，直到有人手动重启。先停引擎再动手。
-        let serving = engine == activeEngine && selectedModel == id
-        if serving { stopService() }
-        let path =
-            engineModels(for: engine).first(where: { $0.id == id })?.path
-            ?? EnginePaths.modelPath(for: engine, model: id)
-        do {
-            try FileManager.default.removeItem(atPath: path)
-            try? FileManager.default.removeItem(atPath: path + ".flashcat-incomplete")
-        } catch {
-            notice = "删除失败：\(error.localizedDescription)"
-            return
-        }
-        if serving {
-            selectedModel = ""
-            adoptSavedModel(for: engine)
-        }
-        EngineModelStore.invalidateMetaCache()
-        reloadModels()
-        toast(L10n.format("已删除 %@ 及其权重文件", id))
-    }
+    func removeModel(_ id: String, engine: EngineID) { modelOps.removeModel(id, engine: engine) }
 
-    /// Fetch weights for the engine the model page is showing.
-    func downloadModel(_ id: String) { downloadModel(id, engine: libraryEngine) }
+    func downloadModel(_ id: String) { modelOps.downloadModel(id) }
 
-    /// Fetch weights for one engine. Both paths download through the
-    /// huggingface_hub that ships inside the engine packs: Splash's installer
-    /// picks the single GGUF quant out of a repository that carries a dozen and
-    /// prepares its assembly, while oMLX and MTPLX run flashCat's snapshot
-    /// downloader straight into their own model folder.
-    ///
-    /// Pause and cancel terminate the child process; the Hub keeps partial
-    /// files in the destination's `.cache`, so resuming later — even after a
-    /// relaunch — continues from the bytes already on disk.
-    ///
-    /// - Parameter family: the model's Splash family when the caller knows it,
-    ///   which picks the released DFlash2 draft more surely than the id does.
-    /// - Returns: whether the download started. A `false` comes with a `notice`.
     @discardableResult
     func downloadModel(_ id: String, engine: EngineID, family: String? = nil) -> Bool {
-        guard downloadingModel == nil else {
-            toast("正在下载另一个模型，先等它结束")
-            return false
-        }
-        reloadModels()
-        guard !repoIsLocal(id) else {
-            notice = "「\(id)」已经在本机了，不用重复下载"
-            return false
-        }
-        let recommendation = ModelRecommendations.recommendation(for: id)
-        let draft =
-            engine.adapter == .splash
-            ? (catalog.draftRepository(id, family: family) ?? recommendation?.draftRepository)
-            : nil
-
-        let plan: ModelInstaller.Plan
-        do {
-            plan = try ModelInstaller.plan(
-                engine: engine,
-                model: id,
-                draftRepository: draft,
-                cache: settings.hfCache)
-        } catch {
-            notice = (error as? ModelInstaller.Failure)?.message ?? "\(error)"
-            return false
-        }
-        return downloads.startDownload(plan, engine: engine, id: id, shared: nil)
+        modelOps.downloadModel(id, engine: engine, family: family)
     }
 
-    /// 从 Hub 下任意仓库到公共目录，并记下它给哪些引擎用。
-    ///
-    /// 这是「开放下载」的入口：不设格式/家族门槛，支持与否交给用户自己
-    /// 判断。卡片只负责标明来源（引擎推荐 / 个人下载），不再把人挡在门外。
-    /// - Returns: whether the transfer started. `false` comes with a `notice`,
-    ///   which the control server (and therefore the CLI) reports verbatim.
     @discardableResult
     func downloadShared(_ repo: String, engines: [EngineID]) -> Bool {
-        guard downloadingModel == nil else {
-            toast("正在下载另一个模型，先等它结束")
-            return false
-        }
-        let target = ModelSharing.canonical(repo.trimmingCharacters(in: .whitespaces))
-        guard target.contains("/") else {
-            notice = "仓库 id 要写成 owner/repo"
-            return false
-        }
-        guard !engines.isEmpty else {
-            notice = "至少选一个引擎，否则下完就没人能用它"
-            return false
-        }
-        // 已经在本机的仓库不再下一遍：先 reload 一次，免得上一次下载刚落地、
-        // 清单还是旧的。
-        reloadModels()
-        guard !repoIsLocal(target) else {
-            notice = "「\(target)」已经在本机了，不用重复下载"
-            return false
-        }
-        let plan: ModelInstaller.Plan
-        do {
-            plan = try ModelInstaller.sharedPlan(
-                repo: target,
-                engines: engines,
-                cache: settings.hfCache)
-        } catch {
-            notice = (error as? ModelInstaller.Failure)?.message ?? "\(error)"
-            return false
-        }
-        return downloads.startDownload(plan, engine: engines.first ?? libraryEngine, id: target, shared: engines)
+        modelOps.downloadShared(repo, engines: engines)
     }
 
-    /// 改一个共享模型能被哪些引擎看见：写授权表并同步链接，模型页随即重算。
+    func repoIsLocal(_ repo: String) -> Bool { modelOps.repoIsLocal(repo) }
 
-    /// 这个仓库是不是已经在本机了（公共目录或任一引擎的模型目录）。
-    /// 判定放在这里而不是视图：置灰只是表现，真正的门在这儿。
-    func repoIsLocal(_ repo: String) -> Bool {
-        localModelRepos.contains(ModelSharing.canonical(repo))
-    }
+    func setSharedEngines(_ engines: [EngineID], repo: String) { modelOps.setSharedEngines(engines, repo: repo) }
 
-    func setSharedEngines(_ engines: [EngineID], repo: String) {
-        let repo = ModelSharing.canonical(repo)
-        ModelSharing.setEngines(Set(engines), for: repo)
-        EngineModelStore.invalidateMetaCache()
-        reloadModels()
-        toast(
-            engines.isEmpty
-                ? "已收回 \(repo) 的引擎授权"
-                : "\(repo) 现在可用于 \(engines.map(\.displayName).joined(separator: "、"))")
-    }
+    func removeShared(_ id: String) { modelOps.removeShared(id) }
 
-    /// 删除公共目录里的权重：先收回授权（各引擎的链接随之删掉），再删文件。
-    func removeShared(_ id: String) {
-        let repo = ModelSharing.canonical(id)
-        ModelSharing.forget(repo)
-        try? FileManager.default.removeItem(atPath: ModelSharing.path(for: repo))
-        try? FileManager.default.removeItem(atPath: ModelSharing.path(for: repo) + ".flashcat-incomplete")
-        if selectedModel == repo || selectedModel == ModelInstaller.folderName(for: repo) {
-            selectedModel = ""
-            adoptSavedModel(for: activeEngine)
-        }
-        EngineModelStore.invalidateMetaCache()
-        reloadModels()
-        toast(L10n.format("已删除 %@ 及其权重文件", repo))
-    }
-
-    /// 真正拉起下载器的那一步：两条入口（引擎自己的目录 / 公共目录）只有落地
-    /// 位置不同，进度、暂停、取消、续传全部共用这一段。
-    /// 共享下载收尾：写授权表，让各引擎目录里的链接跟上，再刷新模型页。
-    private func publishShared(repo: String, engines: [EngineID]) {
-        ModelSharing.setEngines(Set(engines), for: repo)
-        EngineModelStore.invalidateMetaCache()
-        reloadModels()
-        guard !engines.isEmpty else { return }
-        toast("已下载 " + repo + "，可用于 " + engines.map(\.displayName).joined(separator: "、"))
-    }
-
-    /// Run a download and wait for it to end.
-    ///
-    /// Only the launch path uses this: a start that has to fetch the model's
-    /// DFlash2 draft hands the engine a model that is complete, so the engine
-    /// never has to download inside its own startup (its launcher refuses to
-    /// touch the network).
-    private func downloadAndWait(_ id: String, engine: EngineID, family: String?) async -> DownloadOutcome {
-        guard downloads.downloadingModel == nil else {
-            let other = downloads.downloadingModel.map(shortModelName) ?? "另一个模型"
-            return .failed("正在下载 \(other)，等它结束后再启动")
-        }
-        return await withCheckedContinuation { continuation in
-            downloads.setCompletion { continuation.resume(returning: $0) }
-            if !downloadModel(id, engine: engine, family: family) {
-                // Nothing started, so nothing will call back: release the
-                // caller with the notice downloadModel already wrote.
-                downloads.setCompletion(nil)
-                continuation.resume(returning: .failed(notice ?? "无法启动下载"))
-            }
-        }
-    }
-
-    /// Splash runs every model with its DFlash2 draft, and every family it
-    /// recommends is released with one. A model installed by a build that did
-    /// not fetch the draft would keep starting without acceleration, so a start
-    /// fetches it first: the click waits, the model does not.
-    ///
-    /// Returns the model to launch — the rescanned one once the draft is on
-    /// disk, since only a rescan knows its `draftPath`.
-    func ensureSplashDraft(_ model: ModelInfo?) async -> StartPreparation {
-        guard let model, model.origin == .splash, model.draftPath == nil else {
-            return .ready(model)
-        }
-        guard let draft = catalog.draftRepository(model.id, family: model.family) else {
-            append(log: "==> \(model.id) 没有对应的 DFlash2，按无加速启动", engine: .splash)
-            return .ready(model)
-        }
-        append(log: "==> \(model.id) 缺少 DFlash2，先补齐 \(draft)", engine: .splash)
-        toast(L10n.format("%@ 缺少 DFlash2 加速模型，先下载好再启动", shortModelName(model.id)), kind: .warning)
-        supplementInFlight = true
-        let outcome = await downloadAndWait(model.id, engine: .splash, family: model.family)
-        supplementInFlight = false
-        switch outcome {
-        case .finished:
-            // The download rescanned the catalog on its way out.
-            if let refreshed = catalog.machineModel(model.id), refreshed.draftPath != nil {
-                append(log: "==> DFlash2 已就绪：\(draft)", engine: .splash)
-                return .ready(refreshed)
-            }
-            append(log: "==> DFlash2 未能装进装配，按无加速启动", engine: .splash)
-            return .ready(model)
-        case .cancelled:
-            // Cancelling the fetch is a decision, not a failure: start anyway.
-            append(log: "==> DFlash2 下载已取消，按无加速启动", engine: .splash)
-            return .ready(model)
-        case .failed(let message):
-            return .failed(message)
-        }
-    }
+    func ensureSplashDraft(_ model: ModelInfo?) async -> StartPreparation { await modelOps.ensureSplashDraft(model) }
 
     // MARK: download center
 
-    /// 下载中心对外的门面。界面与本地控制通道（`ControlServer+Documents`）
-    /// 原来直接调这些方法，搬进 store 之后仍然从这里转一下——策略留在这一侧，
-    /// 传输动作委托出去。
-    func pauseDownload() { downloads.pauseDownload() }
+    /// 下载中心的门面同样只留一行：传输在 `DownloadCenter`、策略在 `ModelOps`，
+    /// 界面与本地控制通道不必知道它们搬去了哪里。
+    func pauseDownload() { modelOps.pauseDownload() }
 
-    /// Continue a paused transfer: the same snapshot downloader runs again and
-    /// the Hub resumes its partial files.
-    func resumeDownload(_ task: ModelDownloadTask) {
-        // 下进公共目录的任务要回到公共目录，否则续传会另起一份到引擎目录里。
-        if let engines = task.shared, !engines.isEmpty {
-            downloadShared(task.model, engines: engines)
-            return
-        }
-        downloadModel(task.model, engine: task.engine)
-    }
+    func resumeDownload(_ task: ModelDownloadTask) { modelOps.resumeDownload(task) }
 
-    func cancelDownload(_ task: ModelDownloadTask) { downloads.cancelDownload(task) }
+    func cancelDownload(_ task: ModelDownloadTask) { modelOps.cancelDownload(task) }
 
-    /// Remove a finished/failed/stale row from the center.
-    func removeTask(_ task: ModelDownloadTask) { downloads.removeTask(task) }
+    func removeTask(_ task: ModelDownloadTask) { modelOps.removeTask(task) }
 
-    /// Quit-time cleanup that is not engine lifecycle. Gateway and control
-    /// server first, then the downloader child: an orphaned one keeps pulling
-    /// gigabytes to disk with no window left to stop it from.
-    func prepareForTermination() {
-        gateway.stop()
-        control.stop()
-        downloads.prepareForTermination()
-    }
+    func prepareForTermination() { modelOps.prepareForTermination() }
 
-    func finishTermination() {
-        downloads.finishTermination()
-    }
-
-    /// 下载收尾。这两件事都要看当前引擎与启动流程，所以由 AppState 消费，
-    /// store 只报告「下完了」。
-    private func handle(_ event: DownloadEvent) {
-        switch event {
-        case .modelReady(let engine, let model, let installed):
-            // 启动前补件之后紧跟的是启动本身：没有提示要回答，选中模型也不能
-            // 在启动底下被换掉。
-            guard !supplementInFlight else { return }
-            guard engine == activeEngine else {
-                toast(L10n.format("已下载 %@，切到 %@ 就能用", model, engine.displayName))
-                return
-            }
-            applyModel(installed)
-            toast(L10n.format("已下载 %@", model))
-        case .shareRequested(let repo, let engines):
-            publishShared(repo: repo, engines: engines)
-        }
-    }
+    func finishTermination() { modelOps.finishTermination() }
 
     /// Engine logs are per engine; only the running engine's copy is on screen.
     /// 历史写盘失败在 ChatHistory 的后台串行队列上触发，要回到主 actor 才能

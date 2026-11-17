@@ -53,6 +53,14 @@ pub fn engine_status(engine: State<'_, Engine>) -> EngineStatus {
     engine.status()
 }
 
+/// 旧库里的非 GGUF 权重：只展示，不能加载。
+#[tauri::command]
+pub fn list_foreign(engine: State<Engine>) -> Vec<crate::model::ForeignModel> {
+    let items = engine.foreign();
+    crate::logfile::line("INFO", &format!("legacy foreign models={}", items.len()));
+    items
+}
+
 #[tauri::command]
 pub fn list_models(engine: State<'_, Engine>) -> Vec<ModelCard> {
     engine.models()

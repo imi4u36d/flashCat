@@ -60,8 +60,45 @@ pub trait Backend: Send + Sync {
 pub struct Engine {
     backend: Arc<dyn Backend>,
     model_dir: Option<std::path::PathBuf>,
+    /// 旧版 App 的权重库（只读、只用来在界面上交代它们在哪）。
+    legacy: Vec<std::path::PathBuf>,
     runs: Mutex<HashMap<String, Arc<Run>>>,
     seq: AtomicU32,
+}
+
+/// 目录里（含子目录）有没有 gguf。
+fn has_gguf(dir: &std::path::Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for e in entries.filter_map(|e| e.ok()) {
+        let p = e.path();
+        if p.is_dir() {
+            if has_gguf(&p) {
+                return true;
+            }
+        } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("gguf")) {
+            return true;
+        }
+    }
+    false
+}
+
+fn dir_size(dir: &std::path::Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .filter_map(|e| e.ok())
+        .map(|e| {
+            let p = e.path();
+            if p.is_dir() {
+                dir_size(&p)
+            } else {
+                std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0)
+            }
+        })
+        .sum()
 }
 
 /// 同时最多两条生成（桌面可能一边聊一边跑批），移动端只留一条。
@@ -117,6 +154,7 @@ impl Engine {
         Self {
             backend,
             model_dir,
+            legacy: roots.iter().skip(1).cloned().collect(),
             runs: Mutex::new(HashMap::new()),
             seq: AtomicU32::new(0),
         }
@@ -148,6 +186,51 @@ impl Engine {
     /// 真实路径版本（下载命令要往里写文件）。
     pub fn dir(&self) -> Option<std::path::PathBuf> {
         self.model_dir.clone()
+    }
+
+    /// 旧库里的非 GGUF 权重：列表里只做展示，不能加载。
+    pub fn foreign(&self) -> Vec<crate::model::ForeignModel> {
+        let mut out = Vec::new();
+        for root in &self.legacy {
+            let Ok(engines) = std::fs::read_dir(root) else {
+                continue;
+            };
+            for engine_dir in engines.filter_map(|e| e.ok()).map(|e| e.path()) {
+                if !engine_dir.is_dir() {
+                    continue;
+                }
+                let engine = engine_dir
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let Ok(models) = std::fs::read_dir(&engine_dir) else {
+                    continue;
+                };
+                for model_dir in models.filter_map(|e| e.ok()).map(|e| e.path()) {
+                    if !model_dir.is_dir() {
+                        continue;
+                    }
+                    // 有 gguf 的已经作为可跑模型列在另一张表里了，这里跳过。
+                    if has_gguf(&model_dir) {
+                        continue;
+                    }
+                    let name = model_dir
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("?")
+                        .to_string();
+                    out.push(crate::model::ForeignModel {
+                        engine: engine.clone(),
+                        name,
+                        path: model_dir.display().to_string(),
+                        size_mb: (dir_size(&model_dir) / 1_048_576) as u32,
+                    });
+                }
+            }
+        }
+        out.sort_by(|a, b| a.engine.cmp(&b.engine).then(b.size_mb.cmp(&a.size_mb)));
+        out
     }
 
     /// 权重目录：设置页/模型页要把它显示出来，否则用户不知道该把 gguf 放哪。

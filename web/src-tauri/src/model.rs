@@ -51,6 +51,18 @@ pub struct EngineStatus {
     pub quantization: Option<String>,
 }
 
+/// 旧版引擎留下的权重（mlx / safetensors / 打包格式）。
+/// llama.cpp 读不了，但用户得看见它们在哪 —— 否则就是「我的模型全没了」。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForeignModel {
+    /// 旧引擎名：mlx-serve / mtplx / omlx / splash / strata
+    pub engine: String,
+    pub name: String,
+    pub path: String,
+    pub size_mb: u32,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelCard {

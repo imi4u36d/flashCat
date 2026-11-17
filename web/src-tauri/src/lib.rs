@@ -74,6 +74,7 @@ pub fn run() {
             commands::system_info,
             commands::engine_status,
             commands::list_models,
+            commands::list_foreign,
             commands::chat_start,
             commands::chat_cancel,
             commands::log_frontend,

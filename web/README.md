@@ -164,6 +164,9 @@ xcrun devicectl device install app --device <UDID> src-tauri/gen/apple/build/arm
   `.scrim` 点一下收回，跳页自动收；`.sidebar` 在手机上整段被替换为 `MobileDrawer`。
 - **模型行是动作表，不是表格按钮**：点行从底部滑出 `.sheet`（抓取条 + 设为当前 / 复制路径 / 删除 / 取消），
   表格右侧的 `加载/删除` 按钮在手机上隐藏 —— 表格里塞两个小按钮不是移动端做法。
+- **旧库可见**：桌面端把 `Application Support/flashCat/models`、`Splash/models` 里 llm.cpp 读不了的
+  权重（mlx / safetensors / 打包量化）单独列在模型页底部，标引擎与体积，并说明「要跑得先转 GGUF」——
+  用户不会再有「模型全没了」的错觉。
 - **首装提示**：目录里没有权重且后端是 `mock` 时，对话页顶部出现一条「未装权重，当前是演示输出 / 去下载」，
   避免用户把占位回答当成模型能力；装上权重后（`backend=llama.cpp`）自动消失。
 - **长按消息复制**：手机上长按任意气泡 450ms 出动作表（复制文字 / 取消），桌面右键同一入口；

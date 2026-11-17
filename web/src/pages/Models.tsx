@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { AppInfo, DownloadProgress, EngineStatus, ModelCard } from "../bridge";
+import type { AppInfo, DownloadProgress, EngineStatus, ForeignModel, ModelCard } from "../bridge";
 import { bridge, isTauri } from "../bridge";
 import { Icon } from "../icons";
 
@@ -43,11 +43,14 @@ export function Models({
   info,
   models,
   status,
+  foreign,
   onChanged,
 }: {
   info: AppInfo | null;
   models: ModelCard[];
   status: EngineStatus | null;
+  /** 旧库里 mlx / safetensors 这类 llama.cpp 读不了的权重（桌面才有）。 */
+  foreign: ForeignModel[];
   onChanged: () => void;
 }) {
   const dir = info?.modelDir ?? null;
@@ -373,6 +376,37 @@ export function Models({
               <p style={{ color: "var(--text3)" }}>
                 手机上内存紧张：≤1.7B / Q4 在 4GB 可用内存内比较安全，8B 级别请留给桌面。
               </p>
+          {foreign.length > 0 ? (
+            <div className="card" style={{ marginTop: 14 }}>
+              <div className="card-head">
+                <h3>旧库里的其它权重</h3>
+                <span className="aside mono">{foreign.length} 个</span>
+              </div>
+              <div style={{ padding: "0 14px 14px", fontSize: 13, lineHeight: 1.7, color: "var(--text2)" }}>
+                <p style={{ color: "var(--text3)" }}>
+                  这些是旧版引擎的格式（mlx / safetensors / 打包量化），llama.cpp 读不了，所以不能加载。
+                  要在这里跑，得转成 GGUF；不转的话可以留给旧引擎。
+                </p>
+                <ul className="legacy-list">
+                  {foreign.slice(0, 12).map((f) => (
+                    <li key={f.path}>
+                      <span className="tag mono">{f.engine}</span>
+                      <span className="legacy-name" title={f.path}>
+                        {f.name}
+                      </span>
+                      <span className="mono legacy-size">
+                        {f.sizeMb >= 1024 ? `${(f.sizeMb / 1024).toFixed(1)} GB` : `${f.sizeMb} MB`}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                {foreign.length > 12 ? (
+                  <p style={{ color: "var(--text3)" }}>还有 {foreign.length - 12} 个未展开。</p>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
               <p style={{ color: "var(--text3)" }}>
                 桌面端还会读旧版 App 的库（<code>Application Support/flashCat/models</code>、
                 <code>Application Support/Splash/models</code>），扫描到的 GGUF 标「旧库」直接能用；

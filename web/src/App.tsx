@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { Icon } from "./icons";
 import type { IconName } from "./icons";
 import { useChatEngine } from "./chat";
-import type { AppInfo, ModelCard } from "./bridge";
+import type { AppInfo, ForeignModel, ModelCard } from "./bridge";
 import { bridge, isTauri, win } from "./bridge";
 import type { EngineStatus } from "./bridge";
 import { Chat } from "./pages/Chat";
@@ -224,6 +224,7 @@ export default function App() {
   const [status, setStatus] = useState<EngineStatus | null>(null);
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [models, setModels] = useState<ModelCard[]>([]);
+  const [foreign, setForeign] = useState<ForeignModel[]>([]);
   const [page, setPage] = useState<Page>((q.get("page") as Page) || "chat");
   // 手机上侧栏是抽屉，进页面时不占位置：默认收着，点左上角才出来。
   const [sidebar, setSidebar] = useState<boolean>(() =>
@@ -273,6 +274,7 @@ export default function App() {
         setInfo(info);
         // 权重清单也在这里拉：模型页与状态栏用的是同一份快照。
         setModels(await bridge.models());
+        setForeign(await bridge.foreign());
         // 用 Rust 侧的真实平台校正首帧的 UA 推断（浏览器预览走不到这里）。
         document.documentElement.dataset.platform = info.platform;
         if (info.platform === "android" || info.platform === "ios") {
@@ -325,7 +327,15 @@ export default function App() {
       />
     );
   } else if (page === "models") {
-    body = <Models info={info} models={models} status={status} onChanged={refreshModels} />;
+    body = (
+      <Models
+        info={info}
+        models={models}
+        status={status}
+        foreign={foreign}
+        onChanged={refreshModels}
+      />
+    );
   } else if (page === "settings") {
     body = (
       <Settings

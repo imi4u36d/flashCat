@@ -40,6 +40,14 @@ export type ModelCard = {
   note: string | null;
 };
 
+/** 旧库里的非 GGUF 权重：看得见、跑不了。 */
+export type ForeignModel = {
+  engine: string;
+  name: string;
+  path: string;
+  sizeMb: number;
+};
+
 export type ChatRequest = {
   threadId: string;
   message: string;
@@ -89,6 +97,8 @@ export const bridge = {
   system: () => ipc<SystemInfo>("system_info"),
   status: () => ipc<EngineStatus>("engine_status"),
   models: () => ipc<ModelCard[]>("list_models"),
+  /** 旧库里的 mlx / safetensors 权重：只展示。 */
+  foreign: () => ipc<ForeignModel[]>("list_foreign"),
   chatStart: (req: ChatRequest) => ipc<string>("chat_start", { req }),
   /** 预热权重：调用即返回，后端在后台加载，失败只记日志。 */
   async warm(): Promise<void> {

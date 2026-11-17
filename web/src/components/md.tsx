@@ -10,6 +10,7 @@ type Block =
   | { kind: "h2"; text: string }
   | { kind: "h3"; text: string }
   | { kind: "ul"; items: string[] }
+  | { kind: "ol"; items: string[] }
   | { kind: "quote"; text: string }
   | { kind: "code"; lang: string; code: string }
   | { kind: "table"; head: string[]; rows: string[][] };
@@ -96,6 +97,18 @@ function parse(src: string): Block[] {
         i += 1;
       }
       out.push({ kind: "ul", items });
+      continue;
+    }
+
+    // 有序列表：`1. 2. 3.`，中文回答里极常见
+    if (/^\s*\d+[.)]\s+/.test(line)) {
+      flush();
+      const items: string[] = [];
+      while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) {
+        items.push(lines[i].replace(/^\s*\d+[.)]\s+/, ""));
+        i += 1;
+      }
+      out.push({ kind: "ol", items });
       continue;
     }
 
@@ -238,6 +251,14 @@ export function Markdown({ text, caret }: { text: string; caret?: boolean }) {
                   <li key={`${key}-${j}`}>{inline(it, `${key}-${j}`)}</li>
                 ))}
               </ul>
+            );
+          case "ol":
+            return (
+              <ol key={key}>
+                {b.items.map((it, j) => (
+                  <li key={`${key}-${j}`}>{inline(it, `${key}-${j}`)}</li>
+                ))}
+              </ol>
             );
           case "quote":
             return <blockquote key={key}>{inline(b.text, key)}</blockquote>;

@@ -72,6 +72,9 @@ function Bubble({ m, live }: { m: Message; live: Live }) {
   );
 }
 
+const COARSE =
+  typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
+
 export function Chat({
   messages,
   generating,
@@ -258,7 +261,9 @@ export function Chat({
             ref={taRef}
             rows={1}
             value={draft}
-            placeholder="问点什么，或者把一张图拖进来…"
+            placeholder={
+              COARSE ? "问点什么…" : "问点什么，或者把一张图拖进来…"
+            }
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {

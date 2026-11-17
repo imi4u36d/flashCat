@@ -12,6 +12,7 @@
 mod commands;
 mod download;
 mod engine;
+#[cfg(feature = "llama")]
 mod llama;
 mod logfile;
 mod model;

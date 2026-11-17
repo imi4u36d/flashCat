@@ -95,6 +95,8 @@ src/
 
 > Windows / Linux 的包需要各自平台上编译（Tauri 不能从 macOS 交叉编译），
 > 一步步的依赖与出包命令在 **[docs/build-windows-linux.md](docs/build-windows-linux.md)**。
+> 想先验证打包链路、暂时跳过 llama.cpp 的 C++ 工具链：`pnpm tauri build -- --no-default-features`
+>（出的是演示后端的包，体积小一半，界面会提示「未装权重」）。
 
 前置：Node 22+ / pnpm 12 / Rust（**必须走 rustup**，Homebrew 的 rustc 没有交叉 target）、
 macOS 上还要 Xcode 与 CocoaPods；Android 要 NDK 29（`sdkmanager "ndk;29.0.14206865"`）与 JDK 17。

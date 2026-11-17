@@ -78,6 +78,21 @@ llama-cpp-2 = { version = "0.1.161", default-features = false, features = ["cuda
 CUDA 需要 NVIDIA 驱动 + CUDA Toolkit 12.x；Vulkan 需要显卡驱动里的 Vulkan 运行时。
 改完 `pnpm tauri build`，再确认日志里 `shell ready · windows/x86_64 · backend=llama.cpp`。
 
+### 先排「打包」还是「推理」：出一份没有 llama.cpp 的包
+
+Windows 上最容易失败的两段是 C++ 工具链（libclang / CMake / MSVC）和后面的打包。
+排查时先关掉推理，确认 Tauri 打包链路是通的：
+
+```powershell
+cd web
+pnpm build
+pnpm tauri build -- --no-default-features
+```
+
+产物和正式包同名，但小很多（macOS 上 4.2MB app / 2.2MB dmg，正式包 12.9MB / 4.7MB），
+跑起来 `backend=mock`、界面上会出现「未装权重，当前是演示输出」。这说明 WebView、资源、安装器都没问题，
+剩下的失败就只在 llama.cpp 那一段。装好依赖后再跑一次不加 `--no-default-features` 的命令出正式包。
+
 ### 常见报错
 
 | 报错 | 原因 | 修法 |

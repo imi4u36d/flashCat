@@ -15,6 +15,13 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+# 默认带真推理；没有 LLVM/CMake 的机器可以用
+#   pnpm tauri build -- --no-default-features
+# 出一份只有演示后端的包（UI/打包链路仍然完整，方便先验证平台）。
+default = ["llama"]
+llama = ["dep:llama-cpp-2"]
+
 [dependencies]
 tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-opener = "2"
@@ -24,10 +31,10 @@ ureq = "3.2.1"
 # 按目标平台选编译选项：apple 走 Metal（GPU），其它先用纯 CPU。
 # 不开 openmp：Android NDK 的 libomp 要额外分发，收益也比不上单机多线程。
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
-llama-cpp-2 = { version = "0.1.161", default-features = false, features = ["metal"] }
+llama-cpp-2 = { version = "0.1.161", default-features = false, features = ["metal"], optional = true }
 
 [target.'cfg(not(any(target_os = "macos", target_os = "ios")))'.dependencies]
-llama-cpp-2 = { version = "0.1.161", default-features = false }
+llama-cpp-2 = { version = "0.1.161", default-features = false, optional = true }
 
 
 [target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]

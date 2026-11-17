@@ -76,6 +76,16 @@ fn max_concurrent() -> usize {
 impl Engine {
     /// 有 GGUF 权重就用真 llama.cpp，没有就退回 mock（首启体验不能是白屏 + 报错）。
     pub fn new(model_dir: Option<std::path::PathBuf>) -> Self {
+        #[cfg(not(feature = "llama"))]
+        let _ = &model_dir;
+
+        #[cfg(not(feature = "llama"))]
+        let backend: Arc<dyn Backend> = {
+            crate::logfile::line("WARN", "engine mock（本次构建未启用 llama feature）");
+            Arc::new(MockBackend::default())
+        };
+
+        #[cfg(feature = "llama")]
         let backend: Arc<dyn Backend> = match model_dir.clone() {
             Some(dir) => match crate::llama::LlamaChatBackend::new(dir.clone()) {
                 Ok(b) if !b.models().is_empty() => {

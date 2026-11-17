@@ -159,3 +159,25 @@ shell ready · windows/x86_64 · v0.3.2 · backend=llama.cpp model=Qwen3-0.6B-Q4
 三行都有但 `backend=mock` → 权重目录里没有 `.gguf`，回到模型页下载。
 
 日志文件位置（Windows）：`%LOCALAPPDATA%\dev.flashcat.desktop\logs\flashcat.log`。
+
+## 一键脚本（Windows）
+
+依赖装好后，可以从仓库根目录跑：
+
+```powershell
+cd web
+powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1
+```
+
+它会按顺序检查 Node / pnpm / cargo(msvc) / CMake / LIBCLANG_PATH / WebView2，
+然后 `pnpm install` → `pnpm build` → `pnpm tauri build`，最后打印 `bundle\` 下的
+`.exe` / `.msi` 与体积。任何一步失败会停在原地并给出下一步该做什么。
+
+第一次建议先出 lite 包确认打包链路（不编译 llama.cpp，几分钟）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1 -Lite
+```
+
+lite 包能装上、能打开、对话页显示「未装权重，当前是演示输出」就说明 WebView、资源、
+安装器都没问题；之后再跑不带 `-Lite` 的出正式包。

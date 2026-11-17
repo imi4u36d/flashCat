@@ -30,7 +30,6 @@ __pycache__/
 docs/scratch/
 *.screenshot.png
 
-# Distribution/promo material (screenshots, mp4 renders, node_modules): built
 # locally and shipped outside the repo. 5d14e3d removed an accidental add.
 promo/
 
@@ -44,8 +43,6 @@ vendor/*.sha256
 # Bootstrap-cached tools (standalone uv downloaded by the engine pack scripts)
 .tools/
 
-# pnpm 本地内容寻址仓库（web/ 目录安装依赖时产生）
-.pnpm-store/
 
 # 编辑器/工具本地状态
 .zcode/

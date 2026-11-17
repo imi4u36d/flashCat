@@ -1,3 +1,0 @@
-# pnpm 10+ 只会执行显式允许的依赖构建脚本。esbuild 需要它来落本地二进制。
-allowBuilds:
-  esbuild: true

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "./icons";
 import type { IconName } from "./icons";
@@ -9,6 +9,7 @@ import type { EngineStatus } from "./bridge";
 import { Chat } from "./pages/Chat";
 import { Overview } from "./pages/Overview";
 import { Models } from "./pages/Models";
+import { Settings } from "./pages/Settings";
 import { engine, navGroups, recents, seedMessages } from "./data/mock";
 
 export type Page = "overview" | "chat" | "models" | "engines" | "logs" | "settings" | "lab";
@@ -32,6 +33,72 @@ function WindowControls() {
       <button className="wc" data-wc="min" type="button" aria-label="最小化" onClick={() => void win.minimize()} />
       <button className="wc" data-wc="max" type="button" aria-label="缩放" onClick={() => void win.toggleMaximize()} />
     </div>
+  );
+}
+
+/* 手机导航：底部标签栏是 iOS/Android 都认的原生语言，比「藏在左上角的汉堡」好按得多。
+   抽屉只留「更多」：最近对话、设置、引擎、日志、实验都在里面。 */
+function MobileTabs({ page, onNavigate }: { page: Page; onNavigate: (p: Page) => void }) {
+  /* 手机上只留三个页面：对话是主场，模型和设置是它的两个抽屉。
+     概览/引擎/日志这些是桌面运维视角，塞进手机只会让主界面变成仪表盘。 */
+  const items: { page: Page; label: string; icon: IconName }[] = [
+    { page: "chat", label: "对话", icon: "bubble" },
+    { page: "models", label: "模型", icon: "stack" },
+    { page: "settings", label: "设置", icon: "slider" },
+  ];
+  return (
+    <nav className="tabbar" aria-label="主导航">
+      {items.map((i) => (
+        <button
+          key={i.page}
+          className="tab"
+          type="button"
+          data-active={page === i.page ? "true" : undefined}
+          onClick={() => onNavigate(i.page)}
+        >
+          <Icon name={i.icon} size={22} strokeWidth={1.45} />
+          <span>{i.label}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+/* 手机上的「历史」：只有最近对话，不再有引擎/日志/实验。
+   对话是主场，这些是它的附页，不该和主界面并列。 */
+function MobileDrawer({
+  open,
+  onClose,
+  onNewThread,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onNewThread: () => void;
+}) {
+  return (
+    <aside className="sidebar" data-open={open ? "true" : undefined} aria-hidden={open ? undefined : true}>
+      <div className="sidebar-top">
+        <span className="drawer-title">对话</span>
+        <button className="ghost-btn" type="button" onClick={onClose} aria-label="收起">
+          <Icon name="chevron" size={12} />
+        </button>
+      </div>
+      <button className="pill-btn drawer-new" type="button" onClick={onNewThread}>
+        <span className="ico" style={{ display: "grid" }}>
+          <Icon name="plus" size={10} strokeWidth={1.8} />
+        </span>
+        新对话
+      </button>
+      <div className="recents scroll">
+        {recents.map((r) => (
+          <button key={r.id} className="recent" type="button" onClick={onClose}>
+            <span className="title">{r.title}</span>
+            <span className="time">{r.time}</span>
+          </button>
+        ))}
+        <div className="recents-empty">保留最近 14 条</div>
+      </div>
+    </aside>
   );
 }
 
@@ -152,6 +219,7 @@ const q = new URLSearchParams(location.search);
 
 export default function App() {
   const shell = isTauri();
+  const edge = useRef<{ x: number; y: number } | null>(null);
   const [mobile, setMobile] = useState(() => document.documentElement.dataset.mobile === "true");
   const [status, setStatus] = useState<EngineStatus | null>(null);
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -168,7 +236,10 @@ export default function App() {
   const chat = useChatEngine(seedMessages);
 
   const navigate = (p: Page) => {
-    setPage(p);
+    // 手机上只有三页：其余页面是桌面运维视角，落到它们时退回对话，
+    // 免得从 URL 或旧状态进到一个没有出口的页面。
+    const allowed: Page[] = ["chat", "models", "settings"];
+    setPage(mobile && !allowed.includes(p) ? "chat" : p);
     if (mobile) setSidebar(false);
   };
 
@@ -248,32 +319,94 @@ export default function App() {
         onStop={chat.stop}
         onNewThread={chat.reset}
         model={models.find((m) => m.id === status?.modelId) ?? models[0] ?? null}
+        onHistory={mobile ? () => setSidebar(true) : undefined}
       />
     );
   } else if (page === "models") {
     body = <Models info={info} models={models} status={status} onChanged={refreshModels} />;
+  } else if (page === "settings") {
+    body = (
+      <Settings
+        info={info}
+        status={status}
+        models={models}
+        onChanged={refreshModels}
+        onNavigate={(p) => navigate(p)}
+      />
+    );
   } else {
     body = <Placeholder page={page} />;
   }
 
   return (
-    <div className="app" data-sidebar={sidebar ? "shown" : "hidden"} data-mobile={mobile ? "true" : undefined} data-shell={shell ? "tauri" : undefined}>
+    <div
+      className="app"
+      data-sidebar={sidebar ? "shown" : "hidden"}
+      data-mobile={mobile ? "true" : undefined}
+      data-shell={shell ? "tauri" : undefined}
+      /* 屏幕左缘内滑打开抽屉：手机上人人都会试一下的手势，缺了它就像网页。 */
+      onTouchStart={(e) => {
+        if (!mobile) return;
+        const t = e.touches[0];
+        edge.current = { x: t.clientX, y: t.clientY };
+      }}
+      onTouchMove={(e) => {
+        if (!mobile || !edge.current) return;
+        const t = e.touches[0];
+        const dx = t.clientX - edge.current.x;
+        const dy = t.clientY - edge.current.y;
+        if (Math.abs(dy) > Math.abs(dx)) return;
+        // 抽屉开着：向左甩就收回（和开着抽屉的键盘一样，是肌肉记忆）
+        if (sidebar) {
+          if (dx < -52) {
+            setSidebar(false);
+            edge.current = null;
+          }
+          return;
+        }
+        // 关着：只认屏幕左缘起手，别和页面横滑抢手势
+        if (edge.current.x > 28) return;
+        if (dx > 52) {
+          setSidebar(true);
+          edge.current = null;
+        }
+      }}
+      onTouchEnd={() => {
+        edge.current = null;
+      }}
+    >
       {shell && !mobile ? <WindowControls /> : null}
       {mobile && sidebar ? <div className="scrim" onClick={() => setSidebar(false)} /> : null}
-      <Sidebar
-        page={page}
-        onNavigate={navigate}
-        onToggle={() => setSidebar(false)}
-        engineLabel={status ? `${status.backend} · ${status.quantization ?? "fp16"}` : engine.state}
-      />
+      {mobile ? (
+        <MobileDrawer
+          open={sidebar}
+          onClose={() => setSidebar(false)}
+          onNewThread={() => {
+            chat.reset();
+            setSidebar(false);
+            navigate("chat");
+          }}
+        />
+      ) : (
+        <Sidebar
+          page={page}
+          onNavigate={navigate}
+          onToggle={() => setSidebar(false)}
+          engineLabel={status ? `${status.backend} · ${status.quantization ?? "fp16"}` : engine.state}
+        />
+      )}
 
       <div className="titlebar" data-tauri-drag-region>
-        <button className="toggle" type="button" onClick={() => setSidebar((v) => !v)} title="显示/隐藏侧栏">
-          <Icon name="panel" size={13} />
-        </button>
+        {/* 手机上导航在底部标签栏，标题栏不再放汉堡：两个入口指向同一处只会让人犹豫 */}
+        {mobile ? null : (
+          <button className="toggle" type="button" onClick={() => setSidebar((v) => !v)} title="显示/隐藏侧栏">
+            <Icon name="panel" size={13} />
+          </button>
+        )}
         <div className="title-crumbs">
           <b>{titles[page]}</b>
-          {page === "chat" ? <span>· 本地</span> : <span>· 127.0.0.1:9000</span>}
+          {/* 手机上不显示网关地址：那是桌面调试信息，手机上一没有网关二看不懂 */}
+          {page === "chat" ? <span>· 本地</span> : mobile ? null : <span>· 127.0.0.1:9000</span>}
         </div>
         <div style={{ flex: 1 }} />
         {mobile ? null : (
@@ -289,6 +422,10 @@ export default function App() {
       </div>
 
       {body}
+
+      {mobile ? (
+        <MobileTabs page={page} onNavigate={navigate} />
+      ) : null}
     </div>
   );
 }

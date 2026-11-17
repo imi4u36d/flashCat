@@ -79,6 +79,7 @@ export function Chat({
   onSend,
   onStop,
   onNewThread,
+  onHistory,
   model,
 }: {
   messages: Message[];
@@ -87,6 +88,7 @@ export function Chat({
   onSend: (text: string) => void;
   onStop: () => void;
   onNewThread: () => void;
+  onHistory?: () => void;
   /** 当前加载的权重；没有后端或没装权重时是 null（输入卡的 chips 显示「—」）。 */
   model: ModelCard | null;
 }) {
@@ -115,6 +117,11 @@ export function Chat({
   return (
     <div className="chat-wrap">
       <div className="chat-head">
+        {onHistory ? (
+          <button className="toggle" type="button" onClick={onHistory} aria-label="对话历史">
+            <Icon name="doc" size={13} />
+          </button>
+        ) : null}
         <h2>16GB M2 上并发跑 3B</h2>
         <div className="aside">
           {generating ? (

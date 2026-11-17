@@ -1244,6 +1244,9 @@ button {
 
 html[data-mobile="true"] {
   --titlebar-h: 52px;
+  /* Android 的 WebView 不报 safe-area-inset-top（值恒为 0），
+     状态栏会直接压在标题栏文字上。给一个下限兜住系统状态栏高度。 */
+  --safe-top: env(safe-area-inset-top, 0px);
   --sidebar-w: 0px;
 }
 
@@ -1280,8 +1283,23 @@ html[data-mobile="true"] .app[data-sidebar="shown"] .sidebar {
   transform: none;
   box-shadow: 26px 0 70px rgb(0 0 0 / 0.5);
 }
+/* 手机上抽屉只有「对话历史」：顶部是标题 + 收起，不再有拖窗区 */
 html[data-mobile="true"] .sidebar-top {
-  display: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 52px;
+  padding: 0 14px;
+}
+html[data-mobile="true"] .drawer-title {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+}
+html[data-mobile="true"] .drawer-new {
+  margin: 0 14px 8px;
+  height: 40px;
+  justify-content: center;
 }
 
 .scrim {
@@ -1302,9 +1320,12 @@ html[data-mobile="true"] .sidebar-top {
 }
 
 /* 标题行：贴状态栏，左边只剩一个抽屉按钮 */
+html[data-mobile="true"][data-platform="android"] {
+  --safe-top: max(env(safe-area-inset-top, 0px), 26px);
+}
 html[data-mobile="true"] .titlebar {
-  height: calc(var(--titlebar-h) + env(safe-area-inset-top));
-  padding: env(safe-area-inset-top) 10px 0;
+  height: calc(var(--titlebar-h) + var(--safe-top));
+  padding: var(--safe-top) 10px 0;
   border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--bg) 92%, transparent);
   backdrop-filter: blur(24px) saturate(1.4);
@@ -1344,7 +1365,7 @@ html[data-mobile="true"] .island {
 
 /* 页面：单列、边距收紧 */
 html[data-mobile="true"] .page-scroll {
-  padding: calc(var(--titlebar-h) + env(safe-area-inset-top) + 10px) 14px
+  padding: calc(var(--titlebar-h) + var(--safe-top) + 10px) 14px
     calc(16px + env(safe-area-inset-bottom));
 }
 html[data-mobile="true"] .page-inner {
@@ -1411,7 +1432,7 @@ html[data-mobile="true"] .table {
 
 /* 对话：满宽、正文 15.5、输入卡贴安全区 */
 html[data-mobile="true"] .chat-wrap {
-  padding-top: calc(var(--titlebar-h) + env(safe-area-inset-top));
+  padding-top: calc(var(--titlebar-h) + var(--safe-top));
 }
 html[data-mobile="true"] .chat-head {
   padding: 0 14px;
@@ -1437,6 +1458,83 @@ html[data-mobile="true"] .send {
   height: 34px;
 }
 
+/* 底部标签栏：固定在最下、让出 home indicator；页面与输入卡都要给它让位 */
+html[data-mobile="true"] .tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  height: calc(52px + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(24px) saturate(1.4);
+}
+html[data-mobile="true"] .tab {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 0;
+  background: none;
+  color: var(--text3);
+  font: inherit;
+  font-size: 10.5px;
+  letter-spacing: 0.2px;
+  touch-action: manipulation;
+  transition: color 0.16s var(--ease-snappy, ease-out);
+}
+html[data-mobile="true"] .tab:active {
+  color: var(--text);
+}
+html[data-mobile="true"] .tab[data-active="true"] {
+  color: var(--accent);
+}
+/* 输入卡与页面底部让开标签栏，否则最后一句话和发送键被压在栏下面 */
+html[data-mobile="true"] .composer-wrap {
+  padding-bottom: calc(62px + env(safe-area-inset-bottom));
+}
+html[data-mobile="true"] .page-scroll {
+  padding-bottom: calc(72px + env(safe-area-inset-bottom));
+}
+
+/* 触摸设备没有 hover：把桌面那套 hover 反馈换成 press，并且不留下"卡住的选中" */
+@media (hover: none) {
+  html[data-mobile="true"] .nav-row:hover,
+  html[data-mobile="true"] .recent:hover,
+  html[data-mobile="true"] .btn:hover {
+    background: transparent;
+  }
+  html[data-mobile="true"] .nav-row:active,
+  html[data-mobile="true"] .recent:active {
+    background: var(--hover);
+  }
+  html[data-mobile="true"] .btn:active {
+    background: var(--fill-2);
+    transform: scale(0.985);
+  }
+}
+html[data-mobile="true"] * {
+  -webkit-tap-highlight-color: transparent;
+}
+/* 滚动到顶/底不要把整个页面一起拖走（iOS 的橡皮筋会让固定栏跟着抖） */
+html[data-mobile="true"] body,
+html[data-mobile="true"] .app,
+html[data-mobile="true"] .page-scroll,
+html[data-mobile="true"] .thread,
+html[data-mobile="true"] .sidebar {
+  overscroll-behavior: contain;
+}
+html[data-mobile="true"] .thread,
+html[data-mobile="true"] .page-scroll,
+html[data-mobile="true"] .recents {
+  -webkit-overflow-scrolling: touch;
+}
+
 /* 手机上标题行只留标题与一个动作：模型徽标折行会把 44pt 的头撑成两行 */
 html[data-mobile="true"] .chat-head h2 {
   font-size: 15px;
@@ -1446,4 +1544,128 @@ html[data-mobile="true"] .chat-head .tag {
 }
 html[data-mobile="true"] .chat-head .gen-status {
   font-size: 11px;
+}
+
+/* ───────────────────────── 底部动作表（手机）─────────────────────────
+   点模型行才会出现；桌面不渲染这个组件，所以这些样式只在手机上起作用。
+   视觉上照 iOS 的 action sheet：抓取条、圆角顶、最后一项「取消」单独隔开。 */
+.sheet-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  background: color-mix(in srgb, #000 34%, transparent);
+  animation: scrim-in 0.16s var(--ease-snappy, ease-out);
+}
+.sheet {
+  width: 100%;
+  padding: 8px 10px calc(10px + env(safe-area-inset-bottom));
+  border-radius: 20px 20px 0 0;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  backdrop-filter: blur(28px) saturate(1.5);
+  animation: sheet-up 0.22s var(--ease-snappy, ease-out);
+}
+@keyframes sheet-up {
+  from {
+    transform: translateY(14px);
+    opacity: 0.6;
+  }
+}
+.sheet-grabber {
+  width: 36px;
+  height: 4px;
+  margin: 2px auto 10px;
+  border-radius: 2px;
+  background: var(--line3);
+}
+.sheet-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 10px 10px;
+}
+.sheet-title strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.sheet-title span {
+  font-size: 11.5px;
+  color: var(--text3);
+  font-variant-numeric: tabular-nums;
+}
+.sheet-item {
+  display: block;
+  width: 100%;
+  height: 48px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+  touch-action: manipulation;
+}
+.sheet-item:active {
+  background: var(--hover);
+}
+.sheet-item:disabled {
+  color: var(--text4);
+}
+.sheet-item[data-tone="danger"] {
+  color: var(--err);
+}
+.sheet-item[data-tone="cancel"] {
+  margin-top: 6px;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 12px 12px;
+  color: var(--text2);
+}
+html[data-mobile="true"] .row-actions {
+  display: none;
+}
+html[data-mobile="true"] .model-row:active {
+  background: var(--hover);
+}
+
+/* 设置页：手机上是「分组卡片 + 标签/值/动作」三列，桌面同样能看 */
+.set-list {
+  display: flex;
+  flex-direction: column;
+}
+.set-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 14px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+.set-row:first-child {
+  border-top: 0;
+}
+.set-label {
+  color: var(--text2);
+  flex: none;
+}
+.set-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  color: var(--text3);
+  font-size: 12px;
+}
+.set-note {
+  padding: 10px 14px 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text3);
+  border-top: 1px solid var(--line);
 }

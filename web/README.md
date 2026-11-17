@@ -150,22 +150,27 @@ xcrun devicectl device install app --device <UDID> src-tauri/gen/apple/build/arm
 
 ## 移动端
 
-手机不是把桌面版缩小，而是同一套壳换一种密度（`app.css` 末尾的 `html[data-mobile="true"]` 整段，
-桌面宽度一条都不命中）：
+手机不是把桌面版缩小，而是**换一套导航**：手机是「一个对话应用」，不是仪表盘。
 
-- **侧栏变抽屉**：`position: fixed` + `translateX(-102%)`，点汉堡或左缘滑出，`.scrim` 遮罩点一下收回，
-  跳页自动收；`window-controls`（红黄绿三颗）只在 Tauri 桌面壳里渲染。
-- **概览重排**：5 格连体 KPI → 2 列卡片（最后一格跨两列），双栏 `.mid` → 单列，表格横向滚动。
-- **对话满宽**：正文 15.5px/1.62，`.composer-wrap` 贴底部安全区，`.chat-head` 里的模型徽标隐藏
-  （393pt 宽会折行）。
-- **安全区**：`index.html` 的 viewport 带 `viewport-fit=cover`，标题行 `height: calc(52px + env(safe-area-inset-top))`；
-  没有 `viewport-fit` 时 `env(safe-area-inset-*)` 恒为 0（iOS 尤其明显）。
+- **只有三页：对话 / 模型 / 设置**。底部 `TabBar` 三项常驻；概览、引擎、日志、实验是桌面运维视角，
+  手机上不可达（`navigate()` 里有白名单，落在其它页会退回对话）。会话历史收进对话页左上角的
+  抽屉按钮，抽屉里只有「新对话 + 最近对话」，不再有工程导航和 footer。
+- **抽屉**：`position: fixed` + `translateX(-102%)`，左缘 28px 内右滑打开、抽屉开着时左滑关闭，
+  `.scrim` 点一下收回，跳页自动收；`.sidebar` 在手机上整段被替换为 `MobileDrawer`。
+- **模型行是动作表，不是表格按钮**：点行从底部滑出 `.sheet`（抓取条 + 设为当前 / 复制路径 / 删除 / 取消），
+  表格右侧的 `加载/删除` 按钮在手机上隐藏 —— 表格里塞两个小按钮不是移动端做法。
+- **对话满宽**：正文 15.5px/1.62，`.composer-wrap` 与 `.page-scroll` 分别避开 `calc(52px + safe-bottom)`
+  的标签栏高度，输入卡永远在标签栏之上。
+- **安全区**：`index.html` 的 viewport 带 `viewport-fit=cover`；`--safe-top` 在 Android 上取
+  `max(env(safe-area-inset-top), 26px)` —— Android WebView 不报 `safe-area-inset-top`（恒为 0），
+  不兜这一下状态栏就会压在标题栏文字上。底部由 `MainActivity.kt` 的 insets listener 统一让出
+  `max(systemBars.bottom, ime.bottom)`，手势条与键盘都盖不住标签栏/输入框。
 - **外观跟随系统**：手机上 `data-theme` 取 `prefers-color-scheme`（不落 localStorage、不显示切换按钮），
-  这样 Android `enableEdgeToEdge()` 按系统决定的**状态栏图标明暗**永远和界面深浅一致。
-  桌面仍可手动切并在 localStorage 里记住。
-  主题色与系统栏也在原生侧对齐：`res/values/themes.xml` 与 `values-night/themes.xml`
-  都设 `windowBackground=@color/flashcat_canvas`、状态栏/导航栏透明、`windowLightStatusBar=false`。
-  （改 `themes.xml` 时别在 XML 注释里写 `--`，AAPT 会直接失败。）
+  这样 Android `enableEdgeToEdge()` 按系统决定的状态栏图标明暗永远和界面深浅一致。
+  原生侧 `res/values{,-night}/themes.xml` 设 `windowBackground=@color/flashcat_canvas`、系统栏透明、
+  `windowLightStatusBar=false`。（改 `themes.xml` 时别在 XML 注释里写 `--`，AAPT 会直接失败。）
+- **触感细节**：`@media (hover:none)` 把 hover 态换成 `:active`、`-webkit-tap-highlight-color: transparent`、
+  触摸目标 ≥44px、`overscroll-behavior: contain`、`-webkit-overflow-scrolling: touch`。
 
 本地跑移动端：
 

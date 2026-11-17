@@ -44,10 +44,13 @@ export function Models({
   const loaded = status?.modelId ?? null;
   const total = models.reduce((n, m) => n + m.sizeMb, 0);
   const tauri = isTauri();
+  const mobile = document.documentElement.dataset.mobile === "true";
 
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // 手机上点一行 → 底部动作表。表格里塞两枚按钮是桌面习惯，手指容易点错。
+  const [sheet, setSheet] = useState<ModelCard | null>(null);
   const unsub = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -283,7 +286,11 @@ export function Models({
                   </thead>
                   <tbody>
                     {models.map((m) => (
-                      <tr key={m.id}>
+                      <tr
+                        key={m.id}
+                        className="model-row"
+                        onClick={() => (mobile ? setSheet(m) : undefined)}
+                      >
                         <td>
                           <strong>{m.name}</strong>
                         </td>
@@ -309,7 +316,7 @@ export function Models({
                             <span className="tag">就绪</span>
                           )}
                         </td>
-                        <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        <td className="row-actions" style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                           <button
                             type="button"
                             className="btn"
@@ -354,6 +361,57 @@ export function Models({
           </div>
         </div>
       </div>
+
+      {sheet ? (
+        <div className="sheet-scrim" onClick={() => setSheet(null)}>
+          <div className="sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="sheet-grabber" />
+            <div className="sheet-title">
+              <strong>{sheet.name}</strong>
+              <span>
+                {sheet.family} · {sheet.quantization} ·{" "}
+                {sheet.sizeMb >= 1024 ? `${(sheet.sizeMb / 1024).toFixed(2)} GB` : `${sheet.sizeMb} MB`}
+              </span>
+            </div>
+            <button
+              type="button"
+              className="sheet-item"
+              disabled={!tauri || sheet.id === loaded || busyId === sheet.id}
+              onClick={() => {
+                act("select", sheet.id);
+                setSheet(null);
+              }}
+            >
+              {sheet.id === loaded ? "当前已加载" : "设为当前模型"}
+            </button>
+            <button
+              type="button"
+              className="sheet-item"
+              disabled={!tauri || busyId === sheet.id}
+              onClick={() => {
+                void navigator.clipboard?.writeText(`${dir ?? ""}/${sheet.id}.gguf`);
+              }}
+            >
+              复制文件路径
+            </button>
+            <button
+              type="button"
+              className="sheet-item"
+              data-tone="danger"
+              disabled={!tauri || busyId === sheet.id}
+              onClick={() => {
+                act("delete", sheet.id);
+                setSheet(null);
+              }}
+            >
+              删除这个权重
+            </button>
+            <button type="button" className="sheet-item" data-tone="cancel" onClick={() => setSheet(null)}>
+              取消
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

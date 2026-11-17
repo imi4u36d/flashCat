@@ -166,14 +166,14 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
-		"TEMP_848A39C5-94B1-4D96-9308-7128A6DA4639" /* x86_64 */ = {
+		"TEMP_4A5D1E16-38E5-4E2C-AD7B-EECCE33FEB09" /* x86_64 */ = {
 			isa = PBXGroup;
 			children = (
 			);
 			path = x86_64;
 			sourceTree = "<group>";
 		};
-		"TEMP_94E44235-C315-4AC8-96FB-7C39521FE235" /* arm64 */ = {
+		"TEMP_526A73B6-72DF-4139-9F92-C9EFEA7D806B" /* arm64 */ = {
 			isa = PBXGroup;
 			children = (
 			);

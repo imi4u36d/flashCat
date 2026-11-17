@@ -56,8 +56,8 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        CFBundleShortVersionString: 0.3.3
-        CFBundleVersion: "0.3.3"
+        CFBundleShortVersionString: 0.3.4
+        CFBundleVersion: "0.3.4"
     entitlements:
       path: flashcat_iOS/flashcat_iOS.entitlements
     scheme:

@@ -1,6 +1,6 @@
 [package]
 name = "flashcat"
-version = "0.3.3"
+version = "0.3.4"
 description = "FlashCat — local inference workbench"
 authors = ["FlashCat"]
 edition = "2021"

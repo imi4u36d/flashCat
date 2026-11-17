@@ -1,14 +1,14 @@
 # 交付状态
 
-更新时间：2026-11-17 · 版本 0.3.3
+更新时间：2026-11-17 · 版本 0.3.4
 
 ## 已交付并验证
 
 | 平台 | 产物 | 验证方式 |
 | --- | --- | --- |
-| macOS (Apple Silicon) | `release/FlashCat_0.3.3_aarch64.dmg` | 挂载后启动 dmg 内的 .app，日志 `boot FlashCat 0.3.3 platform=macos mobile=false` → `page Finished tauri://localhost` → `shell ready · macos/aarch64 · backend=llama.cpp` |
-| Android (arm64) | `release/FlashCat-0.3.3-arm64.apk` | release keystore 签名；`adb install` 到 Android 14 模拟器，启动后 `boot … platform=android mobile=true`、`engine llama.cpp models=1`、截图见 `docs/preview/23-android-033.png` |
-| iOS (真机, arm64) | `release/FlashCat-0.3.3-ios.ipa` | `xcrun devicectl device install app` 安装成功；首次启动需在「设置 → 通用 → VPN 与设备管理」信任 `Apple Development: wxwzmail@163.com`（7 天有效） |
+| macOS (Apple Silicon) | `release/FlashCat_0.3.4_aarch64.dmg` | 挂载后启动 dmg 内的 .app，日志 `boot FlashCat 0.3.4 platform=macos mobile=false` → `page Finished tauri://localhost` → `shell ready · macos/aarch64 · backend=llama.cpp` |
+| Android (arm64) | `release/FlashCat-0.3.4-arm64.apk` | release keystore 签名；`adb install` 到 Android 14 模拟器，启动后 `boot … platform=android mobile=true`、`engine llama.cpp models=1`、截图见 `docs/preview/23-android-033.png` |
+| iOS (真机, arm64) | `release/FlashCat-0.3.4-ios.ipa` | `xcrun devicectl device install app` 安装成功；首次启动需在「设置 → 通用 → VPN 与设备管理」信任 `Apple Development: wxwzmail@163.com`（7 天有效） |
 | iOS 模拟器 | 构建产物在 `src-tauri/gen/apple/build/arm64-sim/` | 模拟器启动、流式输出、安全区检查通过 |
 
 产物都在 `web/release/`（已 gitignore，不进仓库）。

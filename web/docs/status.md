@@ -13,7 +13,7 @@
 
 产物都在 `web/release/`（已 gitignore，不进仓库）。
 
-| Linux arm64 | `release/FlashCat_0.3.4_arm64.deb` | 在 colima(ubuntu:24.04) 容器内 `pnpm tauri build`；`dpkg-deb -I` 校验 Package=flash-cat / Version=0.3.4 / Arch=arm64 / Depends=libwebkit2gtk-4.1-0,libgtk-3-0，内含 `usr/bin/flashcat` 9.5MB |
+| Linux arm64 | `release/FlashCat_0.3.4_arm64.deb` | colima(ubuntu:24.04) 容器内构建；`dpkg-deb -I` 校验元数据；再在同一容器 `dpkg -i` + `xvfb-run flashcat` 实跑：`page Started/Finished tauri://localhost` 与 `shell ready · linux/aarch64 · v0.3.4 · backend=mock`（容器里没放 gguf，故走 mock） |
 
 ## 未交付
 

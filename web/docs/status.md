@@ -13,12 +13,14 @@
 
 产物都在 `web/release/`（已 gitignore，不进仓库）。
 
+| Linux arm64 | `release/FlashCat_0.3.4_arm64.deb` | 在 colima(ubuntu:24.04) 容器内 `pnpm tauri build`；`dpkg-deb -I` 校验 Package=flash-cat / Version=0.3.4 / Arch=arm64 / Depends=libwebkit2gtk-4.1-0,libgtk-3-0，内含 `usr/bin/flashcat` 9.5MB |
+
 ## 未交付
 
 | 项 | 原因 | 下一步 |
 | --- | --- | --- |
 | Windows 安装包 | 需要 Windows 主机（MSVC + WebView2 + LLVM） | 在目标机器执行 `powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1`（先 `-Lite` 排打包链路） |
-| Linux deb / AppImage | 本机无 Docker daemon、无 Linux 交叉 C 工具链 | 在 Linux 机器或 CI 上 `pnpm tauri build` |
+| Linux x86_64 包 | 本机 colima 是 arm64 虚拟机，只能产出 arm64 deb（已出）；x86_64 另需 qemu 架构或 CI `ubuntu-24.04` | 在 x86_64 Linux 或 CI 上重跑 `web/scripts/linux-build.sh` |
 | iOS 真机长期可用 | 开发签名 7 天过期 | 换 TestFlight / App Store 分发，或每年重签 |
 
 ## 平台边界（不要混）

@@ -189,13 +189,11 @@ struct EngineConfigSheet: View {
             }
             .buttonStyle(.ds(.secondary, size: .regular))
             Spacer(minLength: 0)
-            GlassEffectContainer(spacing: 8) {
-                HStack(spacing: 8) {
-                    Button("取消") { dismiss() }
-                        .buttonStyle(.ds(.secondary, size: .regular))
-                    Button("保存") { save() }
-                        .buttonStyle(.ds(.primary, size: .regular))
-                }
+            HStack(spacing: 8) {
+                Button("取消") { dismiss() }
+                    .buttonStyle(.ds(.secondary, size: .regular))
+                Button("保存") { save() }
+                    .buttonStyle(.ds(.primary, size: .regular))
             }
         }
         .padding(.horizontal, 18)

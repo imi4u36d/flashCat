@@ -5,7 +5,7 @@ import AppKit
 import FlashCatKit
 import SwiftUI
 
-/// 日志页：顶部过滤条 + 一块玻璃控制台，版式对齐 WebUI。
+/// 日志页：顶部过滤条 + ZCode 风格实色日志控制台。
 ///
 /// 默认看的是「全部日志」——每台已装引擎的尾巴按时间并成一份；只想盯一台时
 /// 从 LIVE 旁的菜单里挑。以前这里默认就是当前引擎，别台引擎的报错要切过去才
@@ -239,7 +239,6 @@ struct LogsPage: View {
                         .padding(10)
                     }
                     .scrollIndicators(.never)
-                    .scrollEdgeEffectStyle(.soft, for: .top)
                     .defaultScrollAnchor(.top)
                     .onChange(of: data.lines.count) { _, _ in
                         guard !paused else { return }

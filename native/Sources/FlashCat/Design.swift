@@ -35,7 +35,7 @@ enum Native {
     static let raised = DS.raised
 
     /// The colour AppKit paints behind the hidden title bar.
-    static let windowBackground = NSColor.adaptive(dark: 0x0E0E12, light: 0xECEEF3)
+    static let windowBackground = NSColor.adaptive(dark: 0x161616, light: 0xF8F8F8)
 
     static let label = DS.text
     static let secondary = DS.text2
@@ -75,7 +75,7 @@ enum Native {
     static let pillText = DS.inkText
 
     // Toast capsule.
-    static let toastFill = DS.raised
+    static let toastFill = DS.floating
 
     /// Translucent overlay that flips direction with the skin: white lifts the
     /// night canvas, near-black recesses the daylight one.
@@ -83,11 +83,11 @@ enum Native {
         .adaptiveOverlay(opacity)
     }
 
-    // Geometry —— 仪器化圆角：小控件 7 / 行内卡 9 / 面板 12 / 窗口级 16
+    // Geometry —— ZCode 同心圆角：小控件 6 / 行内卡 8 / 面板 10 / 窗口级 12
     static let radiusSmall: CGFloat = DS.Radius.sm
     static let radiusTile: CGFloat = DS.Radius.md
     static let radiusPanel: CGFloat = DS.Radius.lg
-    static let radiusHero: CGFloat = DS.Radius.lg
+    static let radiusHero: CGFloat = DS.Radius.xl
     static let pagePadding: CGFloat = 20
     static let cardPadding: CGFloat = 14
     static let gap: CGFloat = 12
@@ -147,7 +147,7 @@ struct ArcadeBackdrop: View {
 
 // MARK: - Surface
 
-/// 面板表面：兼容转发到原生 Liquid Glass 表面。
+/// 面板表面：ZCode 实色分层表面 + 1px 发丝边框。
 struct GlassSurface: View {
     var radius: CGFloat = DS.Radius.lg
     var tint: Color = .clear
@@ -155,10 +155,13 @@ struct GlassSurface: View {
 
     var body: some View {
         let shape = DS.rect(radius)
-        LiquidGlassSurface(
-            shape: shape,
-            tint: tint == .clear ? nil : tint.opacity(0.16),
-            interactive: false)
+        ZStack {
+            shape.fill(elevated ? DS.surface : DS.bg)
+            if tint != .clear {
+                shape.fill(tint.opacity(0.12))
+            }
+        }
+        .overlay(shape.strokeBorder(DS.line, lineWidth: 1))
     }
 }
 
@@ -648,7 +651,10 @@ struct StatTile: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .background { GlassSurface(radius: Native.radiusPanel, tint: tint) }
+        .dsSurface(
+            radius: Native.radiusPanel,
+            tint: tint == .clear ? nil : tint.opacity(0.10)
+        )
         .animation(.easeOut(duration: 0.2), value: loading)
     }
 }
@@ -663,14 +669,13 @@ struct MetricCard: View {
     var hint: String? = nil
     var hero: Bool = false
     var loading: Bool = false
-    @State private var hovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Text(L10n.t(label))
                     .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(hero ? Native.secondary : Native.secondary)
+                    .foregroundStyle(Native.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 if let tag {
@@ -712,17 +717,13 @@ struct MetricCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 15)
         .padding(.vertical, 12)
-        .background {
-            LiquidGlassSurface(
-                shape: RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous),
-                tint: hero
-                    ? Native.accent.opacity(0.18)
-                    : (hovering ? Native.accent.opacity(0.06) : nil)
-            )
-        }
-        .onHover { value in
-            withAnimation(Motion.quick) { hovering = value }
-        }
+        .dsSurface(
+            radius: Native.radiusPanel,
+            tint: hero ? DS.accentSoft : nil,
+            stroke: hero ? DS.accent.opacity(0.35) : nil,
+            hoverable: true,
+            active: hero
+        )
         .animation(.easeOut(duration: 0.2), value: loading)
     }
 }
@@ -784,10 +785,7 @@ struct StatusStrip: View {
                 .transition(.opacity)
             }
         }
-        .glassEffect(
-            .regular,
-            in: RoundedRectangle(cornerRadius: Native.radiusPanel, style: .continuous)
-        )
+        .dsSurface(radius: Native.radiusPanel)
         .animation(.easeOut(duration: 0.16), value: statusText)
         .animation(.easeOut(duration: 0.16), value: failure)
     }
@@ -984,31 +982,22 @@ extension PageHeader where Actions == EmptyView {
     }
 }
 
-/// Round icon button used in headers and toolbars.
+/// Icon button used in headers and toolbars.
 struct IconAction: View {
     let systemName: String
     var help: String = ""
     var active: Bool = false
     let action: () -> Void
 
-    @ViewBuilder
     var body: some View {
-        let glyph = Image(systemName: systemName)
-            .font(.system(size: 12, weight: .medium))
-            .frame(width: 18, height: 18)
-
-        if active {
-            Button(action: action) { glyph }
-                .buttonStyle(.glassProminent)
-                .buttonBorderShape(.circle)
-                .tint(DS.accent)
-                .help(help)
-        } else {
-            Button(action: action) { glyph }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .help(help)
-        }
+        DSIconButton(
+            systemName: systemName,
+            help: help,
+            size: 28,
+            style: .outlined,
+            active: active,
+            action: action
+        )
     }
 }
 
@@ -1020,7 +1009,7 @@ struct IconMenuLabel: View {
     var body: some View {
         Image(systemName: systemName)
             .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(active ? .white : DS.text)
+            .foregroundStyle(active ? DS.inkText : DS.text)
             .frame(width: 18, height: 18)
     }
 }
@@ -1035,10 +1024,8 @@ struct EmptyHint: View {
             Image(systemName: icon)
                 .font(.system(size: 20, weight: .regular))
                 .foregroundStyle(DS.text3)
-                .frame(width: 48, height: 48)
-                .background {
-                    LiquidGlassSurface(shape: DS.rect(DS.Radius.lg))
-                }
+                .frame(width: 44, height: 44)
+                .dsSurface(radius: DS.Radius.lg)
             Text(L10n.t(title))
                 .font(DS.Font.md.weight(.medium))
                 .foregroundStyle(DS.text2)
@@ -1060,6 +1047,7 @@ struct ToastView: View {
     let message: String
 
     var body: some View {
+        let shape = DS.rect(DS.Radius.md)
         HStack(spacing: 8) {
             Image(systemName: "sparkles")
                 .font(.system(size: 11, weight: .semibold))
@@ -1068,10 +1056,11 @@ struct ToastView: View {
                 .font(DS.Font.sm.weight(.medium))
                 .foregroundStyle(DS.text)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 9)
-        .glassEffect(.regular, in: Capsule())
-        .shadow(color: DS.shadow, radius: 16, y: 6)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(shape.fill(DS.floating))
+        .overlay(shape.strokeBorder(DS.line2, lineWidth: 1))
+        .shadow(color: DS.shadow, radius: 14, y: 6)
         .padding(.bottom, 20)
     }
 }

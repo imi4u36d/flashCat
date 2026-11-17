@@ -5,7 +5,7 @@ import AppKit
 import FlashCatKit
 import SwiftUI
 
-/// 控制台根视图：左侧悬浮 Liquid Glass 导航面板 + 顶部悬浮玻璃标题栏与灵动岛 + 七个原生页面。
+/// 控制台根视图：左侧 ZCode 风格实体导航边栏 + 1px 发丝分隔线 + 七个原生页面。
 struct ConsoleView: View {
     @ObservedObject var state: AppState
     @ObservedObject private var theme = AppState.shared.theme
@@ -56,7 +56,7 @@ struct ConsoleView: View {
             DSIconButton(
                 systemName: "sidebar.left",
                 help: state.showsSidebar ? "隐藏边栏" : "显示边栏",
-                style: .outlined
+                style: state.showsSidebar ? .ghost : .outlined
             ) {
                 if islandExpanded && state.showsSidebar {
                     withAnimation(DS.Motion.bouncy) { islandExpanded = false }
@@ -195,15 +195,16 @@ struct ConsoleView: View {
     }
 }
 
-// MARK: - Docked Translucent Sidebar
+// MARK: - ZCode Sidebar
 
-/// 贴边通栏的轻量磨砂导航列：无外框卡片，直接承载工作区、控制台、最近对话、灵动岛与底栏。
+/// ZCode 风格实体侧边栏：纯色基底 + 1px 发丝分隔，承载工作区、控制台、最近对话、状态面板与底栏。
 struct ConsoleNavigationPanel: View {
     @ObservedObject var state: AppState
     @ObservedObject var chat: ChatStore
     var openDownloads: () -> Void = {}
     var openFeedback: () -> Void = {}
 
+    @ObservedObject private var background = BackgroundSettings.shared
     @Namespace private var selection
     @State private var hoveringNewChat = false
     @State private var hoveringSettings = false
@@ -238,7 +239,7 @@ struct ConsoleNavigationPanel: View {
             recents
                 .padding(.horizontal, 10)
 
-            // 为左下角悬浮灵动岛预留收起高度，避免列表滚动到底时被遮挡。
+            // 为左下角状态卡预留收起高度，避免列表滚动到底时被遮挡。
             Color.clear
                 .frame(height: 46)
 
@@ -246,17 +247,16 @@ struct ConsoleNavigationPanel: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background {
-            ZStack {
-                Rectangle().fill(.ultraThinMaterial)
-                DS.bg.opacity(0.45)
-            }
-            .ignoresSafeArea()
+            DS.bg
+                .opacity(background.image != nil || background.revealsDesktop ? 0.86 : 1.0)
+                .ignoresSafeArea()
         }
         .animation(DS.Motion.smooth, value: state.section)
     }
 
     private var newChatButton: some View {
-        Button {
+        let shape = DS.rect(DS.Radius.sm)
+        return Button {
             state.newConversation()
             state.section = .chat
         } label: {
@@ -265,16 +265,14 @@ struct ConsoleNavigationPanel: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(DS.accent)
                 Text(L10n.t("新对话"))
-                    .font(DS.Font.xs.weight(.medium))
+                    .font(DS.Font.prose(11.5, weight: .medium))
                     .foregroundStyle(hoveringNewChat ? DS.text : DS.text2)
             }
             .padding(.horizontal, 8)
             .frame(height: 22)
-            .background(
-                Capsule()
-                    .fill(Color.adaptiveOverlay(hoveringNewChat ? 0.09 : 0.04))
-            )
-            .contentShape(Capsule())
+            .background(shape.fill(hoveringNewChat ? DS.surface : DS.hover))
+            .overlay(shape.strokeBorder(hoveringNewChat ? DS.line2 : DS.line, lineWidth: 1))
+            .contentShape(shape)
         }
         .buttonStyle(DSPressStyle(scale: 0.97))
         .fixedSize()
@@ -287,7 +285,7 @@ struct ConsoleNavigationPanel: View {
     private var workspace: some View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(Self.primaryPages) { page in
-                GlassNavRow(
+                SidebarNavRow(
                     page: page,
                     active: state.section == page,
                     badge: 0,
@@ -303,7 +301,7 @@ struct ConsoleNavigationPanel: View {
                 .padding(.bottom, 3)
 
             ForEach(Self.consolePages) { page in
-                GlassNavRow(
+                SidebarNavRow(
                     page: page,
                     active: state.section == page,
                     badge: page == .models ? modelCount : 0,
@@ -333,15 +331,15 @@ struct ConsoleNavigationPanel: View {
         ScrollView(.vertical) {
             if chat.threads.isEmpty {
                 Text(L10n.t("暂无历史对话"))
-                    .font(DS.Font.xs)
-                    .foregroundStyle(DS.text4)
+                    .font(DS.Font.prose(12.5))
+                    .foregroundStyle(DS.text3)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 VStack(alignment: .leading, spacing: 1) {
                     ForEach(chat.threads.prefix(14)) { thread in
-                        GlassRecentRow(
+                        SidebarRecentRow(
                             title: thread.title,
                             date: state.generatingThreadID == thread.id
                                 ? L10n.t("生成中")
@@ -382,9 +380,7 @@ struct ConsoleNavigationPanel: View {
                             DSBadge(count: downloadCount)
                         }
                     }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.capsule)
-                    .controlSize(.small)
+                    .buttonStyle(.ds(.secondary, size: .small))
                     .help(L10n.t("下载中心"))
                     .accessibilityLabel(L10n.t("下载中心"))
                 }
@@ -413,17 +409,17 @@ struct ConsoleNavigationPanel: View {
 
     private var settingsFooterButton: some View {
         let active = state.section == .settings
-        let shape = DS.rect(DS.Radius.md)
+        let shape = DS.rect(DS.Radius.sm)
         return Button {
             state.section = .settings
         } label: {
             HStack(spacing: 7) {
                 Image(systemName: Page.settings.symbol)
-                    .font(.system(size: 12.5, weight: active ? .semibold : .regular))
+                    .font(.system(size: 13.5, weight: active ? .semibold : .regular))
                     .foregroundStyle(active ? DS.accent : (hoveringSettings ? DS.text : DS.text2))
                     .frame(width: 16)
                 Text(L10n.t(Page.settings.rawValue))
-                    .font(.system(size: 12.5, weight: active ? .medium : .regular))
+                    .font(DS.Font.prose(13, weight: active ? .medium : .regular))
                     .foregroundStyle(active ? DS.text : (hoveringSettings ? DS.text : DS.text2))
                     .lineLimit(1)
             }
@@ -432,7 +428,8 @@ struct ConsoleNavigationPanel: View {
             .background {
                 if active {
                     shape
-                        .fill(Color.adaptiveOverlay(0.08))
+                        .fill(DS.selected)
+                        .overlay(shape.strokeBorder(DS.line, lineWidth: 1))
                         .matchedGeometryEffect(id: "nav.selection", in: selection)
                 } else if hoveringSettings {
                     shape.fill(DS.hover)
@@ -449,7 +446,7 @@ struct ConsoleNavigationPanel: View {
     }
 }
 
-private struct GlassNavRow: View {
+private struct SidebarNavRow: View {
     let page: Page
     let active: Bool
     let badge: Int
@@ -459,7 +456,7 @@ private struct GlassNavRow: View {
     @State private var hovering = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var rowShape: RoundedRectangle { DS.rect(DS.Radius.md) }
+    private var rowShape: RoundedRectangle { DS.rect(DS.Radius.sm) }
 
     var body: some View {
         Button(action: action) {
@@ -469,24 +466,25 @@ private struct GlassNavRow: View {
                     .foregroundStyle(active ? DS.accent : (hovering ? DS.text : DS.text2))
                     .frame(width: 18)
                 Text(L10n.t(page.rawValue))
-                    .font(.system(size: 13, weight: active ? .medium : .regular))
+                    .font(DS.Font.prose(13, weight: active ? .medium : .regular))
                 Spacer(minLength: 4)
                 if badge > 0 {
                     Text(verbatim: "\(badge)")
-                        .font(DS.Font.mono(10))
+                        .font(DS.Font.proseNumber(11))
                         .foregroundStyle(active ? DS.text : DS.text3)
                         .padding(.horizontal, 6)
-                        .frame(height: 16)
-                        .background(Capsule().fill(DS.hover))
+                        .frame(height: 17)
+                        .background(DS.rect(DS.Radius.sm).fill(DS.hover))
                 }
             }
             .foregroundStyle(active ? DS.text : (hovering ? DS.text : DS.text2))
-            .padding(.horizontal, 10)
-            .frame(height: DS.Layout.rowHeight + 2)
+            .padding(.horizontal, 9)
+            .frame(height: DS.Layout.rowHeight)
             .background {
                 if active {
                     rowShape
-                        .fill(Color.adaptiveOverlay(0.08))
+                        .fill(DS.selected)
+                        .overlay(rowShape.strokeBorder(DS.line, lineWidth: 1))
                         .matchedGeometryEffect(id: "nav.selection", in: namespace)
                 } else if hovering {
                     rowShape.fill(DS.hover)
@@ -506,7 +504,7 @@ private struct GlassNavRow: View {
     }
 }
 
-private struct GlassRecentRow: View {
+private struct SidebarRecentRow: View {
     let title: String
     let date: String
     let active: Bool
@@ -526,13 +524,13 @@ private struct GlassRecentRow: View {
                         DSStatusDot(color: DS.accent, live: true, size: 5)
                     }
                     Text(title)
-                        .font(DS.Font.sm)
+                        .font(DS.Font.prose(12.5, weight: active ? .medium : .regular))
                         .foregroundStyle(active ? DS.text : (hovering ? DS.text : DS.text2))
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     Text(date)
-                        .font(DS.Font.mono(10))
-                        .foregroundStyle(generating ? DS.accent : DS.text4)
+                        .font(DS.Font.proseNumber(11))
+                        .foregroundStyle(generating ? DS.accent : DS.text3)
                         .lineLimit(1)
                         .opacity(hovering ? 0 : 1)
                 }
@@ -540,7 +538,9 @@ private struct GlassRecentRow: View {
                 .frame(height: 28)
                 .background {
                     if active {
-                        shape.fill(Color.adaptiveOverlay(0.09))
+                        shape
+                            .fill(DS.selected)
+                            .overlay(shape.strokeBorder(DS.line, lineWidth: 1))
                     } else if hovering {
                         shape.fill(DS.hover)
                     }

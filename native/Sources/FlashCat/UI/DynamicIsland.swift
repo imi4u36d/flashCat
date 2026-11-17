@@ -3,8 +3,8 @@
 
 import SwiftUI
 
-/// 侧栏左下角状态胶囊层。收起时停在侧栏底部「设置」栏上方；
-/// 点击平滑向上展开为适配侧栏宽高的 Liquid Glass 浮层卡，点击外部或按 Esc 收起。
+/// 侧栏左下角引擎状态卡层。收起时停在侧栏底部「设置」栏上方；
+/// 点击平滑向上展开为适配侧栏宽高的浮层卡，点击外部或按 Esc 收起。
 struct DynamicIslandLayer: View {
     @ObservedObject var state: AppState
     @Binding var expanded: Bool
@@ -42,7 +42,7 @@ struct DynamicIslandLayer: View {
     }
 }
 
-/// 侧栏底部的自适应 Liquid Glass 状态胶囊。收起与展开均严格适配侧栏宽度（196pt），
+/// 侧栏底部的自适应 ZCode 状态卡。收起与展开均严格适配侧栏宽度（196pt），
 /// 向上展开时根据窗口高度自适应内容与通知列表高度。
 struct DynamicIsland: View {
     @ObservedObject var state: AppState
@@ -67,7 +67,7 @@ struct DynamicIsland: View {
         DS.Layout.sidebarWidth - 20
     }
 
-    private var cornerRadius: CGFloat { expanded ? 14 : DS.Radius.md }
+    private var cornerRadius: CGFloat { expanded ? DS.Radius.lg : DS.Radius.md }
     private var shape: RoundedRectangle { DS.rect(cornerRadius) }
 
     var body: some View {
@@ -81,14 +81,16 @@ struct DynamicIsland: View {
             collapsedBar
         }
         .frame(width: sidebarIslandWidth)
-        .glassEffect(expanded ? .regular : .regular.interactive(), in: shape)
+        .background(shape.fill(expanded ? DS.floating : (hovering ? DS.raised : DS.surface)))
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(hovering || expanded ? DS.line2 : DS.line, lineWidth: 1))
         .shadow(
             color: Color.black.opacity(
                 scheme == .dark
-                    ? (expanded ? 0.42 : 0.16)
-                    : (expanded ? 0.12 : 0.04)),
-            radius: expanded ? 20 : 8,
-            y: expanded ? -4 : 2
+                    ? (expanded ? 0.42 : 0.14)
+                    : (expanded ? 0.10 : 0.03)),
+            radius: expanded ? 14 : 3,
+            y: expanded ? -2 : 1
         )
         .contentShape(shape)
         .onHover { inside in
@@ -464,7 +466,6 @@ private struct IslandMotion: ViewModifier {
         content
             .opacity(active ? 0 : 1)
             .scaleEffect(active ? scale : 1, anchor: anchor)
-            .blur(radius: active ? blur : 0)
     }
 }
 

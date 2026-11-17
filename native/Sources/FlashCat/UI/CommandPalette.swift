@@ -257,7 +257,7 @@ struct CommandPalette: View {
         list.append(
             CommandItem(
                 id: "sidebar", title: state.showsSidebar ? "折叠边栏" : "展开边栏",
-                detail: "显示 / 隐藏玻璃导航列",
+                detail: "显示 / 隐藏导航边栏",
                 icon: "sidebar.left", shortcut: "⌃⌘S"
             ) {
                 state.toggleSidebar()

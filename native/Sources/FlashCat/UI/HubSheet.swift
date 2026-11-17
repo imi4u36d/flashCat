@@ -18,10 +18,17 @@ struct HubSheet: View {
     @State private var sort: HubSort = .trending
     @State private var filter: HubFilter = .all
     @State private var directRepo = ""
+    /// 量化选择按仓库名记：`nil` 表示用默认（最小的那档）。
+    @State private var pickedVariant: String?
+    @AppStorage("hubSource") private var storedSource = HubSource.huggingFace.rawValue
     @FocusState private var searchFocused: Bool
     @FocusState private var directRepoFocused: Bool
 
     private var models: [HubModel] { state.hubResults }
+
+    private var source: HubSource {
+        HubSource(rawValue: storedSource) ?? .huggingFace
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -42,10 +49,13 @@ struct HubSheet: View {
         .frame(width: 1020, height: 700)
         .sheetCanvas()
         .onAppear {
-            if state.hubResults.isEmpty {
-                state.searchHub("", sort: sort.rawValue, filter: filter.rawValue, page: 0)
+            if state.hubResults.isEmpty || state.hubSource != source {
+                state.searchHub(
+                    "", sort: sort.rawValue, filter: filter.rawValue, page: 0,
+                    source: source)
             }
         }
+        .onChange(of: state.hubDetail?.id) { _, _ in pickedVariant = nil }
         .onDisappear { state.closeHubDetail() }
         .onExitCommand { dismiss() }
     }
@@ -57,11 +67,30 @@ struct HubSheet: View {
                 Text("模型广场")
                     .font(DS.Font.lg.weight(.semibold))
                     .foregroundStyle(DS.text)
-                Text("搜 Hugging Face 上的权重，下载到公共目录，再决定哪个引擎看得见")
+                Text(source.subtitle)
                     .font(DS.Font.xs)
                     .foregroundStyle(DS.text3)
             }
             Spacer(minLength: 8)
+            DSMenu {
+                DSMenuTriggerLabel(
+                    title: source.displayName,
+                    systemImage: "globe",
+                    size: .regular
+                )
+            } content: {
+                ForEach(HubSource.allCases) { item in
+                    Button {
+                        switchSource(item)
+                    } label: {
+                        if item == source {
+                            Label(item.displayName, systemImage: "checkmark")
+                        } else {
+                            Text(item.displayName)
+                        }
+                    }
+                }
+            }
             DSIconButton(systemName: "xmark", help: "关闭模型广场") { dismiss() }
         }
         .padding(.horizontal, 18)
@@ -96,7 +125,8 @@ struct HubSheet: View {
                                 state.searchHub(
                                     query, sort: sort.rawValue,
                                     filter: filter.rawValue,
-                                    page: state.hubPage + 1)
+                                    page: state.hubPage + 1,
+                                    source: source)
                             } label: {
                                 Text(L10n.t(state.hubLoading ? "加载中…" : "加载更多"))
                                     .frame(maxWidth: .infinity)
@@ -154,12 +184,12 @@ struct HubSheet: View {
 
                 DSMenu {
                     DSMenuTriggerLabel(
-                        title: sort == .trending ? "趋势" : "下载量",
+                        title: sortLabel(sort),
                         systemImage: "arrow.up.arrow.down",
                         size: .regular
                     )
                 } content: {
-                    Button("趋势") {
+                    Button(sortLabel(.trending)) {
                         sort = .trending
                         runSearch(page: 0)
                     }
@@ -183,7 +213,28 @@ struct HubSheet: View {
     }
 
     private func runSearch(page: Int) {
-        state.searchHub(query, sort: sort.rawValue, filter: filter.rawValue, page: page)
+        state.searchHub(
+            query, sort: sort.rawValue, filter: filter.rawValue, page: page,
+            source: source)
+    }
+
+    private func switchSource(_ next: HubSource) {
+        guard next != source else { return }
+        storedSource = next.rawValue
+        state.closeHubDetail()
+        pickedVariant = nil
+        query = ""
+        // 两家仓库的 id 与排序词不通用，换源从空查询重新起步。
+        state.searchHub(
+            "", sort: sort.rawValue, filter: filter.rawValue, page: 0,
+            source: next)
+    }
+
+    private func sortLabel(_ value: HubSort) -> String {
+        switch value {
+        case .trending: return source.defaultSortLabel
+        case .downloads: return "下载量"
+        }
     }
 
     private var loadingRows: some View {
@@ -208,7 +259,7 @@ struct HubSheet: View {
             Image(systemName: "wifi.exclamationmark")
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(DS.warn)
-            Text("搜不到 Hugging Face")
+            Text(L10n.format("搜不到 %@", source.displayName))
                 .font(DS.Font.md.weight(.semibold))
                 .foregroundStyle(DS.text)
             Text(message)
@@ -236,7 +287,7 @@ struct HubSheet: View {
             memoryText: model.memoryRange.map(memoryRangeText),
             downloadsText: downloadsText(model.downloads)
         ) {
-            state.loadHubDetail(model.id)
+            state.loadHubDetail(model.id, source: source)
         }
     }
 
@@ -382,7 +433,7 @@ struct HubSheet: View {
     }
 
     /// 详情页的标签行：量化、内存下限、许可与 Hub 标签。推荐引擎不再占一枚
-    /// 标签——归属由下面下载条里的「默认授权给 …」交代，重复一遍只会抢注意力。
+    /// 标签——它由下面下载条里的「推荐用 … 运行」交代，重复一遍只会抢注意力。
     private func detailTagTexts(_ detail: HubModel) -> [String] {
         var values: [String] = []
         if let quantization = detail.quantization { values.append(quantization) }
@@ -394,8 +445,10 @@ struct HubSheet: View {
 
     private func downloadBar(_ detail: HubModel) -> some View {
         let local = state.repoIsLocal(detail.id)
-        let target = targetEngine(for: detail)
+        let recommended = recommendedEngine(for: detail)
         let busy = state.downloadingModel != nil
+        let variants = detail.layoutKind == .gguf ? detail.ggufVariants : []
+        let variant = chosenVariant(detail, variants: variants)
         return HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(L10n.t(local ? "已在本机" : "下载到公共目录"))
@@ -404,7 +457,10 @@ struct HubSheet: View {
                 Text(
                     local
                         ? "公共目录里已有这份权重，可直接在模型页使用"
-                        : "一份权重供引擎共用，默认授权给 \(target.displayName)"
+                        : variant.map { L10n.format("只下 %@，其余量化不占盘", variantLabel($0)) }
+                            ?? L10n.format(
+                                "一份权重供所有引擎共用，推荐用 %@ 运行",
+                                recommended.displayName)
                 )
                 .font(DS.Font.xs)
                 .foregroundStyle(DS.text3)
@@ -412,14 +468,34 @@ struct HubSheet: View {
             Spacer(minLength: 8)
             if local {
                 Button("在模型页查看") {
-                    state.libraryEngine = target
+                    state.libraryEngine = recommended
                     state.section = .models
                     dismiss()
                 }
                 .buttonStyle(.ds(.secondary, size: .regular))
             } else {
+                if variants.count > 1 {
+                    DSMenu {
+                        DSMenuTriggerLabel(
+                            title: variant.map(variantLabel) ?? L10n.t("全部量化"),
+                            systemImage: "square.stack.3d.up",
+                            size: .small
+                        )
+                    } content: {
+                        ForEach(Array(variants.enumerated()), id: \.offset) { _, item in
+                            Button {
+                                pickedVariant = item.name ?? ""
+                            } label: {
+                                Text(variantLabel(item) + "  ·  " + memoryText(item))
+                            }
+                        }
+                    }
+                }
                 Button {
-                    state.downloadShared(detail.id, engines: [target])
+                    let includes = variant.map { detail.downloadIncludes(for: $0) } ?? []
+                    state.downloadShared(
+                        detail.id, engines: ModelSharing.downloadTargets(lead: recommended),
+                        source: source, include: includes)
                     dismiss()
                 } label: {
                     Label("下载", systemImage: "arrow.down.circle")
@@ -432,8 +508,33 @@ struct HubSheet: View {
         .dsSurface(radius: DS.Radius.md, tint: DS.accent.opacity(0.14), stroke: DS.accent.opacity(0.30))
     }
 
-    private func targetEngine(for model: HubModel) -> EngineID {
-        if let id = EngineID(rawValue: model.recommendedEngine.id) { return id }
+    /// 多量化仓库默认选体积最小的那档；用户从菜单里挑了就用那档。
+    private func chosenVariant(_ detail: HubModel, variants: [GGUFVariant]) -> GGUFVariant? {
+        guard variants.count > 1 else { return nil }
+        if let pickedVariant,
+            let hit = variants.first(where: { ($0.name ?? "") == pickedVariant })
+        {
+            return hit
+        }
+        return variants.min { $0.bytes < $1.bytes }
+    }
+
+    private func variantLabel(_ variant: GGUFVariant) -> String {
+        variant.name ?? L10n.t("默认")
+    }
+
+    private func memoryText(_ variant: GGUFVariant) -> String {
+        L10n.format(
+            "%@ · ≈%lld GB 内存", Format.size(variant.bytes),
+            Int64(HubModelLayout.estimatedMemoryGB(bytes: variant.bytes)))
+    }
+
+    private func recommendedEngine(for model: HubModel) -> EngineID {
+        if let id = EngineID(rawValue: model.recommendedEngine.id),
+            EngineCatalog.allIDs.contains(id)
+        {
+            return id
+        }
         return engine
     }
 
@@ -443,7 +544,7 @@ struct HubSheet: View {
                 Image(systemName: "link")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(DS.text3)
-                TextField("直接填 owner/repo 下载", text: $directRepo)
+                TextField(source.directRepoPlaceholder, text: $directRepo)
                     .textFieldStyle(.plain)
                     .font(DS.Font.mono(11.5))
                     .focused($directRepoFocused)
@@ -471,18 +572,16 @@ struct HubSheet: View {
                     .font(DS.Font.mono(10.5))
                     .foregroundStyle(DS.text3)
                     .monospacedDigit()
-                GlassEffectContainer(spacing: 6) {
-                    HStack(spacing: 6) {
-                        DSIconButton(systemName: "chevron.left", help: "上一页", style: .outlined) {
-                            runSearch(page: max(0, state.hubPage - 1))
-                        }
-                        .disabled(state.hubPage == 0 || state.hubLoading)
-
-                        DSIconButton(systemName: "chevron.right", help: "下一页", style: .outlined) {
-                            runSearch(page: state.hubPage + 1)
-                        }
-                        .disabled(!state.hubHasMore || state.hubLoading)
+                HStack(spacing: 6) {
+                    DSIconButton(systemName: "chevron.left", help: "上一页", style: .outlined) {
+                        runSearch(page: max(0, state.hubPage - 1))
                     }
+                    .disabled(state.hubPage == 0 || state.hubLoading)
+
+                    DSIconButton(systemName: "chevron.right", help: "下一页", style: .outlined) {
+                        runSearch(page: state.hubPage + 1)
+                    }
+                    .disabled(!state.hubHasMore || state.hubLoading)
                 }
             }
         }
@@ -525,7 +624,7 @@ struct HubSheet: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 6)
         .background(DS.bg)
-        .task(id: directRepo) {
+        .task(id: directRepo + "|" + source.rawValue) {
             let repo = directRepo.trimmingCharacters(in: .whitespacesAndNewlines)
             guard repo.contains("/") else {
                 state.clearRepoProbe()
@@ -533,14 +632,15 @@ struct HubSheet: View {
             }
             try? await Task.sleep(nanoseconds: 500_000_000)
             guard !Task.isCancelled else { return }
-            state.probeRepo(repo)
+            state.probeRepo(repo, source: source)
         }
     }
 
     private func downloadDirect() {
         let repo = directRepo.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !repo.isEmpty else { return }
-        state.downloadShared(repo, engines: [engine])
+        state.downloadShared(
+            repo, engines: ModelSharing.downloadTargets(lead: engine), source: source)
         directRepo = ""
         state.clearRepoProbe()
         dismiss()

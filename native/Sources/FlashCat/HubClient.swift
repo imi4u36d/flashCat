@@ -126,21 +126,50 @@ struct HubModel: Identifiable, Hashable {
         }
     }
 
+    /// Every GGUF the engine can be pointed at, in repository order. The
+    /// detail pane uses this to offer one quant instead of the whole repo.
+    var ggufVariants: [GGUFVariant] {
+        HubModelLayout.ggufVariants(
+            paths: files.map(\.name),
+            sizes: Dictionary(uniqueKeysWithValues: normalizedSizes.map { ($0.key, Int($0.value)) })
+        )
+    }
+
+    /// `--include` patterns for one quant. `nil` means "not a GGUF choice"
+    /// and downloads the whole repository. Projector files sit outside the
+    /// variant's own file list, so they are added explicitly — without them
+    /// a vision GGUF lands without its `mmproj`.
+    func downloadIncludes(for variant: GGUFVariant?) -> [String] {
+        guard let variant, !variant.files.isEmpty else { return [] }
+        let projectors = files.map(\.name).filter(HubModelLayout.isProjector)
+        // 分片量化的 mmproj 可能放在该量化自己的目录里；根目录的 mmproj
+        // 则各档共用。别的量化目录里的 projector 不能混进来。
+        let splitFolder = variant.files.first { $0.contains("/") }
+            .map { String($0.split(separator: "/")[0]) }
+        let relevant = projectors.filter { path in
+            guard !path.contains("/") else {
+                guard let splitFolder else { return false }
+                return path.hasPrefix(splitFolder + "/")
+            }
+            return true
+        }
+        return Array(Set(variant.files + relevant)).sorted()
+    }
+
     /// Unified-memory floor in GiB. For a repository with several GGUF quants,
     /// this is the range across those files.
     var memoryRange: ClosedRange<Int>? {
-        if layoutKind == .gguf, !ggufVariantNames.isEmpty {
-            let variants = HubModelLayout.ggufVariants(
-                paths: files.map(\.name),
-                sizes: Dictionary(uniqueKeysWithValues: normalizedSizes.map { ($0.key, Int($0.value)) })
-            )
-            let memories = variants.compactMap { variant -> Int? in
+        if layoutKind == .gguf {
+            let memories = ggufVariants.compactMap { variant -> Int? in
                 guard variant.bytes > 0 else { return nil }
                 return HubModelLayout.estimatedMemoryGB(bytes: variant.bytes)
             }
             if let low = memories.min(), let high = memories.max() {
                 return low...high
             }
+            // 列表接口没有文件清单时，整仓体积包含所有量化与 fp16 分片，
+            // 拿它估内存只会吓人；宁可不显示，等详情页按量化算。
+            return nil
         }
         let bytes = actualWeightBytes > 0 ? actualWeightBytes : estimatedWeightBytes
         guard bytes > 0 else { return nil }
@@ -272,11 +301,11 @@ enum HubClient {
     /// 端点可被 `hfEndpoint` 覆盖（镜像站/内网代理）。host 之后的部分全是
     /// 标准 HF 的 REST 路径，镜像站（hf-mirror 这类）都兼容。
     static var endpoint: String {
-        let raw =
-            UserDefaults.standard.string(forKey: "hfEndpoint")?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let base = raw.isEmpty ? "https://huggingface.co" : raw
-        return base.hasSuffix("/") ? String(base.dropLast()) : base
+        let raw = UserDefaults.standard.string(forKey: "hfEndpoint") ?? ""
+        // 用户在设置里只写 `hf-mirror.com` 也算数：补上 https，和下载器
+        // 写进 HF_ENDPOINT 的值保持同一份归一化结果。
+        let normalized = HFEndpoint.normalized(raw) ?? ""
+        return normalized.isEmpty ? "https://huggingface.co" : normalized
     }
 
     private static let session: URLSession = {

@@ -67,7 +67,6 @@ struct LabPage: View {
                     .padding(.bottom, Console.contentBottomInset)
                 }
                 .scrollIndicators(.never)
-                .scrollEdgeEffectStyle(.soft, for: .top)
             }
         }
         .dsTrackColumns(
@@ -449,8 +448,9 @@ private struct GalleryVideoTile: View {
                         Image(systemName: "play.fill")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.white)
-                            .frame(width: 36, height: 36)
-                            .glassEffect(.regular.interactive(), in: Circle())
+                            .frame(width: 34, height: 34)
+                            .background(Circle().fill(Color.black.opacity(0.62)))
+                            .overlay(Circle().strokeBorder(Color.white.opacity(0.24), lineWidth: 1))
                     }
                     .task(id: video.path) {
                         cover = await VideoThumbnailStore.thumbnail(atPath: video.path, maxPixel: maxPixel)

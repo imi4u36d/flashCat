@@ -32,6 +32,8 @@ final class HubStore: ObservableObject {
     @Published private(set) var hubQuery = ""
     @Published private(set) var hubSort: HubSort = .trending
     @Published private(set) var hubFilter: HubFilter = .all
+    /// 列表来自哪个 Hub。弹层会把它同步到设置，下次打开还是同一个来源。
+    @Published private(set) var hubSource: HubSource = HubSource.stored
     /// 0 起的页码。HF 的 skip 是纯偏移，所以页码就是 skip / pageSize。
     @Published private(set) var hubPage = 0
     /// 这一页满了就认为还有下一页（HF 不给总数，模型列表也没有 count 接口）。
@@ -103,12 +105,17 @@ final class HubStore: ObservableObject {
 
     /// 搜索/推荐列表。请求会被下一次调用取消，所以连点排序按钮不会乱序上屏。
     /// 翻页/换筛选走同一个入口，只是把 page 与 filter 一起带下去。
-    func searchHub(_ query: String, sort: String, filter: String? = nil, page: Int = 0) {
+    func searchHub(
+        _ query: String, sort: String, filter: String? = nil, page: Int = 0,
+        source: HubSource? = nil
+    ) {
         let value = HubSort(rawValue: sort) ?? .trending
         let bucket = filter.flatMap(HubFilter.init(rawValue:)) ?? hubFilter
+        let origin = source ?? hubSource
         hubQuery = query
         hubSort = value
         hubFilter = bucket
+        hubSource = origin
         hubPage = max(0, page)
         hubSearchTask?.cancel()
         hubError = nil
@@ -116,16 +123,30 @@ final class HubStore: ObservableObject {
         let current = hubPage
         hubSearchTask = Task { [weak self] in
             do {
-                let models = try await HubClient.search(
-                    query: query,
-                    sort: value,
-                    filter: bucket,
-                    page: current
-                )
+                let models: [HubModel]
+                let hasMore: Bool
+                if origin == .modelScope {
+                    // ModelScope gives a real total, so pagination does not
+                    // have to guess from "this page is full".
+                    let page = try await ModelScopeClient.search(
+                        query: query, sort: value, filter: bucket, page: current)
+                    models = page.models
+                    hasMore = page.hasMore
+                } else {
+                    let hits = try await HubClient.search(
+                        query: query,
+                        sort: value,
+                        filter: bucket,
+                        page: current
+                    )
+                    models = hits
+                    hasMore = hits.count >= HubClient.pageSize
+                }
                 guard !Task.isCancelled else { return }
                 self?.hubResults = models
-                self?.hubHasMore = models.count >= HubClient.pageSize
+                self?.hubHasMore = hasMore
                 self?.hubLoading = false
+                guard origin == .huggingFace else { return }
                 // Quantization and memory need real file sizes, which the list
                 // endpoint does not return. Show the rows immediately, then
                 // fill in metadata a few repositories at a time.
@@ -143,14 +164,21 @@ final class HubStore: ObservableObject {
     }
 
     /// 打开某个仓库的模型卡：文件清单和 README 都在这一个请求里补齐。
-    func loadHubDetail(_ repo: String) {
+    func loadHubDetail(_ repo: String, source: HubSource? = nil) {
+        let origin = source ?? hubSource
         hubDetailTask?.cancel()
         hubDetail = nil
         hubError = nil
         hubDetailLoading = true
         hubDetailTask = Task { [weak self] in
             do {
-                let detail = try await HubClient.detail(repo)
+                let detail: HubModel
+                switch origin {
+                case .huggingFace:
+                    detail = try await HubClient.detail(repo)
+                case .modelScope:
+                    detail = try await ModelScopeClient.detail(repo)
+                }
                 guard !Task.isCancelled else { return }
                 self?.hubDetail = detail
                 self?.hubDetailLoading = false
@@ -170,14 +198,17 @@ final class HubStore: ObservableObject {
 
     /// 手填仓库 id 的预检。输入每停一次就调一次，上一次的请求直接取消——
     /// 中间态的仓库 id（`Youssof`、`Youssofal/`）不查，省掉一堆必然 404 的请求。
-    func probeRepo(_ repo: String) {
-        let key = ModelSharing.canonical(repo.trimmingCharacters(in: .whitespacesAndNewlines))
+    func probeRepo(_ repo: String, source: HubSource? = nil) {
+        let origin = source ?? hubSource
+        let name = ModelSharing.canonical(repo.trimmingCharacters(in: .whitespacesAndNewlines))
+        // 同一条 id 在不同 Hub 上是两个仓库，缓存键要把来源算进去。
+        let key = origin.rawValue + "|" + name
         guard key != repoProbeKey else { return }
         repoProbeKey = key
-        repoProbeRepo = key
+        repoProbeRepo = name
         repoProbeTask?.cancel()
         repoProbeError = nil
-        guard key.split(separator: "/").count == 2 else {
+        guard name.split(separator: "/").count == 2 else {
             repoProbe = nil
             repoProbeLoading = false
             return
@@ -186,7 +217,13 @@ final class HubStore: ObservableObject {
         repoProbeLoading = true
         repoProbeTask = Task { [weak self] in
             do {
-                let detail = try await HubClient.detail(key)
+                let detail: HubModel
+                switch origin {
+                case .huggingFace:
+                    detail = try await HubClient.detail(name)
+                case .modelScope:
+                    detail = try await ModelScopeClient.detail(name)
+                }
                 guard !Task.isCancelled else { return }
                 self?.repoProbe = detail
                 self?.repoProbeLoading = false

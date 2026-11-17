@@ -42,11 +42,13 @@ arguments. Leave one blank and the engine decides; defaults come from the engine
 own recommendation, and a new pack can add knobs without migrating your config.
 
 **4. Model downloads.** Curated tiers are sized for this Mac's memory, with size and
-memory floor printed on the card; the Model Hub searches Hugging Face, sorts by
-downloads, filters MLX / GGUF, pages through results, and opens a model card
-(README cleaned up before rendering, family badges included). Downloads pause and
-resume; weights land in a shared folder as a single copy, and you tick which engines
-may use them afterwards.
+memory floor printed on the card; the Model Hub searches Hugging Face or ModelScope
+(switch it in Settings or from the hub header), sorts by downloads, filters MLX / GGUF,
+pages through results, and opens a model card (README cleaned up before rendering,
+family badges included). Downloads pause and resume; weights land in a shared folder
+as a single copy and are visible to every engine by default. GGUF repositories with
+several quantizations offer a per-quant download that includes the chosen shards and
+`mmproj` only.
 
 **5. Readable runtime numbers.** Decode speed, first-token latency, prefill, DFlash2
 draft acceptance, cache hit rate, and current context usage (e.g. `18K / 262K`) in one
@@ -138,12 +140,14 @@ first-token latency. Transcripts stay local; start a new one or browse history a
 not installed still show what they support). Installed weights get a "Use" button,
 missing ones a "Download" that pulls in place, and each card lists size, memory floor,
 and quantization format (`QUANT`: `Q4_K_M` / `oQ4e` / `8-bit` / `BF16`…).
-"Model Hub" in the top right opens search: Hugging Face repositories by popularity,
-keyword search, sort by downloads, filter by "All / MLX / GGUF", page through results
-(30 per page from HF), and click a row to open its model card (README / file list /
-tags) before deciding. Weights land in a shared folder as a single copy, and you tick
-which engines may use them; each card's origin is either "engine recommendation" or
-"personal download".
+"Model Hub" in the top right opens search: Hugging Face or ModelScope repositories
+(switch from the header menu), keyword search, sort by downloads, filter by
+"All / MLX / GGUF", page through results (30 per page from HF, 24 from ModelScope),
+and click a row to open its model card (README / file list / tags) before deciding.
+When a GGUF repository has several quants, the download bar lets you pick one; only
+that quant's shards and `mmproj` are transferred. Weights land in a shared folder as a
+single copy and are visible to every engine by default; each card's origin is either
+"engine recommendation" or "personal download".
 
 **Engines** — one card per engine: status, port, launch arguments, comparison against
 the upstream version, plus one-click update, open install folder, view logs, and
@@ -294,7 +298,8 @@ at mode `0600`, so other users on the same machine cannot drive the app.
 
 ## Models
 
-Models are downloaded inside the app, from Hugging Face. The Models page puts weights
+Models are downloaded inside the app, from Hugging Face or ModelScope (switch under
+Settings → Model Source). The Models page puts weights
 that can load right away under "Local", and tiers this Mac's memory can hold but that
 have not been downloaded yet under "FlashCat Recommended":
 
@@ -308,15 +313,17 @@ Splash runs GGUF builds of the 27B IQ3_S and Flash-Next Q2_0; oMLX uses Jundot's
 quantization; MTPLX additionally falls back to two Youssofal-optimized packs, MiMo 9B
 and Qwen3.5 4B, on low-memory machines. To run something else, open the Model Hub from
 "＋ Download Model" in the top right of the Models page, search or browse Hugging Face
-repositories, open the model card, and download from there: weights land in a shared
-folder as a single copy, and you tick which engines may use them afterwards (ticking
-only controls visibility; files are never copied). Whether a given engine can load a
+or ModelScope repositories, open the model card, and download from there: weights land
+in a shared folder as a single copy and are visible to every engine by default (files
+are never copied). Whether a given engine can load a
 model is the engine's own call, and the Models page keeps downloaded weights separate
 from not-yet-downloaded "FlashCat Recommended" tiers, tagging each local weight as
 "catalog" or "personal download".
 
-For mirrors or gated repositories, set two preference values from the command line
-(leave them alone for huggingface.co and anonymous access):
+For mirrors or gated repositories, fill in the endpoint and token under
+Settings → Model Source; browsing and downloads share the same normalized endpoint.
+The same two values can still be written from the command line (leave them alone for
+huggingface.co and anonymous access):
 
 ```bash
 defaults write com.zhuo.flashCat hfEndpoint https://hf-mirror.com   # mirror
@@ -355,6 +362,9 @@ Where things live on disk (handy when cleaning up):
 | Thinking mode | Auto / off / on; whether thinking models emit reasoning first |
 | Reasoning Effort | Applies when thinking mode is on; the levels come from the engine |
 | Default model | Which model to load when the engine starts |
+| Model Source | Whether the Model Hub searches Hugging Face or ModelScope |
+| Mirror URL | Hugging Face endpoint; leave empty for the official host; used by browsing and downloads |
+| Access Token | Hugging Face token for private / gated repositories |
 | Download cache folder | Where model downloads are cached |
 | Command-line Interface | Switch and port for the local `flashcat` connection (9100 by default) |
 | Restore Defaults | Reset everything above to factory values |

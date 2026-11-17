@@ -39,10 +39,10 @@ enum Console {
     static let tertiary = DS.text3
 
     static let accent = DS.accent
-    static let accentDeep = Color.adaptive(dark: 0xE8590C, light: 0xC2410C)
+    static let accentDeep = Color.adaptive(dark: 0x2563EB, light: 0x0969DA)
     static let accentSoft = DS.accentSoft
 
-    static let userBubble = DS.raised
+    static let userBubble = Color.adaptive(dark: 0x262626, light: 0xEFEFEF)
     static let userBubbleStroke = DS.line
     static let assistantBubble = Color.clear
     static let assistantBubbleStroke = Color.clear
@@ -115,27 +115,10 @@ struct ConsoleBackdrop: View {
 
     var body: some View {
         ZStack {
-            // 画布始终保留底色与柔和的环境光晕，让悬浮的 Liquid Glass 侧栏、
-            // 灵动岛和顶部控件有细腻的色彩折射层次；没有图片时按「APP 透明度」
-            // 让出桌面：0 = 完全不透明，1 = 完全透出桌面。
-            ZStack {
-                LinearGradient(
-                    colors: [Console.backgroundTop, Console.backgroundBottom],
-                    startPoint: .topLeading, endPoint: .bottomTrailing)
-
-                RadialGradient(
-                    colors: [accent.opacity(scheme == .dark ? 0.09 : 0.055), .clear],
-                    center: .topLeading,
-                    startRadius: 20,
-                    endRadius: 720)
-
-                RadialGradient(
-                    colors: [DS.info.opacity(scheme == .dark ? 0.07 : 0.04), .clear],
-                    center: .bottomTrailing,
-                    startRadius: 20,
-                    endRadius: 680)
-            }
-            .opacity(background.image == nil ? 1 - background.desktopReveal : 1)
+            // ZCode 风格纯色静谧画布（去除装饰性环境光晕）；
+            // 没有自定义图片时按「APP 透明度」让出桌面：0 = 完全不透明，1 = 完全透出桌面。
+            DS.canvas
+                .opacity(background.image == nil ? 1 - background.desktopReveal : 1)
 
             if let image = background.image {
                 // 用透明视图定尺寸、图片只做 overlay：避免 `scaledToFill` 的图片把
@@ -252,23 +235,40 @@ extension PrimitiveButtonStyle where Self == ConsolePillStyle {
     static var consoleSuccess: ConsolePillStyle { ConsolePillStyle(tone: .success) }
 }
 
-/// 引擎主按钮：原生 Liquid Glass 着色胶囊，底色跟引擎强调色走。
-struct EngineColorButton: PrimitiveButtonStyle {
+/// 引擎主按钮：ZCode 风格圆角矩形实色按钮，底色跟引擎强调色走。
+struct EngineColorButton: ButtonStyle {
     var color: Color
 
     func makeBody(configuration: Configuration) -> some View {
-        Button(role: configuration.role, action: configuration.trigger) {
-            configuration.label
-                .font(.system(size: 13, weight: .medium))
-                .lineLimit(1)
-        }
-        .buttonStyle(.glassProminent)
-        .buttonBorderShape(.capsule)
-        .tint(color)
+        EngineColorButtonBody(configuration: configuration, color: color)
     }
 }
 
-/// 原生 Liquid Glass 胶囊分段控件：外层 `.glassEffect` 胶囊轨道 + 内层滑动高亮胶囊，与 `DSSearchField` 同高同圆角语言。
+private struct EngineColorButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    let color: Color
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hovering = false
+
+    var body: some View {
+        let shape = DS.rect(DS.Radius.md)
+        configuration.label
+            .font(.system(size: 12.5, weight: .medium))
+            .lineLimit(1)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .frame(height: 28)
+            .background(shape.fill(hovering ? color.opacity(0.88) : color))
+            .contentShape(shape)
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .opacity(isEnabled ? 1 : 0.42)
+            .animation(DS.Motion.snappy, value: configuration.isPressed)
+            .animation(DS.Motion.snappy, value: hovering)
+            .onHover { hovering = $0 }
+    }
+}
+
+/// ZCode 风格圆角矩形分段控件：实体浅凹槽轨道 + 内层滑块卡片，与 `DSSearchField` 同高同圆角语言。
 struct NativeSegmented<Value: Hashable>: View {
     @Binding var selection: Value
     var options: [Value]
@@ -314,20 +314,30 @@ struct NativeSegmented<Value: Hashable>: View {
     private var fontSize: CGFloat {
         switch size {
         case .small: return 11.5
-        case .regular: return 12.5
+        case .regular: return 12
         case .large: return 13
         }
     }
 
     private var horizontalPadding: CGFloat {
         switch size {
-        case .small: return 9
-        case .regular: return 12
+        case .small: return 8
+        case .regular: return 11
         case .large: return 14
         }
     }
 
+    private var trackFill: Color {
+        Color.adaptive(dark: 0x1E1E1E, light: 0xEBEBEB)
+    }
+
+    private var activeFill: Color {
+        Color.adaptive(dark: 0x2C2C2C, light: 0xFFFFFF)
+    }
+
     var body: some View {
+        let trackShape = DS.rect(DS.Radius.md)
+        let segmentShape = DS.rect(DS.Radius.sm)
         HStack(spacing: 2) {
             ForEach(Array(zip(options, labels).enumerated()), id: \.offset) { index, pair in
                 let isSelected = selection == pair.0
@@ -347,29 +357,20 @@ struct NativeSegmented<Value: Hashable>: View {
                         .frame(maxWidth: width != nil ? .infinity : nil, maxHeight: .infinity)
                         .background {
                             if isSelected {
-                                Capsule()
-                                    .fill(
-                                        scheme == .dark
-                                            ? Color.white.opacity(0.18)
-                                            : Color.white.opacity(0.92)
-                                    )
-                                    .overlay(
-                                        Capsule().strokeBorder(
-                                            Color.white.opacity(scheme == .dark ? 0.14 : 0.72),
-                                            lineWidth: 0.75
-                                        )
-                                    )
+                                segmentShape
+                                    .fill(activeFill)
+                                    .overlay(segmentShape.strokeBorder(DS.line, lineWidth: 1))
                                     .shadow(
-                                        color: Color.black.opacity(scheme == .dark ? 0.24 : 0.08),
-                                        radius: 2.5, y: 1
+                                        color: Color.black.opacity(scheme == .dark ? 0.25 : 0.06),
+                                        radius: 1.5, y: 1
                                     )
                                     .matchedGeometryEffect(id: "activeSegment", in: indicator)
                             } else if isHovered {
-                                Capsule()
-                                    .fill(Color.adaptiveOverlay(0.05))
+                                segmentShape
+                                    .fill(DS.hover)
                             }
                         }
-                        .contentShape(Capsule())
+                        .contentShape(segmentShape)
                 }
                 .buttonStyle(.plain)
                 .onHover { inside in
@@ -379,9 +380,10 @@ struct NativeSegmented<Value: Hashable>: View {
                 }
             }
         }
-        .padding(2.5)
+        .padding(2)
         .frame(width: width, height: height)
-        .glassEffect(.regular, in: Capsule())
+        .background(trackShape.fill(trackFill))
+        .overlay(trackShape.strokeBorder(DS.line, lineWidth: 1))
         .opacity(isEnabled ? 1 : 0.45)
         .animation(DS.Motion.snappy, value: selection)
     }

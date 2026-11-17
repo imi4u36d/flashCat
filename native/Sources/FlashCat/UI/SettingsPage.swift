@@ -13,6 +13,8 @@ struct SettingsPage: View {
     @State private var gatewayPort = ""
     @State private var controlPort = ""
     @State private var cachePath = ""
+    @State private var endpoint = ""
+    @State private var token = ""
     @State private var showsChatParameters = false
     @FocusState private var focusedPortEngine: EngineID?
     /// 思考设置走 `@AppStorage` 而不是本地镜像：`AppSettings` 不是
@@ -20,6 +22,11 @@ struct SettingsPage: View {
     /// 观察这两个键之后，聊天浮层滑杆与这里的分段控件才能互相同步。
     @AppStorage("thinkingMode") private var storedThinkingMode = ThinkingMode.automatic.rawValue
     @AppStorage("reasoningEffort") private var storedReasoningEffort = ReasoningEffort.medium.rawValue
+    @AppStorage("hubSource") private var storedHubSource = HubSource.huggingFace.rawValue
+
+    private var hubSource: HubSource {
+        HubSource(rawValue: storedHubSource) ?? .huggingFace
+    }
 
     private var thinkingMode: ThinkingMode {
         ThinkingMode(rawValue: storedThinkingMode) ?? .automatic
@@ -51,7 +58,6 @@ struct SettingsPage: View {
                 }
             }
             .scrollIndicators(.never)
-            .scrollEdgeEffectStyle(.soft, for: .top)
             .overlay(alignment: .top) {
                 WindowDragArea().frame(height: state.showsSidebar ? DS.Space.lg : DS.Layout.titlebarHeight)
             }
@@ -74,6 +80,7 @@ struct SettingsPage: View {
             backgroundCard
             launchCard
             portsCard
+            sourceCard(wide: wide)
             cacheCard
         }
     }
@@ -97,6 +104,8 @@ struct SettingsPage: View {
         gatewayPort = String(state.settings.gatewayPort)
         controlPort = String(state.settings.controlPort)
         cachePath = state.settings.hfCache
+        endpoint = state.settings.hfEndpoint
+        token = state.settings.hfToken
     }
 
     // MARK: Left column
@@ -350,6 +359,77 @@ struct SettingsPage: View {
             state.settings.setControlPort(port)
             state.applyControlSettings()
         }
+    }
+
+    /// 模型广场的来源与网络设置。镜像和 token 只影响 Hugging Face；ModelScope
+    /// 走官方地址，但共用同一份下载缓存与公共目录。
+    private func sourceCard(wide: Bool) -> some View {
+        SettingsCard {
+            SettingsRow(title: "模型来源", detail: "模型广场从哪个仓库搜索与下载") {
+                NativeSegmented(
+                    selection: Binding(
+                        get: { hubSource },
+                        set: { value in
+                            storedHubSource = value.rawValue
+                            state.toast(L10n.format("模型广场改用 %@", value.displayName))
+                        }),
+                    options: HubSource.allCases.map { ($0, $0.displayName) }
+                )
+                .fixedSizeWhen(wide)
+            }
+
+            DSDivider()
+
+            SettingsRow(title: "镜像地址", detail: "Hugging Face 端点，如 hf-mirror.com；留空用官方") {
+                HStack(spacing: 8) {
+                    TextField("https://huggingface.co", text: $endpoint)
+                        .textFieldStyle(.plain)
+                        .font(DS.Font.mono(11))
+                        .frame(minWidth: 120, idealWidth: 190, maxWidth: 210)
+                        .padding(.horizontal, 9)
+                        .frame(height: 28)
+                        .dsInputSurface(radius: DS.Radius.sm)
+                        .onSubmit { applyEndpoint() }
+                    Button("应用") { applyEndpoint() }
+                        .buttonStyle(.ds(.secondary, size: .small))
+                        .fixedSize()
+                }
+            }
+
+            DSDivider()
+
+            SettingsRow(title: "访问令牌", detail: "Hugging Face token，仅私有仓库需要") {
+                HStack(spacing: 8) {
+                    SecureField("hf_…", text: $token)
+                        .textFieldStyle(.plain)
+                        .font(DS.Font.mono(11))
+                        .frame(minWidth: 120, idealWidth: 190, maxWidth: 210)
+                        .padding(.horizontal, 9)
+                        .frame(height: 28)
+                        .dsInputSurface(radius: DS.Radius.sm)
+                        .onSubmit { applyToken() }
+                    Button("应用") { applyToken() }
+                        .buttonStyle(.ds(.secondary, size: .small))
+                        .fixedSize()
+                }
+            }
+        }
+    }
+
+    private func applyEndpoint() {
+        guard let value = HFEndpoint.normalized(endpoint) else {
+            state.toast(L10n.t("镜像地址要写成 host 或 http(s)://host"))
+            return
+        }
+        state.settings.setHfEndpoint(value)
+        endpoint = value
+        state.toast(value.isEmpty ? L10n.t("已改用 Hugging Face 官方端点") : L10n.format("浏览与下载将走 %@", value))
+    }
+
+    private func applyToken() {
+        state.settings.setHfToken(token)
+        token = state.settings.hfToken
+        state.toast(token.isEmpty ? L10n.t("已清除 Hugging Face token") : L10n.t("Hugging Face token 已保存"))
     }
 
     private var cacheCard: some View {

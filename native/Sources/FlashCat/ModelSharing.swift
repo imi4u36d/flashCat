@@ -94,6 +94,12 @@ enum ModelSharing {
         table()[canonical(repo)] ?? []
     }
 
+    /// 公共目录里的权重默认对全部引擎可见。`lead` 排在第一位：下载任务、
+    /// 日志和模型页进度都按 `engines.first` 记账，推荐引擎最合适。
+    static func downloadTargets(lead: EngineID) -> [EngineID] {
+        [lead] + EngineCatalog.allIDs.filter { $0 != lead }
+    }
+
     /// 改了某个模型的可见引擎：写表，然后让磁盘跟上。
     static func setEngines(_ engines: Set<EngineID>, for repo: String) {
         var current = table()

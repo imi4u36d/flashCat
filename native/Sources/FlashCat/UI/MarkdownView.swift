@@ -33,7 +33,7 @@ struct MarkdownView: View {
                     let isLast = index == segments.count - 1
                     Text(MarkdownComposer.compose(group, tailFadeAlpha: isLast ? tailFadeAlpha : nil))
                         .textSelection(.enabled)
-                        .lineSpacing(4.5)
+                        .lineSpacing(5.5)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: fillsWidth ? .infinity : nil, alignment: .leading)
 
@@ -243,9 +243,9 @@ private struct CodeBlockView: View {
 
             ScrollView(.horizontal, showsIndicators: true) {
                 Text(code.isEmpty ? " " : code)
-                    .font(DS.Font.mono(12.5))
+                    .font(DS.Font.mono(12))
                     .foregroundStyle(DS.text)
-                    .lineSpacing(4)
+                    .lineSpacing(4.5)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: true)
                     .padding(.horizontal, 12)
@@ -280,10 +280,10 @@ private struct QuoteBlockView: View {
         for (index, line) in lines.enumerated() {
             if index > 0 {
                 var br = AttributedString("\n")
-                br.font = .system(size: 13.5)
+                br.font = DS.Font.prose(13.5)
                 out += br
             }
-            out += MarkdownComposer.inline(line, font: .system(size: 13.5), color: DS.text2)
+            out += MarkdownComposer.inline(line, size: 13.5, color: DS.text2)
         }
         return out
     }
@@ -291,19 +291,17 @@ private struct QuoteBlockView: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                .fill(DS.accent.opacity(0.65))
-                .frame(width: 3)
+                .fill(DS.text3.opacity(0.45))
+                .frame(width: 2.5)
 
             Text(composed)
-                .lineSpacing(4)
+                .lineSpacing(5)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(DS.rect(DS.Radius.md).fill(DS.surface.opacity(0.75)))
-        .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line, lineWidth: 1))
+        .padding(.leading, 2)
+        .padding(.vertical, 2)
     }
 }
 
@@ -354,14 +352,18 @@ private struct MarkdownTableView: View {
 /// 行内样式（粗体、斜体、行内代码、链接）由 Foundation 的 Markdown
 /// 解析器产出，这里只负责补上块级字体、颜色与块之间的间距。
 private enum MarkdownComposer {
-    private static let bodySize: CGFloat = 14
-    private static let inlineCodeBackground = Color.adaptive(dark: 0x26262E, light: 0xEAEAEF)
+    private static let bodySize: CGFloat = 13.5
+    private static let inlineCodeBackground = Color.adaptive(dark: 0x26262E, light: 0xEEF0F4)
 
     static func compose(_ blocks: [MarkdownBlock], tailFadeAlpha: Double? = nil) -> AttributedString {
         var result = AttributedString()
         for block in blocks {
             if !result.characters.isEmpty {
-                result += newline(count: 2)
+                if case .heading = block.kind {
+                    result += blockGap(10)
+                } else {
+                    result += blockGap(6)
+                }
             }
             result += content(for: block.kind)
         }
@@ -386,7 +388,8 @@ private enum MarkdownComposer {
         }
         return inline(
             parsed,
-            font: .system(size: 12.5, weight: isHeader ? .semibold : .regular),
+            size: 12.5,
+            weight: isHeader ? .medium : .regular,
             color: isHeader ? DS.text : DS.text2)
     }
 
@@ -395,18 +398,19 @@ private enum MarkdownComposer {
         case .heading(let level, let content):
             return inline(
                 content,
-                font: .system(size: headingSize(level), weight: .semibold),
+                size: headingSize(level),
+                weight: .semibold,
                 color: DS.text)
 
         case .paragraph(let content):
-            return inline(content, font: .system(size: bodySize), color: DS.text)
+            return inline(content, size: bodySize, color: DS.text)
 
         case .bullet(let items):
             let pieces = items.map { item -> AttributedString in
                 var marker = AttributedString("•  ")
-                marker.font = .system(size: bodySize, weight: .semibold)
-                marker.foregroundColor = DS.accent
-                marker += inline(item, font: .system(size: bodySize), color: DS.text)
+                marker.font = DS.Font.prose(bodySize)
+                marker.foregroundColor = DS.text3
+                marker += inline(item, size: bodySize, color: DS.text)
                 return marker
             }
             return joined(pieces, separator: newline())
@@ -414,9 +418,9 @@ private enum MarkdownComposer {
         case .ordered(let items):
             let pieces = items.map { item -> AttributedString in
                 var marker = AttributedString("\(item.number).  ")
-                marker.font = .system(size: 12.5, weight: .semibold, design: .monospaced)
+                marker.font = DS.Font.proseNumber(bodySize)
                 marker.foregroundColor = DS.text3
-                marker += inline(item.content, font: .system(size: bodySize), color: DS.text)
+                marker += inline(item.content, size: bodySize, color: DS.text)
                 return marker
             }
             return joined(pieces, separator: newline())
@@ -430,22 +434,36 @@ private enum MarkdownComposer {
 
     static func inline(
         _ source: AttributedString,
-        font: Font,
+        size: CGFloat,
+        weight: NSFont.Weight = .regular,
         color: Color
     ) -> AttributedString {
         var text = source
-        text.font = font
+        text.font = DS.Font.prose(size, weight: weight)
         text.foregroundColor = color
         // Foundation 只标记行内代码的 presentation intent，SwiftUI 的 `Text`
         // 会据此换用等宽字体；换成单个 `Text` 后仍需显式补上等宽与底色。
-        let codeRanges = text.runs.compactMap { run -> Range<AttributedString.Index>? in
-            guard run.inlinePresentationIntent?.contains(.code) == true else { return nil }
-            return run.range
+        // 同时把加粗（`.stronglyEmphasized`）收敛到 `.medium`，避免中文正文
+        // 在系统默认 bold 下笔画过重、发糊。
+        let styledRuns = text.runs.compactMap {
+            run -> (Range<AttributedString.Index>, InlinePresentationIntent)? in
+            guard let intent = run.inlinePresentationIntent, !intent.isEmpty else { return nil }
+            return (run.range, intent)
         }
-        for range in codeRanges {
-            text[range].font = .system(size: 12.5, design: .monospaced)
-            text[range].foregroundColor = DS.text
-            text[range].backgroundColor = inlineCodeBackground
+        for (range, intent) in styledRuns {
+            if intent.contains(.code) {
+                text[range].font = DS.Font.mono(max(11.5, size - 1.5))
+                text[range].foregroundColor = DS.text
+                text[range].backgroundColor = inlineCodeBackground
+            } else if intent.contains(.stronglyEmphasized) || intent.contains(.emphasized) {
+                let resolvedWeight: NSFont.Weight =
+                    (intent.contains(.stronglyEmphasized) && weight == .regular) ? .medium : weight
+                var font = DS.Font.prose(size, weight: resolvedWeight)
+                if intent.contains(.emphasized) {
+                    font = font.italic()
+                }
+                text[range].font = font
+            }
         }
         let linkRanges = text.runs.compactMap { run -> Range<AttributedString.Index>? in
             guard run.link != nil else { return nil }
@@ -471,16 +489,26 @@ private enum MarkdownComposer {
 
     private static func newline(count: Int = 1) -> AttributedString {
         var text = AttributedString(String(repeating: "\n", count: count))
-        text.font = .system(size: bodySize)
+        text.font = DS.Font.prose(bodySize)
         return text
+    }
+
+    /// 段落与块之间的纵向间隔：第一行用正文行高，第二行只占很小的占位高度，
+    /// 保留单 `Text` 的跨段拖选与复制，同时避免整行空距过大。
+    private static func blockGap(_ spacerSize: CGFloat) -> AttributedString {
+        var first = AttributedString("\n")
+        first.font = DS.Font.prose(bodySize)
+        var second = AttributedString("\n")
+        second.font = .system(size: spacerSize)
+        return first + second
     }
 
     private static func headingSize(_ level: Int) -> CGFloat {
         switch level {
-        case 1: return 19
-        case 2: return 16.5
-        case 3: return 15
-        default: return 14
+        case 1: return 18
+        case 2: return 16
+        case 3: return 14.5
+        default: return 13.5
         }
     }
 }

@@ -168,7 +168,7 @@ struct ChatPage: View {
         .frame(height: DS.Layout.titlebarHeight)
         .padding(.top, Console.pageTopPadding)
         .background(WindowDragArea())
-        .padding(.bottom, 4)
+        .overlay(alignment: .bottom) { DSDivider() }
     }
 
     // MARK: Transcript
@@ -238,8 +238,6 @@ struct ChatPage: View {
             // 底部、再往上长。锚点不会跟用户抢滚动：往上翻时它只是保持当前
             // 偏移，人自己滚回底部后又自动接管。
             .defaultScrollAnchor(.bottom, for: .sizeChanges)
-            .scrollEdgeEffectStyle(.soft, for: .top)
-            .scrollEdgeEffectStyle(.soft, for: .bottom)
             .onScrollPhaseChange { _, newPhase in
                 userScrolling = (newPhase == .interacting || newPhase == .tracking || newPhase == .decelerating)
             }
@@ -433,7 +431,7 @@ struct ChatPage: View {
                 icon: "chevron.left.forwardslash.chevron.right",
                 color: DS.accent,
                 label: "编写代码",
-                prompt: "帮我写一个 SwiftUI 玻璃材质卡片组件，带悬停微动效"),
+                prompt: "帮我写一个 SwiftUI 面板卡片组件，带悬停微动效"),
             StarterPrompt(
                 id: "text.explain",
                 icon: "lightbulb",
@@ -455,20 +453,16 @@ struct ChatPage: View {
         ]
     }
 
-    /// 空会话：品牌光晕徽记 + 问候语 + 场景化快捷提示卡 + 最近对话快速接续。
+    /// 空会话：品牌徽记 + 问候语 + 场景化快捷提示卡 + 最近对话快速接续。
     private var emptyState: some View {
         VStack(spacing: 20) {
             VStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(DS.accent.opacity(0.14))
-                        .frame(width: 92, height: 92)
-                        .blur(radius: 22)
-                    BrandMark(size: 44)
-                }
+                BrandMark(size: 40)
+                    .frame(width: 56, height: 56)
+                    .dsSurface(radius: DS.Radius.xl)
 
                 Text(L10n.t("需要我为你做些什么?"))
-                    .font(DS.Font.title)
+                    .font(DS.Font.prose(22, weight: .semibold))
                     .tracking(-0.35)
                     .foregroundStyle(DS.text)
                     .multilineTextAlignment(.center)
@@ -496,11 +490,11 @@ struct ChatPage: View {
                             IconTile(symbol: item.icon, color: item.color, size: 28)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(L10n.t(item.label))
-                                    .font(DS.Font.sm.weight(.semibold))
+                                    .font(DS.Font.prose(12, weight: .medium))
                                     .foregroundStyle(DS.text)
                                     .lineLimit(1)
                                 Text(L10n.t(item.prompt))
-                                    .font(DS.Font.xs)
+                                    .font(DS.Font.prose(11))
                                     .foregroundStyle(DS.text3)
                                     .lineLimit(1)
                                     .truncationMode(.tail)
@@ -671,165 +665,168 @@ struct ChatPage: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
 
-            GlassEffectContainer(spacing: 8) {
-                HStack(spacing: 8) {
-                    // 图像模型没有采样参数：同一个按钮换成图像设置，别再弹文本模型的
-                    // 温度/系统提示面板。
+            HStack(spacing: 8) {
+                // 图像模型没有采样参数：同一个按钮换成图像设置，别再弹文本模型的
+                // 温度/系统提示面板。
+                DSIconButton(
+                    systemName: supportsVideo
+                        ? "video"
+                        : (supportsImage ? "wand.and.stars" : "slider.horizontal.3"),
+                    help: supportsVideo ? "视频参数" : (supportsImage ? "图像参数" : "生成参数"),
+                    size: 28,
+                    style: .outlined
+                ) {
+                    if supportsMedia {
+                        showsImageOptions = true
+                    } else {
+                        showsParameters = true
+                    }
+                }
+                .popover(isPresented: $showsImageOptions, arrowEdge: .top) {
+                    if supportsVideo {
+                        VideoOptionsPopover(
+                            options: $videoOptions,
+                            hasSource: imageAttachment != nil
+                                || lastFrameAttachment != nil,
+                            supportsReferences: supportsVideoReferences,
+                            referenceCount: referenceImages.count
+                                + referenceClips.count)
+                    } else {
+                        ImageOptionsPopover(
+                            options: $imageOptions,
+                            model: state.activeModel,
+                            hasSource: imageAttachment != nil,
+                            lastSeed: lastImageSeed)
+                    }
+                }
+
+                contextReadout
+                    .padding(.leading, 2)
+
+                // 文本模型的「画」开关：开着就把画图工具挂进请求，模型自己决定
+                // 画几张、写什么分镜。默认开，关掉后模型只写字。
+                if state.supportsImageTool {
                     DSIconButton(
-                        systemName: supportsVideo
-                            ? "video"
-                            : (supportsImage ? "wand.and.stars" : "slider.horizontal.3"),
-                        help: supportsVideo ? "视频参数" : (supportsImage ? "图像参数" : "生成参数"),
+                        systemName: state.imageToolEnabled
+                            ? "paintbrush.pointed.fill" : "paintbrush.pointed",
+                        help: state.imageToolEnabled
+                            ? "模型可以直接画图（点一下关掉）"
+                            : "打开后模型可以在这轮对话里直接画图",
                         size: 28,
-                        style: .outlined
+                        style: .outlined,
+                        active: state.imageToolEnabled
                     ) {
-                        if supportsMedia {
-                            showsImageOptions = true
-                        } else {
-                            showsParameters = true
-                        }
+                        state.imageToolEnabled.toggle()
                     }
-                    .popover(isPresented: $showsImageOptions, arrowEdge: .top) {
-                        if supportsVideo {
-                            VideoOptionsPopover(
-                                options: $videoOptions,
-                                hasSource: imageAttachment != nil
-                                    || lastFrameAttachment != nil,
-                                supportsReferences: supportsVideoReferences,
-                                referenceCount: referenceImages.count
-                                    + referenceClips.count)
-                        } else {
-                            ImageOptionsPopover(
-                                options: $imageOptions,
-                                model: state.activeModel,
-                                hasSource: imageAttachment != nil,
-                                lastSeed: lastImageSeed)
-                        }
-                    }
+                }
 
-                    contextReadout
-                        .padding(.leading, 2)
-
-                    // 文本模型的「画」开关：开着就把画图工具挂进请求，模型自己决定
-                    // 画几张、写什么分镜。默认开，关掉后模型只写字。
-                    if state.supportsImageTool {
-                        DSIconButton(
-                            systemName: state.imageToolEnabled
-                                ? "paintbrush.pointed.fill" : "paintbrush.pointed",
-                            help: state.imageToolEnabled
-                                ? "模型可以直接画图（点一下关掉）"
-                                : "打开后模型可以在这轮对话里直接画图",
-                            size: 28,
-                            style: .outlined,
-                            active: state.imageToolEnabled
-                        ) {
-                            state.imageToolEnabled.toggle()
-                        }
-                    }
-
-                    // 画图模型就没法在页头选：页头那一栏一旦选中图像模型，这一轮
-                    // 对话本身就变成图像模式了。所以给工具单独留一个选择器，只在
-                    // 「画」开着时出现。
-                    if state.imageToolActive, !state.imageToolModels.isEmpty {
-                        DSMenu(size: .small) {
-                            DSMenuTriggerLabel(
-                                title: state.imageToolModel.map { state.shortModelName($0.id) } ?? "画图模型",
-                                systemImage: "photo",
-                                imageTint: DS.accent,
-                                size: .small
-                            )
-                        } content: {
-                            ForEach(state.imageToolModels) { model in
-                                Button {
-                                    state.imageToolModelID = model.id
-                                } label: {
-                                    if model.id == state.imageToolModel?.id {
-                                        Label(state.shortModelName(model.id), systemImage: "checkmark")
-                                    } else {
-                                        Text(state.shortModelName(model.id))
-                                    }
+                // 画图模型就没法在页头选：页头那一栏一旦选中图像模型，这一轮
+                // 对话本身就变成图像模式了。所以给工具单独留一个选择器，只在
+                // 「画」开着时出现。
+                if state.imageToolActive, !state.imageToolModels.isEmpty {
+                    DSMenu(size: .small) {
+                        DSMenuTriggerLabel(
+                            title: state.imageToolModel.map { state.shortModelName($0.id) } ?? "画图模型",
+                            systemImage: "photo",
+                            imageTint: DS.accent,
+                            size: .small
+                        )
+                    } content: {
+                        ForEach(state.imageToolModels) { model in
+                            Button {
+                                state.imageToolModelID = model.id
+                            } label: {
+                                if model.id == state.imageToolModel?.id {
+                                    Label(state.shortModelName(model.id), systemImage: "checkmark")
+                                } else {
+                                    Text(state.shortModelName(model.id))
                                 }
                             }
                         }
-                        .disabled(chat.generating)
-                        .help("模型画图时用哪个图像模型")
                     }
+                    .disabled(chat.generating)
+                    .help("模型画图时用哪个图像模型")
+                }
 
-                    if supportsMedia {
-                        DSIconButton(
-                            systemName: "photo.badge.plus",
-                            help: supportsVideoReferences
-                                ? "添加参考图（最多 9 张）"
-                                : (supportsVideo ? "添加首帧或尾帧" : "附上一张图片作重绘底图"),
-                            size: 28,
-                            style: .outlined,
-                            active: hasAttachedMedia
-                        ) {
-                            if supportsVideoReferences {
-                                pickReferenceImage()
-                            } else {
-                                pickImage(for: nil)
-                            }
+                if supportsMedia {
+                    DSIconButton(
+                        systemName: "photo.badge.plus",
+                        help: supportsVideoReferences
+                            ? "添加参考图（最多 9 张）"
+                            : (supportsVideo ? "添加首帧或尾帧" : "附上一张图片作重绘底图"),
+                        size: 28,
+                        style: .outlined,
+                        active: hasAttachedMedia
+                    ) {
+                        if supportsVideoReferences {
+                            pickReferenceImage()
+                        } else {
+                            pickImage(for: nil)
                         }
                     }
+                }
 
-                    if supportsVideoReferences {
-                        DSIconButton(
-                            systemName: "video.badge.plus",
-                            help: "添加参考视频（最多 3 段，每段至少 5 帧）",
-                            size: 28,
-                            style: .outlined,
-                            active: !referenceClips.isEmpty
-                        ) {
-                            pickReferenceClip()
-                        }
+                if supportsVideoReferences {
+                    DSIconButton(
+                        systemName: "video.badge.plus",
+                        help: "添加参考视频（最多 3 段，每段至少 5 帧）",
+                        size: 28,
+                        style: .outlined,
+                        active: !referenceClips.isEmpty
+                    ) {
+                        pickReferenceClip()
                     }
+                }
 
-                    Spacer(minLength: 0)
+                Spacer(minLength: 0)
 
-                    if !draft.isEmpty {
-                        Text("≈ \(AppState.estimateTokens(draft)) tokens")
-                            .font(DS.Font.mono(10.5))
-                            .foregroundStyle(DS.text3)
+                if !draft.isEmpty {
+                    Text("≈ \(AppState.estimateTokens(draft)) tokens")
+                        .font(DS.Font.mono(10.5))
+                        .foregroundStyle(DS.text3)
+                }
+
+                ChatModelControl(state: state, chat: chat)
+
+                if chat.generating {
+                    DSIconButton(
+                        systemName: "stop.fill",
+                        help: "停止生成",
+                        size: 28,
+                        style: .outlined,
+                        tint: DS.err
+                    ) {
+                        state.cancelGeneration()
                     }
-
-                    ChatModelControl(state: state, chat: chat)
-
-                    if chat.generating {
-                        DSIconButton(
-                            systemName: "stop.fill",
-                            help: "停止生成",
-                            size: 28,
-                            style: .outlined,
-                            tint: DS.err
-                        ) {
-                            state.cancelGeneration()
-                        }
-                    } else {
-                        DSIconButton(
-                            systemName: "arrow.up",
-                            help: "回车发送 · ⌘回车换行",
-                            size: 28,
-                            style: canSend ? .primary : .outlined,
-                            action: send
-                        )
-                        .disabled(!canSend)
-                    }
+                } else {
+                    DSIconButton(
+                        systemName: "arrow.up",
+                        help: "回车发送 · ⌘回车换行",
+                        size: 28,
+                        style: canSend ? .primary : .outlined,
+                        action: send
+                    )
+                    .disabled(!canSend)
                 }
             }
             .padding(.top, 2)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
         .frame(maxWidth: composerMaxWidth)
-        .glassEffect(.regular, in: DS.rect(DS.Radius.xl))
+        .background(DS.rect(DS.Radius.xl).fill(DS.surface))
+        .overlay {
+            DS.rect(DS.Radius.xl)
+                .strokeBorder(composerFocused ? DS.accent.opacity(0.65) : DS.line2, lineWidth: 1)
+        }
         .overlay {
             if composerFocused {
-                DS.rect(DS.Radius.xl)
-                    .strokeBorder(DS.accent.opacity(0.42), lineWidth: 1)
+                DS.rect(DS.Radius.xl + 1)
+                    .strokeBorder(DS.accent.opacity(0.14), lineWidth: 2)
+                    .padding(-1)
             }
         }
-        .shadow(color: DS.shadow, radius: 20, y: 8)
+        .shadow(color: DS.shadow, radius: 10, y: 3)
         .contentShape(DS.rect(DS.Radius.xl))
         .onTapGesture { focusComposer() }
         .overlay {
@@ -1469,12 +1466,14 @@ private struct MessageRow: View, Equatable {
         manualThinking ?? (message.streaming && message.content.isEmpty)
     }
 
+    private static let userBubbleFill = Color.adaptive(dark: 0x262626, light: 0xEFEFEF)
+
     private var bubbleBackground: some View {
         DS.rect(DS.Radius.lg)
-            .fill(isUser ? DS.raised : .clear)
+            .fill(isUser ? Self.userBubbleFill : .clear)
             .overlay(
                 DS.rect(DS.Radius.lg)
-                    .strokeBorder(isUser ? DS.line2 : .clear, lineWidth: 1)
+                    .strokeBorder(isUser ? DS.line : .clear, lineWidth: 1)
             )
     }
 
@@ -1516,8 +1515,8 @@ private struct MessageRow: View, Equatable {
                         }
                         if !message.content.isEmpty {
                             Text(message.content)
-                                .font(.system(size: 14))
-                                .lineSpacing(4)
+                                .font(DS.Font.prose(13.5))
+                                .lineSpacing(5)
                                 .foregroundStyle(DS.text)
                                 .textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -1534,16 +1533,16 @@ private struct MessageRow: View, Equatable {
                     HStack(spacing: 6) {
                         BrandMark(size: 16)
                         Text(modelName)
-                            .font(DS.Font.sm.weight(.medium))
+                            .font(DS.Font.prose(12, weight: .medium))
                             .foregroundStyle(DS.text2)
                         if message.streaming {
                             DSStatusDot(color: DS.accent, live: true, size: 5)
                             Text(startupStage == nil ? "生成中" : "启动中")
-                                .font(DS.Font.xs)
+                                .font(DS.Font.prose(11))
                                 .foregroundStyle(DS.accent)
                         } else if message.interrupted, !message.content.isEmpty {
                             Text("已停止生成")
-                                .font(DS.Font.xs)
+                                .font(DS.Font.prose(11))
                                 .foregroundStyle(DS.text3)
                         }
                     }
@@ -1622,7 +1621,7 @@ private struct MessageRow: View, Equatable {
                         .font(.system(size: 8.5, weight: .bold))
                         .rotationEffect(.degrees(showsReasoning ? 90 : 0))
                     Text(thinkingLabel)
-                        .font(DS.Font.xs.weight(.medium))
+                        .font(DS.Font.prose(11.5, weight: .medium))
                     if message.streaming {
                         DSStatusDot(color: DS.accent, live: true, size: 5)
                     }
@@ -1638,8 +1637,8 @@ private struct MessageRow: View, Equatable {
             if showsReasoning {
                 DSDivider()
                 Text(reasoning)
-                    .font(DS.Font.sm)
-                    .lineSpacing(4)
+                    .font(DS.Font.prose(12.5))
+                    .lineSpacing(5)
                     .foregroundStyle(DS.text2)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1844,7 +1843,7 @@ private struct MessageRow: View, Equatable {
                 .animation(DS.Motion.snappy, value: copied)
             }
         }
-        .font(DS.Font.mono(11))
+        .font(DS.Font.proseNumber(11.5))
         .foregroundStyle(DS.text3)
     }
 
@@ -2231,6 +2230,7 @@ private struct VideoOptionsPopover: View {
         }
         .padding(18)
         .frame(width: 344)
+        .dsPopoverSurface()
         .onChange(of: seedText) { _, text in
             let trimmed = text.trimmingCharacters(in: .whitespaces)
             options.seed = trimmed.isEmpty ? nil : Int(trimmed)
@@ -2454,6 +2454,7 @@ private struct ImageOptionsPopover: View {
         }
         .padding(18)
         .frame(width: 330)
+        .dsPopoverSurface()
         .onChange(of: seedText) { _, text in
             let trimmed = text.trimmingCharacters(in: .whitespaces)
             options.seed = trimmed.isEmpty ? nil : Int(trimmed)

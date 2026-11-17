@@ -4,62 +4,63 @@
 import AppKit
 import SwiftUI
 
-// MARK: - flashCat Design System (macOS 26 Native Liquid Glass)
+// MARK: - flashCat Design System (ZCode / Zai Light & Zai Dark)
 //
 // 唯一的设计源。颜色、字号、间距、圆角、动效全部从 `DS` 取；旧的 `Native` /
 // `Console` token 只是指向这里的兼容别名，新代码不要再引用它们。
 //
 // 原则：
-// - 导航层、顶栏、浮层与交互控件采用原生 macOS 26 Liquid Glass（`glassEffect` +
-//   `GlassEffectContainer`）；内容卡片采用同心圆角与通透层级，保证正文极高可读性。
-// - 中性冷灰阶 + 一个强调色（橙），状态色只用于状态。
+// - 克制、高信息密度、操作导向的桌面工作台美学（对标 ZCode）。
+// - 停止使用 Liquid Glass 与半透明玻璃折射；采用实色分层表面 + 1px 发丝边框。
+// - 明暗两套皮肤对应 Zai Light（#F8F8F8 / #F0F0F0 / #FFFFFF）与 Zai Dark
+//   （#161616 / #1C1C1C / #222222），主动作采用高对比单色墨块按钮，聚焦与链接使用 ZCode 蓝。
 // - 数字一律等宽对齐（`.monospacedDigit()`），地址 / 代码用等宽字体。
-// - 同心圆角四档：sm 8 / md 12 / lg 16 / xl 22，按钮与胶囊控件使用 Capsule。
+// - 同心圆角四档：sm 6 / md 8 / lg 10 / xl 12（逐层递减，不使用大胶囊圆角）。
 // - 动效只有四种曲线：snappy（反馈）、smooth（布局 / 页面）、bouncy（强调）、fade。
 
 enum DS {
     // MARK: Color
 
-    /// 侧栏、凹槽（输入框底、代码块）——半透明内嵌层，兼容背景透视。
-    static let bg = Color.adaptive(dark: 0x0B0B0E, light: 0xE6E8EE, darkAlpha: 0.62, lightAlpha: 0.68)
-    /// 主画布：浅色略微压暗成柔灰，让内容卡片与悬浮玻璃层不用重投影也能拉开层次。
-    static let canvas = Color.adaptive(dark: 0x0E0E12, light: 0xECEEF3)
-    /// 卡片 / 面板：通透卡片表面，允许底层画布与自定义背景微微透出。
-    static let surface = Color.adaptive(dark: 0x18181E, light: 0xFFFFFF, darkAlpha: 0.84, lightAlpha: 0.88)
-    /// 浮层、选中行、次级控件底。
-    static let raised = Color.adaptive(dark: 0x222229, light: 0xFFFFFF, darkAlpha: 0.92, lightAlpha: 0.96)
+    /// 侧栏、凹槽（输入框底、代码块）——Zai Light #F0F0F0 / Zai Dark #1C1C1C。
+    static let bg = Color.adaptive(dark: 0x1C1C1C, light: 0xF0F0F0)
+    /// 主画布——Zai Light #F8F8F8 / Zai Dark #161616。
+    static let canvas = Color.adaptive(dark: 0x161616, light: 0xF8F8F8)
+    /// 卡片 / 面板 / 输入卡——Zai Light #FFFFFF / Zai Dark #222222。
+    static let surface = Color.adaptive(dark: 0x222222, light: 0xFFFFFF)
+    /// 浮层、次级控件底、表头。
+    static let raised = Color.adaptive(dark: 0x292929, light: 0xFFFFFF)
     /// 凹槽（`DS.bg`）上的选中块、侧栏选中行。
-    static let selected = Color.adaptive(dark: 0x2A2A34, light: 0xFFFFFF, darkAlpha: 0.92, lightAlpha: 0.96)
-    /// 窗口级浮层（命令面板、弹出卡）。
-    static let floating = Color.adaptive(dark: 0x1E1E25, light: 0xFFFFFF, darkAlpha: 0.86, lightAlpha: 0.90)
-    /// 悬停底。
-    static let hover = Color.adaptive(dark: 0xFFFFFF, light: 0x09090B, darkAlpha: 0.08, lightAlpha: 0.055)
+    static let selected = Color.adaptive(dark: 0x2E2E2E, light: 0xE4E4E4)
+    /// 窗口级浮层（命令面板、弹出卡、菜单栏面板）。
+    static let floating = Color.adaptive(dark: 0x1F1F1F, light: 0xFFFFFF)
+    /// 悬停底——ZCode 5%–6% 中性叠层。
+    static let hover = Color.adaptive(dark: 0xFFFFFF, light: 0x0D0D0D, darkAlpha: 0.06, lightAlpha: 0.05)
 
     /// 描边三档：分隔线 / 控件边 / 强调边。
-    static let line = Color.adaptive(dark: 0xFFFFFF, light: 0x09090B, darkAlpha: 0.08, lightAlpha: 0.07)
-    static let line2 = Color.adaptive(dark: 0xFFFFFF, light: 0x09090B, darkAlpha: 0.13, lightAlpha: 0.11)
-    static let line3 = Color.adaptive(dark: 0xFFFFFF, light: 0x09090B, darkAlpha: 0.22, lightAlpha: 0.18)
+    static let line = Color.adaptive(dark: 0xFFFFFF, light: 0x0D0D0D, darkAlpha: 0.10, lightAlpha: 0.09)
+    static let line2 = Color.adaptive(dark: 0xFFFFFF, light: 0x0D0D0D, darkAlpha: 0.16, lightAlpha: 0.15)
+    static let line3 = Color.adaptive(dark: 0xFFFFFF, light: 0x0D0D0D, darkAlpha: 0.25, lightAlpha: 0.24)
 
     /// 文字四档：正文 / 次要 / 说明 / 占位。
     static let text = Color(nsColor: .consoleText)
-    static let text2 = Color.adaptive(dark: 0xA1A1AA, light: 0x52525B)
-    static let text3 = Color.adaptive(dark: 0x6B6B74, light: 0x8A8A93)
-    static let text4 = Color.adaptive(dark: 0x4A4A52, light: 0xB4B4BB)
+    static let text2 = Color.adaptive(dark: 0xA3A3A3, light: 0x262626, darkAlpha: 1, lightAlpha: 0.65)
+    static let text3 = Color.adaptive(dark: 0x737373, light: 0x262626, darkAlpha: 1, lightAlpha: 0.45)
+    static let text4 = Color.adaptive(dark: 0x525252, light: 0x262626, darkAlpha: 1, lightAlpha: 0.28)
 
     static let accent = Color(nsColor: .consoleAccent)
-    static let accentSoft = Color.adaptive(dark: 0xFF7A3D, light: 0xE8590C, darkAlpha: 0.14, lightAlpha: 0.10)
+    static let accentSoft = Color.adaptive(dark: 0x38BDF8, light: 0xEBF4FF, darkAlpha: 0.14, lightAlpha: 1.0)
 
-    static let ok = Color.adaptive(dark: 0x3DD68C, light: 0x16A34A)
-    static let warn = Color.adaptive(dark: 0xF5B642, light: 0xD97706)
-    static let err = Color.adaptive(dark: 0xFF5C5C, light: 0xDC2626)
-    static let info = Color.adaptive(dark: 0x6EA8FF, light: 0x2563EB)
+    static let ok = Color.adaptive(dark: 0x3DD68C, light: 0x1E8A3E)
+    static let warn = Color.adaptive(dark: 0xF59E0B, light: 0xE07B00)
+    static let err = Color.adaptive(dark: 0xF87171, light: 0xE03131)
+    static let info = Color.adaptive(dark: 0x38BDF8, light: 0x0B7FFF)
 
-    /// 唯一主动作的「墨色」按钮：深色皮肤是亮底黑字，浅色皮肤反过来。
-    static let ink = Color.adaptive(dark: 0xECECEF, light: 0x18181B)
-    static let inkText = Color.adaptive(dark: 0x0B0B0D, light: 0xFFFFFF)
+    /// 主动作按钮：ZCode 高对比单色墨块（浅色黑底白字，深色白底黑字）。
+    static let ink = Color.adaptive(dark: 0xEDEDED, light: 0x171717)
+    static let inkText = Color.adaptive(dark: 0x161616, light: 0xFFFFFF)
 
-    static let scrim = Color.adaptive(dark: 0x000000, light: 0x09090B, darkAlpha: 0.40, lightAlpha: 0.18)
-    static let shadow = Color.adaptive(dark: 0x000000, light: 0x09090B, darkAlpha: 0.50, lightAlpha: 0.12)
+    static let scrim = Color.adaptive(dark: 0x000000, light: 0x0D0D0D, darkAlpha: 0.55, lightAlpha: 0.22)
+    static let shadow = Color.adaptive(dark: 0x000000, light: 0x0D0D0D, darkAlpha: 0.40, lightAlpha: 0.08)
 
     // MARK: Type — 11 / 12 / 13 / 15 / 22 / 30
 
@@ -79,6 +80,47 @@ enum DS {
         static func number(_ size: CGFloat, weight: SwiftUI.Font.Weight = .medium) -> SwiftUI.Font {
             .system(size: size, weight: weight).monospacedDigit()
         }
+
+        /// 对话长文排版字体：西文与数字走系统 SF Pro，中文优先直连 PingFang SC 正文体
+        /// （避开系统默认 UI 控件字重偏粗、字距偏紧的 `.PingFangUITextSC`）。
+        static func proseNS(
+            _ size: CGFloat,
+            weight: NSFont.Weight = .regular,
+            monospacedDigits: Bool = false
+        ) -> NSFont {
+            let scName: String
+            let tcName: String
+            switch weight {
+            case .semibold, .bold, .heavy, .black:
+                scName = "PingFangSC-Semibold"
+                tcName = "PingFangTC-Semibold"
+            case .medium:
+                scName = "PingFangSC-Medium"
+                tcName = "PingFangTC-Medium"
+            default:
+                scName = "PingFangSC-Regular"
+                tcName = "PingFangTC-Regular"
+            }
+            let base =
+                monospacedDigits
+                ? NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight)
+                : NSFont.systemFont(ofSize: size, weight: weight)
+            let descriptor = base.fontDescriptor.addingAttributes([
+                .cascadeList: [
+                    NSFontDescriptor(fontAttributes: [.name: scName]),
+                    NSFontDescriptor(fontAttributes: [.name: tcName]),
+                ]
+            ])
+            return NSFont(descriptor: descriptor, size: size) ?? base
+        }
+
+        static func prose(_ size: CGFloat, weight: NSFont.Weight = .regular) -> SwiftUI.Font {
+            SwiftUI.Font(proseNS(size, weight: weight))
+        }
+
+        static func proseNumber(_ size: CGFloat, weight: NSFont.Weight = .regular) -> SwiftUI.Font {
+            SwiftUI.Font(proseNS(size, weight: weight, monospacedDigits: true))
+        }
     }
 
     // MARK: Space — 4pt grid
@@ -94,13 +136,13 @@ enum DS {
         static let xxxl: CGFloat = 32
     }
 
-    // MARK: Radius — 4 concentric levels
+    // MARK: Radius — ZCode 4 concentric levels (6 / 8 / 10 / 12)
 
     enum Radius {
-        static let sm: CGFloat = 8
-        static let md: CGFloat = 12
-        static let lg: CGFloat = 16
-        static let xl: CGFloat = 22
+        static let sm: CGFloat = 6
+        static let md: CGFloat = 8
+        static let lg: CGFloat = 10
+        static let xl: CGFloat = 12
     }
 
     // MARK: Layout
@@ -171,7 +213,7 @@ private struct DSSurfaceModifier: ViewModifier {
 }
 
 extension View {
-    /// 内容卡片表面：轻量通透底色 + 1px 发丝描边（不与浮层/按钮的 Liquid Glass 冲突）。
+    /// 内容卡片表面：ZCode 实色分层表面 + 1px 发丝边框。
     func dsSurface(
         radius: CGFloat = DS.Radius.lg,
         fill: Color = DS.surface,
@@ -190,22 +232,36 @@ extension View {
                 active: active))
     }
 
-    /// 窗口级浮层（弹出菜单、命令面板）：原生 Liquid Glass 浮层 + 柔和投影。
+    /// 窗口级浮层（弹出菜单、命令面板）：实色分层表面 + 1px 描边 + 轻阴影。
     func dsFloating(radius: CGFloat = DS.Radius.xl) -> some View {
         let shape = DS.rect(radius)
-        return glassEffect(.regular, in: shape)
-            .shadow(color: DS.shadow, radius: 28, y: 12)
+        return background(shape.fill(DS.floating))
+            .clipShape(shape)
+            .overlay(shape.strokeBorder(DS.line2, lineWidth: 1))
+            .shadow(color: DS.shadow, radius: 18, y: 8)
     }
 
-    /// 弹出框表面：保留 macOS 26 `.popover` 原生 Liquid Glass 材质，不再铺不透明底色盖住玻璃。
+    /// 弹出框表面：实色浮层底色，替代 macOS 原生玻璃材质。
     func dsPopoverSurface() -> some View {
-        self
+        background(DS.floating)
+            .presentationBackground(DS.floating)
     }
 
-    /// 输入框 / 文本域表面：半透明内嵌凹槽 + 细描边（聚焦时亮起强调色描边）。
+    /// 弹层画布：实色 ZCode 画布，替代半透明毛玻璃。
+    func sheetCanvas() -> some View {
+        background(DS.canvas.ignoresSafeArea())
+            .presentationBackground(DS.canvas)
+    }
+
+    /// 输入框 / 文本域表面：实色输入底 + 1px 描边（聚焦时亮起强调色描边）。
     func dsInputSurface(radius: CGFloat = DS.Radius.md, focused: Bool = false) -> some View {
-        background(DS.rect(radius).fill(Color.adaptiveOverlay(0.05)))
-            .overlay(DS.rect(radius).strokeBorder(focused ? DS.accent.opacity(0.55) : DS.line2, lineWidth: 1))
+        background(DS.rect(radius).fill(DS.surface))
+            .overlay(DS.rect(radius).strokeBorder(focused ? DS.accent.opacity(0.70) : DS.line2, lineWidth: 1))
+            .overlay(
+                DS.rect(radius + 1)
+                    .strokeBorder(focused ? DS.accent.opacity(0.16) : .clear, lineWidth: 2)
+                    .padding(-1)
+            )
             .animation(DS.Motion.snappy, value: focused)
     }
 }
@@ -255,100 +311,106 @@ extension DSPanel where Accessory == EmptyView {
 
 // MARK: - Buttons
 
-/// 统一按钮样式：直接委托给系统原生 `.glass` / `.glassProminent` Liquid Glass 按钮。
-struct DSButtonStyle: PrimitiveButtonStyle {
+/// ZCode 风格按钮：直角小圆角（`Radius.sm` / `Radius.md`）、1px 发丝边与单色高对比主按钮。
+struct DSButtonStyle: ButtonStyle {
     enum Kind { case primary, secondary, ghost, danger }
     enum Size { case small, regular, large }
 
     var kind: Kind = .secondary
     var size: Size = .regular
 
-    private var controlSize: ControlSize {
-        switch size {
-        case .small: return .small
-        case .regular: return .regular
-        case .large: return .large
-        }
-    }
-
-    private var fontSize: CGFloat {
-        switch size {
-        case .small: return 12
-        case .regular: return 13
-        case .large: return 13.5
-        }
-    }
-
-    @ViewBuilder
     func makeBody(configuration: Configuration) -> some View {
-        let label = configuration.label
-            .font(.system(size: fontSize, weight: size == .large ? .semibold : .medium))
-            .lineLimit(1)
-
-        switch kind {
-        case .primary:
-            Button(role: configuration.role, action: configuration.trigger) {
-                label
-            }
-            .buttonStyle(.glassProminent)
-            .buttonBorderShape(.capsule)
-            .controlSize(controlSize)
-            .tint(DS.accent)
-
-        case .secondary:
-            Button(role: configuration.role, action: configuration.trigger) {
-                label
-            }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.capsule)
-            .controlSize(controlSize)
-
-        case .danger:
-            Button(role: .destructive, action: configuration.trigger) {
-                label.foregroundStyle(DS.err)
-            }
-            .buttonStyle(.glass)
-            .buttonBorderShape(.capsule)
-            .controlSize(controlSize)
-
-        case .ghost:
-            Button(role: configuration.role, action: configuration.trigger) {
-                label
-            }
-            .buttonStyle(DSGhostButtonStyle(size: size))
-        }
+        DSButtonBody(configuration: configuration, kind: kind, size: size)
     }
 }
 
-private struct DSGhostButtonStyle: ButtonStyle {
+private struct DSButtonBody: View {
+    let configuration: ButtonStyleConfiguration
+    let kind: DSButtonStyle.Kind
     let size: DSButtonStyle.Size
+
     @Environment(\.isEnabled) private var isEnabled
     @State private var hovering = false
 
     private var height: CGFloat {
         switch size {
-        case .small: return 22
-        case .regular: return 26
+        case .small: return 24
+        case .regular: return 28
         case .large: return 34
         }
     }
 
     private var horizontalPadding: CGFloat {
         switch size {
-        case .small: return 9
+        case .small: return 10
         case .regular: return 12
-        case .large: return 18
+        case .large: return 16
         }
     }
 
-    func makeBody(configuration: Configuration) -> some View {
+    private var fontSize: CGFloat {
+        switch size {
+        case .small: return 11.5
+        case .regular: return 12.5
+        case .large: return 13
+        }
+    }
+
+    private var radius: CGFloat {
+        size == .small ? DS.Radius.sm : DS.Radius.md
+    }
+
+    private var shape: RoundedRectangle { DS.rect(radius) }
+
+    private var foreground: Color {
+        switch kind {
+        case .primary: return DS.inkText
+        case .secondary: return DS.text
+        case .ghost: return hovering ? DS.text : DS.text2
+        case .danger: return DS.err
+        }
+    }
+
+    private var background: Color {
+        switch kind {
+        case .primary:
+            return hovering ? DS.ink.opacity(0.88) : DS.ink
+        case .secondary:
+            return hovering ? DS.raised : DS.surface
+        case .ghost:
+            return hovering ? DS.hover : .clear
+        case .danger:
+            return DS.err.opacity(hovering ? 0.17 : 0.10)
+        }
+    }
+
+    private var borderColor: Color {
+        switch kind {
+        case .primary: return .clear
+        case .secondary: return hovering ? DS.line3 : DS.line2
+        case .ghost: return .clear
+        case .danger: return DS.err.opacity(hovering ? 0.42 : 0.26)
+        }
+    }
+
+    var body: some View {
         configuration.label
-            .foregroundStyle(hovering ? DS.text : DS.text2)
+            .font(.system(size: fontSize, weight: size == .large ? .semibold : .medium))
+            .lineLimit(1)
+            .foregroundStyle(foreground)
             .padding(.horizontal, horizontalPadding)
             .frame(height: height)
-            .background(Capsule().fill(hovering ? DS.hover : .clear))
-            .contentShape(Capsule())
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .background {
+                ZStack {
+                    shape.fill(background)
+                    if kind == .secondary && hovering {
+                        shape.fill(DS.hover)
+                    }
+                }
+            }
+            .overlay(shape.strokeBorder(borderColor, lineWidth: 1))
+            .contentShape(shape)
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
             .opacity(isEnabled ? 1 : 0.42)
             .animation(DS.Motion.snappy, value: configuration.isPressed)
             .animation(DS.Motion.snappy, value: hovering)
@@ -356,7 +418,7 @@ private struct DSGhostButtonStyle: ButtonStyle {
     }
 }
 
-extension PrimitiveButtonStyle where Self == DSButtonStyle {
+extension ButtonStyle where Self == DSButtonStyle {
     static var dsPrimary: DSButtonStyle { DSButtonStyle(kind: .primary) }
     static var dsSecondary: DSButtonStyle { DSButtonStyle(kind: .secondary) }
     static var dsGhost: DSButtonStyle { DSButtonStyle(kind: .ghost) }
@@ -366,7 +428,7 @@ extension PrimitiveButtonStyle where Self == DSButtonStyle {
     }
 }
 
-/// 圆形图标按钮：支持幽灵、系统原生 `.glass` 与 `.glassProminent` 三种形态。
+/// ZCode 风格圆角矩形图标按钮：支持幽灵、描边与高对比主按钮三种形态。
 struct DSIconButton: View {
     enum Style { case ghost, outlined, primary }
 
@@ -381,68 +443,72 @@ struct DSIconButton: View {
     @Environment(\.isEnabled) private var isEnabled
     @State private var hovering = false
 
-    private var controlSize: ControlSize {
-        size <= 24 ? .small : .regular
+    private var shape: RoundedRectangle {
+        DS.rect(size <= 24 ? DS.Radius.sm : DS.Radius.md)
     }
 
-    private var glyph: some View {
-        Image(systemName: systemName)
-            .font(.system(size: size * 0.42, weight: .medium))
-            .frame(width: size * 0.62, height: size * 0.62)
-    }
-
-    @ViewBuilder
-    var body: some View {
+    private var foreground: Color {
         switch style {
         case .primary:
-            Button(action: action) {
-                glyph
-            }
-            .buttonStyle(.glassProminent)
-            .buttonBorderShape(.circle)
-            .controlSize(controlSize)
-            .tint(tint ?? DS.accent)
-            .help(L10n.t(help))
-            .accessibilityLabel(L10n.t(help))
+            return tint != nil ? .white : DS.inkText
+        case .outlined:
+            if active { return tint != nil ? .white : DS.inkText }
+            return tint ?? (hovering ? DS.text : DS.text2)
+        case .ghost:
+            return tint ?? (active ? DS.accent : (hovering ? DS.text : DS.text2))
+        }
+    }
 
+    private var background: Color {
+        switch style {
+        case .primary:
+            let base = tint ?? DS.ink
+            return hovering ? base.opacity(0.88) : base
         case .outlined:
             if active {
-                Button(action: action) {
-                    glyph
-                }
-                .buttonStyle(.glassProminent)
-                .buttonBorderShape(.circle)
-                .controlSize(controlSize)
-                .tint(tint ?? DS.accent)
-                .help(L10n.t(help))
-                .accessibilityLabel(L10n.t(help))
-            } else {
-                Button(action: action) {
-                    glyph
-                        .foregroundStyle(tint ?? DS.text)
-                }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .controlSize(controlSize)
-                .help(L10n.t(help))
-                .accessibilityLabel(L10n.t(help))
+                let base = tint ?? DS.ink
+                return hovering ? base.opacity(0.90) : base
             }
-
+            return hovering ? DS.raised : DS.surface
         case .ghost:
-            Button(action: action) {
-                Image(systemName: systemName)
-                    .font(.system(size: size * 0.44, weight: .medium))
-                    .foregroundStyle(tint ?? (active ? DS.accent : (hovering ? DS.text : DS.text2)))
-                    .frame(width: size, height: size)
-                    .background(Circle().fill(active ? DS.accentSoft : (hovering ? DS.hover : .clear)))
-                    .contentShape(Circle())
-            }
-            .buttonStyle(DSPressStyle())
-            .opacity(isEnabled ? 1 : 0.4)
-            .help(L10n.t(help))
-            .accessibilityLabel(L10n.t(help))
-            .onHover { value in withAnimation(DS.Motion.snappy) { hovering = value } }
+            return active ? DS.accentSoft : (hovering ? DS.hover : .clear)
         }
+    }
+
+    private var border: Color {
+        switch style {
+        case .primary:
+            return .clear
+        case .outlined:
+            if active { return .clear }
+            return hovering ? DS.line3 : DS.line2
+        case .ghost:
+            return .clear
+        }
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: size * 0.43, weight: .medium))
+                .foregroundStyle(foreground)
+                .frame(width: size, height: size)
+                .background {
+                    ZStack {
+                        shape.fill(background)
+                        if style == .outlined && !active && hovering {
+                            shape.fill(DS.hover)
+                        }
+                    }
+                }
+                .overlay(shape.strokeBorder(border, lineWidth: 1))
+                .contentShape(shape)
+        }
+        .buttonStyle(DSPressStyle(scale: 0.96))
+        .opacity(isEnabled ? 1 : 0.4)
+        .help(L10n.t(help))
+        .accessibilityLabel(L10n.t(help))
+        .onHover { value in withAnimation(DS.Motion.snappy) { hovering = value } }
     }
 }
 
@@ -532,7 +598,7 @@ struct DSStatusDot: View {
     }
 }
 
-/// 小标签：圆点 + 文字，柔和胶囊形态。
+/// 小标签：圆点 + 文字，ZCode 圆角徽标形态。
 struct DSChip: View {
     var text: String
     var dot: Color? = nil
@@ -547,10 +613,10 @@ struct DSChip: View {
                 .foregroundStyle(tint ?? DS.text2)
                 .lineLimit(1)
         }
-        .padding(.horizontal, 9)
+        .padding(.horizontal, 8)
         .frame(height: 22)
-        .background(Capsule().fill(tint?.opacity(0.12) ?? Color.adaptiveOverlay(0.05)))
-        .overlay(Capsule().strokeBorder(tint?.opacity(0.25) ?? DS.line, lineWidth: 0.8))
+        .background(DS.rect(DS.Radius.sm).fill(tint?.opacity(0.12) ?? DS.hover))
+        .overlay(DS.rect(DS.Radius.sm).strokeBorder(tint?.opacity(0.26) ?? DS.line, lineWidth: 1))
         .fixedSize()
     }
 }
@@ -582,7 +648,7 @@ struct DSSectionLabel: View {
     var text: String
     var body: some View {
         Text(L10n.t(text))
-            .font(DS.Font.xs.weight(.medium))
+            .font(DS.Font.prose(11.5, weight: .medium))
             .foregroundStyle(DS.text3)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -625,7 +691,7 @@ struct DSSparkline: View {
 
 // MARK: - Segmented & Button Groups
 
-/// 原生 Liquid Glass 分段控件：在 macOS 27+ 走系统 `.tabs`（拖拽透镜玻璃胶囊），macOS 26 回退 `.segmented`。
+/// ZCode 风格分段控件。
 struct DSSegmented<Value: Hashable>: View {
     @Binding var selection: Value
     var options: [(value: Value, label: String)]
@@ -636,23 +702,21 @@ struct DSSegmented<Value: Hashable>: View {
     }
 }
 
-/// 按钮组容器：用 `GlassEffectContainer` 把一组原生玻璃控件融合排布。
+/// 按钮组容器：紧凑间距排布一组按钮。
 struct DSButtonGroup<Content: View>: View {
     var radius: CGFloat = DS.Radius.md
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        GlassEffectContainer(spacing: 8) {
-            HStack(spacing: 8) {
-                content()
-            }
+        HStack(spacing: 8) {
+            content()
         }
     }
 }
 
 // MARK: - Menus & Popovers
 
-/// 统一下拉菜单触发器标签（纯内容排版，外层玻璃由 `DSMenu` 或按钮样式提供）。
+/// 统一下拉菜单触发器标签（纯内容排版，外层底色与边框由 `DSMenu` 提供）。
 struct DSMenuTriggerLabel: View {
     enum Kind { case primary, secondary, ghost, icon }
 
@@ -669,71 +733,94 @@ struct DSMenuTriggerLabel: View {
             if let systemImage {
                 Image(systemName: systemImage)
                     .font(.system(size: size == .small ? 10.5 : 11.5, weight: .semibold))
-                    .foregroundStyle(imageTint ?? (kind == .primary ? .white : DS.text2))
+                    .foregroundStyle(imageTint ?? (kind == .primary ? DS.inkText : DS.text2))
             }
             if let title {
                 Text(L10n.t(title))
-                    .font(.system(size: size == .small ? 12 : 12.5, weight: .medium))
-                    .foregroundStyle(kind == .primary ? .white : DS.text)
+                    .font(.system(size: size == .small ? 11.5 : 12.5, weight: .medium))
+                    .foregroundStyle(kind == .primary ? DS.inkText : DS.text)
                     .lineLimit(1)
             }
             if let badge {
                 Text(L10n.t(badge))
                     .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(kind == .primary ? Color.white.opacity(0.82) : DS.text2)
+                    .foregroundStyle(kind == .primary ? DS.inkText.opacity(0.82) : DS.text2)
                     .lineLimit(1)
                     .fixedSize()
             }
             if trailingChevron && kind != .icon {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(kind == .primary ? Color.white.opacity(0.75) : DS.text3)
+                    .foregroundStyle(kind == .primary ? DS.inkText.opacity(0.75) : DS.text3)
             }
         }
     }
 }
 
-/// 统一 Menu 包装：使用 macOS 26 原生 `.menuStyle(.button)` + `.buttonStyle(.glass)` / `.glassProminent`。
+/// 统一 Menu 包装：ZCode 风格实体/描边/幽灵下拉按钮，不使用 Liquid Glass。
 struct DSMenu<Label: View, Content: View>: View {
     var kind: DSMenuTriggerLabel.Kind = .secondary
     var size: DSButtonStyle.Size = .regular
     @ViewBuilder var label: () -> Label
     @ViewBuilder var content: () -> Content
 
-    private var controlSize: ControlSize {
+    @State private var hovering = false
+
+    private var height: CGFloat {
         switch size {
-        case .small: return .small
-        case .regular: return .regular
-        case .large: return .large
+        case .small: return 24
+        case .regular: return DS.Layout.controlHeight
+        case .large: return 34
         }
     }
 
-    @ViewBuilder
+    private var horizontalPadding: CGFloat {
+        if kind == .icon { return 0 }
+        return size == .small ? 9 : 11
+    }
+
+    private var radius: CGFloat {
+        size == .small ? DS.Radius.sm : DS.Radius.md
+    }
+
+    private var shape: RoundedRectangle { DS.rect(radius) }
+
+    private var backgroundColor: Color {
+        switch kind {
+        case .primary: return hovering ? DS.ink.opacity(0.88) : DS.ink
+        case .secondary: return hovering ? DS.raised : DS.surface
+        case .icon: return hovering ? DS.raised : DS.surface
+        case .ghost: return hovering ? DS.hover : .clear
+        }
+    }
+
+    private var borderColor: Color {
+        switch kind {
+        case .primary, .ghost: return .clear
+        case .secondary, .icon: return hovering ? DS.line3 : DS.line2
+        }
+    }
+
     var body: some View {
-        let base = Menu(content: content, label: label)
+        Menu(content: content, label: label)
             .menuStyle(.button)
             .menuIndicator(.hidden)
-            .controlSize(controlSize)
+            .buttonStyle(.plain)
+            .padding(.horizontal, horizontalPadding)
+            .frame(width: kind == .icon ? height : nil, height: height)
+            .background {
+                ZStack {
+                    shape.fill(backgroundColor)
+                    if (kind == .secondary || kind == .icon) && hovering {
+                        shape.fill(DS.hover)
+                    }
+                }
+            }
+            .overlay(shape.strokeBorder(borderColor, lineWidth: 1))
+            .contentShape(shape)
             .fixedSize()
-
-        switch kind {
-        case .primary:
-            base
-                .buttonStyle(.glassProminent)
-                .buttonBorderShape(.capsule)
-                .tint(DS.accent)
-        case .secondary:
-            base
-                .buttonStyle(.glass)
-                .buttonBorderShape(.capsule)
-        case .icon:
-            base
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-        case .ghost:
-            base
-                .buttonStyle(.borderless)
-        }
+            .onHover { hovering = $0 }
+            .animation(DS.Motion.snappy, value: hovering)
     }
 }
 
@@ -766,7 +853,7 @@ struct DSMenuRow<Content: View>: View {
 
 // MARK: - Search & Filter
 
-/// 统一 28pt 搜索框：原生 Liquid Glass 胶囊，聚焦时亮起强调色微光。
+/// 统一 28pt 搜索框：ZCode 风格圆角输入框，实色底 + 1px 边框 + 聚焦微环。
 struct DSSearchField: View {
     @Binding var query: String
     var placeholder: String = "搜索"
@@ -775,6 +862,7 @@ struct DSSearchField: View {
     @FocusState private var focused: Bool
 
     var body: some View {
+        let shape = DS.rect(DS.Radius.md)
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11, weight: .medium))
@@ -802,23 +890,20 @@ struct DSSearchField: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 11)
+        .padding(.horizontal, 10)
         .frame(width: width, height: DS.Layout.controlHeight)
-        .glassEffect(
-            .regular.tint(focused ? DS.accent.opacity(0.08) : nil).interactive(),
-            in: Capsule()
+        .background(shape.fill(DS.surface))
+        .overlay(shape.strokeBorder(focused ? DS.accent.opacity(0.70) : DS.line2, lineWidth: 1))
+        .overlay(
+            DS.rect(DS.Radius.md + 1)
+                .strokeBorder(focused ? DS.accent.opacity(0.16) : .clear, lineWidth: 2)
+                .padding(-1)
         )
-        .overlay {
-            if focused {
-                Capsule()
-                    .strokeBorder(DS.accent.opacity(0.42), lineWidth: 1)
-            }
-        }
         .animation(DS.Motion.snappy, value: focused)
     }
 }
 
-/// 一行筛选栏：原生 Liquid Glass 分段控件 + 胶囊玻璃搜索框（包在 `GlassEffectContainer` 中）。
+/// 一行筛选栏：ZCode 分段控件 + 搜索框。
 struct DSFilterBar<Value: Hashable>: View {
     @Binding var selection: Value
     var options: [(value: Value, label: String)]
@@ -827,11 +912,9 @@ struct DSFilterBar<Value: Hashable>: View {
     var maxSearchWidth: CGFloat = 200
 
     var body: some View {
-        GlassEffectContainer(spacing: 10) {
-            HStack(spacing: 10) {
-                DSSegmented(selection: $selection, options: options)
-                DSSearchField(query: $query, placeholder: placeholder, width: maxSearchWidth)
-            }
+        HStack(spacing: 8) {
+            DSSegmented(selection: $selection, options: options)
+            DSSearchField(query: $query, placeholder: placeholder, width: maxSearchWidth)
         }
     }
 }

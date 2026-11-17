@@ -21,7 +21,7 @@ final class BackgroundSurface {
     static let shared = BackgroundSurface()
 
     /// 窗口自己的底色。自定义背景图片时是它，透出桌面时让位给 `.clear`。
-    static let canvasColor = NSColor.adaptive(dark: 0x0E0E12, light: 0xECEEF3)
+    static let canvasColor = NSColor.adaptive(dark: 0x161616, light: 0xF8F8F8)
 
     /// 按给定外观把画布底色解析成固定颜色。
     ///

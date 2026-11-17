@@ -27,7 +27,7 @@ struct ChatComposerField: NSViewRepresentable {
 
     /// 竖排上限：超过之后输入框内部滚动，不再继续长高。
     static let maxLines = 6
-    static let fontSize: CGFloat = 13
+    static let fontSize: CGFloat = 13.5
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -35,7 +35,7 @@ struct ChatComposerField: NSViewRepresentable {
         let container = ComposerContainer()
         let textView = container.textView
         textView.delegate = context.coordinator
-        textView.font = .systemFont(ofSize: Self.fontSize)
+        textView.font = DS.Font.proseNS(Self.fontSize)
         textView.textColor = .consoleText
         textView.insertionPointColor = .consoleAccent
         textView.isRichText = false

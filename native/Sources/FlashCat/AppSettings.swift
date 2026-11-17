@@ -163,6 +163,46 @@ final class AppSettings {
     var hfCache: String { defaults.string(forKey: "hfCache") ?? "" }
     func setHfCache(_ value: String) { defaults.set(value, forKey: "hfCache") }
 
+    /// Hugging Face 端点。空串表示官方地址；`HubClient` 和下载器都从这里
+    /// 读，所以设置页写一次两边一起生效。
+    var hfEndpoint: String {
+        HFEndpoint.normalized(defaults.string(forKey: "hfEndpoint") ?? "") ?? ""
+    }
+
+    func setHfEndpoint(_ value: String) {
+        let normalized = HFEndpoint.normalized(value) ?? value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized.isEmpty {
+            defaults.removeObject(forKey: "hfEndpoint")
+        } else {
+            defaults.set(normalized, forKey: "hfEndpoint")
+        }
+    }
+
+    /// 受限仓库的访问令牌。只发给 Hugging Face；换到 ModelScope 时不会
+    /// 被带过去。
+    var hfToken: String {
+        defaults.string(forKey: "hfToken") ?? ""
+    }
+
+    func setHfToken(_ value: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            defaults.removeObject(forKey: "hfToken")
+        } else {
+            defaults.set(trimmed, forKey: "hfToken")
+        }
+    }
+
+    /// 模型广场默认查哪家。CLI/控制接口的 `download` 不走这个值：它们拿到的
+    /// 是裸 repo id，默认仍按 Hugging Face 解释。
+    var hubSource: HubSource {
+        HubSource.stored
+    }
+
+    func setHubSource(_ value: HubSource) {
+        defaults.set(value.rawValue, forKey: "hubSource")
+    }
+
     /// The recommendation worked out from this Mac's hardware, kept so the model
     /// page can tag its suggestions without inspecting the machine again — and
     /// so the answer does not change under a user who is halfway through a

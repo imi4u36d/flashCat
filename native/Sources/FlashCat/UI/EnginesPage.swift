@@ -51,10 +51,9 @@ struct EnginesPage: View {
                 .padding(.horizontal, Console.contentPadding)
             }
             .scrollIndicators(.never)
-            .scrollEdgeEffectStyle(.soft, for: .top)
             .dsTrackColumns($gridColumns, minWidth: Self.cardMinWidth, spacing: Self.cardSpacing)
         }
-        // 和侧栏玻璃同一条下边界，滚动视口不会一直贴到窗口底沿。
+        // 和侧栏同一条下边界，滚动视口不会一直贴到窗口底沿。
         .padding(.bottom, Console.contentBottomInset)
         .task {
             installs.refreshInstalled()

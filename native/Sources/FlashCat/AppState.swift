@@ -283,6 +283,7 @@ final class AppState: ObservableObject {
     var hubQuery: String { hub.hubQuery }
     var hubSort: HubSort { hub.hubSort }
     var hubFilter: HubFilter { hub.hubFilter }
+    var hubSource: HubSource { hub.hubSource }
     var hubPage: Int { hub.hubPage }
     var hubHasMore: Bool { hub.hubHasMore }
     var hubLoading: Bool { hub.hubLoading }
@@ -1399,17 +1400,24 @@ final class AppState: ObservableObject {
     /// 两套状态各自独立。
     func searchHub(_ query: String) { hub.searchHub(query) }
 
-    func searchHub(_ query: String, sort: String, filter: String? = nil, page: Int = 0) {
-        hub.searchHub(query, sort: sort, filter: filter, page: page)
+    func searchHub(
+        _ query: String, sort: String, filter: String? = nil, page: Int = 0,
+        source: HubSource? = nil
+    ) {
+        hub.searchHub(query, sort: sort, filter: filter, page: page, source: source)
     }
 
     func hubResults(for engine: EngineID) -> [HubSearchResult] { hub.hubResults(for: engine) }
 
-    func loadHubDetail(_ repo: String) { hub.loadHubDetail(repo) }
+    func loadHubDetail(_ repo: String, source: HubSource? = nil) {
+        hub.loadHubDetail(repo, source: source)
+    }
 
     func closeHubDetail() { hub.closeHubDetail() }
 
-    func probeRepo(_ repo: String) { hub.probeRepo(repo) }
+    func probeRepo(_ repo: String, source: HubSource? = nil) {
+        hub.probeRepo(repo, source: source)
+    }
 
     func clearRepoProbe() { hub.clearRepoProbe() }
 
@@ -3883,7 +3891,11 @@ final class AppState: ObservableObject {
     /// - Returns: whether the transfer started. `false` comes with a `notice`,
     ///   which the control server (and therefore the CLI) reports verbatim.
     @discardableResult
-    func downloadShared(_ repo: String, engines: [EngineID]) -> Bool {
+    func downloadShared(
+        _ repo: String, engines: [EngineID],
+        source: HubSource = .huggingFace,
+        include: [String] = []
+    ) -> Bool {
         guard downloadingModel == nil else {
             toast("正在下载另一个模型，先等它结束")
             return false
@@ -3909,7 +3921,9 @@ final class AppState: ObservableObject {
             plan = try ModelInstaller.sharedPlan(
                 repo: target,
                 engines: engines,
-                cache: settings.hfCache)
+                cache: settings.hfCache,
+                source: source,
+                include: include)
         } catch {
             notice = (error as? ModelInstaller.Failure)?.message ?? "\(error)"
             return false
@@ -3959,7 +3973,11 @@ final class AppState: ObservableObject {
         EngineModelStore.invalidateMetaCache()
         reloadModels()
         guard !engines.isEmpty else { return }
-        toast("已下载 " + repo + "，可用于 " + engines.map(\.displayName).joined(separator: "、"))
+        if Set(engines) == Set(EngineCatalog.allIDs) {
+            toast("已下载 " + repo + "，所有引擎的模型页都能看到")
+        } else {
+            toast("已下载 " + repo + "，可用于 " + engines.map(\.displayName).joined(separator: "、"))
+        }
     }
 
     /// Run a download and wait for it to end.

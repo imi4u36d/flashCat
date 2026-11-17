@@ -24,7 +24,6 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 | `UI/DynamicIsland.swift` | 标题栏灵动岛：引擎状态、通知历史与引擎详情 |
 | `IslandNotice.swift` | 灵动岛通知的数据模型与信息 / 成功 / 警告 / 错误分类 |
 | `UI/FeedbackSheet.swift` | 反馈弹窗：QQ 群号、复制与拉起 QQ |
-| `UI/LiquidGlass.swift` | macOS 26 Liquid Glass 材质与玻璃按钮样式 |
 | `UI/ModelFamily.swift` | 模型家族识别与家族徽标 |
 | `UI/ModelCardText.swift` | Hugging Face 模型卡的 Markdown 清洗 |
 | `UI/CommandPalette.swift` | 命令面板：页面跳转与常用动作（鼠标操作） |
@@ -56,35 +55,28 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
   面板一律只报引擎真实处于的阶段，不复述「切换中 / 加载新模型」）、
   外观切换、下载中心（带任务徽标）、反馈入口（最右，和下载中心之间隔一道 1pt 竖线）。
   标题栏不放命令面板入口，它只从「页面 → 命令面板」打开。
-- **侧栏。** 悬浮玻璃导航列，可整体隐藏让主视口铺满窗口；收起按钮的右缘与导航列右缘
-  共用同一条竖线（列收起后退回红绿灯右侧的安全位），
-  与「显示 → 隐藏边栏」菜单同一条路径；
-  工作区七页 + 最近对话 + 引擎卡（启停与切换）。
+- **侧栏。** ZCode 风格实体侧边栏（浅色 `#F0F0F0` / 深色 `#1C1C1C`），右侧以 1pt 发丝线与主工作区分隔，可整体隐藏让主视口铺满窗口；
+  收起按钮与「显示 → 隐藏边栏」菜单同一条路径；
+  工作区七页 + 最近对话 + 引擎状态卡（启停与切换）。
 - **页面切换。** 220ms 淡入 + 8pt 上移；侧栏选中态用 `matchedGeometryEffect` 在行间滑动。
 - **动效。** `Motion.quick` 140ms 用于 hover/press，`Motion.standard` 220ms 用于页面与卡片状态，
   `Motion.entrance` 轻弹簧用于消息与 toast；`accessibilityReduceMotion` 下关闭位移动画。
 
 ## 控件
 
-- 控件统一走 macOS 26 Liquid Glass：侧栏、标题栏按钮、命令面板、输入卡与浮层使用
-  `glassEffect`（`LiquidGlassSurface`），互斥按钮组用系统 `.tabs` 分段控件（`NativeSegmented`）；
-  卡片也用同一层玻璃材质，但正文只靠排版分层，不在内容上再叠色。
-  菜单用系统玻璃 popover（如 `ModelPickerPopover`）。
-- 可点击 / 可悬停的玻璃表面必须带 `interactive: true`（`LiquidGlassSurface` 与
-  `consoleCardSurface` 同一语义）；只把 hover 填充色换成强调色不算交互反馈。
-- **模型卡内的动作按钮不铺底面。** 卡片本身已经是一层玻璃，按钮再叠一个玻璃胶囊会在
-  卡面上多出一块更亮的椭圆；卡内的「使用 / 下载 / 暂停」只留文字与图标，靠悬停提亮、
-  按下收缩给反馈（`CardActionStyle`）。正在使用的模型卡也不整块染色，「使用中」胶囊是
-  唯一的选中信号；卡面只在下载中铺一层暖色。右上角「…」例外——它是 Liquid Glass 的
-  圆形交互面，保留玻璃圆底。
+- 控件统一走 ZCode 工作台美学（停止使用 Liquid Glass、模糊折射与大胶囊圆角）：
+  侧栏、按钮、分段控件、搜索框、命令面板、输入卡与浮层使用实色分层表面 + 1px 发丝边框，
+  遵循同心圆角层级（6 / 8 / 10 / 12pt）；分段控件用圆角矩形滑块（`NativeSegmented`），
+  菜单用实体浮层 popover（`DSPopoverSurface` / `ModelPickerPopover`）。
+- 可点击 / 可悬停的卡片表面使用 `dsSurface(..., hoverable: true)`，悬停时轻微提亮并加深边框。
+- **模型卡内的动作按钮**采用 ZCode 紧凑次级描边按钮（`Radius.sm` = 6pt）；正在使用的模型卡以
+  「使用中」徽标和强调色边框标记，不再整块叠色。
 - **行尾删除按钮只在悬停时显形。** 常驻垃圾桶会让每一行历史都顶一个危险色标记，和行尾
   的时间读数抢注意力。侧栏「最近对话」与对话页的「…」弹层用同一个 `RowDeleteButton`：
   行宽不变，悬停时读数淡出、垃圾桶淡入；挂在行上是中性灰，真指着按钮才转危险红。
   垃圾桶与行按钮平级（`ZStack`），塞进行按钮的 label 里点击会被外层按钮吞掉。
-- **无边框 `Menu` 的标签会被压平。** `.menuStyle(.borderlessButton)` 把 label 当模板处理，
-  label 里的 `frame`、`background`、`foregroundStyle` 都会失效（图标还会被全局
-  `.tint(Console.accent)` 染成粉色）。尺寸、玻璃圆底和颜色都要挂在 `Menu` 外层：
-  `.frame(width:height:)` + `.background { LiquidGlassSurface(...) }` + `.tint(...)`。
+- **下拉菜单触发器**通过 `DSMenu` 包装 `.menuStyle(.button)` + `.buttonStyle(.plain)`，
+  保留图标与文字原色，外层由 `DS.rect` 填充与 1px 描边承载。
 
 ## 对话
 
@@ -237,15 +229,12 @@ macOS 自己提供的文本编辑与剪贴板快捷键、关闭窗口与退出�
 
 ## 视觉语言
 
-- 画布是纯色（日间白 / 夜间暖石墨），卡片与 chrome 使用 macOS 26 Liquid Glass
-  （`GlassSurface` / `GlassCard` → `glassEffect`）。窗口铺与画布一致的不透明底色，
-  玻璃控件采样窗口内画布；不再自绘玻璃渐变与投影，也不再使用全透明窗口
-  （切换壁纸后容易出现残影和错位）。
-- 品牌色是日落橙红，只出现在主按钮、选中态、大读数与状态点；状态色是页面里
-  饱和度最高的颜色。
-- 危险色不交给玻璃 `tint`：tint 是层半透明色雾，红底叠红图标会被糊成一片
-  （下载中心的删除按钮踩过）。危险态用中性玻璃 + 自绘的浅红底与 0.8 pt
-  发丝边，图标保持满饱和，边缘由视图自己画，不经过玻璃模糊。
+- 画布与表面对标 ZCode（Zai Light / Zai Dark）：日间浅灰画布 `#F8F8F8` + 侧栏 `#F0F0F0` + 卡片 `#FFFFFF`；
+  夜间深灰画布 `#161616` + 侧栏 `#1C1C1C` + 卡片 `#222222`。全部采用实色分层与 1px 发丝边框，
+  不自绘装饰性环境光晕或玻璃折射。
+- 主动作按钮采用高对比单色墨块（日间 `#171717` / 夜间 `#EDEDED`）；聚焦、链接与关键强调色使用
+  ZCode 蓝（日间 `#0B7FFF` / 夜间 `#3B82F6`），状态色只用于状态。
+- 危险态采用浅红实色底 + 1px 描边 + 高对比红字，图标与文字保持清晰可读。
 - 两副皮肤共享同一套语义 token（`Native` + `Theme.swift` 的 `NSColor.adaptive`），
   视图不判断当前是哪套皮肤；换肤由 `ThemeController` 改 **内容视图** 的外观
   （`window.contentView.appearance`），颜色自动重解，不做自定义过渡。

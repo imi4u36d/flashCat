@@ -5,7 +5,7 @@ import AppKit
 import FlashCatKit
 import SwiftUI
 
-/// 模型页：单行筛选操作栏 + 轻量化 Liquid Glass 模型卡片网格。
+/// 模型页：单行筛选操作栏 + ZCode 风格实色卡片网格。
 struct ModelsPage: View {
     @ObservedObject var state: AppState
     let engine: EngineID
@@ -95,7 +95,6 @@ struct ModelsPage: View {
                     .padding(.top, 2)
                 }
                 .scrollIndicators(.never)
-                .scrollEdgeEffectStyle(.soft, for: .top)
                 .dsTrackColumns($gridColumns, minWidth: Self.cardMinWidth, spacing: Self.cardSpacing)
                 .onChange(of: scope) { _, _ in
                     DispatchQueue.main.async {

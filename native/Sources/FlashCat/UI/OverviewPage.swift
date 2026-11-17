@@ -57,8 +57,8 @@ struct OverviewPage: View {
         state.stats?.activeRequests ?? 0
     }
 
-    private let sectionGap: CGFloat = 14
-    private let sideColumnWidth: CGFloat = 340
+    private let sectionGap: CGFloat = 20
+    private let sideColumnWidth: CGFloat = 336
 
     var body: some View {
         GeometryReader { proxy in
@@ -74,11 +74,16 @@ struct OverviewPage: View {
         ScrollView {
             VStack(alignment: .leading, spacing: sectionGap) {
                 hero
+                DSDivider()
                 metricsRow(compact: true)
+                DSDivider()
                 decodeChart
-                    .frame(height: 240)
-                gatewayCard
-                runtimeCard
+                    .frame(height: 228)
+                DSDivider()
+                gatewaySection
+                DSDivider()
+                runtimeSection
+                DSDivider()
                 recentRequests
                     .frame(minHeight: 200)
             }
@@ -87,7 +92,6 @@ struct OverviewPage: View {
             .padding(.bottom, Console.contentBottomInset)
         }
         .scrollIndicators(.never)
-        .scrollEdgeEffectStyle(.soft, for: .top)
         .overlay(alignment: .top) {
             WindowDragArea().frame(height: state.showsSidebar ? DS.Space.lg : DS.Layout.titlebarHeight)
         }
@@ -95,27 +99,34 @@ struct OverviewPage: View {
 
     private func wideLayout(_ proxy: GeometryProxy) -> some View {
         let topInset = Console.scrollTopInset(sidebarShown: state.showsSidebar)
-        // 为页头、5 格指标条与 3 段间距预留大致高度，让中间双栏与底部请求表自然吃满视口。
-        let reservedUpperHeight: CGFloat = topInset + Console.contentBottomInset + 56 + 86 + sectionGap * 3
-        let availableBody = max(452, proxy.size.height - reservedUpperHeight)
-        let middleHeight = max(256, min(300, floor(availableBody * 0.52)))
-        let recentMinHeight = max(196, availableBody - middleHeight)
+        // 为页头、5 格指标条与段间分隔预留大致高度，让中间双栏与底部请求表自然吃满视口。
+        let reservedUpperHeight: CGFloat = topInset + Console.contentBottomInset + 58 + 84 + sectionGap * 4
+        let availableBody = max(440, proxy.size.height - reservedUpperHeight)
+        let middleHeight = max(248, min(288, floor(availableBody * 0.50)))
+        let recentMinHeight = max(190, availableBody - middleHeight)
 
         return ScrollView {
             VStack(alignment: .leading, spacing: sectionGap) {
                 hero
-                metricsRow(compact: false)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(alignment: .top, spacing: sectionGap) {
+                VStack(spacing: 0) {
+                    DSDivider()
+                    metricsRow(compact: false)
+                        .fixedSize(horizontal: false, vertical: true)
+                    DSDivider()
+                }
+                HStack(alignment: .top, spacing: 24) {
                     decodeChart
-                    VStack(spacing: sectionGap) {
-                        gatewayCard
-                        runtimeCard
-                            .frame(maxHeight: .infinity)
+                    DSDivider(vertical: true)
+                    VStack(alignment: .leading, spacing: 18) {
+                        gatewaySection
+                        DSDivider()
+                        runtimeSection
+                            .frame(maxHeight: .infinity, alignment: .top)
                     }
                     .frame(width: sideColumnWidth)
                 }
                 .frame(height: middleHeight)
+                DSDivider()
                 recentRequests
                     .frame(minHeight: recentMinHeight)
             }
@@ -124,7 +135,6 @@ struct OverviewPage: View {
             .padding(.bottom, Console.contentBottomInset)
         }
         .scrollIndicators(.never)
-        .scrollEdgeEffectStyle(.soft, for: .top)
         .overlay(alignment: .top) {
             WindowDragArea().frame(height: state.showsSidebar ? DS.Space.lg : DS.Layout.titlebarHeight)
         }
@@ -137,7 +147,7 @@ struct OverviewPage: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(L10n.t(modelTitleParts.name))
-                        .font(DS.Font.title)
+                        .font(DS.Font.prose(22, weight: .semibold))
                         .tracking(-0.35)
                         .foregroundStyle(DS.text)
                         .lineLimit(2)
@@ -147,10 +157,9 @@ struct OverviewPage: View {
                         Text(variant)
                             .font(DS.Font.mono(11, weight: .medium))
                             .foregroundStyle(DS.text2)
-                            .padding(.horizontal, 6)
+                            .padding(.horizontal, 7)
                             .padding(.vertical, 2)
-                            .background(DS.rect(DS.Radius.sm).fill(DS.raised))
-                            .overlay(DS.rect(DS.Radius.sm).strokeBorder(DS.line2, lineWidth: 1))
+                            .background(DS.rect(DS.Radius.sm).fill(DS.hover))
                             .fixedSize()
                     }
                 }
@@ -161,50 +170,48 @@ struct OverviewPage: View {
                         live: state.canChat,
                         size: 6)
                     Text(runningText)
-                        .font(DS.Font.sm)
+                        .font(DS.Font.prose(12.5))
                         .foregroundStyle(DS.text2)
                         .lineLimit(1)
                     Text("·")
-                        .font(DS.Font.sm)
+                        .font(DS.Font.prose(12.5))
                         .foregroundStyle(DS.text4)
                     Text(verbatim: "127.0.0.1:\(state.port)")
-                        .font(DS.Font.mono(11))
+                        .font(DS.Font.proseNumber(11.5))
                         .foregroundStyle(DS.text3)
                     Text("·")
-                        .font(DS.Font.sm)
+                        .font(DS.Font.prose(12.5))
                         .foregroundStyle(DS.text4)
                     Text("\(sessionCount) SESSIONS")
-                        .font(DS.Font.mono(10, weight: .medium))
+                        .font(DS.Font.proseNumber(11, weight: .medium))
                         .tracking(0.3)
                         .foregroundStyle(DS.text3)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            GlassEffectContainer(spacing: 8) {
-                HStack(spacing: 8) {
-                    Button {
-                        state.toggleService()
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: state.isRunning ? "stop.fill" : "play.fill")
-                                .font(.system(size: 9.5, weight: .semibold))
-                            Text(L10n.t(state.isRunning ? "停止引擎" : "启动引擎"))
-                        }
+            HStack(spacing: 8) {
+                Button {
+                    state.toggleService()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: state.isRunning ? "stop.fill" : "play.fill")
+                            .font(.system(size: 9.5, weight: .semibold))
+                        Text(L10n.t(state.isRunning ? "停止引擎" : "启动引擎"))
                     }
-                    .buttonStyle(.ds(state.isRunning ? .danger : .primary))
-                    .disabled(state.isSwitchingModel)
-
-                    ModelPickerButton(state: state, kind: .secondary) {
-                        DSMenuTriggerLabel(
-                            title: "切换模型",
-                            systemImage: "square.stack.3d.up.fill",
-                            kind: .secondary,
-                            size: .regular
-                        )
-                    }
-                    .disabled(state.isSwitchingModel)
                 }
+                .buttonStyle(.ds(state.isRunning ? .danger : .primary))
+                .disabled(state.isSwitchingModel)
+
+                ModelPickerButton(state: state, kind: .secondary) {
+                    DSMenuTriggerLabel(
+                        title: "切换模型",
+                        systemImage: "square.stack.3d.up.fill",
+                        kind: .secondary,
+                        size: .regular
+                    )
+                }
+                .disabled(state.isSwitchingModel)
             }
             .fixedSize()
         }
@@ -217,24 +224,18 @@ struct OverviewPage: View {
     @ViewBuilder
     private func metricsRow(compact: Bool) -> some View {
         if compact {
-            GlassEffectContainer(spacing: 10) {
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 180), spacing: 10, alignment: .top)],
-                    alignment: .leading,
-                    spacing: 10
-                ) {
-                    averageMetricCell
-                        .dsSurface(radius: DS.Radius.md)
-                    contextMetricCell
-                        .dsSurface(radius: DS.Radius.md)
-                    ttftMetricCell
-                        .dsSurface(radius: DS.Radius.md)
-                    prefillMetricCell
-                        .dsSurface(radius: DS.Radius.md)
-                    cacheMetricCell
-                        .dsSurface(radius: DS.Radius.md)
-                }
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 168), spacing: 16, alignment: .top)],
+                alignment: .leading,
+                spacing: 14
+            ) {
+                averageMetricCell
+                contextMetricCell
+                ttftMetricCell
+                prefillMetricCell
+                cacheMetricCell
             }
+            .padding(.vertical, 4)
         } else {
             HStack(alignment: .top, spacing: 0) {
                 averageMetricCell
@@ -247,8 +248,7 @@ struct OverviewPage: View {
                 DSDivider(vertical: true)
                 cacheMetricCell
             }
-            .dsSurface(radius: DS.Radius.lg)
-            .clipShape(DS.rect(DS.Radius.lg))
+            .padding(.vertical, 2)
         }
     }
 
@@ -311,20 +311,20 @@ struct OverviewPage: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(L10n.t(title))
-                .font(DS.Font.sm.weight(.medium))
-                .foregroundStyle(DS.text2)
+                .font(DS.Font.prose(12, weight: .medium))
+                .foregroundStyle(DS.text3)
                 .lineLimit(1)
 
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text(value)
-                    .font(DS.Font.number(24, weight: .semibold))
+                    .font(DS.Font.number(26, weight: .semibold))
                     .foregroundStyle(value == "—" ? DS.text4 : DS.text)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                     .contentTransition(.numericText())
                 if let unit {
                     Text(unit)
-                        .font(DS.Font.mono(11))
+                        .font(DS.Font.proseNumber(11.5))
                         .foregroundStyle(DS.text3)
                         .lineLimit(1)
                 }
@@ -365,16 +365,16 @@ struct OverviewPage: View {
     // MARK: Decode Chart
 
     private var decodeChart: some View {
-        DSPanel(title: "总解码 · 最近 60 秒") {
+        overviewSection(title: "总解码 · 最近 60 秒") {
             HStack(spacing: 8) {
                 if chartRate > 0 {
                     HStack(alignment: .firstTextBaseline, spacing: 3) {
                         Text(rateText(chartRate))
-                            .font(DS.Font.mono(13, weight: .semibold))
+                            .font(DS.Font.proseNumber(13, weight: .semibold))
                             .foregroundStyle(DS.text)
                             .contentTransition(.numericText())
                         Text("tok/s")
-                            .font(DS.Font.mono(10))
+                            .font(DS.Font.prose(10.5))
                             .foregroundStyle(DS.text3)
                     }
                 }
@@ -390,14 +390,14 @@ struct OverviewPage: View {
                                 .font(.system(size: 16, weight: .regular))
                                 .foregroundStyle(DS.text4)
                             Text(L10n.t(chartEmptyText))
-                                .font(DS.Font.sm)
+                                .font(DS.Font.prose(12.5))
                                 .foregroundStyle(DS.text3)
                                 .multilineTextAlignment(.center)
                                 .frame(maxWidth: 320)
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(DS.surface.opacity(0.92), in: DS.rect(DS.Radius.sm))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(DS.canvas.opacity(0.85), in: DS.rect(DS.Radius.sm))
                     }
                 } else {
                     Chart {
@@ -427,13 +427,13 @@ struct OverviewPage: View {
                         AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { _ in
                             AxisGridLine().foregroundStyle(DS.line)
                             AxisValueLabel()
-                                .font(DS.Font.mono(10))
+                                .font(DS.Font.proseNumber(10.5))
                                 .foregroundStyle(DS.text3)
                         }
                     }
                 }
             }
-            .padding(14)
+            .padding(.top, 4)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
@@ -484,35 +484,31 @@ struct OverviewPage: View {
 
     // MARK: Gateway & Runtime
 
-    private var gatewayCard: some View {
-        DSPanel(title: "API 网关", subtitle: "OpenAI + Claude") {
+    private var gatewaySection: some View {
+        overviewSection(title: "API 网关", subtitle: "OpenAI + Claude") {
             DSChip(
                 text: gateway.isRunning ? "ONLINE" : "OFFLINE",
                 dot: gateway.isRunning ? DS.ok : DS.text4,
                 live: gateway.isRunning)
         } content: {
             VStack(alignment: .leading, spacing: 0) {
-                VStack(spacing: 0) {
-                    endpointRow(name: "OpenAI", url: state.gatewayURL)
-                    DSDivider()
-                    endpointRow(name: "Claude", url: state.gatewayClaudeURL)
-                }
-                .padding(.horizontal, 14)
+                endpointRow(name: "OpenAI", url: state.gatewayURL)
+                DSDivider()
+                endpointRow(name: "Claude", url: state.gatewayClaudeURL)
 
                 if let failure = gateway.failureMessage, !gateway.isRunning {
                     Text(failure)
-                        .font(DS.Font.xs)
+                        .font(DS.Font.prose(11.5))
                         .foregroundStyle(DS.warn)
-                        .padding(.horizontal, 14)
-                        .padding(.bottom, 8)
+                        .padding(.top, 6)
                 }
             }
         }
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    private var runtimeCard: some View {
-        DSPanel(title: "运行时", subtitle: state.activeEngine.displayName) {
+    private var runtimeSection: some View {
+        overviewSection(title: "运行时", subtitle: state.activeEngine.displayName) {
             DSChip(
                 text: state.isRunning ? "运行中" : "已停止",
                 dot: state.canChat ? DS.ok : (state.isModelBusy ? DS.warn : DS.text4),
@@ -525,8 +521,31 @@ struct OverviewPage: View {
                 DSDivider()
                 telemetryRow(label: "温度", value: stats?.thermalText ?? "—")
             }
-            .padding(.horizontal, 14)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func overviewSection<Accessory: View, Content: View>(
+        title: String,
+        subtitle: String? = nil,
+        @ViewBuilder accessory: () -> Accessory,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: DS.Space.sm) {
+                Text(L10n.t(title))
+                    .font(DS.Font.prose(13.5, weight: .medium))
+                    .foregroundStyle(DS.text)
+                if let subtitle {
+                    Text(L10n.t(subtitle))
+                        .font(DS.Font.prose(12))
+                        .foregroundStyle(DS.text3)
+                }
+                Spacer(minLength: DS.Space.sm)
+                accessory()
+            }
+            content()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 
@@ -543,12 +562,12 @@ struct OverviewPage: View {
     private func endpointRow(name: String, url: String) -> some View {
         HStack(spacing: 8) {
             Text(name)
-                .font(DS.Font.sm.weight(.medium))
+                .font(DS.Font.prose(12.5, weight: .medium))
                 .foregroundStyle(DS.text)
                 .frame(width: 52, alignment: .leading)
 
             Text(verbatim: url)
-                .font(DS.Font.mono(11))
+                .font(DS.Font.proseNumber(11.5))
                 .foregroundStyle(DS.text2)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -559,21 +578,21 @@ struct OverviewPage: View {
                 state.copy(url, label: "\(name) 接口地址已复制")
             }
         }
-        .padding(.vertical, 7)
+        .padding(.vertical, 6)
     }
 
     private func telemetryRow(label: String, value: String) -> some View {
         HStack {
             Text(L10n.t(label))
-                .font(DS.Font.sm)
+                .font(DS.Font.prose(12.5))
                 .foregroundStyle(DS.text3)
             Spacer(minLength: 8)
             Text(verbatim: value)
-                .font(DS.Font.mono(11))
+                .font(DS.Font.proseNumber(12))
                 .foregroundStyle(value == "—" ? DS.text4 : DS.text2)
                 .lineLimit(1)
         }
-        .frame(minHeight: 30, maxHeight: .infinity)
+        .frame(minHeight: 28, maxHeight: .infinity)
     }
 
     // MARK: Recent Requests
@@ -581,11 +600,11 @@ struct OverviewPage: View {
     private var recentRequests: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             let sessions = Array(GatewayMeter.shared.snapshot(limit: 6).reversed())
-            DSPanel(title: "最近请求") {
+            overviewSection(title: "最近请求") {
                 HStack(spacing: 8) {
                     DSSourceBadge(text: L10n.t("按请求"))
                     Text("\(sessions.count) 条")
-                        .font(DS.Font.mono(11))
+                        .font(DS.Font.proseNumber(11.5))
                         .foregroundStyle(DS.text3)
                 }
             } content: {
@@ -596,10 +615,10 @@ struct OverviewPage: View {
                             .font(.system(size: 15, weight: .regular))
                             .foregroundStyle(DS.text4)
                         Text(L10n.t("暂无请求"))
-                            .font(DS.Font.sm)
+                            .font(DS.Font.prose(13))
                             .foregroundStyle(DS.text2)
                         Text(verbatim: "127.0.0.1:\(state.settings.gatewayPort)")
-                            .font(DS.Font.mono(11))
+                            .font(DS.Font.proseNumber(11.5))
                             .foregroundStyle(DS.text3)
                         Spacer(minLength: 16)
                     }
@@ -620,11 +639,10 @@ struct OverviewPage: View {
                             Text(L10n.t("上下文"))
                                 .frame(width: 76, alignment: .trailing)
                         }
-                        .font(DS.Font.xs.weight(.medium))
+                        .font(DS.Font.prose(11.5, weight: .medium))
                         .foregroundStyle(DS.text3)
-                        .padding(.horizontal, 14)
-                        .frame(height: 30)
-                        .background(DS.bg.opacity(0.6))
+                        .padding(.horizontal, 8)
+                        .frame(height: 28)
 
                         DSDivider()
 
@@ -653,45 +671,44 @@ struct OverviewPage: View {
             HStack(spacing: 6) {
                 DSStatusDot(color: sessionColor(session.state), live: live, size: 6)
                 Text(L10n.t(stateLabel(session.state)))
-                    .font(DS.Font.xs.weight(.medium))
+                    .font(DS.Font.prose(12, weight: .medium))
                     .foregroundStyle(live ? DS.text : DS.text2)
             }
             .frame(width: 68, alignment: .leading)
 
             Text(verbatim: session.dialect.isEmpty ? "API" : session.dialect)
-                .font(DS.Font.mono(10))
+                .font(DS.Font.prose(10.5, weight: .medium))
                 .foregroundStyle(DS.text2)
-                .padding(.horizontal, 5)
-                .frame(height: 18)
-                .background(DS.rect(4).fill(DS.bg))
-                .overlay(DS.rect(4).strokeBorder(DS.line, lineWidth: 1))
+                .padding(.horizontal, 6)
+                .frame(height: 19)
+                .background(DS.rect(4).fill(DS.hover))
                 .frame(width: 72, alignment: .leading)
 
             Text(state.shortModelName(session.model.isEmpty ? "未命名" : session.model))
-                .font(DS.Font.sm)
+                .font(DS.Font.prose(12.5))
                 .foregroundStyle(DS.text)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Text(verbatim: ttftText)
-                .font(DS.Font.mono(11))
+                .font(DS.Font.proseNumber(11.5))
                 .foregroundStyle(DS.text2)
                 .frame(width: 72, alignment: .trailing)
 
             Text(verbatim: decodeText)
-                .font(DS.Font.mono(11))
+                .font(DS.Font.proseNumber(11.5))
                 .foregroundStyle(decode > 0 ? DS.text : DS.text3)
                 .frame(width: 92, alignment: .trailing)
 
             Text(Format.tokens(session.ctxTokens))
-                .font(DS.Font.mono(11))
+                .font(DS.Font.proseNumber(11.5))
                 .foregroundStyle(DS.text3)
                 .frame(width: 76, alignment: .trailing)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 8)
         .frame(height: 36)
-        .background(hovered ? DS.hover : .clear)
+        .background(hovered ? DS.hover : .clear, in: DS.rect(DS.Radius.sm))
         .contentShape(Rectangle())
         .onHover { inside in
             withAnimation(DS.Motion.snappy) {

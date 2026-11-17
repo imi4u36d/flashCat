@@ -80,7 +80,7 @@ final class BackgroundSettings: ObservableObject {
             image = nil
         }
         let storedOpacity = defaults.object(forKey: Keys.opacity) as? Double
-        opacity = min(max(storedOpacity ?? 0.35, 0), 1)
+        opacity = min(max(storedOpacity ?? 0, 0), 1)
         let storedBlur = defaults.object(forKey: Keys.blur) as? Double
         blur = min(max(storedBlur ?? 18, 0), 40)
     }

@@ -91,6 +91,16 @@
         }
       }
     },
+    "%@ · ≈%lld GB 内存": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · ≈%lld GB memory"
+          }
+        }
+      }
+    },
     "%@ · 端口 %@": {
       "localizations": {
         "en": {
@@ -501,12 +511,42 @@
         }
       }
     },
+    "Hugging Face token 已保存": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face token saved"
+          }
+        }
+      }
+    },
+    "Hugging Face token，仅私有仓库需要": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face token; only needed for private repositories"
+          }
+        }
+      }
+    },
     "Hugging Face 端点": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Hugging Face Endpoint"
+          }
+        }
+      }
+    },
+    "Hugging Face 端点，如 hf-mirror.com；留空用官方": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face endpoint, e.g. hf-mirror.com; leave empty for the official one"
           }
         }
       }
@@ -731,12 +771,12 @@
         }
       }
     },
-    "一份权重供引擎共用，默认授权给 %@": {
+    "一份权重供所有引擎共用，推荐用 %@ 运行": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "One copy of the weights shared across engines; enabled for %@ by default"
+            "value": "One copy of the weights shared across all engines; recommended for %@"
           }
         }
       }
@@ -1151,6 +1191,16 @@
         }
       }
     },
+    "全部量化": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All Quantizations"
+          }
+        }
+      }
+    },
     "公共目录里已有这份权重，可直接在模型页使用": {
       "localizations": {
         "en": {
@@ -1187,6 +1237,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Shared with %@"
+          }
+        }
+      }
+    },
+    "共享给全部引擎": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shared with all engines"
           }
         }
       }
@@ -1687,6 +1747,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "%lld more files"
+          }
+        }
+      }
+    },
+    "只下 %@，其余量化不占盘": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloads only %@; other quantizations take no disk space"
           }
         }
       }
@@ -2501,6 +2571,16 @@
         }
       }
     },
+    "已改用 Hugging Face 官方端点": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Using the official Hugging Face endpoint again"
+          }
+        }
+      }
+    },
     "已暂停": {
       "localizations": {
         "en": {
@@ -2531,6 +2611,16 @@
         }
       }
     },
+    "已清除 Hugging Face token": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face token cleared"
+          }
+        }
+      }
+    },
     "已等待 %@": {
       "localizations": {
         "en": {
@@ -2541,12 +2631,12 @@
         }
       }
     },
-    "帮我写一个 SwiftUI 玻璃材质卡片组件，带悬停微动效": {
+    "帮我写一个 SwiftUI 面板卡片组件，带悬停微动效": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Build a SwiftUI Liquid Glass card component with subtle hover motion"
+            "value": "Build a SwiftUI panel card component with subtle hover motion"
           }
         }
       }
@@ -3191,12 +3281,22 @@
         }
       }
     },
-    "搜 Hugging Face 上的权重，下载到公共目录，再决定哪个引擎看得见": {
+    "搜 Hugging Face 上的权重，下载到公共目录，所有引擎共用一份": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Search weights on Hugging Face, download to a shared folder, then choose which engines can see them"
+            "value": "Search weights on Hugging Face, download them to the shared folder — one copy for all engines"
+          }
+        }
+      }
+    },
+    "搜 ModelScope 上的权重，下载到公共目录，所有引擎共用一份": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search weights on ModelScope, download them to the shared folder — one copy for all engines"
           }
         }
       }
@@ -3207,6 +3307,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Search a model repository"
+          }
+        }
+      }
+    },
+    "搜不到 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing found on %@"
           }
         }
       }
@@ -3431,12 +3541,12 @@
         }
       }
     },
-    "显示 / 隐藏玻璃导航列": {
+    "显示 / 隐藏导航边栏": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Show / hide the glass navigation column"
+            "value": "Show / hide the navigation sidebar"
           }
         }
       }
@@ -3991,12 +4101,42 @@
         }
       }
     },
+    "模型广场从哪个仓库搜索与下载": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Where the model hub searches and downloads from"
+          }
+        }
+      }
+    },
+    "模型广场改用 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model hub switched to %@"
+          }
+        }
+      }
+    },
     "模型库、模型广场与下载": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Model library, hub and downloads"
+          }
+        }
+      }
+    },
+    "模型来源": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model Source"
           }
         }
       }
@@ -4127,6 +4267,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Light"
+          }
+        }
+      }
+    },
+    "浏览与下载将走 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Browsing and downloads will use %@"
           }
         }
       }
@@ -4361,6 +4511,16 @@
         }
       }
     },
+    "直接填 %@ 的 owner/repo 下载": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Or enter an %@ owner/repo directly to download"
+          }
+        }
+      }
+    },
     "直接填 owner/repo 下载": {
       "localizations": {
         "en": {
@@ -4571,6 +4731,16 @@
         }
       }
     },
+    "综合": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Relevance"
+          }
+        }
+      }
+    },
     "缓存命中率": {
       "localizations": {
         "en": {
@@ -4727,6 +4897,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Settings"
+          }
+        }
+      }
+    },
+    "访问令牌": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Access Token"
           }
         }
       }
@@ -5091,6 +5271,26 @@
         }
       }
     },
+    "镜像地址": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mirror URL"
+          }
+        }
+      }
+    },
+    "镜像地址要写成 host 或 http(s)://host": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use a host or an http(s)://host mirror URL"
+          }
+        }
+      }
+    },
     "长提示词处理速度": {
       "localizations": {
         "en": {
@@ -5297,6 +5497,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Advanced"
+          }
+        }
+      }
+    },
+    "默认": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Default"
           }
         }
       }

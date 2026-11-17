@@ -134,12 +134,17 @@ enum ModelInstaller {
             incompleteMarker: nil)
     }
 
-    /// 任取一个 Hub 仓库下到公共目录。下载器仍是引擎包里那个
-    /// `huggingface_hub`，跟落盘位置无关：哪个 pack 装了就用哪个，都没有才
-    /// 报错。
+    /// 任取一个 Hub 仓库下到公共目录。下载器仍是引擎包里那个 Python：HF 走
+    /// `huggingface_hub`，ModelScope 走标准库脚本；哪个 pack 装了 Python 就用
+    /// 哪个，都没有才报错。
+    ///
+    /// `include` 是 GGUF 量化选项挑出来的文件清单（含 mmproj），只对
+    /// Python 下载器生效；MLX-Serve 的原生 puller 只会整仓下载。
     static func sharedPlan(
         repo: String, engines: [EngineID],
-        cache: String
+        cache: String,
+        source: HubSource = .huggingFace,
+        include: [String] = []
     ) throws -> Plan {
         var candidates = engines
         candidates += EngineCatalog.allIDs
@@ -161,6 +166,9 @@ enum ModelInstaller {
             engines.contains(.mlxServe) || seen.contains(.mlxServe),
             let installation = EngineInstallations.newest(.mlxServe, version: nil)
         {
+            guard source == .huggingFace, include.isEmpty else {
+                throw Failure.message("MLX-Serve 的原生下载器只能整仓下载 Hugging Face 仓库，选量化需要先装一个带 Python 的引擎包")
+            }
             return try mlxServeSharedPlan(
                 repo: repo,
                 installation: installation,
@@ -169,12 +177,21 @@ enum ModelInstaller {
         guard let python, let root else {
             throw Failure.message("公共下载需要已安装的 MLX-Serve，或任意一个带 Python 的引擎包：Splash、oMLX、MTPLX、Strata")
         }
-        let script = try scriptPath()
         let name = repo.split(separator: ":", maxSplits: 1).first.map(String.init) ?? repo
         let destination = sharedDestination(repo: name)
+        let script: String
+        switch source {
+        case .huggingFace: script = try scriptPath()
+        case .modelScope: script = try modelScopeScriptPath()
+        }
         var arguments = [script, name, destination]
-        let trimmed = cache.trimmingCharacters(in: .whitespaces)
-        if !trimmed.isEmpty { arguments += ["--cache", trimmed] }
+        if source == .huggingFace {
+            let trimmed = cache.trimmingCharacters(in: .whitespaces)
+            if !trimmed.isEmpty { arguments += ["--cache", trimmed] }
+        }
+        for pattern in include {
+            arguments += ["--include", pattern]
+        }
         return Plan(
             engine: engines.first ?? .omlx,
             model: name,
@@ -368,7 +385,7 @@ enum ModelInstaller {
             }
         }
         // 镜像端点同样是「设置里改了，下载器也得知道」的那一类。
-        let endpoint = UserDefaults.standard.string(forKey: "hfEndpoint")?.trimmingCharacters(in: .whitespaces) ?? ""
+        let endpoint = HFEndpoint.normalized(UserDefaults.standard.string(forKey: "hfEndpoint") ?? "") ?? ""
         if !endpoint.isEmpty { environment["HF_ENDPOINT"] = endpoint }
         return environment
     }
@@ -406,17 +423,25 @@ enum ModelInstaller {
     // MARK: Downloader script
 
     static var scriptPathValue: String { Paths.supportDirectory + "/scripts/hf_snapshot.py" }
+    static var modelScopeScriptPathValue: String { Paths.supportDirectory + "/scripts/ms_snapshot.py" }
 
     /// Write the snapshot downloader next to the support files, rewriting it
     /// only when its text changed so an update lands without touching mtimes
     /// on every download.
     static func scriptPath() throws -> String {
-        let path = scriptPathValue
+        try writeScript(script, to: scriptPathValue)
+    }
+
+    static func modelScopeScriptPath() throws -> String {
+        try writeScript(modelScopeScript, to: modelScopeScriptPathValue)
+    }
+
+    private static func writeScript(_ text: String, to path: String) throws -> String {
         let folder = (path as NSString).deletingLastPathComponent
         Paths.ensureDirectory(folder)
-        if (try? String(contentsOfFile: path, encoding: .utf8)) != script {
+        if (try? String(contentsOfFile: path, encoding: .utf8)) != text {
             do {
-                try script.write(toFile: path, atomically: true, encoding: .utf8)
+                try text.write(toFile: path, atomically: true, encoding: .utf8)
             } catch {
                 throw Failure.message("无法写入下载脚本：\(error.localizedDescription)")
             }
@@ -436,10 +461,11 @@ enum ModelInstaller {
         cache. `TOTAL <bytes>` is printed before the transfer so the app can show a
         percentage from the folder size, and the resolved path comes last.
 
-        usage: hf_snapshot.py <owner/repo> <destination> [--cache DIR] [--revision REV]
+        usage: hf_snapshot.py <owner/repo> <destination> [--cache DIR] [--revision REV] [--include PATTERN ...]
         \"\"\"
 
         import argparse
+        import fnmatch
         import os
         import sys
 
@@ -450,6 +476,7 @@ enum ModelInstaller {
             parser.add_argument("destination")
             parser.add_argument("--cache", default=None)
             parser.add_argument("--revision", default=None)
+            parser.add_argument("--include", action="append", default=[])
             args = parser.parse_args()
 
             from huggingface_hub import HfApi, snapshot_download
@@ -458,7 +485,13 @@ enum ModelInstaller {
             total = 0
             try:
                 info = HfApi().model_info(args.repo, revision=args.revision, files_metadata=True)
-                total = sum(size.size or 0 for size in (info.siblings or []))
+                files = info.siblings or []
+                if args.include:
+                    files = [
+                        item for item in files
+                        if any(fnmatch.fnmatch(item.rfilename, pattern) for pattern in args.include)
+                    ]
+                total = sum(size.size or 0 for size in files)
             except Exception as error:  # size is a nicety, never a reason to stop
                 print(f"Warning: 无法读取仓库大小：{error}", file=sys.stderr, flush=True)
             print(f"TOTAL {total}", flush=True)
@@ -469,9 +502,160 @@ enum ModelInstaller {
                 revision=args.revision,
                 local_dir=args.destination,
                 cache_dir=cached,
+                allow_patterns=args.include or None,
                 max_workers=8,
             )
             print(f"DONE {path}", flush=True)
+            return 0
+
+
+        if __name__ == "__main__":
+            sys.exit(main())
+
+        """
+
+    /// ModelScope 没有 huggingface_hub 那套快照器，但它的文件清单和
+    /// `resolve` 地址已经够用：标准库列文件、Range 续传、`.part` 落盘，
+    /// 进度仍交给 DownloadCenter 看文件夹大小。`--include` 接的是仓库里的
+    /// 完整路径（量化选择传选中的分片 + mmproj）。
+    static let modelScopeScript = """
+        #!/usr/bin/env python3
+        # Download one ModelScope repository into a folder with the standard library.
+        #
+        # flashCat runs this with the Python inside an engine pack. `TOTAL <bytes>` is
+        # printed before the transfer so the app can show a percentage, and `DONE` last.
+        # `--include` takes exact repository paths (the GGUF quant picker sends the
+        # chosen shard files plus mmproj), and partial `.part` files resume by Range.
+
+        import argparse
+        import fnmatch
+        import json
+        import os
+        import sys
+        import urllib.error
+        import urllib.parse
+        import urllib.request
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        ENDPOINT = "https://www.modelscope.cn"
+
+
+        def quote(value):
+            return urllib.parse.quote(value, safe="/")
+
+
+        def read_json(url):
+            request = urllib.request.Request(url, headers={"User-Agent": "flashCat/1.0"})
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return json.load(response)
+
+
+        def list_files(repo, revision):
+            last = None
+            for candidate in [revision, "main"]:
+                url = (
+                    ENDPOINT + "/api/v1/models/" + quote(repo) + "/repo/files?Revision="
+                    + urllib.parse.quote(candidate) + "&Recursive=true"
+                )
+                try:
+                    payload = read_json(url)
+                except urllib.error.HTTPError as error:
+                    if error.code != 404:
+                        raise
+                    last = error
+                    continue
+                files = (payload.get("Data") or {}).get("Files") or []
+                return [item for item in files if (item.get("Type") or "blob") == "blob"], candidate
+            raise last
+
+
+        def download(item, destination, repo, revision):
+            path = item.get("Path") or ""
+            if not path:
+                return
+            size = int(item.get("Size") or 0)
+            target = os.path.join(destination, path)
+            parent = os.path.dirname(target)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            if os.path.exists(target) and (size == 0 or os.path.getsize(target) == size):
+                return
+            part = target + ".part"
+            offset = os.path.getsize(part) if os.path.exists(part) else 0
+            if size and offset == size:
+                os.replace(part, target)
+                return
+            if not size:
+                offset = 0
+            elif offset > size:
+                os.remove(part)
+                offset = 0
+            url = (
+                ENDPOINT + "/models/" + quote(repo) + "/resolve/" + urllib.parse.quote(revision)
+                + "/" + quote(path)
+            )
+            request = urllib.request.Request(url, headers={"User-Agent": "flashCat/1.0"})
+            if offset:
+                request.add_header("Range", "bytes=%d-" % offset)
+            with urllib.request.urlopen(request, timeout=120) as response:
+                status = getattr(response, "status", 200)
+                mode = "ab" if status == 206 else "wb"
+                with open(part, mode) as output:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        output.write(chunk)
+            if size and os.path.getsize(part) != size:
+                raise RuntimeError("size mismatch: %s" % path)
+            os.replace(part, target)
+
+
+        def main():
+            parser = argparse.ArgumentParser()
+            parser.add_argument("repo")
+            parser.add_argument("destination")
+            parser.add_argument("--revision", default="master")
+            parser.add_argument("--include", action="append", default=[])
+            args = parser.parse_args()
+
+            repo = args.repo.strip().strip("/")
+            if repo.count("/") != 1:
+                print("ERROR 仓库 id 要写成 owner/repo", file=sys.stderr, flush=True)
+                return 2
+            os.makedirs(args.destination, exist_ok=True)
+            try:
+                files, revision = list_files(repo, args.revision)
+            except Exception as error:
+                print("ERROR 无法读取 ModelScope 文件清单：%s" % error, file=sys.stderr, flush=True)
+                return 1
+            if args.include:
+                files = [
+                    item for item in files
+                    if any(fnmatch.fnmatch(item.get("Path") or "", pattern) for pattern in args.include)
+                ]
+            total = sum(int(item.get("Size") or 0) for item in files)
+            print("TOTAL %d" % total, flush=True)
+            if not files:
+                print("ERROR 没有匹配到要下载的文件", file=sys.stderr, flush=True)
+                return 1
+
+            errors = []
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                futures = [
+                    pool.submit(download, item, args.destination, repo, revision)
+                    for item in files
+                ]
+                for future in as_completed(futures):
+                    try:
+                        future.result()
+                    except Exception as error:
+                        errors.append(str(error))
+            if errors:
+                for message in errors:
+                    print("ERROR %s" % message, file=sys.stderr, flush=True)
+                return 1
+            print("DONE %s" % args.destination, flush=True)
             return 0
 
 

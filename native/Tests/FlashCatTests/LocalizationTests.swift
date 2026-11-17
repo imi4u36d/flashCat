@@ -158,8 +158,8 @@ final class LocalizationTests: XCTestCase {
             english.localizedString(forKey: "点击一行运行命令", value: nil, table: nil),
             "Click a row to run the command")
         XCTAssertEqual(
-            english.localizedString(forKey: "显示 / 隐藏玻璃导航列", value: nil, table: nil),
-            "Show / hide the glass navigation column")
+            english.localizedString(forKey: "显示 / 隐藏导航边栏", value: nil, table: nil),
+            "Show / hide the navigation sidebar")
     }
 
     /// 每个中文词条都得有英文译文：漏一条，英文界面就会露出中文源文案。

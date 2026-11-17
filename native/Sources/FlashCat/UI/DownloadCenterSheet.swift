@@ -108,7 +108,7 @@ struct DownloadCenterSheet: View {
                         .truncationMode(.middle)
                     Tag(text: statusLabel(task), tone: statusTone(task))
                     if let shared = task.shared, !shared.isEmpty {
-                        Tag(text: "共享给 \(shared.map(\.displayName).joined(separator: "/"))", tone: .neutral)
+                        Tag(text: sharedTag(shared), tone: .neutral)
                     }
                 }
                 Text(detailText(task))
@@ -148,6 +148,15 @@ struct DownloadCenterSheet: View {
         }
     }
 
+    /// 授权给全部引擎时不再逐个列名字：五行文本会把这一行挤爆，而「全部」
+    /// 本身就是下载页给出的默认。
+    private func sharedTag(_ engines: [EngineID]) -> String {
+        guard Set(engines) != Set(EngineCatalog.allIDs) else {
+            return L10n.t("共享给全部引擎")
+        }
+        return L10n.format("共享给 %@", engines.map(\.displayName).joined(separator: "/"))
+    }
+
     private func detailText(_ task: ModelDownloadTask) -> String {
         var parts = [task.engine.displayName]
         if task.downloadedBytes > 0 { parts.append(L10n.format("已下载 %@", Format.size(task.downloadedBytes))) }
@@ -161,16 +170,14 @@ struct DownloadCenterSheet: View {
                 .font(DS.Font.xs)
                 .foregroundStyle(DS.text3)
             Spacer(minLength: 0)
-            GlassEffectContainer(spacing: 8) {
-                HStack(spacing: 8) {
-                    Button("打开模型总目录") {
-                        Paths.ensureDirectory(EnginePaths.modelsRoot)
-                        NSWorkspace.shared.open(URL(fileURLWithPath: EnginePaths.modelsRoot))
-                    }
-                    .buttonStyle(.ds(.secondary, size: .regular))
-                    Button("完成") { dismiss() }
-                        .buttonStyle(.ds(.primary, size: .regular))
+            HStack(spacing: 8) {
+                Button("打开模型总目录") {
+                    Paths.ensureDirectory(EnginePaths.modelsRoot)
+                    NSWorkspace.shared.open(URL(fileURLWithPath: EnginePaths.modelsRoot))
                 }
+                .buttonStyle(.ds(.secondary, size: .regular))
+                Button("完成") { dismiss() }
+                    .buttonStyle(.ds(.primary, size: .regular))
             }
         }
         .padding(.horizontal, 18)

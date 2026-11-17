@@ -75,4 +75,48 @@ final class NativeUITests: XCTestCase {
         XCTAssertTrue(LogsFilter.warning.matches(.warning))
         XCTAssertFalse(LogsFilter.error.matches(.info))
     }
+
+    func testNoLiquidGlassRemainsInAppSources() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // Tests/FlashCatTests/
+            .deletingLastPathComponent()  // Tests/
+            .deletingLastPathComponent()  // native/
+            .appendingPathComponent("Sources/FlashCat")
+        let enumerator = try XCTUnwrap(
+            FileManager.default.enumerator(
+                at: root,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]))
+        let files: [URL] = enumerator.compactMap { item in
+            guard let url = item as? URL, url.pathExtension == "swift" else { return nil }
+            return url
+        }
+        XCTAssertGreaterThan(files.count, 30, "源码目录扫描异常")
+
+        let banned = [
+            #"\.glassEffect\("#,
+            #"GlassEffectContainer"#,
+            #"\.buttonStyle\(\s*\.glass"#,
+            #"\.scrollEdgeEffectStyle"#,
+            #"\.regularMaterial"#,
+            #"\.ultraThinMaterial"#,
+            #"\.thinMaterial"#,
+            #"\.thickMaterial"#,
+            #"LiquidGlass"#,
+        ]
+        var offenders: [String] = []
+        for file in files {
+            let source = try String(contentsOf: file, encoding: .utf8)
+            let range = NSRange(source.startIndex..., in: source)
+            for pattern in banned {
+                let expression = try NSRegularExpression(pattern: pattern)
+                if expression.firstMatch(in: source, range: range) != nil {
+                    offenders.append(file.lastPathComponent + " ← " + pattern)
+                }
+            }
+        }
+        XCTAssertTrue(
+            offenders.isEmpty,
+            "系统内不应再使用 Liquid Glass / 材质模糊：\(offenders.joined(separator: " | "))")
+    }
 }

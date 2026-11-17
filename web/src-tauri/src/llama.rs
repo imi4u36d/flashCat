@@ -54,7 +54,8 @@ fn threads() -> i32 {
 }
 
 pub struct LlamaChatBackend {
-    dir: PathBuf,
+    /// 多个根目录：第一个是 App 自己的（下载写这里），其余是旧版本的存量库，只读扫描。
+    roots: Vec<PathBuf>,
     backend: Arc<LlamaBackend>,
     /// 只缓存「当前这一个」模型：换模型时旧的 Arc 自然释放，不需要淘汰策略。
     /// `Arc<Mutex<…>>` 是为了让生成线程能独立持有它，不必回借 `self`。
@@ -72,10 +73,10 @@ struct Loaded {
 impl LlamaChatBackend {
     /// `dir` 是权重目录；`None` 表示 llama.cpp 初始化失败（例如没编进 Metal），
     /// 这时返回 `Err`，由 `Engine` 决定回落到 mock 还是直接报错。
-    pub fn new(dir: PathBuf) -> Result<Self, String> {
+    pub fn new(roots: Vec<PathBuf>) -> Result<Self, String> {
         let backend = LlamaBackend::init().map_err(|e| format!("llama.cpp 初始化失败：{e}"))?;
         Ok(Self {
-            dir,
+            roots,
             backend: Arc::new(backend),
             loaded: Arc::new(Mutex::new(None)),
             active: Arc::new(Mutex::new(None)),
@@ -83,34 +84,30 @@ impl LlamaChatBackend {
     }
 
     fn scan(&self) -> Vec<ModelCard> {
-        let Ok(entries) = std::fs::read_dir(&self.dir) else {
-            return Vec::new();
-        };
-        let mut cards: Vec<ModelCard> = entries
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("gguf")))
-            .filter_map(|p| card_for(&p))
-            .collect();
+        let mut cards: Vec<ModelCard> = Vec::new();
+        for root in &self.roots {
+            for path in walk_gguf(root, 0) {
+                if let Some(mut card) = card_for(&path) {
+                    // 同一个文件在多个根目录里不会重复（不同目录算不同副本），
+                    // 但同名会撞 id —— 后来的加后缀，免得列表里两行都点不动。
+                    if cards.iter().any(|c| c.id == card.id) {
+                        card.id = format!("{}-{}", card.id, cards.len());
+                    }
+                    card.source = path
+                        .parent()
+                        .map(|p| shorten_path(p))
+                        .unwrap_or_default();
+                    cards.push(card);
+                }
+            }
+        }
         cards.sort_by(|a, b| a.name.cmp(&b.name));
         cards
     }
 
     fn pick(&self, model_id: Option<&str>) -> Option<PathBuf> {
-        let cards = self.scan();
         let want = model_id?;
-        cards
-            .iter()
-            .find(|c| c.id == want)
-            .and_then(|c| {
-                self.dir
-                    .read_dir()
-                    .ok()?
-                    .filter_map(|e| e.ok())
-                    .map(|e| e.path())
-                    .find(|p| p.file_stem().and_then(|s| s.to_str()) == Some(c.id.as_str()))
-            })
-            .or_else(|| self.default_model())
+        self.path_of(want).or_else(|| self.default_model())
     }
 
     fn default_model(&self) -> Option<PathBuf> {
@@ -125,14 +122,16 @@ impl LlamaChatBackend {
     }
 
     fn path_of(&self, id: &str) -> Option<PathBuf> {
-        self.dir
-            .read_dir()
-            .ok()?
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
+        let cards = self.scan();
+        let card = cards.iter().find(|c| c.id == id)?;
+        // 用扫描结果反查文件：id 可能被加过后缀，靠 file_stem 拼回去会错。
+        self.roots
+            .iter()
+            .flat_map(|root| walk_gguf(root, 0))
             .find(|p| {
-                p.extension().is_some_and(|x| x.eq_ignore_ascii_case("gguf"))
-                    && p.file_stem().and_then(|s| s.to_str()) == Some(id)
+                p.file_stem().and_then(|s| s.to_str()) == Some(id)
+                    || card.source == p.parent().map(shorten_path).unwrap_or_default()
+                        && card.name == display_name(p)
             })
     }
 
@@ -188,6 +187,49 @@ fn gpu_layers() -> u32 {
 
 /// 从文件名推断元信息。GGUF 头里有更准的 `general.name` / 量化类型，
 /// 但那要在加载后读；列表页不该为了排序去开 400MB 的文件，所以先用文件名。
+
+/// 递归找 `.gguf`，最多三层（`flashCat/models/<引擎>/<模型>/x.gguf` 这种布局）。
+fn walk_gguf(dir: &Path, depth: usize) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return found;
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.is_dir() {
+            if depth < 3 {
+                found.extend(walk_gguf(&path, depth + 1));
+            }
+            continue;
+        }
+        if path.extension().is_some_and(|x| x.eq_ignore_ascii_case("gguf")) {
+            found.push(path);
+        }
+    }
+    found
+}
+
+/// 列表里显示目录用：把家目录换成 `~`，太长的保留尾部。
+fn shorten_path(path: &Path) -> String {
+    let text = path.display().to_string();
+    let text = match std::env::var("HOME") {
+        Ok(home) if text.starts_with(&home) => format!("~{}", &text[home.len()..]),
+        _ => text,
+    };
+    if text.chars().count() <= 72 {
+        return text;
+    }
+    let tail: String = text.chars().rev().take(68).collect::<String>().chars().rev().collect();
+    format!("…{tail}")
+}
+
+fn display_name(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("model")
+        .to_string()
+}
+
 fn card_for(path: &Path) -> Option<ModelCard> {
     let stem = path.file_stem()?.to_str()?.to_string();
     let size = std::fs::metadata(path).ok().map(|m| m.len()).unwrap_or(0);
@@ -226,6 +268,7 @@ fn card_for(path: &Path) -> Option<ModelCard> {
         tags: vec!["chat".into()],
         platforms: vec!["macos", "windows", "linux", "ios", "android"],
         installed: true,
+        source: String::new(),
         note: None,
     })
 }
@@ -375,6 +418,41 @@ impl Backend for LlamaChatBackend {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// 提示词能占多少 token：窗口减去本轮要生成的，再留 64 给模板里的收尾标记。
+fn budget_for(context: u32, max_tokens: usize) -> usize {
+    (context as usize).saturating_sub(max_tokens).saturating_sub(64)
+}
+
+fn render_prompt(model: &LlamaModel, messages: &[(String, String)]) -> String {
+    let mut chat = Vec::with_capacity(messages.len());
+    for (role, content) in messages {
+        match LlamaChatMessage::new(role.clone(), content.clone()) {
+            Ok(m) => chat.push(m),
+            // 内容里有 NUL 就走兜底，不让整轮推理失败
+            Err(_) => return plain_prompt(messages),
+        }
+    }
+    match model.chat_template(None) {
+        Ok(tmpl) => model
+            .apply_chat_template(&tmpl, &chat, true)
+            .unwrap_or_else(|_| plain_prompt(messages)),
+        Err(_) => plain_prompt(messages),
+    }
+}
+
+/// 没有 chat template 的兜底排版，至少保持「角色: 内容」的顺序。
+fn plain_prompt(messages: &[(String, String)]) -> String {
+    let mut out = String::new();
+    for (role, content) in messages {
+        out.push_str(role);
+        out.push_str(": ");
+        out.push_str(content);
+        out.push('\n');
+    }
+    out.push_str("Assistant:");
+    out
+}
+
 fn decode_into(
     backend: &LlamaBackend,
     loaded: &Loaded,
@@ -398,20 +476,45 @@ fn decode_into(
 
     // 有 chat template 就用模型自己的（Qwen3 的模板里带 thinking 开关），
     // 没有就退化成最朴素的一问一答，至少不会整条命令失败。
-    let mut messages: Vec<LlamaChatMessage> = Vec::new();
-    for m in &req.history {
-        messages.push(LlamaChatMessage::new(m.role.clone(), m.content.clone()).map_err(|e| e.to_string())?);
-    }
-    messages.push(LlamaChatMessage::new("user".into(), req.message.clone()).map_err(|e| e.to_string())?);
+    let mut messages: Vec<(String, String)> = req
+        .history
+        .iter()
+        .map(|m| (m.role.clone(), m.content.clone()))
+        .collect();
+    messages.push(("user".to_string(), req.message.clone()));
 
-    let prompt = match model.chat_template(None) {
-        Ok(tmpl) => model
-            .apply_chat_template(&tmpl, &messages, true)
-            .map_err(|e| format!("套用 chat template 失败：{e}"))?,
-        Err(_) => format!("User: {}\nAssistant:", req.message),
+    // 上下文窗口是固定的，历史却一直在长。装不下时如果照旧送进去，
+    // llama.cpp 不会报错，而是从尾部截断 —— 那截掉的正好是本轮用户消息。
+    // 所以先按预算裁历史，从最旧的一轮开始丢。
+    let default_max = if IS_MOBILE { 192 } else { 512 };
+    let max_tokens = req.max_tokens.unwrap_or(default_max).min(4096) as usize;
+    let budget = budget_for(context_window(), max_tokens);
+
+    let mut dropped = 0usize;
+    let tokens = loop {
+        let prompt = render_prompt(model, &messages);
+        let tokens = model.vocab().tokenize(prompt.as_bytes(), true, true);
+        if tokens.len() <= budget || messages.len() <= 1 {
+            break tokens;
+        }
+        let victim = messages
+            .iter()
+            .position(|(role, _)| role != "system")
+            .unwrap_or(0);
+        messages.remove(victim);
+        dropped += 1;
     };
+    if dropped > 0 {
+        crate::logfile::line(
+            "INFO",
+            &format!(
+                "prompt trimmed dropped={dropped} kept={} tokens={} budget={budget}",
+                messages.len(),
+                tokens.len()
+            ),
+        );
+    }
 
-    let tokens = model.vocab().tokenize(prompt.as_bytes(), true, true);
     if tokens.is_empty() {
         return Err("提示词编码为空".into());
     }
@@ -431,10 +534,6 @@ fn decode_into(
     }
 
     let temperature = req.temperature.unwrap_or(0.7).clamp(0.0, 2.0);
-    // 手机上 1 tok ≈ 0.1–0.8 s（CPU 解码），默认给太长会变成「等一分钟」；
-    // 桌面给足，反正用户随时能停。
-    let default_max = if IS_MOBILE { 192 } else { 512 };
-    let max_tokens = req.max_tokens.unwrap_or(default_max).min(4096) as usize;
     let n_vocab = model.n_vocab();
     let mut sampler = LlamaSampler::chain_simple([
         LlamaSampler::penalties(n_vocab, 64, 1.1, 0.0, 0.0),
@@ -644,6 +743,34 @@ fn partial_tag_len(s: &str, tag: &str) -> usize {
         }
     }
     0
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    #[test]
+    fn keeps_room_for_the_answer() {
+        // 手机窗口 2048、回答 192、再留 64 的模板收尾
+        assert_eq!(budget_for(2048, 192), 1792);
+        assert_eq!(budget_for(4096, 512), 3520);
+    }
+
+    #[test]
+    fn small_window_never_underflows() {
+        assert_eq!(budget_for(64, 512), 0);
+        assert_eq!(budget_for(0, 1), 0);
+    }
+
+    #[test]
+    fn plain_prompt_keeps_roles_and_opens_for_the_answer() {
+        let msgs = vec![
+            ("system".to_string(), "你是助手".to_string()),
+            ("user".to_string(), "你好".to_string()),
+        ];
+        let out = plain_prompt(&msgs);
+        assert_eq!(out, "system: 你是助手\nuser: 你好\nAssistant:");
+    }
 }
 
 #[cfg(test)]

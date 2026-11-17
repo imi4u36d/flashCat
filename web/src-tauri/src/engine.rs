@@ -75,9 +75,11 @@ fn max_concurrent() -> usize {
 
 impl Engine {
     /// 有 GGUF 权重就用真 llama.cpp，没有就退回 mock（首启体验不能是白屏 + 报错）。
-    pub fn new(model_dir: Option<std::path::PathBuf>) -> Self {
+    pub fn new(roots: Vec<std::path::PathBuf>) -> Self {
+        // 第一个根目录是「我们自己的」——下载写这里；其余是旧版 App 的存量目录，只读。
+        let model_dir = roots.first().cloned();
         #[cfg(not(feature = "llama"))]
-        let _ = &model_dir;
+        let _ = &roots;
 
         #[cfg(not(feature = "llama"))]
         let backend: Arc<dyn Backend> = {
@@ -86,25 +88,31 @@ impl Engine {
         };
 
         #[cfg(feature = "llama")]
-        let backend: Arc<dyn Backend> = match model_dir.clone() {
-            Some(dir) => match crate::llama::LlamaChatBackend::new(dir.clone()) {
+        let backend: Arc<dyn Backend> = if roots.is_empty() {
+            crate::logfile::line("WARN", "engine mock（没有可用的权重目录）");
+            Arc::new(MockBackend::default())
+        } else {
+            match crate::llama::LlamaChatBackend::new(roots.clone()) {
                 Ok(b) if !b.models().is_empty() => {
                     crate::logfile::line(
                         "INFO",
-                        &format!("engine llama.cpp models={} dir={}", b.models().len(), dir.display()),
+                        &format!(
+                            "engine llama.cpp models={} roots={}",
+                            b.models().len(),
+                            roots.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(":")
+                        ),
                     );
                     Arc::new(b)
                 }
                 Ok(_) => {
-                    crate::logfile::line("WARN", &format!("engine mock（{} 下没有 gguf）", dir.display()));
+                    crate::logfile::line("WARN", "engine mock（这些目录下都没有 gguf）");
                     Arc::new(MockBackend::default())
                 }
                 Err(e) => {
                     crate::logfile::line("ERROR", &format!("engine mock（{e}）"));
                     Arc::new(MockBackend::default())
                 }
-            },
-            None => Arc::new(MockBackend::default()),
+            }
         };
         Self {
             backend,
@@ -178,7 +186,7 @@ impl Engine {
 
 impl Default for Engine {
     fn default() -> Self {
-        Self::new(None)
+        Self::new(Vec::new())
     }
 }
 
@@ -378,6 +386,8 @@ fn catalog() -> Vec<ModelCard> {
             tags: vec!["chat".into()],
             platforms: portable.to_vec(),
             installed: true,
+
+            source: "演示".into(),
             note: Some("手机默认档，1.2GB 内存内可跑".into()),
         },
         ModelCard {
@@ -391,6 +401,8 @@ fn catalog() -> Vec<ModelCard> {
             tags: vec!["chat".into()],
             platforms: portable.to_vec(),
             installed: false,
+
+            source: "演示".into(),
             note: Some("手机高档位，建议 8GB 内存以上".into()),
         },
         ModelCard {
@@ -404,6 +416,8 @@ fn catalog() -> Vec<ModelCard> {
             tags: vec!["chat".into()],
             platforms: portable.to_vec(),
             installed: false,
+
+            source: "演示".into(),
             note: None,
         },
         ModelCard {
@@ -417,6 +431,8 @@ fn catalog() -> Vec<ModelCard> {
             tags: vec!["chat".into()],
             platforms: all.to_vec(),
             installed: false,
+
+            source: "演示".into(),
             note: Some("桌面档，16GB 内存起步".into()),
         },
         ModelCard {
@@ -430,6 +446,8 @@ fn catalog() -> Vec<ModelCard> {
             tags: vec!["embedding".into()],
             platforms: all.to_vec(),
             installed: false,
+
+            source: "演示".into(),
             note: None,
         },
     ]

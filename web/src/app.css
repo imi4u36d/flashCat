@@ -1549,6 +1549,12 @@ html[data-mobile="true"] .chat-head .gen-status {
 /* ───────────────────────── 底部动作表（手机）─────────────────────────
    点模型行才会出现；桌面不渲染这个组件，所以这些样式只在手机上起作用。
    视觉上照 iOS 的 action sheet：抓取条、圆角顶、最后一项「取消」单独隔开。 */
+.src-line {
+  margin-top: 3px;
+  font-size: 10.5px;
+  color: var(--text4);
+}
+
 .sheet-scrim {
   position: fixed;
   inset: 0;

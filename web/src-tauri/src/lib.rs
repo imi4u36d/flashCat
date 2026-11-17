@@ -30,11 +30,28 @@ pub fn run() {
             if let Ok(dir) = app.path().app_log_dir() {
                 logfile::init(dir);
             }
-            let model_dir = app.path().app_data_dir().ok().map(|d| d.join("models"));
-            if let Some(dir) = model_dir.as_ref() {
-                let _ = std::fs::create_dir_all(dir);
+            // 权重目录可以有多个：第一个是 App 自己的（下载写这里），
+            // 后面是旧版桌面 App 的存量库 —— 直接读，用户不用把几十 GB 再搬一遍。
+            let mut roots: Vec<std::path::PathBuf> = Vec::new();
+            if let Ok(dir) = app.path().app_data_dir() {
+                let own = dir.join("models");
+                let _ = std::fs::create_dir_all(&own);
+                roots.push(own);
             }
-            app.manage(Engine::new(model_dir));
+            #[cfg(target_os = "macos")]
+            if let Ok(home) = std::env::var("HOME") {
+                // SwiftUI 版用 `Application Support/flashCat`，再早的版本叫 Splash。
+                for legacy in ["flashCat", "Splash"] {
+                    let dir = std::path::Path::new(&home)
+                        .join("Library/Application Support")
+                        .join(legacy)
+                        .join("models");
+                    if dir.is_dir() {
+                        roots.push(dir);
+                    }
+                }
+            }
+            app.manage(Engine::new(roots));
             app.manage(std::sync::Arc::new(download::Downloads::default()));
             logfile::line(
                 "INFO",

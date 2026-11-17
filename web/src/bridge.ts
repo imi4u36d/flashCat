@@ -35,6 +35,8 @@ export type ModelCard = {
   tags: string[];
   platforms: Platform[];
   installed: boolean;
+  /** 权重所在目录（桌面会同时扫旧版 App 的库）。 */
+  source: string;
   note: string | null;
 };
 

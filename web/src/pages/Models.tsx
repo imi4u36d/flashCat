@@ -29,6 +29,16 @@ const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(0)} MB`;
  * 为什么下载放在这里而不是「设置」：手机上装完 APK 之后，用户没有任何手段
  * 把 400MB 的 gguf 放进沙盒——这一页就是「拿到模型」的唯一入口。
  */
+/** 旧版桌面 App 的权重库，扫到了就标出来，免得用户以为是新下的。 */
+function originHint(source: string): string {
+  return /Application Support\/(flashCat|Splash)\//.test(source) ? "旧库 · " : "";
+}
+
+function shortSource(source: string): string {
+  const parts = source.split("/").filter(Boolean);
+  return parts.slice(-2).join("/");
+}
+
 export function Models({
   info,
   models,
@@ -293,6 +303,12 @@ export function Models({
                       >
                         <td>
                           <strong>{m.name}</strong>
+                          {m.source ? (
+                            <div className="src-line mono" title={m.source}>
+                              {originHint(m.source)}
+                              {shortSource(m.source)}
+                            </div>
+                          ) : null}
                         </td>
                         <td className="col-opt">{m.family}</td>
                         <td className="col-opt">
@@ -356,6 +372,11 @@ export function Models({
               </p>
               <p style={{ color: "var(--text3)" }}>
                 手机上内存紧张：≤1.7B / Q4 在 4GB 可用内存内比较安全，8B 级别请留给桌面。
+              </p>
+              <p style={{ color: "var(--text3)" }}>
+                桌面端还会读旧版 App 的库（<code>Application Support/flashCat/models</code>、
+                <code>Application Support/Splash/models</code>），扫描到的 GGUF 标「旧库」直接能用；
+                那里的 mlx / safetensors 是给旧引擎的，llama.cpp 读不了，不会列出。
               </p>
             </div>
           </div>

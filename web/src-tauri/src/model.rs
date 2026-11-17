@@ -66,6 +66,8 @@ pub struct ModelCard {
     /// 该权重能跑的端；移动端只列 4 bit 且 ≤1.7B 的模型。
     pub platforms: Vec<&'static str>,
     pub installed: bool,
+    /// 权重所在的目录（桌面会同时扫旧版 App 的目录，用户要知道这一行是哪个）。
+    pub source: String,
     pub note: Option<String>,
 }
 

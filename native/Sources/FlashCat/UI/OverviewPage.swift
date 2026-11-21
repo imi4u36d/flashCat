@@ -12,7 +12,9 @@ struct OverviewPage: View {
     @ObservedObject var chat: ChatStore
     @ObservedObject private var gateway = GatewayController.shared
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hoveredSessionID: Int?
+    @State private var hoveredChartDate: Date?
 
     private var stats: ServerStats? { state.stats }
     private var samples: [ThroughputSample] { state.overviewThroughput(window: 60) }
@@ -116,6 +118,7 @@ struct OverviewPage: View {
                 }
                 HStack(alignment: .top, spacing: 24) {
                     decodeChart
+                        .frame(minHeight: middleHeight)
                     DSDivider(vertical: true)
                     VStack(alignment: .leading, spacing: 18) {
                         gatewaySection
@@ -125,7 +128,7 @@ struct OverviewPage: View {
                     }
                     .frame(width: sideColumnWidth)
                 }
-                .frame(height: middleHeight)
+                .frame(minHeight: middleHeight)
                 DSDivider()
                 recentRequests
                     .frame(minHeight: recentMinHeight)
@@ -182,7 +185,7 @@ struct OverviewPage: View {
                     Text("·")
                         .font(DS.Font.prose(12.5))
                         .foregroundStyle(DS.text4)
-                    Text("\(sessionCount) SESSIONS")
+                    Text(L10n.format("%lld 个活跃会话", Int64(sessionCount)))
                         .font(DS.Font.proseNumber(11, weight: .medium))
                         .tracking(0.3)
                         .foregroundStyle(DS.text3)
@@ -201,7 +204,8 @@ struct OverviewPage: View {
                     }
                 }
                 .buttonStyle(.ds(state.isRunning ? .danger : .primary))
-                .disabled(state.isSwitchingModel)
+                .disabled(engineToggleDisabled)
+                .help(engineToggleHelp)
 
                 ModelPickerButton(state: state, kind: .secondary) {
                     DSMenuTriggerLabel(
@@ -217,6 +221,22 @@ struct OverviewPage: View {
         }
         .padding(.horizontal, 2)
         .padding(.vertical, 2)
+    }
+
+    private var engineToggleDisabled: Bool {
+        state.isSwitchingModel
+            || state.serverState == .starting
+            || state.serverState == .stopping
+            || (!state.isRunning && (state.selectedModel.isEmpty || state.runtimeMissing != nil))
+    }
+
+    private var engineToggleHelp: String {
+        if !state.isRunning {
+            if state.runtimeMissing != nil { return L10n.t("引擎尚未安装") }
+            if state.selectedModel.isEmpty { return L10n.t("请先选择模型") }
+            return L10n.t("启动引擎")
+        }
+        return L10n.t("停止引擎")
     }
 
     // MARK: Connected 5-Cell KPI Strip
@@ -367,9 +387,12 @@ struct OverviewPage: View {
     private var decodeChart: some View {
         overviewSection(title: "总解码 · 最近 60 秒") {
             HStack(spacing: 8) {
-                if chartRate > 0 {
+                if let hovered = hoveredSample {
+                    let secondsAgo = max(
+                        0,
+                        Int64(state.overviewChartEnd.timeIntervalSince(hovered.at).rounded()))
                     HStack(alignment: .firstTextBaseline, spacing: 3) {
-                        Text(rateText(chartRate))
+                        Text(rateText(hovered.value))
                             .font(DS.Font.proseNumber(13, weight: .semibold))
                             .foregroundStyle(DS.text)
                             .contentTransition(.numericText())
@@ -377,8 +400,24 @@ struct OverviewPage: View {
                             .font(DS.Font.prose(10.5))
                             .foregroundStyle(DS.text3)
                     }
+                    DSChip(
+                        text: L10n.format("%lld 秒前", secondsAgo),
+                        dot: DS.accent,
+                        live: false)
+                } else {
+                    if chartRate > 0 {
+                        HStack(alignment: .firstTextBaseline, spacing: 3) {
+                            Text(rateText(chartRate))
+                                .font(DS.Font.proseNumber(13, weight: .semibold))
+                                .foregroundStyle(DS.text)
+                                .contentTransition(.numericText())
+                            Text("tok/s")
+                                .font(DS.Font.prose(10.5))
+                                .foregroundStyle(DS.text3)
+                        }
+                    }
+                    DSChip(text: speedChip.text, dot: speedChip.color, live: speedChip.live)
                 }
-                DSChip(text: speedChip.text, dot: speedChip.color, live: speedChip.live)
             }
         } content: {
             Group {
@@ -419,6 +458,14 @@ struct OverviewPage: View {
                                 .foregroundStyle(DS.accent)
                                 .symbolSize(26)
                         }
+                        if let hovered = hoveredSample {
+                            RuleMark(x: .value("时间", hovered.at))
+                                .foregroundStyle(DS.line3)
+                                .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                            PointMark(x: .value("时间", hovered.at), y: .value("tok/s", hovered.value))
+                                .foregroundStyle(DS.accent)
+                                .symbolSize(36)
+                        }
                     }
                     .chartXScale(domain: chartWindow)
                     .chartYScale(domain: 0...(peak * 1.2))
@@ -431,11 +478,51 @@ struct OverviewPage: View {
                                 .foregroundStyle(DS.text3)
                         }
                     }
+                    .chartOverlay { proxy in
+                        GeometryReader { geo in
+                            Color.clear
+                                .contentShape(Rectangle())
+                                .onContinuousHover { phase in
+                                    switch phase {
+                                    case .active(let location):
+                                        guard let plotAnchor = proxy.plotFrame else {
+                                            hoveredChartDate = nil
+                                            return
+                                        }
+                                        let plotFrame = geo[plotAnchor]
+                                        let relativeX = location.x - plotFrame.origin.x
+                                        guard relativeX >= 0, relativeX <= plotFrame.width,
+                                            let date: Date = proxy.value(atX: relativeX)
+                                        else {
+                                            hoveredChartDate = nil
+                                            return
+                                        }
+                                        hoveredChartDate = date
+                                    case .ended:
+                                        hoveredChartDate = nil
+                                    }
+                                }
+                        }
+                    }
                 }
             }
             .padding(.top, 4)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private var hoveredSample: ThroughputSample? {
+        guard let hoveredChartDate, !samples.isEmpty else { return nil }
+        var best: ThroughputSample?
+        var bestDelta: TimeInterval = .greatestFiniteMagnitude
+        for sample in samples {
+            let delta = abs(sample.at.timeIntervalSince(hoveredChartDate))
+            if delta < bestDelta {
+                bestDelta = delta
+                best = sample
+            }
+        }
+        return bestDelta <= 3.0 ? best : nil
     }
 
     private var chartWindow: ClosedRange<Date> {
@@ -450,7 +537,7 @@ struct OverviewPage: View {
         switch speedOrigin {
         case .gatewayLive: return ("网关", DS.info, true)
         case .engineLive: return ("引擎", DS.accent, true)
-        case .none: return (state.isRunning ? "等待" : "IDLE", DS.text4, false)
+        case .none: return (state.isRunning ? "等待" : "空闲", DS.text4, false)
         }
     }
 
@@ -487,7 +574,7 @@ struct OverviewPage: View {
     private var gatewaySection: some View {
         overviewSection(title: "API 网关", subtitle: "OpenAI + Claude") {
             DSChip(
-                text: gateway.isRunning ? "ONLINE" : "OFFLINE",
+                text: L10n.t(gateway.isRunning ? "在线" : "离线"),
                 dot: gateway.isRunning ? DS.ok : DS.text4,
                 live: gateway.isRunning)
         } content: {
@@ -510,16 +597,20 @@ struct OverviewPage: View {
     private var runtimeSection: some View {
         overviewSection(title: "运行时", subtitle: state.activeEngine.displayName) {
             DSChip(
-                text: state.isRunning ? "运行中" : "已停止",
+                text: L10n.t(state.isRunning ? "运行中" : "已停止"),
                 dot: state.canChat ? DS.ok : (state.isModelBusy ? DS.warn : DS.text4),
                 live: state.canChat)
         } content: {
             VStack(spacing: 0) {
-                telemetryRow(label: "引擎端口", value: "127.0.0.1:\(state.port)")
+                telemetryRow(
+                    label: "引擎端口",
+                    value: "127.0.0.1:\(state.port)",
+                    copyLabel: "%@ 接口地址已复制",
+                    copyArg: state.activeEngine.displayName)
                 DSDivider()
                 telemetryRow(label: "内存压力", value: memorySummaryText)
                 DSDivider()
-                telemetryRow(label: "温度", value: stats?.thermalText ?? "—")
+                telemetryRow(label: "温度", value: stats.map { L10n.t($0.thermalText) } ?? "—")
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -551,12 +642,14 @@ struct OverviewPage: View {
 
     private var memorySummaryText: String {
         if let bytes = stats?.memoryBytes, bytes > 0 {
-            if let pressure = stats?.memoryPressure, !pressure.isEmpty {
-                return "\(Format.memory(bytes)) · \(stats?.memoryPressureText ?? "")"
+            if let pressure = stats?.memoryPressure, !pressure.isEmpty,
+                let pressureText = stats?.memoryPressureText
+            {
+                return "\(Format.memory(bytes)) · \(L10n.t(pressureText))"
             }
             return Format.memory(bytes)
         }
-        return stats?.memoryPressureText ?? "—"
+        return stats.map { L10n.t($0.memoryPressureText) } ?? "—"
     }
 
     private func endpointRow(name: String, url: String) -> some View {
@@ -575,14 +668,19 @@ struct OverviewPage: View {
             Spacer(minLength: 4)
 
             DSIconButton(systemName: "doc.on.doc", help: "复制地址", size: 24) {
-                state.copy(url, label: "\(name) 接口地址已复制")
+                state.copy(url, label: L10n.format("%@ 接口地址已复制", name))
             }
         }
         .padding(.vertical, 6)
     }
 
-    private func telemetryRow(label: String, value: String) -> some View {
-        HStack {
+    private func telemetryRow(
+        label: String,
+        value: String,
+        copyLabel: String? = nil,
+        copyArg: String? = nil
+    ) -> some View {
+        HStack(spacing: 6) {
             Text(L10n.t(label))
                 .font(DS.Font.prose(12.5))
                 .foregroundStyle(DS.text3)
@@ -591,6 +689,13 @@ struct OverviewPage: View {
                 .font(DS.Font.proseNumber(12))
                 .foregroundStyle(value == "—" ? DS.text4 : DS.text2)
                 .lineLimit(1)
+                .textSelection(.enabled)
+            if let copyLabel, value != "—" {
+                DSIconButton(systemName: "doc.on.doc", help: "复制地址", size: 22) {
+                    let message = copyArg.map { L10n.format(copyLabel, $0) } ?? L10n.t(copyLabel)
+                    state.copy(value, label: message)
+                }
+            }
         }
         .frame(minHeight: 28, maxHeight: .infinity)
     }
@@ -598,12 +703,12 @@ struct OverviewPage: View {
     // MARK: Recent Requests
 
     private var recentRequests: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { _ in
+        TimelineView(.periodic(from: .now, by: (gateway.isRunning || state.isRunning) ? 1 : 5)) { _ in
             let sessions = Array(GatewayMeter.shared.snapshot(limit: 6).reversed())
             overviewSection(title: "最近请求") {
                 HStack(spacing: 8) {
                     DSSourceBadge(text: L10n.t("按请求"))
-                    Text("\(sessions.count) 条")
+                    Text(L10n.format("%lld 条", Int64(sessions.count)))
                         .font(DS.Font.proseNumber(11.5))
                         .foregroundStyle(DS.text3)
                 }
@@ -654,7 +759,7 @@ struct OverviewPage: View {
                             }
                         }
                     }
-                    .animation(DS.Motion.smooth, value: sessions.map(\.id))
+                    .animation(reduceMotion ? nil : DS.Motion.smooth, value: sessions.map(\.id))
                 }
             }
         }
@@ -666,53 +771,71 @@ struct OverviewPage: View {
         let decodeText = decode > 0 ? "\(Format.compact(decode)) tok/s" : "—"
         let live = session.state == .decode || session.state == .prefill
         let hovered = hoveredSessionID == session.id
+        let dialect = session.dialect.isEmpty ? "API" : session.dialect
+        let rawModel = session.model.isEmpty ? L10n.t("未命名") : session.model
+        let modelDisplay = session.model.isEmpty ? L10n.t("未命名") : state.shortModelName(session.model)
+        let summary = "\(dialect) · \(rawModel) · TTFT \(ttftText) · Decode \(decodeText) · Ctx \(Format.tokens(session.ctxTokens))"
 
-        return HStack(spacing: 10) {
-            HStack(spacing: 6) {
-                DSStatusDot(color: sessionColor(session.state), live: live, size: 6)
-                Text(L10n.t(stateLabel(session.state)))
-                    .font(DS.Font.prose(12, weight: .medium))
-                    .foregroundStyle(live ? DS.text : DS.text2)
+        return Button {
+            state.copy(summary, label: L10n.t("已复制请求摘要"))
+        } label: {
+            HStack(spacing: 10) {
+                HStack(spacing: 6) {
+                    DSStatusDot(color: sessionColor(session.state), live: live, size: 6)
+                    Text(L10n.t(stateLabel(session.state)))
+                        .font(DS.Font.prose(12, weight: .medium))
+                        .foregroundStyle(live ? DS.text : DS.text2)
+                }
+                .frame(width: 68, alignment: .leading)
+
+                Text(verbatim: dialect)
+                    .font(DS.Font.prose(10.5, weight: .medium))
+                    .foregroundStyle(DS.text2)
+                    .padding(.horizontal, 6)
+                    .frame(height: 19)
+                    .background(DS.rect(4).fill(DS.hover))
+                    .frame(width: 72, alignment: .leading)
+
+                Text(modelDisplay)
+                    .font(DS.Font.prose(12.5))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text(verbatim: ttftText)
+                    .font(DS.Font.proseNumber(11.5))
+                    .foregroundStyle(DS.text2)
+                    .frame(width: 72, alignment: .trailing)
+
+                Text(verbatim: decodeText)
+                    .font(DS.Font.proseNumber(11.5))
+                    .foregroundStyle(decode > 0 ? DS.text : DS.text3)
+                    .frame(width: 92, alignment: .trailing)
+
+                Text(Format.tokens(session.ctxTokens))
+                    .font(DS.Font.proseNumber(11.5))
+                    .foregroundStyle(DS.text3)
+                    .frame(width: 76, alignment: .trailing)
             }
-            .frame(width: 68, alignment: .leading)
-
-            Text(verbatim: session.dialect.isEmpty ? "API" : session.dialect)
-                .font(DS.Font.prose(10.5, weight: .medium))
-                .foregroundStyle(DS.text2)
-                .padding(.horizontal, 6)
-                .frame(height: 19)
-                .background(DS.rect(4).fill(DS.hover))
-                .frame(width: 72, alignment: .leading)
-
-            Text(state.shortModelName(session.model.isEmpty ? "未命名" : session.model))
-                .font(DS.Font.prose(12.5))
-                .foregroundStyle(DS.text)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text(verbatim: ttftText)
-                .font(DS.Font.proseNumber(11.5))
-                .foregroundStyle(DS.text2)
-                .frame(width: 72, alignment: .trailing)
-
-            Text(verbatim: decodeText)
-                .font(DS.Font.proseNumber(11.5))
-                .foregroundStyle(decode > 0 ? DS.text : DS.text3)
-                .frame(width: 92, alignment: .trailing)
-
-            Text(Format.tokens(session.ctxTokens))
-                .font(DS.Font.proseNumber(11.5))
-                .foregroundStyle(DS.text3)
-                .frame(width: 76, alignment: .trailing)
+            .padding(.horizontal, 8)
+            .frame(height: 36)
+            .background(hovered ? DS.hover : .clear, in: DS.rect(DS.Radius.sm))
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 8)
-        .frame(height: 36)
-        .background(hovered ? DS.hover : .clear, in: DS.rect(DS.Radius.sm))
-        .contentShape(Rectangle())
+        .buttonStyle(.plain)
         .onHover { inside in
-            withAnimation(DS.Motion.snappy) {
+            withAnimation(reduceMotion ? nil : DS.Motion.snappy) {
                 hoveredSessionID = inside ? session.id : (hoveredSessionID == session.id ? nil : hoveredSessionID)
+            }
+        }
+        .help(L10n.t("点击复制请求摘要"))
+        .contextMenu {
+            Button(L10n.t("复制模型名")) {
+                state.copy(rawModel, label: L10n.t("已复制模型名"))
+            }
+            Button(L10n.t("复制请求指标")) {
+                state.copy(summary, label: L10n.t("已复制请求摘要"))
             }
         }
     }

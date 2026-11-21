@@ -195,21 +195,8 @@ struct MenuBarPanelContainer: View {
     var onCardHeightChange: (CGFloat) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.colorScheme) private var scheme
 
     private var cardShape: RoundedRectangle { DS.rect(DS.Radius.xl) }
-
-    private var rim: LinearGradient {
-        LinearGradient(
-            colors: [
-                Color.white.opacity(scheme == .dark ? 0.24 : 0.72),
-                Color.white.opacity(scheme == .dark ? 0.04 : 0.14),
-                Color.white.opacity(scheme == .dark ? 0.14 : 0.42),
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
 
     var body: some View {
         MenuBarPanel(
@@ -394,13 +381,13 @@ struct MenuBarPanel: View {
                 .help(L10n.t("模型"))
             }
 
-            Text(modelTitle)
+            Text(L10n.t(modelTitle))
                 .font(DS.Font.lg.weight(.semibold))
                 .foregroundStyle(state.selectedModel.isEmpty ? DS.text3 : DS.text)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .contentTransition(.opacity)
-                .help(modelTitle)
+                .help(L10n.t(modelTitle))
 
             endpointRow
         }
@@ -600,6 +587,7 @@ struct MenuBarPanel: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.ds(.danger, size: .regular))
+                .disabled(busy)
 
                 Button {
                     state.restartService()
@@ -608,6 +596,7 @@ struct MenuBarPanel: View {
                 }
                 .buttonStyle(.ds(.secondary, size: .regular))
                 .fixedSize()
+                .disabled(busy)
             } else {
                 Button {
                     state.startService()
@@ -616,6 +605,7 @@ struct MenuBarPanel: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.ds(.primary, size: .regular))
+                .disabled(state.selectedModel.isEmpty || state.runtimeMissing != nil || busy)
             }
         }
     }
@@ -633,7 +623,7 @@ struct MenuBarPanel: View {
             Spacer(minLength: 4)
             HStack(spacing: 8) {
                 footerButton("主窗口", symbol: "macwindow") { onOpenMainWindow(nil) }
-                    .help("打开主窗口")
+                    .help(L10n.t("打开主窗口"))
                 footerButton("退出", symbol: "power") {
                     onDismiss()
                     NSApp.terminate(nil)
@@ -652,6 +642,7 @@ struct MenuBarPanel: View {
             Label(L10n.t(title), systemImage: symbol)
         }
         .buttonStyle(.ds(.secondary, size: .small))
+        .fixedSize()
     }
 
     private static func countersText(_ stats: ServerStats) -> String {
@@ -744,7 +735,7 @@ private struct MetricStrip: View {
 
     private var decodeTagTint: Color {
         switch decode.origin {
-        case .gatewayLive, .engineLive: return DS.accent
+        case .gatewayLive, .engineLive: return DS.ok
         default: return DS.text3
         }
     }
@@ -760,7 +751,7 @@ private struct MetricStrip: View {
     }
 
     private var prefillTagTint: Color {
-        prefill.origin == .engineLive ? DS.accent : DS.text3
+        prefill.origin == .engineLive ? DS.ok : DS.text3
     }
 
     private func number(_ value: Double?) -> String {

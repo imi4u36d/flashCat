@@ -11,6 +11,16 @@
         }
       }
     },
+    "%.1f 秒": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%.1f s"
+          }
+        }
+      }
+    },
     "%.1fM 下载": {
       "localizations": {
         "en": {
@@ -57,6 +67,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ tok/s"
+          }
+        }
+      }
+    },
+    "%@ tokens": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ tokens"
           }
         }
       }
@@ -181,12 +201,32 @@
         }
       }
     },
+    "%@ 的配置已保存，重启引擎后生效": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ configuration saved; restart engine to apply"
+          }
+        }
+      }
+    },
     "%@ 端口": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "%@ Port"
+          }
+        }
+      }
+    },
+    "%@ 端口已设为 %lld": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ port set to %lld"
           }
         }
       }
@@ -301,6 +341,16 @@
         }
       }
     },
+    "%lld GB 内存起 · 超出本机": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Requires %lld GB · Exceeds device memory"
+          }
+        }
+      }
+    },
     "%lld GB 统一内存": {
       "localizations": {
         "en": {
@@ -351,12 +401,32 @@
         }
       }
     },
+    "%lld 个活跃会话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld active sessions"
+          }
+        }
+      }
+    },
     "%lld 字符": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "%lld characters"
+          }
+        }
+      }
+    },
+    "%lld 帧": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld frames"
           }
         }
       }
@@ -377,6 +447,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "%lld messages · %@"
+          }
+        }
+      }
+    },
+    "%lld 秒前": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%llds ago"
           }
         }
       }
@@ -417,6 +497,46 @@
           "stringUnit": {
             "state": "translated",
             "value": "--flag value"
+          }
+        }
+      }
+    },
+    "2 秒": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "2s"
+          }
+        }
+      }
+    },
+    "4 秒": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "4s"
+          }
+        }
+      }
+    },
+    "5 秒": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "5s"
+          }
+        }
+      }
+    },
+    "8 步能出草稿，20 步细节更稳；越高越慢。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "8 steps work for drafts; 20 steps give cleaner detail at higher cost."
           }
         }
       }
@@ -467,6 +587,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "API Gateway Port"
+          }
+        }
+      }
+    },
+    "API 网关端口已设为 %lld": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API Gateway port set to %lld"
           }
         }
       }
@@ -551,6 +681,16 @@
         }
       }
     },
+    "Hugging Face 端点，留空用官方；选 HF-Mirror 时固定走 hf-mirror.com": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face endpoint; leave empty for the official one. HF-Mirror always uses hf-mirror.com"
+          }
+        }
+      }
+    },
     "Hugging Face 缓存目录，留空用默认": {
       "localizations": {
         "en": {
@@ -601,6 +741,16 @@
         }
       }
     },
+    "Mage 的采样器只认上面的固定画布，不能自定宽高。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mage sampler only supports the fixed canvases above; custom dimensions are unavailable."
+          }
+        }
+      }
+    },
     "OpenAI + Claude": {
       "localizations": {
         "en": {
@@ -647,6 +797,36 @@
           "stringUnit": {
             "state": "translated",
             "value": "QQ group number"
+          }
+        }
+      }
+    },
+    "REF2VA 从参考素材生成新视频：至少附一张图或一段视频，不再使用首帧/尾帧。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "REF2VA generates video from references: attach at least one image or video clip (first/last frames are ignored)."
+          }
+        }
+      }
+    },
+    "REF2VA 需要至少一个参考素材；首帧/尾帧不适用于这个包": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "REF2VA requires at least one reference item; first/last frames do not apply."
+          }
+        }
+      }
+    },
+    "REF2VA 需要至少一张参考图或一段参考视频。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "REF2VA requires at least one reference image or video clip."
           }
         }
       }
@@ -721,6 +901,16 @@
         }
       }
     },
+    "↑↓ 选择 · 回车运行 · ESC 关闭": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "↑↓ Select · Return to run · Esc to close"
+          }
+        }
+      }
+    },
     "≈ %lld tokens": {
       "localizations": {
         "en": {
@@ -791,7 +981,57 @@
         }
       }
     },
+    "上一项": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Previous"
+          }
+        }
+      }
+    },
+    "上下文": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Context"
+          }
+        }
+      }
+    },
+    "上下文 %@ / %@（%.0f%%）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Context %@ / %@ (%.0f%%)"
+          }
+        }
+      }
+    },
+    "上下文 %@ tokens": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Context %@ tokens"
+          }
+        }
+      }
+    },
     "下一页": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Next"
+          }
+        }
+      }
+    },
+    "下一项": {
       "localizations": {
         "en": {
           "stringUnit": {
@@ -817,6 +1057,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Download %@"
+          }
+        }
+      }
+    },
+    "下载 %lld": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloads %lld"
           }
         }
       }
@@ -867,6 +1117,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Download to shared folder"
+          }
+        }
+      }
+    },
+    "下载并安装引擎": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download and install engine"
           }
         }
       }
@@ -931,12 +1191,42 @@
         }
       }
     },
+    "不附帧直接按提示词生成；附首帧/尾帧可约束开头和结尾": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generate from prompt alone, or attach first/last frames to guide start and end"
+          }
+        }
+      }
+    },
+    "不附底图，直接按提示词出图": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generate directly from prompt without a base image"
+          }
+        }
+      }
+    },
     "不限制": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Unlimited"
+          }
+        }
+      }
+    },
+    "专注 Qwen MTP 投机解码的单模型运行时。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Single-model runtime focused on Qwen MTP speculative decoding."
           }
         }
       }
@@ -951,12 +1241,72 @@
         }
       }
     },
+    "主窗口": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Main Window"
+          }
+        }
+      }
+    },
+    "也可以直接填宽高（256–%lld）；引擎会按 %lld 对齐，非预设画布也能出图。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Or enter custom size (256–%lld); aligned to %lld px by the engine."
+          }
+        }
+      }
+    },
+    "仅支持串行": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Serial only"
+          }
+        }
+      }
+    },
+    "今天": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Today"
+          }
+        }
+      }
+    },
     "从请求到首个 token": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Request to first token"
+          }
+        }
+      }
+    },
+    "以 %@ 进入控制台": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Console with %@"
+          }
+        }
+      }
+    },
+    "以附件为底图重绘，强度决定离原图多远": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Redraw from the attached image; strength controls deviation from the original"
           }
         }
       }
@@ -1061,6 +1411,16 @@
         }
       }
     },
+    "保持构图，重绘细节": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preserve composition and refine details"
+          }
+        }
+      }
+    },
     "停止": {
       "localizations": {
         "en": {
@@ -1137,6 +1497,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Stop Service"
+          }
+        }
+      }
+    },
+    "停止生成": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stop generating"
           }
         }
       }
@@ -1221,6 +1591,26 @@
         }
       }
     },
+    "共 %lld 个": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld total"
+          }
+        }
+      }
+    },
+    "共 %lld 张": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld total"
+          }
+        }
+      }
+    },
     "共享": {
       "localizations": {
         "en": {
@@ -1267,6 +1657,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Off"
+          }
+        }
+      }
+    },
+    "关闭后每次重启都要从零重算整段历史": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When off, prompt history is recomputed from scratch after each restart"
           }
         }
       }
@@ -1401,6 +1801,16 @@
         }
       }
     },
+    "准备中…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparing…"
+          }
+        }
+      }
+    },
     "准备切换": {
       "localizations": {
         "en": {
@@ -1421,12 +1831,52 @@
         }
       }
     },
+    "减小端口": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Decrease port"
+          }
+        }
+      }
+    },
+    "分辨率与帧数越大越吃显存；显存不足时先降尺寸，再减帧数。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Higher resolution and frame counts use more memory; reduce size or frames if memory runs low."
+          }
+        }
+      }
+    },
     "切换中": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Switching"
+          }
+        }
+      }
+    },
+    "切换为浅色外观": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switch to Light appearance"
+          }
+        }
+      }
+    },
+    "切换为深色外观": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switch to Dark appearance"
           }
         }
       }
@@ -1551,6 +2001,36 @@
         }
       }
     },
+    "删除…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete…"
+          }
+        }
+      }
+    },
+    "删除对话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete conversation"
+          }
+        }
+      }
+    },
+    "删除对话…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete conversation…"
+          }
+        }
+      }
+    },
     "删除权重…": {
       "localizations": {
         "en": {
@@ -1577,6 +2057,36 @@
           "stringUnit": {
             "state": "translated",
             "value": "Delete this chat?"
+          }
+        }
+      }
+    },
+    "刷新": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Refresh"
+          }
+        }
+      }
+    },
+    "前往对话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Go to Chat"
+          }
+        }
+      }
+    },
+    "前缀缓存": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prefix Cache"
           }
         }
       }
@@ -1641,12 +2151,32 @@
         }
       }
     },
+    "加载更早的 %lld 条": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Load %lld earlier messages"
+          }
+        }
+      }
+    },
     "加载权重": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Loading weights"
+          }
+        }
+      }
+    },
+    "加载模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Loading model"
           }
         }
       }
@@ -1671,6 +2201,46 @@
         }
       }
     },
+    "单模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Single model"
+          }
+        }
+      }
+    },
+    "单模型 GGUF 运行时，专注 DFlash2 投机解码与视觉。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Single-model GGUF runtime focused on DFlash2 speculative decoding and vision."
+          }
+        }
+      }
+    },
+    "原文件已不在": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Original file missing"
+          }
+        }
+      }
+    },
+    "原生 MLX / GGUF 通用引擎，多模型热加载，无需 Python。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Native MLX / GGUF general-purpose engine with hot-loading and no Python required."
+          }
+        }
+      }
+    },
     "去安装": {
       "localizations": {
         "en": {
@@ -1687,6 +2257,116 @@
           "stringUnit": {
             "state": "translated",
             "value": "Parameters"
+          }
+        }
+      }
+    },
+    "参考图": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ref Images"
+          }
+        }
+      }
+    },
+    "参考图 %lld": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ref Image %lld"
+          }
+        }
+      }
+    },
+    "参考图最多 9 张。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Up to 9 reference images."
+          }
+        }
+      }
+    },
+    "参考帧按生成画布缩放：上传更快，适合先试效果。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scales reference frames to canvas size for faster uploads and quick iteration."
+          }
+        }
+      }
+    },
+    "参考帧长边按 1280 发送：细节更多，上传与预处理更慢。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sends reference frames at 1280px max edge for more detail with slower upload."
+          }
+        }
+      }
+    },
+    "参考素材": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "References"
+          }
+        }
+      }
+    },
+    "参考素材最多 12 个（9 张图 + 3 段视频）。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Up to 12 reference items total (9 images + 3 videos)."
+          }
+        }
+      }
+    },
+    "参考细节": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reference Detail"
+          }
+        }
+      }
+    },
+    "参考视频": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ref Videos"
+          }
+        }
+      }
+    },
+    "参考视频 %lld": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ref Video %lld"
+          }
+        }
+      }
+    },
+    "参考视频最多 3 段。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Up to 3 reference videos."
           }
         }
       }
@@ -1721,6 +2401,16 @@
         }
       }
     },
+    "发送": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send"
+          }
+        }
+      }
+    },
     "取消": {
       "localizations": {
         "en": {
@@ -1737,6 +2427,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Cancel Waiting"
+          }
+        }
+      }
+    },
+    "取消置顶": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unpin"
           }
         }
       }
@@ -1767,6 +2467,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Only listens on 127.0.0.1; occupied ports in the same range are skipped"
+          }
+        }
+      }
+    },
+    "可以从模型广场浏览 Hugging Face / ModelScope 权重并下载。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Browse and download Hugging Face or ModelScope weights from the Model Hub."
           }
         }
       }
@@ -1811,6 +2521,16 @@
         }
       }
     },
+    "名称": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Name"
+          }
+        }
+      }
+    },
     "启动": {
       "localizations": {
         "en": {
@@ -1837,6 +2557,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Start Engine"
+          }
+        }
+      }
+    },
+    "启动引擎后，日志会实时出现在这里": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start an engine to stream logs here"
           }
         }
       }
@@ -1961,12 +2691,62 @@
         }
       }
     },
+    "固定 %lld 步": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fixed %lld steps"
+          }
+        }
+      }
+    },
+    "固定 seed：提示词与参数相同时，结果基本可复现。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fixed seed: results are largely reproducible with identical prompt and parameters."
+          }
+        }
+      }
+    },
     "固定入口，客户端不用改": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Fixed endpoint; clients do not need changes"
+          }
+        }
+      }
+    },
+    "图像": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Image"
+          }
+        }
+      }
+    },
+    "图像参数": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Image Options"
+          }
+        }
+      }
+    },
+    "图像模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Image model"
           }
         }
       }
@@ -1981,12 +2761,72 @@
         }
       }
     },
+    "图片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Image"
+          }
+        }
+      }
+    },
+    "图片 %lld": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Images %lld"
+          }
+        }
+      }
+    },
+    "图片已被移除：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Image removed: %@"
+          }
+        }
+      }
+    },
+    "图片详情": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Image Details"
+          }
+        }
+      }
+    },
     "在 Finder 中显示": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Show in Finder"
+          }
+        }
+      }
+    },
+    "在对话里让模型生成图片后，作品会自动出现在这里。\n你发给模型的底图不会收录。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Images generated in chat will appear here automatically.\nSource images you attach are not listed."
+          }
+        }
+      }
+    },
+    "在对话里让模型生成视频后，作品会自动出现在这里。\n你发给模型的首帧图不会收录。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Videos generated in chat will appear here automatically.\nFirst-frame images you attach are not listed."
           }
         }
       }
@@ -2011,12 +2851,62 @@
         }
       }
     },
+    "在线": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ONLINE"
+          }
+        }
+      }
+    },
     "在终端运行 flashcat --help 查看全部命令": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Run flashcat --help in Terminal for every command"
+          }
+        }
+      }
+    },
+    "在访达中显示": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reveal in Finder"
+          }
+        }
+      }
+    },
+    "在页面内播放": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Play inline"
+          }
+        }
+      }
+    },
+    "在预览中打开原图": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open original in Preview"
+          }
+        }
+      }
+    },
+    "增加端口": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Increase port"
           }
         }
       }
@@ -2041,12 +2931,42 @@
         }
       }
     },
+    "复制回答": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy response"
+          }
+        }
+      }
+    },
+    "复制图像": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy image"
+          }
+        }
+      }
+    },
     "复制地址": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Copy Address"
+          }
+        }
+      }
+    },
+    "复制带时间与来源": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy with time & source"
           }
         }
       }
@@ -2061,12 +2981,52 @@
         }
       }
     },
+    "复制提示词": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy prompt"
+          }
+        }
+      }
+    },
+    "复制提问": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy prompt"
+          }
+        }
+      }
+    },
+    "复制整段对话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy conversation"
+          }
+        }
+      }
+    },
     "复制模型 ID": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Copy Model ID"
+          }
+        }
+      }
+    },
+    "复制模型名": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy model name"
           }
         }
       }
@@ -2081,12 +3041,52 @@
         }
       }
     },
+    "复制该行": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy line"
+          }
+        }
+      }
+    },
+    "复制请求指标": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy request metrics"
+          }
+        }
+      }
+    },
+    "复制通知内容": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy notification"
+          }
+        }
+      }
+    },
     "外观": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Appearance"
+          }
+        }
+      }
+    },
+    "外观、启动、网关、控制接口与默认对话参数": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Appearance, launch, gateway, control API, and default chat settings"
           }
         }
       }
@@ -2107,6 +3107,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Appearance, background, launch and gateway settings"
+          }
+        }
+      }
+    },
+    "多模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Multi-model"
           }
         }
       }
@@ -2181,6 +3191,16 @@
         }
       }
     },
+    "安装失败": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Install Failed"
+          }
+        }
+      }
+    },
     "安装并开始": {
       "localizations": {
         "en": {
@@ -2241,12 +3261,52 @@
         }
       }
     },
+    "宽": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Width"
+          }
+        }
+      }
+    },
     "对话": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Chat"
+          }
+        }
+      }
+    },
+    "对话中生成 · %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generated in chat · %@"
+          }
+        }
+      }
+    },
+    "对话中生成的图片与视频": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Images and videos generated in chat"
+          }
+        }
+      }
+    },
+    "对话历史": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chat history"
           }
         }
       }
@@ -2271,12 +3331,62 @@
         }
       }
     },
+    "将恢复外观、随应用启动、API 网关、控制接口及默认对话参数，自定义系统提示也会清空。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resets appearance, launch behavior, API gateway, control API, default chat parameters, and clears your custom system prompt."
+          }
+        }
+      }
+    },
+    "将清空 %@ 中的内存日志视图，不影响磁盘上的历史记录。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clears the in-memory log view for %@ without deleting log files on disk."
+          }
+        }
+      }
+    },
     "就绪": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Ready"
+          }
+        }
+      }
+    },
+    "尺寸": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Size"
+          }
+        }
+      }
+    },
+    "尾帧": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last Frame"
+          }
+        }
+      }
+    },
+    "展开思考": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show thought"
           }
         }
       }
@@ -2301,12 +3411,32 @@
         }
       }
     },
+    "展开通知或引擎详情": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expand notifications or engine details"
+          }
+        }
+      }
+    },
     "峰值 %@ tok/s": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Peak %@ tok/s"
+          }
+        }
+      }
+    },
+    "工具调用": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tool calling"
           }
         }
       }
@@ -2387,6 +3517,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Stopped generating"
+          }
+        }
+      }
+    },
+    "已冻结": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Frozen"
           }
         }
       }
@@ -2481,6 +3621,36 @@
         }
       }
     },
+    "已复制对话内容": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conversation copied"
+          }
+        }
+      }
+    },
+    "已复制提示词": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompt copied"
+          }
+        }
+      }
+    },
+    "已复制模型名": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model name copied"
+          }
+        }
+      }
+    },
     "已复制筛选后的日志": {
       "localizations": {
         "en": {
@@ -2501,6 +3671,16 @@
         }
       }
     },
+    "已复制请求摘要": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Request summary copied"
+          }
+        }
+      }
+    },
     "已安装": {
       "localizations": {
         "en": {
@@ -2517,6 +3697,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "%lld versions installed"
+          }
+        }
+      }
+    },
+    "已展开": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expanded"
           }
         }
       }
@@ -2571,6 +3761,16 @@
         }
       }
     },
+    "已收起": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Collapsed"
+          }
+        }
+      }
+    },
     "已改用 Hugging Face 官方端点": {
       "localizations": {
         "en": {
@@ -2597,6 +3797,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Download paused. Progress is kept."
+          }
+        }
+      }
+    },
+    "已有下载任务进行中，请稍候": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A download is already in progress; please wait"
+          }
+        }
+      }
+    },
+    "已检查引擎更新": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checked for engine updates"
           }
         }
       }
@@ -2631,6 +3851,26 @@
         }
       }
     },
+    "已附 %lld 个参考素材：REF2VA 会从素材生成新视频": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld references attached: REF2VA generates a new video from them"
+          }
+        }
+      }
+    },
+    "已附参考帧：首帧定开头、尾帧定结尾，只给一边也可以": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reference frame attached: first locks start, last locks end"
+          }
+        }
+      }
+    },
     "帮我写一个 SwiftUI 面板卡片组件，带悬停微动效": {
       "localizations": {
         "en": {
@@ -2661,12 +3901,32 @@
         }
       }
     },
+    "平均解码": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Avg Decode"
+          }
+        }
+      }
+    },
     "并发 %lld": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Active %lld"
+          }
+        }
+      }
+    },
+    "广场从哪个仓库搜索与下载；HF-Mirror 是 Hugging Face 的国内镜像": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Where the model hub searches and downloads from; HF-Mirror is a Hugging Face mirror"
           }
         }
       }
@@ -2737,6 +3997,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Engines"
+          }
+        }
+      }
+    },
+    "引擎尚未安装": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Engine not installed"
           }
         }
       }
@@ -2871,6 +4141,16 @@
         }
       }
     },
+    "当前级别或搜索词下没有日志记录。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No log entries match the active level or search filter."
+          }
+        }
+      }
+    },
     "当前：%@": {
       "localizations": {
         "en": {
@@ -2921,6 +4201,16 @@
         }
       }
     },
+    "思考": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thought"
+          }
+        }
+      }
+    },
     "思考 token 预算": {
       "localizations": {
         "en": {
@@ -2937,6 +4227,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Thinking · %@"
+          }
+        }
+      }
+    },
+    "思考中": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thinking"
           }
         }
       }
@@ -3091,6 +4391,26 @@
         }
       }
     },
+    "打开主窗口": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Main Window"
+          }
+        }
+      }
+    },
+    "打开后模型可以在这轮对话里直接画图": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow the model to draw images directly in this conversation"
+          }
+        }
+      }
+    },
     "打开对话": {
       "localizations": {
         "en": {
@@ -3107,6 +4427,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Start the default engine when the app opens"
+          }
+        }
+      }
+    },
+    "打开文件夹": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Folder"
           }
         }
       }
@@ -3131,6 +4461,16 @@
         }
       }
     },
+    "打开模型广场": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Model Hub"
+          }
+        }
+      }
+    },
     "打开模型总目录": {
       "localizations": {
         "en": {
@@ -3141,12 +4481,32 @@
         }
       }
     },
+    "把宽高限制在引擎支持的范围内并应用": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clamp width and height to engine bounds and apply"
+          }
+        }
+      }
+    },
     "把推理留在这台 Mac 上": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Keep inference on this Mac"
+          }
+        }
+      }
+    },
+    "把见过的前缀写到 SSD；App 重启后恢复而不是重算": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Persist seen prefixes to SSD and restore on restart instead of recomputing"
           }
         }
       }
@@ -3171,12 +4531,52 @@
         }
       }
     },
+    "拖动调节对话宽度，双击回到默认": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag to adjust column width; double-click to reset"
+          }
+        }
+      }
+    },
     "按请求": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Per-request"
+          }
+        }
+      }
+    },
+    "换个关键词或切换引擎筛选试试。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Try a different keyword or switch the engine filter."
+          }
+        }
+      }
+    },
+    "换个关键词或清空筛选条件试试。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Try a different keyword or clear the filter."
+          }
+        }
+      }
+    },
+    "换个关键词，或清除搜索。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Try another keyword, or clear the search."
           }
         }
       }
@@ -3231,6 +4631,26 @@
         }
       }
     },
+    "控制端口已设为 %lld": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Control port set to %lld"
+          }
+        }
+      }
+    },
+    "推理": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reasoning"
+          }
+        }
+      }
+    },
     "推理引擎": {
       "localizations": {
         "en": {
@@ -3271,12 +4691,72 @@
         }
       }
     },
+    "描述想生成的画面，或拖入底图重绘…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Describe the image to generate, or drop a base image to redraw…"
+          }
+        }
+      }
+    },
+    "描述想生成的视频内容，或拖入参考图 / 视频…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Describe the video to generate, or drop reference images / clips…"
+          }
+        }
+      }
+    },
+    "描述想生成的视频画面，可附首帧 / 尾帧…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Describe the video scene, optionally attach first/last frames…"
+          }
+        }
+      }
+    },
     "提示": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Info"
+          }
+        }
+      }
+    },
+    "提示词": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompt"
+          }
+        }
+      }
+    },
+    "提示词 → 图像": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompt → Image"
+          }
+        }
+      }
+    },
+    "提示词 → 视频": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompt → Video"
           }
         }
       }
@@ -3341,12 +4821,32 @@
         }
       }
     },
+    "搜索 Hugging Face / ModelScope 并下载": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search Hugging Face / ModelScope and download"
+          }
+        }
+      }
+    },
     "搜索 Hugging Face 并下载": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Search Hugging Face and download"
+          }
+        }
+      }
+    },
+    "搜索对话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search chats"
           }
         }
       }
@@ -3371,12 +4871,32 @@
         }
       }
     },
+    "播放视频": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Play Video"
+          }
+        }
+      }
+    },
     "收起": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Collapse"
+          }
+        }
+      }
+    },
+    "收起思考": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Collapse thought"
           }
         }
       }
@@ -3441,6 +4961,16 @@
         }
       }
     },
+    "文件大小": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "File Size"
+          }
+        }
+      }
+    },
     "文件清单、体积、许可与 README 原文都在这里；确认后再下载。": {
       "localizations": {
         "en": {
@@ -3481,12 +5011,32 @@
         }
       }
     },
+    "新建对话 (⌘N)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New Chat (⌘N)"
+          }
+        }
+      }
+    },
     "无": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "None"
+          }
+        }
+      }
+    },
+    "无样本": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No samples"
           }
         }
       }
@@ -3531,12 +5081,32 @@
         }
       }
     },
+    "时长（24fps）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Duration (24fps)"
+          }
+        }
+      }
+    },
     "时间": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Time"
+          }
+        }
+      }
+    },
+    "昨天": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yesterday"
           }
         }
       }
@@ -3581,6 +5151,16 @@
         }
       }
     },
+    "暂无历史对话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No conversations yet"
+          }
+        }
+      }
+    },
     "暂无可用模型": {
       "localizations": {
         "en": {
@@ -3611,6 +5191,16 @@
         }
       }
     },
+    "更多操作": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "More Actions"
+          }
+        }
+      }
+    },
     "更换": {
       "localizations": {
         "en": {
@@ -3637,6 +5227,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Update to %@"
+          }
+        }
+      }
+    },
+    "更早": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Older"
           }
         }
       }
@@ -3707,6 +5307,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Minimal"
+          }
+        }
+      }
+    },
+    "最近 30 天": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Previous 30 Days"
+          }
+        }
+      }
+    },
+    "最近 7 天": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Previous 7 Days"
           }
         }
       }
@@ -3787,6 +5407,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Unknown"
+          }
+        }
+      }
+    },
+    "未知模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unknown model"
           }
         }
       }
@@ -3891,6 +5521,36 @@
         }
       }
     },
+    "松开作为重绘底图": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drop to use as base image"
+          }
+        }
+      }
+    },
+    "松开添加参考图或参考视频": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drop to add reference image or video"
+          }
+        }
+      }
+    },
+    "松开添加视频首帧或尾帧": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drop to attach first or last frame"
+          }
+        }
+      }
+    },
     "极简玻璃质感的小猫雕塑，柔和清晨自然光，微距摄影": {
       "localizations": {
         "en": {
@@ -3931,6 +5591,16 @@
         }
       }
     },
+    "查看详情": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "View Details"
+          }
+        }
+      }
+    },
     "查看通知": {
       "localizations": {
         "en": {
@@ -3957,6 +5627,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Validating pack"
+          }
+        }
+      }
+    },
+    "根据参考素材生成一段连贯的视频": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generate a coherent video from the reference media"
           }
         }
       }
@@ -4061,12 +5741,32 @@
         }
       }
     },
+    "模型列表已刷新": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model list refreshed"
+          }
+        }
+      }
+    },
     "模型卡": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Model Card"
+          }
+        }
+      }
+    },
+    "模型可以直接画图（点一下关掉）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Image drawing enabled (click to disable)"
           }
         }
       }
@@ -4131,12 +5831,62 @@
         }
       }
     },
+    "模型思考多久再回答": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "How long the model thinks before answering"
+          }
+        }
+      }
+    },
+    "模型未运行": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No model running"
+          }
+        }
+      }
+    },
     "模型来源": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Model Source"
+          }
+        }
+      }
+    },
+    "模型画图时用哪个图像模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Which image model to use when drawing"
+          }
+        }
+      }
+    },
+    "模型详情加载失败": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Failed to load model details"
+          }
+        }
+      }
+    },
+    "模型重扫": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model rescan"
           }
         }
       }
@@ -4171,12 +5921,42 @@
         }
       }
     },
+    "正在扫描…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scanning…"
+          }
+        }
+      }
+    },
     "正在构建 %@，完成后再试": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Building %@. Try again when it finishes."
+          }
+        }
+      }
+    },
+    "正在检查更新…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checking for updates…"
+          }
+        }
+      }
+    },
+    "正在生成回复…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generating response…"
           }
         }
       }
@@ -4201,6 +5981,26 @@
         }
       }
     },
+    "步": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "steps"
+          }
+        }
+      }
+    },
+    "步数": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Steps"
+          }
+        }
+      }
+    },
     "每条消息都会带上这组默认值": {
       "localizations": {
         "en": {
@@ -4221,12 +6021,42 @@
         }
       }
     },
+    "没有匹配的作品": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No matching items"
+          }
+        }
+      }
+    },
     "没有匹配的命令": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "No matching commands"
+          }
+        }
+      }
+    },
+    "没有匹配的对话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No matching chats"
+          }
+        }
+      }
+    },
+    "没有匹配的日志": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No matching logs"
           }
         }
       }
@@ -4261,6 +6091,16 @@
         }
       }
     },
+    "流式": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Streaming"
+          }
+        }
+      }
+    },
     "浅色": {
       "localizations": {
         "en": {
@@ -4291,6 +6131,36 @@
         }
       }
     },
+    "添加参考图（最多 9 张）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add reference images (up to 9)"
+          }
+        }
+      }
+    },
+    "添加参考视频（最多 3 段，每段至少 5 帧）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add reference videos (up to 3, ≥5 frames each)"
+          }
+        }
+      }
+    },
+    "添加首帧或尾帧": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Attach first or last frame"
+          }
+        }
+      }
+    },
     "清空": {
       "localizations": {
         "en": {
@@ -4311,6 +6181,16 @@
         }
       }
     },
+    "清空当前日志？": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear current logs?"
+          }
+        }
+      }
+    },
     "清空日志": {
       "localizations": {
         "en": {
@@ -4327,6 +6207,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Clear Notification History"
+          }
+        }
+      }
+    },
+    "清除搜索": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear search"
+          }
+        }
+      }
+    },
+    "清除筛选": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear Filter"
           }
         }
       }
@@ -4371,12 +6271,72 @@
         }
       }
     },
+    "点击复制 seed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click to copy seed"
+          }
+        }
+      }
+    },
     "点击复制接口地址": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Click to copy endpoint"
+          }
+        }
+      }
+    },
+    "点击复制请求摘要": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click to copy request summary"
+          }
+        }
+      }
+    },
+    "点击用「预览」打开": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click to open in Preview"
+          }
+        }
+      }
+    },
+    "点击选择": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click to pick"
+          }
+        }
+      }
+    },
+    "热加载": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hot load"
+          }
+        }
+      }
+    },
+    "热卸载": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hot unload"
           }
         }
       }
@@ -4431,12 +6391,32 @@
         }
       }
     },
+    "生成时间": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Created"
+          }
+        }
+      }
+    },
     "生效 %lld": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Effective %lld"
+          }
+        }
+      }
+    },
+    "用 QuickTime 打开": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open in QuickTime"
           }
         }
       }
@@ -4451,12 +6431,32 @@
         }
       }
     },
+    "用上次 #%lld": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use last #%lld"
+          }
+        }
+      }
+    },
     "用通俗易懂的比喻解释 Transformer 的注意力机制": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Explain Transformer self-attention with a clear everyday analogy"
+          }
+        }
+      }
+    },
+    "用预览打开": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open in Preview"
           }
         }
       }
@@ -4471,12 +6471,62 @@
         }
       }
     },
+    "画图模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Image Model"
+          }
+        }
+      }
+    },
     "画完图后图像模型留在显存里，下一轮生图不必重新加载；内存不够时引擎仍会自己换出": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Keep the image model in memory after drawing so the next round does not reload it; the engine still swaps it out when memory runs low."
+          }
+        }
+      }
+    },
+    "留空「PLE 内存」时生效": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Applies when PLE Memory is empty"
+          }
+        }
+      }
+    },
+    "留空则每次随机": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Random if blank"
+          }
+        }
+      }
+    },
+    "留空时每张图随机一个 seed；生成后点图下方的 seed 复制，贴回这里即可复现。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Random seed per image when blank; copy the seed below an image to reproduce it."
+          }
+        }
+      }
+    },
+    "留空时每段视频随机一个 seed；生成后视频下方会显示实际值。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Random seed per clip when blank; actual seed is shown beneath the video."
           }
         }
       }
@@ -4531,12 +6581,32 @@
         }
       }
     },
+    "直接填 owner/repo，经 hf-mirror.com 下载": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter owner/repo to download through hf-mirror.com"
+          }
+        }
+      }
+    },
     "直接进入控制台，稍后再装引擎": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Enter the console and install an engine later"
+          }
+        }
+      }
+    },
+    "确认恢复默认设置？": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reset settings to defaults?"
           }
         }
       }
@@ -4571,12 +6641,42 @@
         }
       }
     },
+    "磁盘预算 (GB)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disk Budget (GB)"
+          }
+        }
+      }
+    },
+    "离线": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OFFLINE"
+          }
+        }
+      }
+    },
     "移除": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Remove"
+          }
+        }
+      }
+    },
+    "移除下载任务？": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove download task?"
           }
         }
       }
@@ -4591,12 +6691,52 @@
         }
       }
     },
+    "移除参考图": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove reference image"
+          }
+        }
+      }
+    },
+    "移除参考视频": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove reference video"
+          }
+        }
+      }
+    },
+    "移除底图": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove base image"
+          }
+        }
+      }
+    },
     "稍候": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Please wait"
+          }
+        }
+      }
+    },
+    "空闲": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "IDLE"
           }
         }
       }
@@ -4611,12 +6751,42 @@
         }
       }
     },
+    "端口需在 %lld–%lld 之间": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Port must be between %lld and %lld"
+          }
+        }
+      }
+    },
+    "端口需在 1024–65535 之间": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Port must be between 1024 and 65535"
+          }
+        }
+      }
+    },
     "第 %lld 页 · %lld 条": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Page %lld · %lld items"
+          }
+        }
+      }
+    },
+    "等待": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting"
           }
         }
       }
@@ -4637,6 +6807,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Waiting to install"
+          }
+        }
+      }
+    },
+    "等待当前下载完成后再继续": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wait for the active download to finish before resuming"
           }
         }
       }
@@ -4671,6 +6851,26 @@
         }
       }
     },
+    "筛选提示词、模型或 seed": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Filter prompt, model, or seed"
+          }
+        }
+      }
+    },
+    "筛选模型…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Filter models…"
+          }
+        }
+      }
+    },
     "系统提示": {
       "localizations": {
         "en": {
@@ -4687,6 +6887,36 @@
           "stringUnit": {
             "state": "translated",
             "value": "Text Only"
+          }
+        }
+      }
+    },
+    "经 hf-mirror.com 镜像搜 Hugging Face 权重，下载到公共目录，所有引擎共用一份": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search Hugging Face weights through the hf-mirror.com mirror, download them to the shared folder — one copy for all engines"
+          }
+        }
+      }
+    },
+    "给 FlashCat 发消息": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Message FlashCat"
+          }
+        }
+      }
+    },
+    "给「%@」换一个名字。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Give “%@” a new name."
           }
         }
       }
@@ -4731,6 +6961,16 @@
         }
       }
     },
+    "继续下载": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resume download"
+          }
+        }
+      }
+    },
     "综合": {
       "localizations": {
         "en": {
@@ -4771,12 +7011,42 @@
         }
       }
     },
+    "网关": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gateway"
+          }
+        }
+      }
+    },
     "网关端口": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Gateway Port"
+          }
+        }
+      }
+    },
+    "置顶": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pin"
+          }
+        }
+      }
+    },
+    "置顶、重命名或删除这段对话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pin, rename or delete this chat"
           }
         }
       }
@@ -4797,6 +7067,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Automatic"
+          }
+        }
+      }
+    },
+    "自定义": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Custom"
           }
         }
       }
@@ -4841,12 +7121,112 @@
         }
       }
     },
+    "落盘": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disk Persist"
+          }
+        }
+      }
+    },
+    "蒸馏 LTX 8 步够用；H3 一般给到 20 步。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Distilled LTX works well at 8 steps; H3 typically needs 20 steps."
+          }
+        }
+      }
+    },
     "被占用时会自动顺延，实际端口写在 control.json": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Falls forward when taken; the actual port is written to control.json"
+          }
+        }
+      }
+    },
+    "视觉": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vision"
+          }
+        }
+      }
+    },
+    "视觉模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vision model"
+          }
+        }
+      }
+    },
+    "视频": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Video"
+          }
+        }
+      }
+    },
+    "视频 %lld": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Videos %lld"
+          }
+        }
+      }
+    },
+    "视频参数": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Video Options"
+          }
+        }
+      }
+    },
+    "视频已保存在本地，可直接播放": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Video saved locally; ready to play"
+          }
+        }
+      }
+    },
+    "视频模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Video model"
+          }
+        }
+      }
+    },
+    "视频详情": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Video Details"
           }
         }
       }
@@ -4891,6 +7271,16 @@
         }
       }
     },
+    "让画面自然地动起来": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Animate the scene naturally"
+          }
+        }
+      }
+    },
     "设置": {
       "localizations": {
         "en": {
@@ -4911,12 +7301,52 @@
         }
       }
     },
+    "该引擎": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This engine"
+          }
+        }
+      }
+    },
     "请先": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Please"
+          }
+        }
+      }
+    },
+    "请先停止运行中的引擎再删除": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stop the running engine before removing"
+          }
+        }
+      }
+    },
+    "请先选择模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select a model first"
+          }
+        }
+      }
+    },
+    "读取提示词": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reading prompt"
           }
         }
       }
@@ -4937,6 +7367,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Adjust"
+          }
+        }
+      }
+    },
+    "调节对话宽度": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resize chat column"
+          }
+        }
+      }
+    },
+    "越低越贴近原图，越高越放飞；0.55–0.65 适合换风格。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lower preserves the original; higher explores freely (0.55–0.65 works well for restyling)."
           }
         }
       }
@@ -5001,6 +7451,16 @@
         }
       }
     },
+    "输入消息，回车发送 · ⌘回车换行": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Message… (Return to send · ⌘Return for newline)"
+          }
+        }
+      }
+    },
     "运行中": {
       "localizations": {
         "en": {
@@ -5031,12 +7491,62 @@
         }
       }
     },
+    "返回": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Back"
+          }
+        }
+      }
+    },
     "还没有保存的对话": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "No saved chats yet"
+          }
+        }
+      }
+    },
+    "还没有安装推理引擎，请先在启动页选择一个": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No inference engine is installed yet. Choose one on the launch page."
+          }
+        }
+      }
+    },
+    "还没有本地模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No local models yet"
+          }
+        }
+      }
+    },
+    "还没有生成的图片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No generated images yet"
+          }
+        }
+      }
+    },
+    "还没有生成的视频": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No generated videos yet"
           }
         }
       }
@@ -5051,12 +7561,32 @@
         }
       }
     },
+    "还没有选择模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No model selected"
+          }
+        }
+      }
+    },
     "还没有选择模型，在模型页选一个即可启动": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "No model selected yet. Pick one on the Models page to start."
+          }
+        }
+      }
+    },
+    "这个模型是蒸馏加速版，采样表由权重写死；拖步数不会改变结果，出图就按 %lld 步算。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This model is distilled with a fixed schedule; always generates at %lld steps."
           }
         }
       }
@@ -5091,6 +7621,16 @@
         }
       }
     },
+    "这将移除「%@」的任务记录，并清理未完成的半成品目录。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This will remove the task entry for \"%@\" and clean up the incomplete directory."
+          }
+        }
+      }
+    },
     "进度按已下载字节计算；暂停后继续会从断点接着走": {
       "localizations": {
         "en": {
@@ -5117,6 +7657,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Process not started"
+          }
+        }
+      }
+    },
+    "退出": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quit"
           }
         }
       }
@@ -5171,12 +7721,52 @@
         }
       }
     },
+    "选择一张图片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose an Image"
+          }
+        }
+      }
+    },
     "选择一张图片作为画布背景": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Choose an image as the canvas background"
+          }
+        }
+      }
+    },
+    "选择下载缓存目录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose Download Cache Folder"
+          }
+        }
+      }
+    },
+    "选择参考图": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose Reference Images"
+          }
+        }
+      }
+    },
+    "选择参考视频": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose Reference Videos"
           }
         }
       }
@@ -5201,12 +7791,52 @@
         }
       }
     },
+    "选择目录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose folder"
+          }
+        }
+      }
+    },
+    "选择视频%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose Video %@"
+          }
+        }
+      }
+    },
+    "通用 MLX 引擎，多模型热切换，MTP / DFlash2 按模型配置。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "General-purpose MLX engine with multi-model hot swapping and per-model MTP / DFlash2 config."
+          }
+        }
+      }
+    },
     "通知": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Notifications"
+          }
+        }
+      }
+    },
+    "通过运行时 pack 接入的引擎。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Engine integrated via runtime pack."
           }
         }
       }
@@ -5221,12 +7851,52 @@
         }
       }
     },
+    "采样": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sampling"
+          }
+        }
+      }
+    },
     "重启服务": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Restart Service"
+          }
+        }
+      }
+    },
+    "重命名": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rename"
+          }
+        }
+      }
+    },
+    "重命名…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rename…"
+          }
+        }
+      }
+    },
+    "重命名对话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rename Chat"
           }
         }
       }
@@ -5247,6 +7917,46 @@
           "stringUnit": {
             "state": "translated",
             "value": "Rescan"
+          }
+        }
+      }
+    },
+    "重新生成这轮回答": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Regenerate this reply"
+          }
+        }
+      }
+    },
+    "重绘 · 强度 %lld%%": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Redraw · Strength %lld%%"
+          }
+        }
+      }
+    },
+    "重绘强度": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Denoise Strength"
+          }
+        }
+      }
+    },
+    "重置筛选": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reset Filters"
           }
         }
       }
@@ -5301,6 +8011,16 @@
         }
       }
     },
+    "附上一张图片作重绘底图": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Attach a base image for image-to-image"
+          }
+        }
+      }
+    },
     "随 macOS 外观自动切换日间 / 夜间皮肤": {
       "localizations": {
         "en": {
@@ -5331,6 +8051,26 @@
         }
       }
     },
+    "随机": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Random"
+          }
+        }
+      }
+    },
+    "随机（未记录）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Random (not recorded)"
+          }
+        }
+      }
+    },
     "隐藏边栏": {
       "localizations": {
         "en": {
@@ -5351,12 +8091,32 @@
         }
       }
     },
+    "需要我为你做些什么?": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "What can I help you with?"
+          }
+        }
+      }
+    },
     "非流式请求无逐秒曲线": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "No per-second curve for non-streaming requests"
+          }
+        }
+      }
+    },
+    "面向大规模 MoE 的 SSD 流式推理引擎，支持 Metal / CUDA / HIP。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SSD streaming inference engine for large-scale MoE models with Metal / CUDA / HIP support."
           }
         }
       }
@@ -5431,6 +8191,16 @@
         }
       }
     },
+    "额外命令行参数": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Extra CLI Arguments"
+          }
+        }
+      }
+    },
     "首字": {
       "localizations": {
         "en": {
@@ -5457,6 +8227,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "First-token Latency"
+          }
+        }
+      }
+    },
+    "首帧": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "First Frame"
           }
         }
       }
@@ -5511,6 +8291,16 @@
         }
       }
     },
+    "默认 %lld · 允许 %lld–%lld": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Default %lld · Allowed %lld–%lld"
+          }
+        }
+      }
+    },
     "默认使用 HF_HUB_CACHE": {
       "localizations": {
         "en": {
@@ -5537,6 +8327,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Default Model"
+          }
+        }
+      }
+    },
+    "（无提示词）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "(No prompt)"
+          }
+        }
+      }
+    },
+    "（没有记录提示词）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "(No prompt recorded)"
           }
         }
       }

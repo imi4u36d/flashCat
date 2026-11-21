@@ -17,16 +17,19 @@ struct CommandPalette: View {
     var dismiss: () -> Void
 
     @State private var query = ""
-    @State private var hovered: String?
     @State private var selectedIndex = 0
     @State private var presented = false
     @FocusState private var focused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var items: [CommandItem] {
         let all = commands
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !text.isEmpty else { return all }
-        return all.filter { "\($0.title) \($0.detail)".lowercased().contains(text) }
+        return all.filter { item in
+            let haystack = "\(item.title) \(L10n.t(item.title)) \(item.detail) \(L10n.t(item.detail))".lowercased()
+            return haystack.contains(text)
+        }
     }
 
     private var clampedSelection: Int {
@@ -35,29 +38,39 @@ struct CommandPalette: View {
     }
 
     var body: some View {
-        ZStack {
-            DS.scrim
-                .ignoresSafeArea()
-                .onTapGesture { dismiss() }
+        GeometryReader { proxy in
+            let cardWidth = min(560, max(360, proxy.size.width - 48))
+            let topPadding = min(108, max(32, proxy.size.height * 0.14))
+            let listMaxHeight = min(340, max(160, proxy.size.height - topPadding - 130))
 
-            VStack(spacing: 0) {
-                searchRow
-                DSDivider()
-                results
-                DSDivider()
-                footer
+            ZStack {
+                DS.scrim
+                    .ignoresSafeArea()
+                    .onTapGesture { dismiss() }
+
+                VStack(spacing: 0) {
+                    searchRow
+                    DSDivider()
+                    results(maxHeight: listMaxHeight)
+                    DSDivider()
+                    footer
+                }
+                .frame(width: cardWidth)
+                .dsFloating(radius: DS.Radius.xl)
+                .scaleEffect((!reduceMotion && !presented) ? 0.97 : 1)
+                .opacity(presented ? 1 : 0)
+                .padding(.top, topPadding)
+                .frame(maxHeight: .infinity, alignment: .top)
             }
-            .frame(width: 560)
-            .dsFloating(radius: DS.Radius.xl)
-            .scaleEffect(presented ? 1 : 0.97)
-            .opacity(presented ? 1 : 0)
-            .padding(.top, 108)
-            .frame(maxHeight: .infinity, alignment: .top)
         }
         .onAppear {
             selectedIndex = 0
             focused = true
-            withAnimation(DS.Motion.bouncy) { presented = true }
+            if reduceMotion {
+                presented = true
+            } else {
+                withAnimation(DS.Motion.bouncy) { presented = true }
+            }
         }
         .onChange(of: query) { _, _ in selectedIndex = 0 }
         .onExitCommand { dismiss() }
@@ -95,7 +108,7 @@ struct CommandPalette: View {
         .frame(height: 46)
     }
 
-    private var results: some View {
+    private func results(maxHeight: CGFloat) -> some View {
         ScrollViewReader { scroll in
             ScrollView {
                 LazyVStack(spacing: 2) {
@@ -108,27 +121,33 @@ struct CommandPalette: View {
                     } else {
                         let activeIndex = clampedSelection
                         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                            row(item, selected: index == activeIndex || hovered == item.id)
-                                .id(item.id)
-                                .onTapGesture { run(item) }
-                                .onHover { inside in
-                                    if inside {
-                                        hovered = item.id
-                                        selectedIndex = index
-                                    } else if hovered == item.id {
-                                        hovered = nil
-                                    }
+                            Button {
+                                run(item)
+                            } label: {
+                                row(item, selected: index == activeIndex)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(item.disabled)
+                            .id(item.id)
+                            .onHover { inside in
+                                if inside {
+                                    selectedIndex = index
                                 }
+                            }
                         }
                     }
                 }
                 .padding(6)
             }
-            .frame(maxHeight: 340)
+            .frame(maxHeight: maxHeight)
             .onChange(of: selectedIndex) { _, newValue in
                 guard newValue >= 0, newValue < items.count else { return }
-                withAnimation(DS.Motion.snappy) {
+                if reduceMotion {
                     scroll.scrollTo(items[newValue].id, anchor: .center)
+                } else {
+                    withAnimation(DS.Motion.snappy) {
+                        scroll.scrollTo(items[newValue].id, anchor: .center)
+                    }
                 }
             }
         }
@@ -137,7 +156,6 @@ struct CommandPalette: View {
     private func moveSelection(_ delta: Int) {
         let count = items.count
         guard count > 0 else { return }
-        hovered = nil
         selectedIndex = (clampedSelection + delta + count) % count
     }
 
@@ -152,7 +170,7 @@ struct CommandPalette: View {
         return HStack(spacing: 10) {
             Image(systemName: item.icon)
                 .font(.system(size: 12.5, weight: .medium))
-                .foregroundStyle(selected ? DS.accent : DS.text3)
+                .foregroundStyle(selected && !item.disabled ? DS.accent : DS.text3)
                 .frame(width: 20, height: 20)
             VStack(alignment: .leading, spacing: 1) {
                 Text(L10n.t(item.title))
@@ -172,24 +190,25 @@ struct CommandPalette: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
+        .opacity(item.disabled ? 0.42 : 1)
         .background {
             if selected {
                 shape.fill(DS.hover)
                     .overlay(alignment: .leading) {
                         Capsule()
-                            .fill(DS.accent)
+                            .fill(item.disabled ? DS.text4 : DS.accent)
                             .frame(width: 2, height: 14)
                             .padding(.leading, 1)
                     }
             }
         }
-        .animation(DS.Motion.snappy, value: selected)
+        .animation(reduceMotion ? nil : DS.Motion.snappy, value: selected)
         .contentShape(shape)
     }
 
     private var footer: some View {
         HStack(spacing: 12) {
-            Text("点击一行运行命令")
+            Text(L10n.t("↑↓ 选择 · 回车运行 · ESC 关闭"))
                 .font(DS.Font.xs)
                 .foregroundStyle(DS.text3)
             Spacer(minLength: 0)
@@ -210,13 +229,13 @@ struct CommandPalette: View {
     }
 
     private var commands: [CommandItem] {
-        var list: [CommandItem] = Page.allCases.enumerated().map { index, page in
+        var list: [CommandItem] = Page.orderedForCommandPalette.map { page in
             CommandItem(
                 id: "nav.\(page.rawValue)",
                 title: L10n.format("打开%@", L10n.t(page.rawValue)),
                 detail: page.detail,
                 icon: page.symbol,
-                shortcut: index < 6 ? "⌘\(index + 1)" : nil
+                shortcut: page.shortcutDisplay
             ) {
                 state.section = page
             }
@@ -226,7 +245,8 @@ struct CommandPalette: View {
                 id: "engine.toggle",
                 title: state.isRunning ? "停止推理引擎" : "启动推理引擎",
                 detail: engineToggleDetail,
-                icon: state.isRunning ? "stop.fill" : "play.fill"
+                icon: state.isRunning ? "stop.fill" : "play.fill",
+                disabled: state.isSwitchingModel || state.runtimeMissing != nil
             ) {
                 state.toggleService()
             })
@@ -244,13 +264,13 @@ struct CommandPalette: View {
                 icon: "arrow.down.circle", run: openDownloads))
         list.append(
             CommandItem(
-                id: "hub", title: "模型广场", detail: "搜索 Hugging Face 并下载",
+                id: "hub", title: "模型广场", detail: "搜索 Hugging Face / ModelScope 并下载",
                 icon: "sparkle.magnifyingglass", run: openHub))
         list.append(
             CommandItem(
                 id: "theme", title: "切换外观",
                 detail: L10n.format("当前：%@", L10n.t(state.theme.mode.label)),
-                icon: state.theme.mode == .dark ? "sun.max" : "moon"
+                icon: state.theme.isDark ? "sun.max" : "moon"
             ) {
                 toggleAppearance()
             })
@@ -271,6 +291,7 @@ struct CommandPalette: View {
     }
 
     private func run(_ item: CommandItem) {
+        guard !item.disabled else { return }
         dismiss()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { item.run() }
     }
@@ -282,6 +303,7 @@ struct CommandItem: Identifiable {
     let detail: String
     let icon: String
     var shortcut: String? = nil
+    var disabled: Bool = false
     let run: () -> Void
 }
 

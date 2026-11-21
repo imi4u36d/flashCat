@@ -28,6 +28,28 @@ enum Page: String, CaseIterable, Identifiable {
         }
     }
 
+    /// 侧栏主工作区入口。
+    static let primaryPages: [Page] = [.chat, .lab]
+
+    /// 侧栏控制台分区入口。
+    static let consolePages: [Page] = [.overview, .models, .engines, .logs]
+
+    /// 与 `App.swift` 菜单栏快捷键完全一致的命令面板排序。
+    static let orderedForCommandPalette: [Page] = [.chat, .lab, .overview, .models, .engines, .logs, .settings]
+
+    /// 与 `App.swift` `.keyboardShortcut` 对应的快捷键展示文案。
+    var shortcutDisplay: String {
+        switch self {
+        case .chat: return "⌘1"
+        case .lab: return "⌘2"
+        case .overview: return "⌘3"
+        case .models: return "⌘4"
+        case .engines: return "⌘5"
+        case .logs: return "⌘6"
+        case .settings: return "⌘,"
+        }
+    }
+
     /// 主工作区七页：实验紧跟在设置后面。
     static let workspace: [Page] = [.overview, .chat, .models, .engines, .logs, .settings, .lab]
 }

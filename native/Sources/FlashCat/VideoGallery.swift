@@ -158,6 +158,11 @@ enum VideoThumbnailStore {
         return cache
     }()
 
+    static func cachedThumbnail(atPath path: String, maxPixel: CGFloat) -> NSImage? {
+        let key = "\(path)#\(Int(maxPixel))" as NSString
+        return cache.object(forKey: key)
+    }
+
     static func thumbnail(atPath path: String, maxPixel: CGFloat) async -> NSImage? {
         let key = "\(path)#\(Int(maxPixel))" as NSString
         if let hit = cache.object(forKey: key) { return hit }

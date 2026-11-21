@@ -37,6 +37,51 @@ final class HubSourceTests: XCTestCase {
         XCTAssertEqual(HubSource.stored, .huggingFace)
     }
 
+    // MARK: HF-Mirror source
+
+    func testHFMirrorIsAHuggingFaceCompatibleSource() {
+        XCTAssertEqual(HubSource(rawValue: "hf-mirror"), .hfMirror)
+        XCTAssertEqual(HubSource.hfMirror.displayName, "HF-Mirror")
+        XCTAssertEqual(HubSource.hfMirror.endpoint, "https://hf-mirror.com")
+        XCTAssertTrue(HubSource.hfMirror.isHuggingFaceCompatible)
+    }
+
+    /// 自定义镜像地址只改官方那一档；显式选 HF-Mirror 时固定走镜像站。
+    func testExplicitMirrorIsNotOverriddenByCustomEndpoint() {
+        UserDefaults.standard.set("https://mirror.example.com", forKey: "hfEndpoint")
+        defer { UserDefaults.standard.removeObject(forKey: "hfEndpoint") }
+
+        XCTAssertEqual(HubSource.huggingFace.endpoint, "https://mirror.example.com")
+        XCTAssertEqual(HubSource.hfMirror.endpoint, "https://hf-mirror.com")
+    }
+
+    func testDownloaderEnvironmentFollowsSource() {
+        let mirror = ModelInstaller.environment(
+            pythonRoot: "/tmp/flashcat-test", cache: "", source: .hfMirror)
+        XCTAssertEqual(mirror["HF_ENDPOINT"], "https://hf-mirror.com")
+
+        let official = ModelInstaller.environment(
+            pythonRoot: "/tmp/flashcat-test", cache: "", source: .huggingFace)
+        XCTAssertEqual(official["HF_ENDPOINT"], "https://huggingface.co")
+
+        // ModelScope 走自己的协议，不能把 HF 端点带过去。
+        let scope = ModelInstaller.environment(
+            pythonRoot: "/tmp/flashcat-test", cache: "", source: .modelScope)
+        XCTAssertNil(scope["HF_ENDPOINT"])
+    }
+
+    /// 引擎目录里的下载没有来源参数：选了 HF-Mirror 就跟着走，选了
+    /// ModelScope 则退回 Hugging Face 端点那条通道。
+    func testEngineDownloadsFollowStoredSource() {
+        defer { UserDefaults.standard.removeObject(forKey: "hubSource") }
+
+        UserDefaults.standard.set(HubSource.hfMirror.rawValue, forKey: "hubSource")
+        XCTAssertEqual(HubSource.downloadSource, .hfMirror)
+
+        UserDefaults.standard.set(HubSource.modelScope.rawValue, forKey: "hubSource")
+        XCTAssertEqual(HubSource.downloadSource, .huggingFace)
+    }
+
     // MARK: Quant download selection
 
     func testSingleRootQuantKeepsProjector() {

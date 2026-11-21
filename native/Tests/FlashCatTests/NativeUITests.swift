@@ -119,4 +119,179 @@ final class NativeUITests: XCTestCase {
             offenders.isEmpty,
             "系统内不应再使用 Liquid Glass / 材质模糊：\(offenders.joined(separator: " | "))")
     }
+
+    func testModelCardTextPreservesCodeFencesAndIndentation() {
+        let raw = """
+            ---
+            license: apache-2.0
+            ---
+
+            <p><a href="https://example.com"><img alt="License"></a></p>
+
+            Use `<div>` inline &amp; keep nested lists:
+
+            - top item
+              - nested item
+                - deep item
+
+            ```python
+            def render():
+                return "<span>&amp;</span>"
+
+
+            class Sample:
+                pass
+            ```
+
+            ~~~bash
+            echo "<p>hello</p>"
+            ~~~
+            """
+        let normalized = ModelCardText.normalized(raw)
+        XCTAssertFalse(normalized.contains("license: apache-2.0"))
+        XCTAssertTrue(normalized.contains("[License](https://example.com)"))
+        XCTAssertTrue(normalized.contains("Use `<div>` inline & keep nested lists:"))
+        XCTAssertTrue(normalized.contains("\n  - nested item\n    - deep item\n"))
+        XCTAssertTrue(
+            normalized.contains(
+                "```python\ndef render():\n    return \"<span>&amp;</span>\"\n\n\nclass Sample:\n    pass\n```"
+            )
+        )
+        XCTAssertTrue(normalized.contains("~~~bash\necho \"<p>hello</p>\"\n~~~"))
+    }
+
+    func testModelDownloadTaskCodableBackwardCompatibility() throws {
+        let legacyJSON = """
+            {
+              "engine": "omlx",
+              "model": "Qwen/Qwen3-8B-MLX-4bit",
+              "status": "paused",
+              "totalBytes": 1000,
+              "downloadedBytes": 250,
+              "addedAt": 1000000,
+              "shared": ["omlx", "mtplx"]
+            }
+            """
+        let decodedLegacy = try JSONDecoder().decode(
+            ModelDownloadTask.self,
+            from: Data(legacyJSON.utf8))
+        XCTAssertEqual(decodedLegacy.engine, .omlx)
+        XCTAssertEqual(decodedLegacy.model, "Qwen/Qwen3-8B-MLX-4bit")
+        XCTAssertEqual(decodedLegacy.status, .paused)
+        XCTAssertEqual(decodedLegacy.totalBytes, 1000)
+        XCTAssertEqual(decodedLegacy.downloadedBytes, 250)
+        XCTAssertEqual(decodedLegacy.shared, [.omlx, .mtplx])
+        XCTAssertNil(decodedLegacy.source)
+        XCTAssertNil(decodedLegacy.include)
+
+        let task = ModelDownloadTask(
+            engine: .splash,
+            model: "Qwen/Qwen3-8B-GGUF",
+            status: .downloading,
+            totalBytes: 4096,
+            downloadedBytes: 512,
+            shared: [.splash],
+            source: .modelScope,
+            include: ["*Q4_K_M*.gguf"]
+        )
+        let encoded = try JSONEncoder().encode(task)
+        let roundTripped = try JSONDecoder().decode(ModelDownloadTask.self, from: encoded)
+        XCTAssertEqual(roundTripped.source, .modelScope)
+        XCTAssertEqual(roundTripped.include, ["*Q4_K_M*.gguf"])
+    }
+
+    func testPageCommandPaletteOrderAndShortcutsMatchApp() throws {
+        XCTAssertEqual(Page.primaryPages, [.chat, .lab])
+        XCTAssertEqual(Page.consolePages, [.overview, .models, .engines, .logs])
+        XCTAssertEqual(Page.orderedForCommandPalette, Page.primaryPages + Page.consolePages + [.settings])
+        XCTAssertEqual(Set(Page.orderedForCommandPalette), Set(Page.allCases))
+        XCTAssertEqual(Page.orderedForCommandPalette.count, Page.allCases.count)
+
+        let appURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // Tests/FlashCatTests/
+            .deletingLastPathComponent()  // Tests/
+            .deletingLastPathComponent()  // native/
+            .appendingPathComponent("Sources/FlashCat/App.swift")
+        let appSource = try String(contentsOf: appURL, encoding: .utf8)
+        let pattern = #"state\.section\s*=\s*\.(\w+)\s*\}\s*\.keyboardShortcut\("([0-9,])",\s*modifiers:\s*\.command\)"#
+        let regex = try NSRegularExpression(pattern: pattern)
+        let range = NSRange(appSource.startIndex..., in: appSource)
+        var appShortcuts: [String: String] = [:]
+        for match in regex.matches(in: appSource, range: range) {
+            guard let pageRange = Range(match.range(at: 1), in: appSource),
+                let digitRange = Range(match.range(at: 2), in: appSource)
+            else { continue }
+            appShortcuts[String(appSource[pageRange])] = "⌘" + String(appSource[digitRange])
+        }
+
+        XCTAssertEqual(appShortcuts.count, Page.allCases.count)
+        for page in Page.orderedForCommandPalette {
+            XCTAssertFalse(page.shortcutDisplay.isEmpty)
+            let caseName = "\(page)"
+            XCTAssertEqual(
+                page.shortcutDisplay,
+                appShortcuts[caseName],
+                "\(page) shortcutDisplay mismatches App.swift")
+        }
+    }
+
+    func testTildeCodeFenceAndNestedBulletListParsing() {
+        let codeBlocks = MarkdownBlock.parse("~~~bash\necho hi\n~~~")
+        XCTAssertEqual(codeBlocks.count, 1)
+        guard case .code(let language, let code) = codeBlocks[0].kind else {
+            return XCTFail("波浪线围栏应当解析为代码块")
+        }
+        XCTAssertEqual(language, "bash")
+        XCTAssertEqual(code, "echo hi")
+
+        let bullets = MarkdownBlock.parse("- top\n  - child\n    - grandchild")
+        XCTAssertEqual(bullets.count, 1)
+        guard case .bullet(let items) = bullets[0].kind else {
+            return XCTFail("应当解析为无序列表")
+        }
+        XCTAssertEqual(items.count, 3)
+        XCTAssertEqual(items.map(\.indent), [0, 1, 2])
+        XCTAssertEqual(items.map { String($0.content.characters) }, ["top", "child", "grandchild"])
+    }
+
+    func testLogsDigestCountsAndFilteringMatchAllLevels() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let entries = [
+            LogFeedEntry(
+                origin: "omlx",
+                tag: "omlx",
+                line: LogLine(id: 1, time: now, text: "Engine ready on port 8000", level: .system)),
+            LogFeedEntry(
+                origin: "omlx",
+                tag: "omlx",
+                line: LogLine(id: 2, time: now, text: "Slow token generation warning", level: .warning)),
+            LogFeedEntry(
+                origin: "splash",
+                tag: "splash",
+                line: LogLine(id: 3, time: now, text: "Failed to load Draft weights", level: .error)),
+            LogFeedEntry(
+                origin: "splash",
+                tag: "splash",
+                line: LogLine(id: 4, time: now, text: "Request completed in 42ms", level: .success)),
+            LogFeedEntry(
+                origin: "splash",
+                tag: "splash",
+                line: LogLine(id: 5, time: now, text: "Loaded model weights", level: .info)),
+        ]
+
+        let all = LogsDigest.make(from: entries, level: .all, query: "")
+        XCTAssertEqual(all.lines.count, 5)
+        XCTAssertEqual(all.counts[.all], 5)
+        XCTAssertEqual(all.counts[.info], 3)
+        XCTAssertEqual(all.counts[.warning], 1)
+        XCTAssertEqual(all.counts[.error], 1)
+
+        let warnings = LogsDigest.make(from: entries, level: .warning, query: "")
+        XCTAssertEqual(warnings.lines.map(\.text), ["Slow token generation warning"])
+        XCTAssertEqual(warnings.counts[.all], 5)
+
+        let queryMatch = LogsDigest.make(from: entries, level: .all, query: "WEIGHTS")
+        XCTAssertEqual(queryMatch.lines.map(\.id), ["splash#3", "splash#5"])
+        XCTAssertEqual(queryMatch.counts[.all], 5)
+    }
 }

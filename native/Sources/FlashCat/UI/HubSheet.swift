@@ -20,6 +20,7 @@ struct HubSheet: View {
     @State private var directRepo = ""
     /// 量化选择按仓库名记：`nil` 表示用默认（最小的那档）。
     @State private var pickedVariant: String?
+    @State private var lastSelectedRepo: String?
     @AppStorage("hubSource") private var storedSource = HubSource.huggingFace.rawValue
     @FocusState private var searchFocused: Bool
     @FocusState private var directRepoFocused: Bool
@@ -58,6 +59,16 @@ struct HubSheet: View {
         .onChange(of: state.hubDetail?.id) { _, _ in pickedVariant = nil }
         .onDisappear { state.closeHubDetail() }
         .onExitCommand { dismiss() }
+        .task(id: directRepo + "|" + source.rawValue) {
+            let repo = directRepo.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard repo.contains("/") else {
+                state.clearRepoProbe()
+                return
+            }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
+            state.probeRepo(repo, source: source)
+        }
     }
 
     private var header: some View {
@@ -287,6 +298,7 @@ struct HubSheet: View {
             memoryText: model.memoryRange.map(memoryRangeText),
             downloadsText: downloadsText(model.downloads)
         ) {
+            lastSelectedRepo = model.id
             state.loadHubDetail(model.id, source: source)
         }
     }
@@ -325,6 +337,21 @@ struct HubSheet: View {
             .padding(24)
         } else if let detail = state.hubDetail {
             detailContent(detail)
+        } else if let error = state.hubError, !error.isEmpty {
+            VStack(spacing: 12) {
+                EmptyHint(
+                    icon: "wifi.exclamationmark",
+                    title: "模型详情加载失败",
+                    detail: error
+                )
+                if let repo = lastSelectedRepo {
+                    Button(L10n.t("重试")) {
+                        state.loadHubDetail(repo, source: source)
+                    }
+                    .buttonStyle(.ds(.secondary, size: .regular))
+                }
+            }
+            .frame(maxHeight: .infinity)
         } else {
             EmptyHint(
                 icon: "doc.text.magnifyingglass",
@@ -493,10 +520,10 @@ struct HubSheet: View {
                 }
                 Button {
                     let includes = variant.map { detail.downloadIncludes(for: $0) } ?? []
-                    state.downloadShared(
+                    let started = state.downloadShared(
                         detail.id, engines: ModelSharing.downloadTargets(lead: recommended),
                         source: source, include: includes)
-                    dismiss()
+                    if started { dismiss() }
                 } label: {
                     Label("下载", systemImage: "arrow.down.circle")
                 }
@@ -551,7 +578,10 @@ struct HubSheet: View {
                     .onSubmit(downloadDirect)
                 Button("下载", action: downloadDirect)
                     .buttonStyle(.ds(.secondary, size: .small))
-                    .disabled(directRepo.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(
+                        directRepo.trimmingCharacters(in: .whitespaces).isEmpty
+                            || state.downloadingModel != nil
+                    )
             }
             .padding(.horizontal, 10)
             .frame(height: 30)
@@ -624,26 +654,28 @@ struct HubSheet: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 6)
         .background(DS.bg)
-        .task(id: directRepo + "|" + source.rawValue) {
-            let repo = directRepo.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard repo.contains("/") else {
-                state.clearRepoProbe()
-                return
-            }
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            guard !Task.isCancelled else { return }
-            state.probeRepo(repo, source: source)
-        }
     }
 
     private func downloadDirect() {
         let repo = directRepo.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !repo.isEmpty else { return }
-        state.downloadShared(
-            repo, engines: ModelSharing.downloadTargets(lead: engine), source: source)
-        directRepo = ""
-        state.clearRepoProbe()
-        dismiss()
+        guard !repo.isEmpty, state.downloadingModel == nil else { return }
+        let probeLead: EngineID? = {
+            guard let probe = state.repoProbe,
+                probe.id.caseInsensitiveCompare(repo) == .orderedSame
+                    || state.repoProbeRepo.caseInsensitiveCompare(repo) == .orderedSame,
+                let id = EngineID(rawValue: probe.recommendedEngine.id),
+                EngineCatalog.allIDs.contains(id)
+            else { return nil }
+            return id
+        }()
+        let started = state.downloadShared(
+            repo, engines: ModelSharing.downloadTargets(lead: probeLead ?? engine),
+            source: source)
+        if started {
+            directRepo = ""
+            state.clearRepoProbe()
+            dismiss()
+        }
     }
 }
 

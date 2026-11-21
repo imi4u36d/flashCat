@@ -2,32 +2,20 @@
 // Copyright (c) 2026 wangzhuo
 
 import AppKit
-import SwiftUI
 
-/// 背景参数的「执行器」：把透明度 / 模糊落到窗口表面和毛玻璃层上。
+/// 窗口画布背景表面：始终维持不透明纯实色 ZCode 画布（日间 `#F8F8F8` / 夜间 `#161616`）。
 ///
-/// 这两件事以前挂在 `DesktopBackdrop.updateNSView` 里。NSViewRepresentable 只在
-/// 自己的入参变化时才会被 SwiftUI 回调，而这个代表视图的入参只有 `blur`——
-/// 于是「只拖 APP 透明度」这一路一步都跑不到窗口表面：`isOpaque` 与
-/// `backgroundColor` 还是旧值，桌面根本不露出来；反过来拖模糊时它才顺带
-/// 把上一步的透明度一起落下去。用户看到的就是「拖一个条没反应，拖另一个条
-/// 上一个改动才生效」。
-///
-/// 现在改由 `BackgroundSettings` 的 `didSet` 直接驱动：参数一变，窗口和毛玻璃
-/// 层立刻跟着变，不依赖任何视图的更新时机。`refresh()` 是幂等的，重复调用没有
-/// 副作用。
+/// 主窗口本身为了压低阴影始终保持 Aqua 外观，因此必须先按 `contentView` 的
+/// 实际外观把动态画布色解析成静态 sRGB 再写进 `window.backgroundColor`，
+/// 避免圆角外缘与切换皮肤瞬间闪白。
 @MainActor
 final class BackgroundSurface {
     static let shared = BackgroundSurface()
 
-    /// 窗口自己的底色。自定义背景图片时是它，透出桌面时让位给 `.clear`。
+    /// 主画布底色：Zai Dark `#161616` / Zai Light `#F8F8F8`。
     static let canvasColor = NSColor.adaptive(dark: 0x161616, light: 0xF8F8F8)
 
-    /// 按给定外观把画布底色解析成固定颜色。
-    ///
-    /// 不能把动态颜色直接交给窗口：窗口为了投影恒定是浅色外观（见
-    /// `ThemeController.apply(to:)`），`window.backgroundColor` 会按窗口外观
-    /// 现场解析成浅色画布，深色皮肤下铺在内容后面，圆角和换肤过渡时就会闪白。
+    /// 按给定外观把画布底色解析成静态 sRGB 颜色。
     static func canvasColor(for appearance: NSAppearance) -> NSColor {
         var resolved = canvasColor
         appearance.performAsCurrentDrawingAppearance {
@@ -36,62 +24,15 @@ final class BackgroundSurface {
         return resolved
     }
 
-    private weak var window: NSWindow?
-    private weak var effectView: NSVisualEffectView?
-
     private init() {}
 
-    /// 主窗口登记一次；之后参数一变就会直接落到它身上。
-    /// 挑窗口是调用方的事（`AppDelegate.configure` 已经滤掉面板和状态栏窗口），
-    /// 这里只记住最近一个。
-    func attach(window: NSWindow) {
-        guard window !== self.window else { return }
-        self.window = window
-        refresh()
-    }
-
-    func attach(effectView: NSVisualEffectView) {
-        guard effectView !== self.effectView else { return }
-        self.effectView = effectView
-        refresh()
-    }
-
-    /// 把当前参数落到窗口与毛玻璃层上。幂等。
-    func refresh() {
-        if let window {
-            applyWindowSurface(to: window)
-        }
-
-        guard let effectView else { return }
-        let settings = BackgroundSettings.shared
-        let alpha = CGFloat(
-            BackgroundMath.desktopFrost(
-                blur: settings.blur,
-                hasImage: settings.image != nil))
-        // 只有强度真的变了才碰这一层：它铺满整窗、又是 behindWindow 混合，
-        // 每帧标脏等于让系统重新采样桌面并重合成整个窗口，拖动时会闪。
-        // 有自定义图片时强度恒为 0，这一路根本不该跑。
-        guard abs(effectView.alphaValue - alpha) > 0.0005 else { return }
-        effectView.alphaValue = alpha
-        // `alphaValue` 只改合成参数，层内容本身不一定会重新解析。显式标脏，
-        // 保证拖动滑杆时毛玻璃跟着走，而不是等下一次别的重绘顺手带出来。
-        effectView.needsDisplay = true
-        effectView.layer?.setNeedsDisplay()
-    }
-
-    /// 只改窗口这一层：透出桌面时非不透明 + 清空底色，否则回到不透明画布。
-    ///
-    /// `isOpaque` 与 `backgroundColor` 必须成对改：只清底色不设非不透明，
-    /// 桌面不会透上来；只设非不透明不清底色，切壁纸后旧画面会挂在窗口上。
+    /// 保持窗口不透明并用当前皮肤对应的纯色画布填充窗口底色。
     func applyWindowSurface(to window: NSWindow) {
-        let revealsDesktop = BackgroundSettings.shared.revealsDesktop
-        if window.isOpaque == revealsDesktop {
-            window.isOpaque = !revealsDesktop
+        if !window.isOpaque {
+            window.isOpaque = true
         }
-        let targetColor: NSColor =
-            revealsDesktop
-            ? .clear
-            : Self.canvasColor(for: window.contentView?.effectiveAppearance ?? window.effectiveAppearance)
+        let targetColor = Self.canvasColor(
+            for: window.contentView?.effectiveAppearance ?? window.effectiveAppearance)
         if window.backgroundColor != targetColor {
             window.backgroundColor = targetColor
         }

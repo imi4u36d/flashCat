@@ -30,7 +30,10 @@ struct ModelDownloadTask: Codable, Identifiable, Equatable {
     var addedAt: Date = Date()
     /// 下到公共目录的任务：`engine` 只是「谁发起、之后给谁用」的记号，权重
     /// 落盘位置与引擎无关。nil 表示下进了某个引擎自己的目录（旧行为）。
-    var shared: [EngineID]?
+    var shared: [EngineID]? = nil
+    /// 发起下载时选择的 Hub 来源与文件白名单（用于断点续传时沿用同一来源与量化档位）。
+    var source: HubSource? = nil
+    var include: [String]? = nil
 
     var id: String { engine.rawValue + "/" + model }
 

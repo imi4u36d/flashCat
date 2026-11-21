@@ -163,8 +163,9 @@ final class AppSettings {
     var hfCache: String { defaults.string(forKey: "hfCache") ?? "" }
     func setHfCache(_ value: String) { defaults.set(value, forKey: "hfCache") }
 
-    /// Hugging Face 端点。空串表示官方地址；`HubClient` 和下载器都从这里
-    /// 读，所以设置页写一次两边一起生效。
+    /// 官方来源的 Hugging Face 端点。空串表示官方地址；`HubClient` 和下载器
+    /// 都从这里读，所以设置页写一次两边一起生效。HF-Mirror 通道固定用
+    /// hf-mirror.com，不读这个值。
     var hfEndpoint: String {
         HFEndpoint.normalized(defaults.string(forKey: "hfEndpoint") ?? "") ?? ""
     }
@@ -193,8 +194,8 @@ final class AppSettings {
         }
     }
 
-    /// 模型广场默认查哪家。CLI/控制接口的 `download` 不走这个值：它们拿到的
-    /// 是裸 repo id，默认仍按 Hugging Face 解释。
+    /// 模型广场默认查哪家。CLI/控制接口的 `download` 也沿用这个通道；只有
+    /// ModelScope 不参与——裸 repo id 默认仍按 Hugging Face 端点解释。
     var hubSource: HubSource {
         HubSource.stored
     }

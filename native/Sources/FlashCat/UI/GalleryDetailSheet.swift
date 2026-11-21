@@ -70,15 +70,30 @@ enum GalleryDetailItem: Identifiable {
 
 struct GalleryDetailSheet: View {
     let item: GalleryDetailItem
+    var items: [GalleryDetailItem] = []
+    var onSelect: ((GalleryDetailItem) -> Void)? = nil
+
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var player: AVPlayer?
+    @State private var missingVideo = false
+    @State private var copiedPrompt = false
+    @State private var copyResetTask: Task<Void, Never>?
 
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.locale = .autoupdatingCurrent
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
         return formatter
     }()
+
+    private var fileExists: Bool {
+        FileManager.default.fileExists(atPath: item.path)
+    }
+
+    private var currentIndex: Int? {
+        items.firstIndex(where: { $0.id == item.id })
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -94,21 +109,44 @@ struct GalleryDetailSheet: View {
         }
         .frame(width: 720, height: 540)
         .sheetCanvas()
+        .onExitCommand { dismiss() }
+        .onDisappear {
+            player?.pause()
+            player = nil
+            copyResetTask?.cancel()
+            copyResetTask = nil
+        }
     }
 
     private var header: some View {
         HStack(spacing: 12) {
             IconTile(symbol: item.isVideo ? "film" : "photo.on.rectangle.angled", color: DS.accent, size: 30)
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(item.kindName)详情")
+                Text(L10n.t(item.isVideo ? "视频详情" : "图片详情"))
                     .font(DS.Font.lg.weight(.semibold))
                     .foregroundStyle(DS.text)
-                Text("对话中生成 · \(item.model.isEmpty ? "未知模型" : item.model)")
+                Text(L10n.format("对话中生成 · %@", item.model.isEmpty ? L10n.t("未知模型") : item.model))
                     .font(DS.Font.xs)
                     .foregroundStyle(DS.text3)
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
+            if let index = currentIndex, items.count > 1, let onSelect {
+                HStack(spacing: 6) {
+                    Text(verbatim: "\(index + 1) / \(items.count)")
+                        .font(DS.Font.mono(10.5))
+                        .foregroundStyle(DS.text3)
+                        .monospacedDigit()
+                    DSIconButton(systemName: "chevron.left", help: "上一项", style: .outlined) {
+                        onSelect(items[index - 1])
+                    }
+                    .disabled(index <= 0)
+                    DSIconButton(systemName: "chevron.right", help: "下一项", style: .outlined) {
+                        onSelect(items[index + 1])
+                    }
+                    .disabled(index >= items.count - 1)
+                }
+            }
             DSIconButton(systemName: "xmark", help: "关闭") { dismiss() }
         }
         .padding(.horizontal, 18)
@@ -142,7 +180,8 @@ struct GalleryDetailSheet: View {
             .contentShape(DS.rect(DS.Radius.lg))
         }
         .buttonStyle(.plain)
-        .help("在预览中打开原图")
+        .disabled(!fileExists)
+        .help(L10n.t("在预览中打开原图"))
         .frame(width: 320, height: 320, alignment: .top)
     }
 
@@ -151,8 +190,10 @@ struct GalleryDetailSheet: View {
     private var videoPreview: some View {
         ZStack {
             DS.rect(DS.Radius.lg)
-                .fill(Color.black)
-            if let player {
+                .fill(missingVideo ? DS.bg : Color.black)
+            if missingVideo {
+                MissingPreview()
+            } else if let player {
                 VideoPlayer(player: player)
             } else {
                 thumbnail
@@ -166,15 +207,25 @@ struct GalleryDetailSheet: View {
                 .strokeBorder(DS.line, lineWidth: 1)
         }
         .task(id: item.id) {
-            guard item.isVideo, player == nil else { return }
-            let url = URL(fileURLWithPath: item.path)
-            player =
-                FileManager.default.fileExists(atPath: item.path)
-                ? AVPlayer(url: url)
-                : nil
+            player?.pause()
+            player = nil
+            copiedPrompt = false
+            copyResetTask?.cancel()
+            copyResetTask = nil
+            guard item.isVideo else {
+                missingVideo = false
+                return
+            }
+            let exists = FileManager.default.fileExists(atPath: item.path)
+            missingVideo = !exists
+            guard exists else { return }
+            player = AVPlayer(url: URL(fileURLWithPath: item.path))
         }
-        .onDisappear { player?.pause() }
-        .help("在页面内播放")
+        .onDisappear {
+            player?.pause()
+            player = nil
+        }
+        .help(L10n.t("在页面内播放"))
         .frame(width: 320, height: 320, alignment: .top)
     }
 
@@ -193,9 +244,9 @@ struct GalleryDetailSheet: View {
             VStack(alignment: .leading, spacing: 14) {
                 promptSection
                 DSDivider()
-                infoRow("模型", item.model.isEmpty ? "未知" : item.model)
+                infoRow("模型", item.model.isEmpty ? L10n.t("未知") : item.model)
                 infoRow("尺寸", resolution)
-                infoRow("Seed", item.seed.map(String.init) ?? "随机（未记录）", mono: true)
+                infoRow("Seed", item.seed.map(String.init) ?? L10n.t("随机（未记录）"), mono: true)
                 if let note = item.note, !note.isEmpty {
                     infoRow("生成参数", note, mono: true)
                 }
@@ -212,17 +263,30 @@ struct GalleryDetailSheet: View {
     private var promptSection: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
-                Text("提示词")
+                Text(L10n.t("提示词"))
                     .font(DS.Font.xs.weight(.medium))
                     .foregroundStyle(DS.text3)
                 Spacer(minLength: 4)
-                Button("复制") {
+                Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(item.prompt, forType: .string)
+                    copyResetTask?.cancel()
+                    withAnimation(reduceMotion ? nil : DS.Motion.snappy) { copiedPrompt = true }
+                    copyResetTask = Task {
+                        try? await Task.sleep(for: .seconds(1.2))
+                        guard !Task.isCancelled else { return }
+                        withAnimation(reduceMotion ? nil : DS.Motion.snappy) { copiedPrompt = false }
+                    }
+                } label: {
+                    Label(
+                        L10n.t(copiedPrompt ? "已复制" : "复制"),
+                        systemImage: copiedPrompt ? "checkmark" : "doc.on.doc"
+                    )
                 }
                 .buttonStyle(.ds(.secondary, size: .small))
+                .disabled(item.prompt.isEmpty)
             }
-            Text(item.prompt.isEmpty ? "（没有记录提示词）" : item.prompt)
+            Text(item.prompt.isEmpty ? L10n.t("（没有记录提示词）") : item.prompt)
                 .font(DS.Font.md)
                 .foregroundStyle(DS.text)
                 .textSelection(.enabled)
@@ -233,23 +297,26 @@ struct GalleryDetailSheet: View {
 
     private var footer: some View {
         HStack(spacing: 8) {
-            Button("在访达中显示") {
+            Button(L10n.t("在访达中显示")) {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.path)])
             }
             .buttonStyle(.ds(.secondary, size: .regular))
+            .disabled(!fileExists)
             if item.isVideo {
-                Button("用 QuickTime 打开") {
+                Button(L10n.t("用 QuickTime 打开")) {
                     VideoPlayback.openInQuickTime(item.path)
                 }
                 .buttonStyle(.ds(.secondary, size: .regular))
+                .disabled(!fileExists)
             } else {
-                Button("用预览打开") {
+                Button(L10n.t("用预览打开")) {
                     NSWorkspace.shared.open(URL(fileURLWithPath: item.path))
                 }
                 .buttonStyle(.ds(.secondary, size: .regular))
+                .disabled(!fileExists)
             }
             Spacer()
-            Button("完成") { dismiss() }
+            Button(L10n.t("完成")) { dismiss() }
                 .buttonStyle(.ds(.primary, size: .regular))
         }
         .padding(.horizontal, 18)
@@ -258,7 +325,7 @@ struct GalleryDetailSheet: View {
 
     private func infoRow(_ title: String, _ value: String, mono: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title)
+            Text(L10n.t(title))
                 .font(DS.Font.xs.weight(.medium))
                 .foregroundStyle(DS.text3)
             Text(value)
@@ -286,13 +353,13 @@ struct GalleryDetailSheet: View {
                 if text.contains("×") { return text }
             }
         }
-        return "未知"
+        return L10n.t("未知")
     }
 
     private var fileSize: String {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: item.path),
             let bytes = attributes[.size] as? NSNumber
-        else { return "未知" }
+        else { return L10n.t("未知") }
         return ByteCountFormatter.string(fromByteCount: bytes.int64Value, countStyle: .file)
     }
 }
@@ -372,7 +439,7 @@ private struct MissingPreview: View {
         VStack(spacing: 8) {
             Image(systemName: "questionmark.square.dashed")
                 .font(.system(size: 26, weight: .light))
-            Text("原文件已不在")
+            Text(L10n.t("原文件已不在"))
                 .font(DS.Font.xs)
         }
         .foregroundStyle(DS.text3)

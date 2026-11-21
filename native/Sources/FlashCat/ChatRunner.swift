@@ -69,6 +69,7 @@ final class ChatRunner {
     /// 依赖全部构造时注入：这里不读单例，也就能在测试里塞替身。
     private let chat: ChatStore
     private let session: ChatSessionStore
+    private let drafts: ChatDraftStore
     private let engineSession: EngineSessionStore
     private let settings: AppSettings
     private let history: ChatHistory
@@ -81,6 +82,7 @@ final class ChatRunner {
     init(
         chat: ChatStore,
         session: ChatSessionStore,
+        drafts: ChatDraftStore,
         engineSession: EngineSessionStore,
         settings: AppSettings,
         history: ChatHistory,
@@ -93,6 +95,7 @@ final class ChatRunner {
     ) {
         self.chat = chat
         self.session = session
+        self.drafts = drafts
         self.engineSession = engineSession
         self.settings = settings
         self.history = history
@@ -131,6 +134,10 @@ final class ChatRunner {
     private var pendingThreadDelete: ChatThread? {
         get { session.pendingThreadDelete }
         set { session.pendingThreadDelete = newValue }
+    }
+    private var pendingThreadRename: ChatThread? {
+        get { session.pendingThreadRename }
+        set { session.pendingThreadRename = newValue }
     }
     private var imageToolEnabled: Bool { session.imageToolEnabled }
     private var imageToolModelID: String { session.imageToolModelID }
@@ -1850,7 +1857,9 @@ final class ChatRunner {
                 videoPath: $0.videoPath,
                 videoNote: $0.videoNote,
                 videoSourcePath: $0.videoSourcePath,
-                videoLastFramePath: $0.videoLastFramePath)
+                videoLastFramePath: $0.videoLastFramePath,
+                videoReferenceImagePaths: $0.videoReferenceImagePaths,
+                videoReferenceClipPaths: $0.videoReferenceClipPaths)
         }
         threadID = thread.id
         // 打开的这段对话就是「当前对话」：不写回 `conversation.json` 的话，
@@ -1875,20 +1884,56 @@ final class ChatRunner {
         deleteThread(thread)
     }
 
-    func deleteThread(_ thread: ChatThread) {
-        // 删掉的正是后台还在生成的那段：先停掉，别让它跑完再把这条写回来。
-        if background?.threadID == thread.id { cancelGeneration() }
-        history.delete(id: thread.id)
+    /// 改名同样只挂起，壳层统一弹输入框；侧栏与对话页标题菜单共用这一条。
+    func requestThreadRename(_ thread: ChatThread) {
+        pendingThreadRename = thread
+    }
+
+    func cancelThreadRename() {
+        pendingThreadRename = nil
+    }
+
+    func confirmThreadRename(_ title: String) {
+        guard let thread = pendingThreadRename else { return }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        pendingThreadRename = nil
+        guard !trimmed.isEmpty else { return }
+        history.rename(id: thread.id, title: trimmed)
         threads = history.load()
-        // 删掉的是当前这段对话：下一轮算新会话，别写回刚删掉的 id。
-        if thread.id == threadID { threadID = Self.newThreadID() }
+    }
+
+    /// 置顶 / 取消置顶，和历史一起落盘。
+    func setThreadPinned(_ thread: ChatThread, _ pinned: Bool) {
+        history.pin(id: thread.id, pinned)
+        threads = history.load()
+    }
+
+    func deleteThread(_ thread: ChatThread) {
+        // 删掉的正是在生成的那段（前台或后台）：先停掉，别让它跑完再把这条写回来。
+        if generating, thread.id == generatingThreadID { cancelGeneration() }
+        history.delete(id: thread.id)
+        drafts.forget(thread.id)
+        threads = history.load()
+        // 删掉的是当前这段对话：清空正文、换一条新会话。只换 id 不换正文的话，
+        // 下一轮保存会把刚删掉的内容写到新 id 名下，界面上也还停在已删除的对话里。
+        if thread.id == threadID {
+            messages.removeAll()
+            conversation.clear()
+            threadID = Self.newThreadID()
+        }
         toast(L10n.format("已删除对话「%@」", thread.title))
     }
 
     func clearThreads() {
-        if background != nil { cancelGeneration() }
-        for thread in threads { history.delete(id: thread.id) }
+        if generating { cancelGeneration() }
+        for thread in threads {
+            history.delete(id: thread.id)
+            drafts.forget(thread.id)
+        }
         threads = history.load()
+        // 清空历史等于把当前这段也删了：正文和草稿一起回到新会话。
+        messages.removeAll()
+        conversation.clear()
         threadID = Self.newThreadID()
     }
 

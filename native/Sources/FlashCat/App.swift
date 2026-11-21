@@ -180,9 +180,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Both the canvas colour and the appearance follow the selected skin so
         // the strip above the sidebar matches instead of flashing dark.
         AppState.shared.theme.apply(to: target)
-        // 登记主窗口：之后透明度 / 模糊一变，窗口表面立刻跟着变，不再等
-        // 某个视图碰巧重建（见 BackgroundSurface）。
-        BackgroundSurface.shared.attach(window: target)
         // The console has a compact layout down to this point. Below it the
         // navigation rail and one-column content no longer have a stable
         // readable width, so stop the window instead of letting it collapse

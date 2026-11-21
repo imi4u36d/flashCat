@@ -6,8 +6,7 @@ import Combine
 import Foundation
 import SwiftUI
 
-/// 界面上「现在在哪一页、要不要响一声」的状态：当前页、启动页、侧栏折叠、
-/// 错误横幅与灵动岛通知。
+/// 界面上「现在在哪一页、要不要响一声」的状态：当前页、启动页、侧栏折叠与通知流。
 ///
 /// 这些字段只服务视图，不参与引擎启停与模型装卸的任何判断，所以从装配根里
 /// 分出来单独持有。视图仍然只订阅 AppState（`@ObservedObject var state`），
@@ -19,13 +18,23 @@ final class UIStateStore: ObservableObject {
     /// Re-open the launch page from the engines tab; the page is also shown
     /// automatically while no engine is installed.
     @Published var showsLaunchPage = false
+    /// 用户主动跳过首次无引擎启动页，进入控制台。
+    @Published var dismissedInitialLaunch = false
     /// Persistent banner for errors that need the reader's attention.
-    @Published var notice: String?
-    /// 灵动岛上短暂展示的当前通知；过期后回到引擎状态。
+    /// Assigning a non-empty error also routes into the notice stream.
+    @Published var notice: String? {
+        didSet {
+            guard let message = notice?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !message.isEmpty
+            else { return }
+            toast(message, kind: .error, transient: false)
+        }
+    }
+    /// 最近一条通知。灵动岛移除后暂时没有常驻展示面，数据仍留给后续出口。
     @Published private(set) var islandNotice: IslandNotice?
-    /// 本次会话的通知历史，展开灵动岛后按时间倒序查看。
+    /// 本次会话的通知历史，按时间倒序。
     @Published private(set) var islandNotices: [IslandNotice] = []
-    /// 尚未展开查看的通知数量。
+    /// 尚未查看过的通知数量。
     @Published private(set) var islandUnread = 0
     /// 悬浮导航列是否显示。隐藏后主视口铺满窗口，重新显示时恢复玻璃列；
     /// 状态落盘到 UserDefaults 的 `sidebarVisible`，重启后沿用上次的样子。

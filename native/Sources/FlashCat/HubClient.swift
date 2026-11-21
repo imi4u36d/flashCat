@@ -298,14 +298,12 @@ struct HubModel: Identifiable, Hashable {
 }
 
 enum HubClient {
-    /// 端点可被 `hfEndpoint` 覆盖（镜像站/内网代理）。host 之后的部分全是
-    /// 标准 HF 的 REST 路径，镜像站（hf-mirror 这类）都兼容。
+    /// 官方来源的端点：可被 `hfEndpoint` 覆盖（镜像站/内网代理）。host 之后
+    /// 的部分全是标准 HF 的 REST 路径，镜像站（hf-mirror 这类）都兼容。
+    /// 镜像来源的端点由 `HubSource.hfMirror.endpoint` 固定给出，调用方按
+    /// 来源把 `endpoint` 传进来。
     static var endpoint: String {
-        let raw = UserDefaults.standard.string(forKey: "hfEndpoint") ?? ""
-        // 用户在设置里只写 `hf-mirror.com` 也算数：补上 https，和下载器
-        // 写进 HF_ENDPOINT 的值保持同一份归一化结果。
-        let normalized = HFEndpoint.normalized(raw) ?? ""
-        return normalized.isEmpty ? "https://huggingface.co" : normalized
+        HFEndpoint.resolved(for: .huggingFace) ?? HFEndpoint.official
     }
 
     private static let session: URLSession = {
@@ -333,16 +331,16 @@ enum HubClient {
             return values[key]
         }
 
-        func store(_ model: HubModel) {
+        func store(_ model: HubModel, key: String) {
             lock.lock()
             defer { lock.unlock() }
-            if values[model.id] == nil {
-                order.append(model.id)
+            if values[key] == nil {
+                order.append(key)
                 if order.count > limit {
                     values.removeValue(forKey: order.removeFirst())
                 }
             }
-            values[model.id] = model
+            values[key] = model
         }
     }
 
@@ -357,7 +355,8 @@ enum HubClient {
         sort: HubSort,
         filter: HubFilter = .all,
         page: Int = 0,
-        limit: Int = pageSize
+        limit: Int = pageSize,
+        endpoint: String = HubClient.endpoint
     ) async throws -> [HubModel] {
         guard var components = URLComponents(string: endpoint + "/api/models") else {
             throw HubClientError.message("模型广场地址无效：\(endpoint)")
@@ -395,17 +394,32 @@ enum HubClient {
     /// Metadata and file sizes for one repository, without the README. Search
     /// rows use this to fill quantization and memory after the list is already
     /// on screen; opening the model card still adds the README separately.
-    static func metadata(_ repo: String, force: Bool = false) async throws -> HubModel {
-        let key = repo.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// 缓存键要带上端点：官方和镜像上是同一份仓库，但 gated / 元数据可能
+    /// 不同，混用会让切源后的第一页顶着上一个端点的答案。
+    private static func cacheKey(_ repo: String, endpoint: String) -> String {
+        endpoint + "|" + repo.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func metadata(
+        _ repo: String,
+        force: Bool = false,
+        endpoint: String = HubClient.endpoint
+    ) async throws -> HubModel {
+        let raw = repo.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = cacheKey(raw, endpoint: endpoint)
         if !force, let cached = cache.value(for: key) { return cached }
-        let model = try await fetchMetadata(key)
-        cache.store(model)
+        let model = try await fetchMetadata(raw, endpoint: endpoint)
+        cache.store(model, key: key)
         return model
     }
 
     /// A page of search hits enriched in small batches. The first rows are done
     /// before the rest, and one failed repository simply keeps its list data.
-    static func enrich(_ models: [HubModel], concurrent: Int = 6) async -> [HubModel] {
+    static func enrich(
+        _ models: [HubModel],
+        concurrent: Int = 6,
+        endpoint: String = HubClient.endpoint
+    ) async -> [HubModel] {
         var result: [HubModel] = []
         result.reserveCapacity(models.count)
         let width = max(1, concurrent)
@@ -414,7 +428,7 @@ enum HubClient {
             let enriched = await withTaskGroup(of: (String, HubModel?).self) { group in
                 for model in chunk {
                     group.addTask {
-                        (model.id, try? await fetchMetadata(model.id))
+                        (model.id, try? await fetchMetadata(model.id, endpoint: endpoint))
                     }
                 }
                 var values: [String: HubModel] = [:]
@@ -425,23 +439,30 @@ enum HubClient {
             }
             for original in chunk {
                 let model = enriched[original.id] ?? original
-                if model.files.isEmpty == false { cache.store(model) }
+                if model.files.isEmpty == false {
+                    cache.store(model, key: cacheKey(model.id, endpoint: endpoint))
+                }
                 result.append(model)
             }
         }
         return result
     }
 
-    static func detail(_ repo: String, force: Bool = false) async throws -> HubModel {
-        let key = repo.trimmingCharacters(in: .whitespacesAndNewlines)
+    static func detail(
+        _ repo: String,
+        force: Bool = false,
+        endpoint: String = HubClient.endpoint
+    ) async throws -> HubModel {
+        let raw = repo.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = cacheKey(raw, endpoint: endpoint)
         if !force, let cached = cache.value(for: key), cached.modelCard != nil { return cached }
-        var model = try await metadata(key, force: force)
-        model.modelCard = try? await card(key)
-        cache.store(model)
+        var model = try await metadata(raw, force: force, endpoint: endpoint)
+        model.modelCard = try? await card(raw, endpoint: endpoint)
+        cache.store(model, key: key)
         return model
     }
 
-    private static func fetchMetadata(_ key: String) async throws -> HubModel {
+    private static func fetchMetadata(_ key: String, endpoint: String) async throws -> HubModel {
         guard !key.isEmpty else { throw HubClientError.message("仓库 id 是空的") }
         let path = key.split(separator: "/")
             .map { $0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? String($0) }
@@ -468,7 +489,7 @@ enum HubClient {
 
     /// README 就是模型卡。走 `raw/main`：拿到的是原始 markdown，前端用自己的
     /// `md()` 渲染，不再引一份 markdown 库。
-    private static func card(_ repo: String) async throws -> String? {
+    private static func card(_ repo: String, endpoint: String) async throws -> String? {
         let path = repo.split(separator: "/")
             .map { $0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? String($0) }
             .joined(separator: "/")

@@ -25,6 +25,10 @@ final class AppState: ObservableObject {
         get { ui.showsLaunchPage }
         set { ui.showsLaunchPage = newValue }
     }
+    var dismissedInitialLaunch: Bool {
+        get { ui.dismissedInitialLaunch }
+        set { ui.dismissedInitialLaunch = newValue }
+    }
     /// 引擎会话状态（服务状态、指标、当前模型、切换流程）独立成 store。
     /// 这里保留同名 get/set 转发，编排代码与视图都不用改。
     let engineSession = EngineSessionStore()
@@ -124,6 +128,10 @@ final class AppState: ObservableObject {
         get { chatSession.pendingThreadDelete }
         set { chatSession.pendingThreadDelete = newValue }
     }
+    var pendingThreadRename: ChatThread? {
+        get { chatSession.pendingThreadRename }
+        set { chatSession.pendingThreadRename = newValue }
+    }
     var imageToolEnabled: Bool {
         get { chatSession.imageToolEnabled }
         set { chatSession.imageToolEnabled = newValue }
@@ -138,6 +146,9 @@ final class AppState: ObservableObject {
     }
     /// 高频对话状态独立成 store；这里保留同名转发，内部逻辑不用改。
     let chat = ChatStore()
+    /// 每个会话的草稿。刻意不桥回 AppState：草稿逐字发布，桥回去会让整个
+    /// 壳层跟着重绘；只有对话页直接订阅它。
+    let chatDrafts = ChatDraftStore()
     var messages: [ChatMessage] {
         get { chat.messages }
         set { chat.messages = newValue }
@@ -175,11 +186,11 @@ final class AppState: ObservableObject {
         get { ui.notice }
         set { ui.notice = newValue }
     }
-    /// 灵动岛上短暂展示的当前通知；过期后回到引擎状态。
+    /// 最近一条通知。灵动岛移除后暂时没有常驻展示面，数据仍留给后续出口。
     var islandNotice: IslandNotice? { ui.islandNotice }
-    /// 本次会话的通知历史，展开灵动岛后按时间倒序查看。
+    /// 本次会话的通知历史，按时间倒序。
     var islandNotices: [IslandNotice] { ui.islandNotices }
-    /// 尚未展开查看的通知数量。
+    /// 尚未查看过的通知数量。
     var islandUnread: Int { ui.islandUnread }
     /// 悬浮导航列是否显示。隐藏后主视口铺满窗口，重新显示时恢复玻璃列；
     /// 状态落盘到 UserDefaults 的 `sidebarVisible`，重启后沿用上次的样子。
@@ -290,7 +301,8 @@ final class AppState: ObservableObject {
         contextWindows = ContextWindowTracker(
             session: engineSession, library: modelLibrary, engineCoordinator: engineCoordinator)
         runner = ChatRunner(
-            chat: chat, session: chatSession, engineSession: engineSession, settings: settings,
+            chat: chat, session: chatSession, drafts: chatDrafts,
+            engineSession: engineSession, settings: settings,
             history: history, conversation: conversation, chatClient: chatClient,
             imageClient: imageClient, videoClient: videoClient, metrics: metrics)
         // 三段闭包接线（对话 / 下载 / 模型编排）放在 `AppState+Wiring.swift`：
@@ -397,7 +409,9 @@ final class AppState: ObservableObject {
     /// No engine pack installed yet: the launch page owns the window until one
     /// is chosen.
     var needsEngineSetup: Bool { service.needsEngineSetup }
-    var isPresentingLaunchPage: Bool { !showsRecommendationPage && (needsEngineSetup || showsLaunchPage) }
+    var isPresentingLaunchPage: Bool {
+        !showsRecommendationPage && (showsLaunchPage || (needsEngineSetup && !ui.dismissedInitialLaunch))
+    }
     var installedEngineIDs: [EngineID] { engines?.installedIDs ?? [] }
     /// Version of whatever engine is active, so the sidebar names the thing that
     /// is actually running instead of always claiming splash.
@@ -584,6 +598,8 @@ final class AppState: ObservableObject {
 
     func dismissRecommendation(engine: EngineID?) { modelOps.dismissRecommendation(engine: engine) }
 
+    func armRecommendedDownload(for engine: EngineID) { modelOps.armRecommendedDownload(for: engine) }
+
     func recommendationTag(for id: String, engine: EngineID) -> String? {
         modelOps.recommendationTag(for: id, engine: engine)
     }
@@ -715,6 +731,12 @@ final class AppState: ObservableObject {
     func requestThreadDelete(_ thread: ChatThread) { runner.requestThreadDelete(thread) }
     func cancelThreadDelete() { runner.cancelThreadDelete() }
     func confirmThreadDelete() { runner.confirmThreadDelete() }
+    func requestThreadRename(_ thread: ChatThread) { runner.requestThreadRename(thread) }
+    func cancelThreadRename() { runner.cancelThreadRename() }
+    func confirmThreadRename(_ title: String) { runner.confirmThreadRename(title) }
+    func setThreadPinned(_ thread: ChatThread, _ pinned: Bool) {
+        runner.setThreadPinned(thread, pinned)
+    }
     func deleteThread(_ thread: ChatThread) { runner.deleteThread(thread) }
     func clearThreads() { runner.clearThreads() }
     func resetChatParameters() { runner.resetChatParameters() }
@@ -749,7 +771,7 @@ final class AppState: ObservableObject {
     @discardableResult
     func downloadShared(
         _ repo: String, engines: [EngineID],
-        source: HubSource = .huggingFace,
+        source: HubSource = HubSource.downloadSource,
         include: [String] = []
     ) -> Bool {
         modelOps.downloadShared(repo, engines: engines, source: source, include: include)

@@ -141,7 +141,9 @@ final class DownloadCenter: ObservableObject {
         _ plan: ModelInstaller.Plan,
         engine: EngineID,
         id: String,
-        shared: [EngineID]?
+        shared: [EngineID]?,
+        source: HubSource? = nil,
+        include: [String]? = nil
     ) -> Bool {
         pendingSharedRepo = shared == nil ? nil : id
         pendingSharedEngines = shared ?? []
@@ -179,6 +181,8 @@ final class DownloadCenter: ObservableObject {
         upsertTask(engine: engine, model: id) { task in
             task.status = .downloading
             task.shared = shared
+            task.source = source ?? task.source
+            if let include, !include.isEmpty { task.include = include }
             task.downloadedBytes = resumeBytes
             task.totalBytes = max(task.totalBytes, resumeTotal)
             if task.addedAt.timeIntervalSinceNow < -60 * 60 * 24 * 30 { task.addedAt = Date() }

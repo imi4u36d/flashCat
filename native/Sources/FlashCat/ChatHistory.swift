@@ -3,16 +3,23 @@
 
 import Foundation
 
-struct ChatThread: Identifiable {
+struct ChatThread: Identifiable, Equatable {
     let id: String
     var title: String
     var updatedAt: Date
+    /// 置顶到「最近对话」最上方的时间；nil 表示未置顶。置顶是会话属性，
+    /// 跟标题一起落盘，重启后仍然有效。
+    var pinnedAt: Date? = nil
     var messages: [ChatMessage]
+
+    var pinned: Bool { pinnedAt != nil }
 }
 
-/// Sidebar conversation history: newest first, capped at six entries.
+/// Sidebar conversation history: newest first. The limit is only a guard against
+/// an unbounded history file — it is high enough that the list behaves like a
+/// normal chat app, not a six-item shelf.
 final class ChatHistory {
-    private let limit = 6
+    static let limit = 200
 
     /// 写盘失败必须能被看见：历史是用户找回上一轮回答的唯一途径，静默失败
     /// 等于「保存成功」的假象。这里注入闭包而不是直接持有 LogStore，是因为
@@ -27,6 +34,8 @@ final class ChatHistory {
         let id: String
         let title: String
         let updatedAt: Double
+        /// 老历史没有这个键，解码为 nil（未置顶）。
+        var pinnedAt: Double?
         let messages: [StoredMessage]
     }
 
@@ -117,6 +126,7 @@ final class ChatHistory {
                 ChatThread(
                     id: item.id, title: item.title,
                     updatedAt: Date(timeIntervalSince1970: item.updatedAt),
+                    pinnedAt: item.pinnedAt.map { Date(timeIntervalSince1970: $0) },
                     messages: item.messages.map { message in
                         let usage =
                             (message.promptTokens != nil || message.completionTokens != nil)
@@ -234,7 +244,7 @@ final class ChatHistory {
 
     func delete(id: String) {
         var threads = load().filter { $0.id != id }
-        threads = Array(threads.prefix(limit))
+        threads = Array(threads.prefix(Self.limit))
         write(threads)
     }
 
@@ -242,6 +252,15 @@ final class ChatHistory {
         var threads = load()
         guard let index = threads.firstIndex(where: { $0.id == id }) else { return }
         threads[index].title = title
+        write(threads)
+    }
+
+    /// 置顶 / 取消置顶。置顶时间决定同一分组里的先后：最后置顶的排最前，
+    /// 和 Splash 的 `pinned ?? .distantPast` 排序一致。
+    func pin(id: String, _ pinned: Bool, at date: Date = Date()) {
+        var threads = load()
+        guard let index = threads.firstIndex(where: { $0.id == id }) else { return }
+        threads[index].pinnedAt = pinned ? date : nil
         write(threads)
     }
 
@@ -257,6 +276,7 @@ final class ChatHistory {
             StoredThread(
                 id: thread.id, title: thread.title,
                 updatedAt: thread.updatedAt.timeIntervalSince1970,
+                pinnedAt: thread.pinnedAt?.timeIntervalSince1970,
                 messages: thread.messages.map(Self.stored))
         }
         let sink = onWriteFailure
@@ -295,22 +315,32 @@ final class ChatHistory {
     /// 同一段对话只占一条：`threadID` 已存在就原地覆盖并提到最前，只有新会话
     /// 才 insert。以前这里无条件 insert 新 id，而每轮生成结束都会调一次，于是
     /// 一段三轮对话会在「最近对话」里留下 6/8 两条、侧栏看起来像两段。
-    func save(messages: [ChatMessage], threadID: String) {
+    func save(messages: [ChatMessage], threadID: String, updatedAt: Date = Date()) {
         let completed = Self.savable(messages)
         guard !completed.isEmpty else { return }
 
         var threads = load()
-        let firstUser = completed.first(where: { $0.role == "user" })?.content ?? "未命名对话"
-        let title = firstUser.split(separator: "\n").first.map(String.init) ?? "未命名对话"
+        let existing = threads.first(where: { $0.id == threadID })
+        // 用户改过名、置过顶的会话在每轮保存后仍然是那个名字、那个位置：
+        // 以前这里每轮都按首句重算标题，改名刚生效就被下一轮回答覆盖。
+        let title = existing.flatMap { $0.title.isEmpty ? nil : $0.title }
+            ?? Self.autoTitle(messages: completed)
 
         if let index = threads.firstIndex(where: { $0.id == threadID }) {
             threads.remove(at: index)
         }
         threads.insert(
             ChatThread(
-                id: threadID, title: title, updatedAt: Date(),
-                messages: completed), at: 0)
-        write(Array(threads.prefix(limit)))
+                id: threadID, title: title, updatedAt: updatedAt,
+                pinnedAt: existing?.pinnedAt, messages: completed),
+            at: 0)
+        write(Array(threads.prefix(Self.limit)))
+    }
+
+    /// 新会话的默认标题：第一条用户消息的第一行。
+    static func autoTitle(messages: [ChatMessage]) -> String {
+        let firstUser = messages.first(where: { $0.role == "user" })?.content ?? "未命名对话"
+        return firstUser.split(separator: "\n").first.map(String.init) ?? "未命名对话"
     }
 }
 

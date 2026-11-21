@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import AppKit
+import Combine
 import FlashCatKit
 import SwiftUI
 
@@ -13,9 +14,11 @@ struct ConsoleView: View {
     @State private var showCommand = false
     @State private var showDownloads = false
     @State private var showHub = false
-    @State private var showFeedback = false
-    @State private var islandExpanded = false
     @State private var sidebarToggleWidth: CGFloat = DS.Layout.controlHeight
+    /// 重命名弹窗里的输入。线程本身挂在 `pendingThreadRename` 上，壳层只负责
+    /// 把输入框和落点接起来。
+    @State private var renameText = ""
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -24,13 +27,8 @@ struct ConsoleView: View {
             HStack(spacing: 0) {
                 if state.showsSidebar {
                     HStack(spacing: 0) {
-                        ConsoleNavigationPanel(
-                            state: state,
-                            chat: state.chat,
-                            openDownloads: { showDownloads = true },
-                            openFeedback: { showFeedback = true }
-                        )
-                        .frame(width: DS.Layout.sidebarWidth)
+                        ConsoleNavigationPanel(state: state, chat: state.chat)
+                            .frame(width: DS.Layout.sidebarWidth)
                         DSDivider(vertical: true)
                     }
                     .transition(.move(edge: .leading).combined(with: .opacity))
@@ -39,15 +37,14 @@ struct ConsoleView: View {
                 ZStack {
                     pageContent
                         .id(state.section)
-                        .transition(.dsPage)
+                        .transition(reduceMotion ? .opacity : .dsPage)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .animation(DS.Motion.smooth, value: state.section)
+                .animation(reduceMotion ? nil : DS.Motion.smooth, value: state.section)
                 .clipped()
             }
-            .animation(DS.Motion.smooth, value: state.showsSidebar)
+            .animation(reduceMotion ? nil : DS.Motion.smooth, value: state.showsSidebar)
         }
-        .background { DesktopBackdrop().ignoresSafeArea() }
         // 换肤不在这里做。`.preferredColorScheme` 会让 SwiftUI 去改窗口外观，
         // 而深色窗口那条系统投影明显更重（见 ThemeController.apply(to:)）；
         // 皮肤改由窗口的 contentView 外观承担，SwiftUI 的 colorScheme 也跟着
@@ -58,9 +55,6 @@ struct ConsoleView: View {
                 help: state.showsSidebar ? "隐藏边栏" : "显示边栏",
                 style: state.showsSidebar ? .ghost : .outlined
             ) {
-                if islandExpanded && state.showsSidebar {
-                    withAnimation(DS.Motion.bouncy) { islandExpanded = false }
-                }
                 state.toggleSidebar()
             }
             .onGeometryChange(for: CGFloat.self) { proxy in
@@ -71,16 +65,9 @@ struct ConsoleView: View {
             .padding(.leading, sidebarToggleLeading)
             .padding(.top, 11)
         }
-        .overlay(alignment: .bottomLeading) {
-            if state.showsSidebar {
-                DynamicIslandLayer(state: state, expanded: $islandExpanded, bottomOffset: 54)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-            }
-        }
-        .animation(DS.Motion.smooth, value: state.showsSidebar)
         .overlay {
             if isShowingOnboarding {
-                LaunchPage(state: state)
+                LaunchPage(state: state, installs: state.installs)
                     .transition(.opacity.animation(Motion.pageCrossfade))
             }
         }
@@ -100,9 +87,9 @@ struct ConsoleView: View {
         }
         .sheet(isPresented: $showDownloads) { DownloadCenterSheet(state: state) }
         .sheet(isPresented: $showHub) { HubSheet(state: state, engine: state.libraryEngine) }
-        .sheet(isPresented: $showFeedback) { FeedbackSheet(state: state) }
         .onReceive(NotificationCenter.default.publisher(for: .flashCatOpenCommandPalette)) { _ in
-            showCommand = true
+            guard !isShowingOnboarding else { return }
+            showCommand.toggle()
         }
         .alert("切换模型？", isPresented: modelSwitchShown) {
             Button("取消", role: .cancel) { state.cancelModelSwitchRequest() }
@@ -111,7 +98,9 @@ struct ConsoleView: View {
             Text(modelSwitchMessage)
         }
         .alert(
-            "\(state.pendingEngineInstall?.displayName ?? "该引擎") 还没安装",
+            L10n.format(
+                "%@ 还没安装",
+                state.pendingEngineInstall?.displayName ?? L10n.t("该引擎")),
             isPresented: engineInstallShown,
             presenting: state.pendingEngineInstall
         ) { _ in
@@ -133,6 +122,17 @@ struct ConsoleView: View {
             Button("取消", role: .cancel) { state.cancelThreadDelete() }
         } message: { thread in
             Text("「\(thread.title)」里的 \(thread.messages.count) 条消息会一并删除，无法恢复。")
+        }
+        .alert("重命名对话", isPresented: threadRenameShown, presenting: state.pendingThreadRename) { _ in
+            TextField("名称", text: $renameText)
+            Button("重命名") { state.confirmThreadRename(renameText) }
+                .disabled(renameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("取消", role: .cancel) { state.cancelThreadRename() }
+        } message: { thread in
+            Text("给「\(thread.title)」换一个名字。")
+        }
+        .onChange(of: state.pendingThreadRename) { _, thread in
+            if let thread { renameText = thread.title }
         }
     }
 
@@ -176,6 +176,12 @@ struct ConsoleView: View {
             set: { if !$0 { state.cancelThreadDelete() } })
     }
 
+    private var threadRenameShown: Binding<Bool> {
+        Binding(
+            get: { state.pendingThreadRename != nil },
+            set: { if !$0 { state.cancelThreadRename() } })
+    }
+
     private var modelSwitchMessage: String {
         let next = state.shortModelName(state.confirmingModelSwitch ?? "")
         let running = state.shortModelName(state.selectedModel)
@@ -197,24 +203,21 @@ struct ConsoleView: View {
 
 // MARK: - ZCode Sidebar
 
-/// ZCode 风格实体侧边栏：纯色基底 + 1px 发丝分隔，承载工作区、控制台、最近对话、状态面板与底栏。
+/// ZCode 风格实体侧边栏：纯色基底 + 1px 发丝分隔，承载工作区、控制台与最近对话。
 struct ConsoleNavigationPanel: View {
     @ObservedObject var state: AppState
     @ObservedObject var chat: ChatStore
-    var openDownloads: () -> Void = {}
-    var openFeedback: () -> Void = {}
 
-    @ObservedObject private var background = BackgroundSettings.shared
     @Namespace private var selection
-    @State private var hoveringNewChat = false
-    @State private var hoveringSettings = false
-
-    private static let primaryPages: [Page] = [.chat, .lab]
-    private static let consolePages: [Page] = [.overview, .models, .engines, .logs]
-
-    private var downloadCount: Int {
-        state.downloadTasks.count + (state.downloadingModel == nil ? 0 : 1)
-    }
+    /// 会话列表的搜索词；Esc 清空。
+    @State private var query = ""
+    /// 日期分组用的「今天」。跨过午夜后重新分组，不需要重启应用。
+    @State private var today = Date()
+    /// 搜索 + 分组的结果。对话流式输出时 `ChatStore` 每秒会发布很多次，
+    /// 但线程列表没变；把结果存成状态，避免每帧都扫一遍 200 条历史正文。
+    /// nil 表示还没算过，首帧用下面的 `shownSections` 现算一次。
+    @State private var sections: [ChatThreadSections.Section]?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -236,55 +239,30 @@ struct ConsoleNavigationPanel: View {
             .padding(.top, DS.Space.lg)
             .padding(.bottom, DS.Space.xs)
 
+            searchField
+                .padding(.horizontal, 10)
+                .padding(.bottom, DS.Space.xs)
+
             recents
                 .padding(.horizontal, 10)
-
-            // 为左下角状态卡预留收起高度，避免列表滚动到底时被遮挡。
-            Color.clear
-                .frame(height: 46)
-
-            sidebarFooter
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background {
-            DS.bg
-                .opacity(background.image != nil || background.revealsDesktop ? 0.86 : 1.0)
-                .ignoresSafeArea()
+            DS.bg.ignoresSafeArea()
         }
-        .animation(DS.Motion.smooth, value: state.section)
+        .animation(reduceMotion ? nil : DS.Motion.smooth, value: state.section)
     }
 
     private var newChatButton: some View {
-        let shape = DS.rect(DS.Radius.sm)
-        return Button {
+        ChatNewConversationButton {
             state.newConversation()
             state.section = .chat
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "square.and.pencil")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(DS.accent)
-                Text(L10n.t("新对话"))
-                    .font(DS.Font.prose(11.5, weight: .medium))
-                    .foregroundStyle(hoveringNewChat ? DS.text : DS.text2)
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 22)
-            .background(shape.fill(hoveringNewChat ? DS.surface : DS.hover))
-            .overlay(shape.strokeBorder(hoveringNewChat ? DS.line2 : DS.line, lineWidth: 1))
-            .contentShape(shape)
-        }
-        .buttonStyle(DSPressStyle(scale: 0.97))
-        .fixedSize()
-        .help(L10n.t("新对话"))
-        .onHover { value in
-            withAnimation(DS.Motion.snappy) { hoveringNewChat = value }
         }
     }
 
     private var workspace: some View {
         VStack(alignment: .leading, spacing: 2) {
-            ForEach(Self.primaryPages) { page in
+            ForEach(Page.primaryPages) { page in
                 SidebarNavRow(
                     page: page,
                     active: state.section == page,
@@ -300,7 +278,7 @@ struct ConsoleNavigationPanel: View {
                 .padding(.top, 10)
                 .padding(.bottom, 3)
 
-            ForEach(Self.consolePages) { page in
+            ForEach(Page.consolePages) { page in
                 SidebarNavRow(
                     page: page,
                     active: state.section == page,
@@ -314,21 +292,47 @@ struct ConsoleNavigationPanel: View {
     }
 
     private var modelCount: Int {
-        EngineCatalog.allIDs
-            .flatMap { state.libraryEntries(for: $0) }
-            .filter(\.installed)
-            .count
+        Set(
+            EngineCatalog.allIDs
+                .flatMap { state.libraryEntries(for: $0) }
+                .filter(\.installed)
+                .map { ModelSharing.canonical($0.model.id) }
+        ).count
     }
 
-    private func recentDate(_ date: Date) -> String {
-        if Calendar.current.isDateInToday(date) { return Format.clock(date) }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "M/d"
-        return formatter.string(from: date)
+    /// 会话列表的搜索框：标题与消息正文都搜，Esc 清空。
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 10.5))
+                .foregroundStyle(DS.text3)
+
+            TextField(L10n.t("搜索对话"), text: $query)
+                .textFieldStyle(.plain)
+                .font(DS.Font.prose(12))
+                .onExitCommand { query = "" }
+
+            if !query.isEmpty {
+                Button {
+                    query = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(DS.text3)
+                }
+                .buttonStyle(.plainHit)
+                .help(L10n.t("清除搜索"))
+                .accessibilityLabel(L10n.t("清除搜索"))
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .background(DS.rect(7).fill(DS.hover))
     }
 
     private var recents: some View {
-        ScrollView(.vertical) {
+        let shown = shownSections
+        return ScrollView(.vertical) {
             if chat.threads.isEmpty {
                 Text(L10n.t("暂无历史对话"))
                     .font(DS.Font.prose(12.5))
@@ -336,21 +340,45 @@ struct ConsoleNavigationPanel: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 6)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            } else if shown.isEmpty {
+                VStack(spacing: 3) {
+                    Text(L10n.t("没有匹配的对话"))
+                        .font(DS.Font.prose(12.5, weight: .medium))
+                        .foregroundStyle(DS.text2)
+                    Text(L10n.t("换个关键词，或清除搜索。"))
+                        .font(DS.Font.prose(11))
+                        .foregroundStyle(DS.text3)
+                }
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 16)
+                .padding(.top, 20)
+                .frame(maxWidth: .infinity, alignment: .top)
             } else {
-                VStack(alignment: .leading, spacing: 1) {
-                    ForEach(chat.threads.prefix(14)) { thread in
-                        SidebarRecentRow(
-                            title: thread.title,
-                            date: state.generatingThreadID == thread.id
-                                ? L10n.t("生成中")
-                                : recentDate(thread.updatedAt),
-                            active: state.currentThreadID == thread.id && state.section == .chat,
-                            generating: state.generatingThreadID == thread.id
-                        ) {
-                            state.openThread(thread)
-                            state.section = .chat
-                        } onDelete: {
-                            state.requestThreadDelete(thread)
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    ForEach(shown) { section in
+                        Text(L10n.t(ChatThreadSections.title(section.group)))
+                            .font(DS.Font.prose(10.5, weight: .medium))
+                            .foregroundStyle(DS.text3)
+                            .padding(.horizontal, 8)
+                            .padding(.top, section.id == shown.first?.id ? 4 : 12)
+                            .padding(.bottom, 2)
+                            .accessibilityAddTraits(.isHeader)
+
+                        ForEach(section.threads) { thread in
+                            ChatThreadRow(
+                                thread: thread,
+                                active: state.currentThreadID == thread.id && state.section == .chat,
+                                generating: state.generatingThreadID == thread.id
+                            ) {
+                                state.openThread(thread)
+                                state.section = .chat
+                            } onPin: {
+                                state.setThreadPinned(thread, !thread.pinned)
+                            } onRename: {
+                                state.requestThreadRename(thread)
+                            } onDelete: {
+                                state.requestThreadDelete(thread)
+                            }
                         }
                     }
                 }
@@ -360,89 +388,30 @@ struct ConsoleNavigationPanel: View {
         }
         .scrollIndicators(.never)
         .frame(maxHeight: .infinity, alignment: .top)
-    }
-
-    private var sidebarFooter: some View {
-        VStack(spacing: 0) {
-            DSDivider()
-                .padding(.horizontal, 10)
-
-            HStack(spacing: 4) {
-                settingsFooterButton
-
-                Spacer(minLength: 4)
-
-                if downloadCount > 0 {
-                    Button(action: openDownloads) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.down.circle")
-                                .font(.system(size: 11, weight: .medium))
-                            DSBadge(count: downloadCount)
-                        }
-                    }
-                    .buttonStyle(.ds(.secondary, size: .small))
-                    .help(L10n.t("下载中心"))
-                    .accessibilityLabel(L10n.t("下载中心"))
-                }
-
-                DSIconButton(
-                    systemName: "bubble.left.and.bubble.right",
-                    help: "反馈与交流",
-                    size: 26,
-                    style: .ghost,
-                    action: openFeedback
-                )
-
-                DSIconButton(
-                    systemName: state.theme.isDark ? "sun.max" : "moon",
-                    help: "切换外观",
-                    size: 26,
-                    style: .ghost
-                ) {
-                    state.theme.set(state.theme.isDark ? .light : .dark)
-                }
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 46)
+        .onAppear {
+            today = .now
+            refreshSections()
+        }
+        // 只在会话列表本身变化时重算；流式 token 更新 `messages` 不会触发。
+        // `@Published` 在 willSet 里发值，所以直接用闭包收到的新数组，
+        // 不要回读 `chat.threads`——那一刻它还是旧值。
+        .onReceive(chat.$threads) { threads in refreshSections(threads) }
+        .onChange(of: query) { _, _ in refreshSections() }
+        .onChange(of: today) { _, _ in refreshSections() }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+            today = .now
         }
     }
 
-    private var settingsFooterButton: some View {
-        let active = state.section == .settings
-        let shape = DS.rect(DS.Radius.sm)
-        return Button {
-            state.section = .settings
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: Page.settings.symbol)
-                    .font(.system(size: 13.5, weight: active ? .semibold : .regular))
-                    .foregroundStyle(active ? DS.accent : (hoveringSettings ? DS.text : DS.text2))
-                    .frame(width: 16)
-                Text(L10n.t(Page.settings.rawValue))
-                    .font(DS.Font.prose(13, weight: active ? .medium : .regular))
-                    .foregroundStyle(active ? DS.text : (hoveringSettings ? DS.text : DS.text2))
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 28)
-            .background {
-                if active {
-                    shape
-                        .fill(DS.selected)
-                        .overlay(shape.strokeBorder(DS.line, lineWidth: 1))
-                        .matchedGeometryEffect(id: "nav.selection", in: selection)
-                } else if hoveringSettings {
-                    shape.fill(DS.hover)
-                }
-            }
-            .contentShape(shape)
-        }
-        .buttonStyle(.plainHit)
-        .fixedSize()
-        .help(L10n.t(Page.settings.rawValue))
-        .onHover { value in
-            withAnimation(DS.Motion.snappy) { hoveringSettings = value }
-        }
+    private var shownSections: [ChatThreadSections.Section] {
+        if let sections { return sections }
+        let matched = ChatThreadSections.matching(chat.threads, query: query)
+        return ChatThreadSections.sections(matched, now: today)
+    }
+
+    private func refreshSections(_ threads: [ChatThread]? = nil) {
+        let matched = ChatThreadSections.matching(threads ?? chat.threads, query: query)
+        sections = ChatThreadSections.sections(matched, now: today)
     }
 }
 
@@ -493,6 +462,7 @@ private struct SidebarNavRow: View {
             .contentShape(rowShape)
         }
         .buttonStyle(.plainHit)
+        .accessibilityAddTraits(active ? .isSelected : [])
         .help(L10n.t(page.rawValue))
         .onHover { value in
             guard !reduceMotion else {
@@ -501,60 +471,6 @@ private struct SidebarNavRow: View {
             }
             withAnimation(DS.Motion.snappy) { hovering = value }
         }
-    }
-}
-
-private struct SidebarRecentRow: View {
-    let title: String
-    let date: String
-    let active: Bool
-    let generating: Bool
-    let action: () -> Void
-    let onDelete: () -> Void
-
-    @State private var hovering = false
-
-    private var shape: RoundedRectangle { DS.rect(DS.Radius.sm) }
-
-    var body: some View {
-        ZStack(alignment: .trailing) {
-            Button(action: action) {
-                HStack(spacing: 7) {
-                    if generating {
-                        DSStatusDot(color: DS.accent, live: true, size: 5)
-                    }
-                    Text(title)
-                        .font(DS.Font.prose(12.5, weight: active ? .medium : .regular))
-                        .foregroundStyle(active ? DS.text : (hovering ? DS.text : DS.text2))
-                        .lineLimit(1)
-                    Spacer(minLength: 4)
-                    Text(date)
-                        .font(DS.Font.proseNumber(11))
-                        .foregroundStyle(generating ? DS.accent : DS.text3)
-                        .lineLimit(1)
-                        .opacity(hovering ? 0 : 1)
-                }
-                .padding(.horizontal, 9)
-                .frame(height: 28)
-                .background {
-                    if active {
-                        shape
-                            .fill(DS.selected)
-                            .overlay(shape.strokeBorder(DS.line, lineWidth: 1))
-                    } else if hovering {
-                        shape.fill(DS.hover)
-                    }
-                }
-                .contentShape(shape)
-            }
-            .buttonStyle(.plainHit)
-
-            RowDeleteButton(action: onDelete)
-                .padding(.trailing, 4)
-                .opacity(hovering ? 1 : 0)
-                .allowsHitTesting(hovering)
-        }
-        .onHover { value in withAnimation(DS.Motion.snappy) { hovering = value } }
     }
 }
 

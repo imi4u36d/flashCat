@@ -174,6 +174,11 @@ enum Motion {
     static let quick = DS.Motion.snappy
     static let standard = DS.Motion.smooth
     static let entrance = DS.Motion.smooth
+    /// Splash 的 `settle`：状态或形状变化（输入卡在页面中与页脚之间移动、
+    /// 思考行展开）用 240ms 平滑曲线；Reduce Motion 下由调用方关掉。
+    static let settle = Animation.smooth(duration: 0.24)
+    /// Splash 的 `glide`：滚到最新一条、滚到展开的选项，400ms 平滑曲线。
+    static let glide = Animation.smooth(duration: 0.4)
     /// 灵动岛展开/收起：轻微过冲再回弹。
     static let island = DS.Motion.bouncy
     /// 引导页与控制台之间的交叉淡入淡出。
@@ -321,11 +326,12 @@ enum BrandGlyph {
     private static var artworkCache: [String: NSImage] = [:]
 
     static func image(named name: String) -> NSImage? {
-        guard let original = load(named: name, cache: &artworkCache) else { return nil }
         if let cached = cache[name] { return cached }
-        original.isTemplate = true
-        cache[name] = original
-        return original
+        guard let original = load(named: name, cache: &artworkCache) else { return nil }
+        let template = (original.copy() as? NSImage) ?? original
+        template.isTemplate = true
+        cache[name] = template
+        return template
     }
 
     /// 原始配色的品牌图，用于引擎官方 app icon，不能当模板染色。
@@ -810,6 +816,8 @@ struct ProgressRing: View {
     var size: CGFloat = 30
     var lineWidth: CGFloat = 3.5
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     private var clamped: Double { min(max(fraction, 0), 1) }
     private var percent: Int { Int((clamped * 100).rounded()) }
 
@@ -824,15 +832,19 @@ struct ProgressRing: View {
                     style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
                 )
                 .rotationEffect(.degrees(-90))
-            Text(verbatim: "\(percent)%")
-                .font(DS.Font.mono(size * 0.28, weight: .semibold))
-                .foregroundStyle(DS.text2)
-                .minimumScaleFactor(0.6)
-                .lineLimit(1)
-                .padding(.horizontal, 2)
+            if size >= 26 {
+                Text(verbatim: "\(percent)%")
+                    .font(DS.Font.mono(size * 0.28, weight: .semibold))
+                    .foregroundStyle(DS.text2)
+                    .minimumScaleFactor(0.6)
+                    .lineLimit(1)
+                    .padding(.horizontal, 2)
+            }
         }
         .frame(width: size, height: size)
-        .animation(DS.Motion.smooth, value: clamped)
+        .animation(reduceMotion ? nil : DS.Motion.smooth, value: clamped)
+        .accessibilityElement(children: .ignore)
+        .accessibilityValue("\(percent)%")
     }
 }
 
@@ -841,24 +853,27 @@ struct ProgressRing: View {
 struct ShimmerSweep: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    @ViewBuilder
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { timeline in
-            GeometryReader { proxy in
-                let width = max(proxy.size.width, 1)
-                let sweep = max(width * 0.55, 28)
-                let period: Double = 1.35
-                let time = timeline.date.timeIntervalSinceReferenceDate
-                let phase = CGFloat(time.truncatingRemainder(dividingBy: period) / period)
-                LinearGradient(
-                    colors: [.clear, Native.overlay(0.22), .clear],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-                .frame(width: sweep)
-                .offset(x: -sweep + phase * (width + sweep))
+        if !reduceMotion {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+                GeometryReader { proxy in
+                    let width = max(proxy.size.width, 1)
+                    let sweep = max(width * 0.55, 28)
+                    let period: Double = 1.35
+                    let time = timeline.date.timeIntervalSinceReferenceDate
+                    let phase = CGFloat(time.truncatingRemainder(dividingBy: period) / period)
+                    LinearGradient(
+                        colors: [.clear, Native.overlay(0.22), .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: sweep)
+                    .offset(x: -sweep + phase * (width + sweep))
+                }
             }
+            .allowsHitTesting(false)
         }
-        .allowsHitTesting(false)
     }
 }
 

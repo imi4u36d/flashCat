@@ -21,16 +21,10 @@ struct LabPage: View {
             case .videos: return .videos
             }
         }
-
-        var unit: String {
-            switch self {
-            case .images: return "张"
-            case .videos: return "个"
-            }
-        }
     }
 
     @State private var tab: LabTab = .images
+    @State private var query = ""
     @State private var images: [GalleryImage] = []
     @State private var videos: [GalleryVideo] = []
     @State private var detail: GalleryDetailItem?
@@ -53,6 +47,19 @@ struct LabPage: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(.horizontal, Console.contentPadding)
                     .padding(.bottom, Console.contentBottomInset)
+            } else if filteredCount == 0 {
+                VStack(spacing: 14) {
+                    EmptyHint(
+                        icon: "magnifyingglass",
+                        title: "没有匹配的作品",
+                        detail: "换个关键词或清空筛选条件试试。"
+                    )
+                    Button(L10n.t("清除筛选")) { query = "" }
+                        .buttonStyle(.ds(.secondary, size: .regular))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.horizontal, Console.contentPadding)
+                .padding(.bottom, Console.contentBottomInset)
             } else {
                 ScrollView {
                     DSAnimatedGrid(
@@ -79,8 +86,15 @@ struct LabPage: View {
         .onChange(of: tab) { _, _ in
             reload()
         }
+        .onChange(of: state.threads.count) { _, _ in
+            reload()
+        }
         .sheet(item: $detail) { item in
-            GalleryDetailSheet(item: item)
+            GalleryDetailSheet(
+                item: item,
+                items: detailItems,
+                onSelect: { detail = $0 }
+            )
         }
     }
 
@@ -89,11 +103,15 @@ struct LabPage: View {
             DSSegmented(
                 selection: $tab,
                 options: [
-                    (.images, "图片 \(images.count)"),
-                    (.videos, "视频 \(videos.count)"),
+                    (.images, L10n.format("图片 %lld", Int64(images.count))),
+                    (.videos, L10n.format("视频 %lld", Int64(videos.count))),
                 ])
-            if itemCount > 0 {
-                Text("共 \(itemCount) \(tab.unit)")
+            if filteredCount > 0 {
+                Text(
+                    tab == .images
+                        ? L10n.format("共 %lld 张", Int64(filteredCount))
+                        : L10n.format("共 %lld 个", Int64(filteredCount))
+                )
                     .font(DS.Font.xs)
                     .foregroundStyle(DS.text3)
                     .monospacedDigit()
@@ -102,8 +120,15 @@ struct LabPage: View {
             Spacer(minLength: 8)
 
             HStack(spacing: 8) {
+                if itemCount > 0 {
+                    DSSearchField(
+                        query: $query,
+                        placeholder: "筛选提示词、模型或 seed",
+                        width: 220
+                    )
+                }
                 DSIconButton(systemName: "arrow.clockwise", help: "刷新", style: .outlined) { reload() }
-                Button("打开文件夹") {
+                Button(L10n.t("打开文件夹")) {
                     let folder = tab == .images ? ImageStore.directory : VideoStore.directory
                     Paths.ensureDirectory(folder)
                     NSWorkspace.shared.open(URL(fileURLWithPath: folder))
@@ -120,6 +145,43 @@ struct LabPage: View {
         }
     }
 
+    private var filteredImages: [GalleryImage] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return images }
+        return images.filter {
+            matches(prompt: $0.prompt, model: $0.model, seed: $0.seed, needle: needle)
+        }
+    }
+
+    private var filteredVideos: [GalleryVideo] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return videos }
+        return videos.filter {
+            matches(prompt: $0.prompt, model: $0.model, seed: $0.seed, needle: needle)
+        }
+    }
+
+    private var filteredCount: Int {
+        switch tab {
+        case .images: return filteredImages.count
+        case .videos: return filteredVideos.count
+        }
+    }
+
+    private var detailItems: [GalleryDetailItem] {
+        switch tab {
+        case .images: return filteredImages.map { .image($0) }
+        case .videos: return filteredVideos.map { .video($0) }
+        }
+    }
+
+    private func matches(prompt: String, model: String, seed: Int?, needle: String) -> Bool {
+        prompt.localizedCaseInsensitiveContains(needle)
+            || model.localizedCaseInsensitiveContains(needle)
+            || modelLabel(model).localizedCaseInsensitiveContains(needle)
+            || (seed.map { String($0).localizedCaseInsensitiveContains(needle) } ?? false)
+    }
+
     @ViewBuilder
     private var emptyState: some View {
         switch tab {
@@ -127,12 +189,14 @@ struct LabPage: View {
             LabEmptyState(
                 icon: "photo.on.rectangle.angled",
                 title: "还没有生成的图片",
-                detail: "在对话里让模型生成图片后，作品会自动出现在这里。\n你发给模型的底图不会收录。")
+                detail: "在对话里让模型生成图片后，作品会自动出现在这里。\n你发给模型的底图不会收录。",
+                onStartChat: { state.section = .chat })
         case .videos:
             LabEmptyState(
                 icon: "film",
                 title: "还没有生成的视频",
-                detail: "在对话里让模型生成视频后，作品会自动出现在这里。\n你发给模型的首帧图不会收录。")
+                detail: "在对话里让模型生成视频后，作品会自动出现在这里。\n你发给模型的首帧图不会收录。",
+                onStartChat: { state.section = .chat })
         }
     }
 
@@ -142,29 +206,29 @@ struct LabPage: View {
     private var gridItems: some View {
         switch tab {
         case .images:
-            ForEach(images) { image in
+            ForEach(filteredImages) { image in
                 GalleryImageTile(
                     image: image,
                     modelName: modelLabel(image.model),
-                    coverHeight: 210,
                     maxPixel: 640,
-                    openDetail: { detail = .image(image) })
+                    openDetail: { detail = .image(image) },
+                    copyPrompt: { state.copy(image.prompt, label: L10n.t("已复制提示词")) })
             }
         case .videos:
-            ForEach(videos) { video in
+            ForEach(filteredVideos) { video in
                 GalleryVideoTile(
                     video: video,
                     modelName: modelLabel(video.model),
-                    coverHeight: 175,
                     maxPixel: 800,
-                    openDetail: { detail = .video(video) })
+                    openDetail: { detail = .video(video) },
+                    copyPrompt: { state.copy(video.prompt, label: L10n.t("已复制提示词")) })
             }
         }
     }
 
     /// 卡片页脚只放得下仓库名（去掉 owner/ 前缀），完整 id 留给详情面板。
     private func modelLabel(_ model: String) -> String {
-        model.isEmpty ? "未知模型" : state.shortModelName(model)
+        model.isEmpty ? L10n.t("未知模型") : state.shortModelName(model)
     }
 
     private func reload() {
@@ -275,6 +339,7 @@ private struct LabEmptyState: View {
     let icon: String
     let title: String
     let detail: String
+    let onStartChat: () -> Void
 
     var body: some View {
         VStack(spacing: 10) {
@@ -283,14 +348,17 @@ private struct LabEmptyState: View {
                 .foregroundStyle(DS.text3)
                 .frame(width: 48, height: 48)
                 .dsSurface(radius: DS.Radius.lg)
-            Text(title)
+            Text(L10n.t(title))
                 .font(DS.Font.md.weight(.medium))
                 .foregroundStyle(DS.text2)
-            Text(detail)
+            Text(L10n.t(detail))
                 .font(DS.Font.xs)
                 .foregroundStyle(DS.text3)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
+            Button(L10n.t("前往对话"), action: onStartChat)
+                .buttonStyle(.ds(.primary, size: .regular))
+                .padding(.top, 4)
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 24)
@@ -300,16 +368,16 @@ private struct LabEmptyState: View {
 private struct GalleryImageTile: View {
     let image: GalleryImage
     let modelName: String
-    let coverHeight: CGFloat
     let maxPixel: CGFloat
     let openDetail: () -> Void
+    let copyPrompt: () -> Void
 
     var body: some View {
         Button(action: openDetail) {
             VStack(alignment: .leading, spacing: 5) {
                 GalleryImageCover(path: image.path, maxPixel: maxPixel)
                     .frame(maxWidth: .infinity)
-                    .frame(height: coverHeight)
+                    .aspectRatio(1, contentMode: .fit)
                     .clipped()
                     .clipShape(DS.rect(DS.Radius.md))
                     .overlay {
@@ -317,7 +385,7 @@ private struct GalleryImageTile: View {
                             .strokeBorder(DS.line, lineWidth: 1)
                     }
 
-                Text(image.prompt.isEmpty ? "（无提示词）" : image.prompt)
+                Text(image.prompt.isEmpty ? L10n.t("（无提示词）") : image.prompt)
                     .font(DS.Font.sm)
                     .foregroundStyle(DS.text)
                     .lineLimit(1)
@@ -344,16 +412,18 @@ private struct GalleryImageTile: View {
         }
         .buttonStyle(.plain)
         .dsSurface(radius: DS.Radius.lg, hoverable: true)
-        .help(image.prompt.isEmpty ? "查看详情" : image.prompt)
+        .help(image.prompt.isEmpty ? L10n.t("查看详情") : image.prompt)
         .contextMenu {
-            Button("查看详情", action: openDetail)
-            Button("用预览打开") {
+            Button(L10n.t("查看详情"), action: openDetail)
+            Button(L10n.t("用预览打开")) {
                 NSWorkspace.shared.open(URL(fileURLWithPath: image.path))
             }
-            Button("在访达中显示") {
+            Button(L10n.t("在访达中显示")) {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: image.path)])
             }
-            Button("复制提示词") { copyToPasteboard(image.prompt) }
+            if !image.prompt.isEmpty {
+                Button(L10n.t("复制提示词"), action: copyPrompt)
+            }
         }
     }
 }
@@ -367,6 +437,7 @@ private struct GalleryImageCover: View {
     let path: String
     let maxPixel: CGFloat
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var image: NSImage?
     @State private var missing = false
 
@@ -396,7 +467,7 @@ private struct GalleryImageCover: View {
                 }
             }
             .clipped()
-            .animation(DS.Motion.snappy, value: image == nil)
+            .animation(reduceMotion ? nil : DS.Motion.snappy, value: image == nil)
             .task(id: path) { await load() }
     }
 
@@ -415,23 +486,50 @@ private struct GalleryImageCover: View {
 private struct GalleryVideoTile: View {
     let video: GalleryVideo
     let modelName: String
-    let coverHeight: CGFloat
     let maxPixel: CGFloat
     let openDetail: () -> Void
+    let copyPrompt: () -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var cover: NSImage?
+    @State private var loading = false
+    @State private var missing = false
+
+    init(
+        video: GalleryVideo,
+        modelName: String,
+        maxPixel: CGFloat,
+        openDetail: @escaping () -> Void,
+        copyPrompt: @escaping () -> Void
+    ) {
+        self.video = video
+        self.modelName = modelName
+        self.maxPixel = maxPixel
+        self.openDetail = openDetail
+        self.copyPrompt = copyPrompt
+        _cover = State(initialValue: VideoThumbnailStore.cachedThumbnail(atPath: video.path, maxPixel: maxPixel))
+    }
 
     var body: some View {
         Button(action: openDetail) {
             VStack(alignment: .leading, spacing: 5) {
                 Color.clear
-                    .frame(height: coverHeight)
                     .frame(maxWidth: .infinity)
+                    .aspectRatio(16.0 / 9.0, contentMode: .fit)
                     .overlay {
                         if let cover {
                             Image(nsImage: cover)
                                 .resizable()
                                 .aspectRatio(contentMode: .fill)
+                        } else if missing {
+                            Image(systemName: "questionmark.square.dashed")
+                                .font(.system(size: 22, weight: .light))
+                                .foregroundStyle(DS.text3)
+                        } else if loading {
+                            ZStack {
+                                DS.bg
+                                ProgressView().controlSize(.small)
+                            }
                         } else {
                             Image(systemName: "film")
                                 .font(.system(size: 22, weight: .light))
@@ -445,18 +543,38 @@ private struct GalleryVideoTile: View {
                             .strokeBorder(DS.line, lineWidth: 1)
                     }
                     .overlay {
-                        Image(systemName: "play.fill")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(width: 34, height: 34)
-                            .background(Circle().fill(Color.black.opacity(0.62)))
-                            .overlay(Circle().strokeBorder(Color.white.opacity(0.24), lineWidth: 1))
+                        if !missing {
+                            Image(systemName: "play.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 34, height: 34)
+                                .background(Circle().fill(Color.black.opacity(0.62)))
+                                .overlay(Circle().strokeBorder(Color.white.opacity(0.24), lineWidth: 1))
+                        }
                     }
+                    .animation(reduceMotion ? nil : DS.Motion.snappy, value: cover == nil)
                     .task(id: video.path) {
-                        cover = await VideoThumbnailStore.thumbnail(atPath: video.path, maxPixel: maxPixel)
+                        if let cached = VideoThumbnailStore.cachedThumbnail(atPath: video.path, maxPixel: maxPixel) {
+                            cover = cached
+                            missing = false
+                            loading = false
+                            return
+                        }
+                        guard FileManager.default.fileExists(atPath: video.path) else {
+                            cover = nil
+                            missing = true
+                            loading = false
+                            return
+                        }
+                        missing = false
+                        loading = true
+                        let loaded = await VideoThumbnailStore.thumbnail(atPath: video.path, maxPixel: maxPixel)
+                        loading = false
+                        cover = loaded
+                        missing = loaded == nil
                     }
 
-                Text(video.prompt.isEmpty ? "（无提示词）" : video.prompt)
+                Text(video.prompt.isEmpty ? L10n.t("（无提示词）") : video.prompt)
                     .font(DS.Font.sm)
                     .foregroundStyle(DS.text)
                     .lineLimit(1)
@@ -483,22 +601,21 @@ private struct GalleryVideoTile: View {
         }
         .buttonStyle(.plain)
         .dsSurface(radius: DS.Radius.lg, hoverable: true)
-        .help(video.prompt.isEmpty ? "查看详情" : video.prompt)
+        .help(video.prompt.isEmpty ? L10n.t("查看详情") : video.prompt)
         .contextMenu {
-            Button("查看详情", action: openDetail)
-            Button("播放视频", action: openDetail)
-            Button("用 QuickTime 打开") {
-                VideoPlayback.openInQuickTime(video.path)
+            Button(L10n.t("查看详情"), action: openDetail)
+            if !missing {
+                Button(L10n.t("播放视频"), action: openDetail)
+                Button(L10n.t("用 QuickTime 打开")) {
+                    VideoPlayback.openInQuickTime(video.path)
+                }
+                Button(L10n.t("在访达中显示")) {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: video.path)])
+                }
             }
-            Button("在访达中显示") {
-                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: video.path)])
+            if !video.prompt.isEmpty {
+                Button(L10n.t("复制提示词"), action: copyPrompt)
             }
-            Button("复制提示词") { copyToPasteboard(video.prompt) }
         }
     }
-}
-
-private func copyToPasteboard(_ text: String) {
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(text, forType: .string)
 }

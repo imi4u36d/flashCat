@@ -9,6 +9,7 @@ import SwiftUI
 struct DownloadCenterSheet: View {
     @ObservedObject var state: AppState
     @Environment(\.dismiss) private var dismiss
+    @State private var pendingRemoval: ModelDownloadTask?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -41,6 +42,33 @@ struct DownloadCenterSheet: View {
         }
         .frame(width: 620, height: 460)
         .sheetCanvas()
+        .alert(
+            L10n.t("移除下载任务？"),
+            isPresented: Binding(
+                get: { pendingRemoval != nil },
+                set: { if !$0 { pendingRemoval = nil } }
+            ),
+            presenting: pendingRemoval
+        ) { task in
+            Button(L10n.t("取消"), role: .cancel) { pendingRemoval = nil }
+            Button(L10n.t("移除"), role: .destructive) {
+                state.removeTask(task)
+                pendingRemoval = nil
+            }
+        } message: { task in
+            Text(L10n.format("这将移除「%@」的任务记录，并清理未完成的半成品目录。", task.model))
+        }
+    }
+
+    private var activeTask: ModelDownloadTask? {
+        guard let model = state.downloadingModel else { return nil }
+        if let hit = state.downloadTasks.first(where: {
+            $0.model == model && $0.engine == state.downloadingEngine
+        }) {
+            return hit
+        }
+        guard let engine = state.downloadingEngine else { return nil }
+        return ModelDownloadTask(engine: engine, model: model, status: .downloading)
     }
 
     /// 正在跑的任务由上面的 `activeRow` 负责，列表里不再重复一份：
@@ -71,6 +99,7 @@ struct DownloadCenterSheet: View {
 
     private func activeRow(_ model: String) -> some View {
         let fraction = state.downloadFraction ?? 0
+        let preparing = state.downloadFraction == nil || (fraction == 0 && state.downloadSpeed == 0)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text(model)
@@ -79,26 +108,51 @@ struct DownloadCenterSheet: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Tag(text: "下载中", tone: .accent)
+                if let engineName = state.downloadingEngine?.displayName {
+                    Tag(text: engineName, tone: .neutral)
+                }
                 Spacer(minLength: 4)
-                Text(Format.rate(state.downloadSpeed))
+                if !preparing {
+                    Text(Format.rate(state.downloadSpeed))
+                        .font(DS.Font.mono(10.5))
+                        .foregroundStyle(DS.text3)
+                        .monospacedDigit()
+                }
+                Button("暂停") { state.pauseDownload() }
+                    .buttonStyle(.ds(.secondary, size: .small))
+                if let activeTask {
+                    Button {
+                        pendingRemoval = activeTask
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.ds(.danger, size: .small))
+                    .help(L10n.t("移除任务并清理半成品"))
+                    .accessibilityLabel(L10n.t("移除任务并清理半成品"))
+                }
+            }
+            if preparing {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(L10n.t("准备中…"))
+                        .font(DS.Font.mono(10.5))
+                        .foregroundStyle(DS.text3)
+                }
+            } else {
+                Meter(fraction: fraction, tint: DS.accent)
+                Text(verbatim: fraction.formatted(.percent.precision(.fractionLength(0))))
                     .font(DS.Font.mono(10.5))
                     .foregroundStyle(DS.text3)
                     .monospacedDigit()
-                Button("暂停") { state.pauseDownload() }
-                    .buttonStyle(.ds(.secondary, size: .small))
             }
-            Meter(fraction: fraction, tint: DS.accent)
-            Text(verbatim: fraction.formatted(.percent.precision(.fractionLength(0))))
-                .font(DS.Font.mono(10.5))
-                .foregroundStyle(DS.text3)
-                .monospacedDigit()
         }
         .padding(12)
         .dsSurface(radius: DS.Radius.md, tint: DS.accent.opacity(0.12), stroke: DS.accent.opacity(0.35))
     }
 
     private func taskRow(_ task: ModelDownloadTask) -> some View {
-        HStack(spacing: 10) {
+        let busy = state.downloadingModel != nil
+        return HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(task.model)
@@ -120,13 +174,16 @@ struct DownloadCenterSheet: View {
             Spacer(minLength: 8)
             Button("继续") { state.resumeDownload(task) }
                 .buttonStyle(.ds(.secondary, size: .small))
+                .disabled(busy)
+                .help(busy ? L10n.t("等待当前下载完成后再继续") : L10n.t("继续下载"))
             Button {
-                state.removeTask(task)
+                pendingRemoval = task
             } label: {
                 Image(systemName: "trash")
             }
             .buttonStyle(.ds(.danger, size: .small))
-            .help("移除任务并清理半成品")
+            .help(L10n.t("移除任务并清理半成品"))
+            .accessibilityLabel(L10n.t("移除任务并清理半成品"))
         }
         .padding(12)
         .dsSurface(radius: DS.Radius.md)

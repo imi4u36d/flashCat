@@ -16,6 +16,7 @@ struct EnginesPage: View {
     @State private var pendingRemoval: EngineID?
     @State private var checking: Set<EngineID> = []
     @State private var gridColumns = 0
+    @State private var refreshing = false
 
     private static let cardMinWidth: CGFloat = 400
     private static let cardSpacing: CGFloat = 14
@@ -64,12 +65,12 @@ struct EnginesPage: View {
             EngineConfigSheet(state: state, engine: id)
         }
         .alert(
-            "删除 \(pendingRemoval?.displayName ?? "") 运行时？",
+            L10n.format("删除 %@ 运行时？", pendingRemoval?.displayName ?? ""),
             isPresented: Binding(
                 get: { pendingRemoval != nil },
                 set: { if !$0 { pendingRemoval = nil } })
         ) {
-            Button("删除", role: .destructive) {
+            Button(L10n.t("删除"), role: .destructive) {
                 guard let id = pendingRemoval else { return }
                 pendingRemoval = nil
                 Task { @MainActor in
@@ -80,42 +81,56 @@ struct EnginesPage: View {
                     }
                 }
             }
-            Button("取消", role: .cancel) { pendingRemoval = nil }
+            Button(L10n.t("取消"), role: .cancel) { pendingRemoval = nil }
         } message: {
-            Text("会删除 \(pendingRemoval.map(removableVersionsText) ?? "可删除的运行时")，模型与配置不受影响。")
+            Text(
+                L10n.format(
+                    "会删除 %@，模型与配置不受影响。",
+                    pendingRemoval.map(removableVersionsText) ?? L10n.t("可删除的运行时")
+                )
+            )
         }
     }
 
     private func removableVersionsText(_ id: EngineID) -> String {
         let versions = EngineInstallations.removableVersions(id)
-        guard !versions.isEmpty else { return "可删除的运行时" }
+        guard !versions.isEmpty else { return L10n.t("可删除的运行时") }
         return versions.sorted().joined(separator: "、")
     }
 
     private var header: some View {
         HStack(alignment: .center, spacing: 10) {
-            Text("运行时")
+            Text(L10n.t("运行时"))
                 .font(DS.Font.title)
                 .foregroundStyle(DS.text)
             DSStatusDot(color: runningCount > 0 ? DS.ok : DS.text4, live: runningCount > 0, size: 6)
-            Text("\(runningCount) 运行中")
+            Text(L10n.format("%lld 运行中", Int64(runningCount)))
                 .font(DS.Font.sm)
                 .foregroundStyle(DS.text2)
                 .monospacedDigit()
             DSDivider(vertical: true)
                 .frame(height: 12)
-            Text("\(installedCount) / \(EngineCatalog.allIDs.count) 已安装")
+            Text(L10n.format("%lld / %lld 已安装", Int64(installedCount), Int64(EngineCatalog.allIDs.count)))
                 .font(DS.Font.sm)
                 .foregroundStyle(DS.text2)
                 .monospacedDigit()
             Spacer(minLength: 0)
-            DSIconButton(systemName: "arrow.clockwise", help: "检查更新", style: .outlined) {
+            DSIconButton(
+                systemName: "arrow.clockwise",
+                help: refreshing ? "正在检查更新…" : "检查更新",
+                style: .outlined
+            ) {
+                guard !refreshing else { return }
+                refreshing = true
                 Task { @MainActor in
+                    defer { refreshing = false }
                     installs.refreshInstalled()
                     await installs.loadIndexIfNeeded(force: true)
                     await installs.checkUpstream(force: true)
+                    state.toast(L10n.t("已检查引擎更新"))
                 }
             }
+            .disabled(refreshing)
         }
     }
 
@@ -127,10 +142,13 @@ struct EnginesPage: View {
         let versions = installs.installed[id] ?? []
         let phase = installs.phases[id] ?? .idle
         let busy = phase.isBusy || installs.building == id
+        let failureMessage: String? = {
+            if case .failed(let message) = phase { return message }
+            return nil
+        }()
         let accent = engineAccent(id)
         let newer = installs.upstream[id]?.newerRelease
 
-        // 极简引擎卡：仅保留图标、名称/版本、运行状态（运行中/更新/异常时显形）与右侧操作。
         return HStack(alignment: .center, spacing: 12) {
             EngineGlyph(id: id, color: accent, size: 36)
 
@@ -143,7 +161,7 @@ struct EnginesPage: View {
                     if busy, installed {
                         updateChip(id: id, tint: accent)
                     } else {
-                        statusChip(installed: installed, active: isActive, busy: busy)
+                        statusChip(installed: installed, active: isActive, busy: busy, failed: failureMessage != nil)
                     }
                 }
 
@@ -179,6 +197,25 @@ struct EnginesPage: View {
                         .foregroundStyle(DS.text3)
                         .lineLimit(1)
                 }
+
+                Text(L10n.t(id.descriptor.summary))
+                    .font(DS.Font.xs)
+                    .foregroundStyle(DS.text3)
+                    .lineLimit(1)
+                    .help(L10n.t(id.descriptor.summary))
+
+                if let failureMessage, !busy {
+                    HStack(alignment: .top, spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 10))
+                            .padding(.top, 1)
+                        Text(failureMessage)
+                            .font(DS.Font.xs)
+                            .lineLimit(2)
+                    }
+                    .foregroundStyle(DS.err)
+                    .help(failureMessage)
+                }
             }
 
             Spacer(minLength: 8)
@@ -208,7 +245,7 @@ struct EnginesPage: View {
 
                     DSIconButton(
                         systemName: "trash",
-                        help: "删除",
+                        help: (isActive && state.isRunning) ? "请先停止运行中的引擎再删除" : "删除",
                         size: 28,
                         style: .outlined
                     ) {
@@ -218,6 +255,11 @@ struct EnginesPage: View {
 
                     Group {
                         if isActive {
+                            let toggleDisabled = state.isSwitchingModel
+                                || busy
+                                || state.serverState == .starting
+                                || state.serverState == .stopping
+                                || (!state.isRunning && state.selectedModel.isEmpty)
                             Button {
                                 state.toggleService()
                             } label: {
@@ -226,14 +268,19 @@ struct EnginesPage: View {
                                     systemImage: state.isRunning ? "stop.fill" : "play.fill")
                             }
                             .buttonStyle(.ds(state.isRunning ? .danger : .secondary, size: .small))
-                            .disabled(state.isSwitchingModel || busy)
+                            .disabled(toggleDisabled)
+                            .help(
+                                !state.isRunning && state.selectedModel.isEmpty
+                                    ? L10n.t("请先选择模型")
+                                    : L10n.t(state.isRunning ? "停止引擎" : "启动引擎")
+                            )
                         } else {
                             Button {
                                 Task { @MainActor in
                                     _ = await state.switchEngine(id, start: true)
                                 }
                             } label: {
-                                Label("使用", systemImage: "play.fill")
+                                Label(L10n.t("使用"), systemImage: "play.fill")
                             }
                             .buttonStyle(.ds(.secondary, size: .small))
                             .disabled(state.isSwitchingModel || busy)
@@ -244,9 +291,14 @@ struct EnginesPage: View {
                     Button {
                         install(id)
                     } label: {
-                        Label("下载", systemImage: "arrow.down.circle.fill")
+                        Label(L10n.t("下载"), systemImage: "arrow.down.circle.fill")
                     }
                     .buttonStyle(.ds(.primary, size: .small))
+                    .disabled(installs.building != nil)
+                    .help(
+                        installs.building.map { L10n.format("正在构建 %@，完成后再试", $0.displayName) }
+                            ?? L10n.t("下载并安装引擎")
+                    )
                 }
             }
         }
@@ -262,9 +314,11 @@ struct EnginesPage: View {
     }
 
     @ViewBuilder
-    private func statusChip(installed: Bool, active: Bool, busy: Bool) -> some View {
+    private func statusChip(installed: Bool, active: Bool, busy: Bool, failed: Bool) -> some View {
         if busy {
             StatusChip(text: "安装中", color: DS.warn, filled: true)
+        } else if failed {
+            StatusChip(text: "安装失败", color: DS.err, filled: true)
         } else if active, state.serverState == .ready {
             StatusChip(text: "运行中", color: DS.ok, filled: true)
         } else if active, state.serverState == .starting {
@@ -272,7 +326,7 @@ struct EnginesPage: View {
         } else if active, state.serverState == .stopping {
             StatusChip(text: "停止中", color: DS.warn, filled: true)
         } else if active, state.serverState == .failed {
-            StatusChip(text: "异常", color: DS.warn, filled: true)
+            StatusChip(text: "异常", color: DS.err, filled: true)
         }
     }
 
@@ -304,7 +358,7 @@ struct EnginesPage: View {
         if let release = installs.upstream[id]?.newerRelease {
             return L10n.format("更新到 %@", release.version)
         }
-        return "检查更新"
+        return L10n.t("检查更新")
     }
 
     private func performUpdateAction(_ id: EngineID) {
@@ -382,7 +436,7 @@ func engineAccent(_ id: EngineID) -> Color {
     case .mtplx: return Color(console: 0x5B57C9)
     case .mlxServe: return Color(console: 0x2F7CF6)
     case .strata: return Color(console: 0x3FAE7A)
-    default: return Console.accent
+    default: return DS.accent
     }
 }
 

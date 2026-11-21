@@ -32,7 +32,7 @@ enum DS {
     /// 凹槽（`DS.bg`）上的选中块、侧栏选中行。
     static let selected = Color.adaptive(dark: 0x2E2E2E, light: 0xE4E4E4)
     /// 窗口级浮层（命令面板、弹出卡、菜单栏面板）。
-    static let floating = Color.adaptive(dark: 0x1F1F1F, light: 0xFFFFFF)
+    static let floating = Color.adaptive(dark: 0x282828, light: 0xFFFFFF)
     /// 悬停底——ZCode 5%–6% 中性叠层。
     static let hover = Color.adaptive(dark: 0xFFFFFF, light: 0x0D0D0D, darkAlpha: 0.06, lightAlpha: 0.05)
 
@@ -44,11 +44,11 @@ enum DS {
     /// 文字四档：正文 / 次要 / 说明 / 占位。
     static let text = Color(nsColor: .consoleText)
     static let text2 = Color.adaptive(dark: 0xA3A3A3, light: 0x262626, darkAlpha: 1, lightAlpha: 0.65)
-    static let text3 = Color.adaptive(dark: 0x737373, light: 0x262626, darkAlpha: 1, lightAlpha: 0.45)
-    static let text4 = Color.adaptive(dark: 0x525252, light: 0x262626, darkAlpha: 1, lightAlpha: 0.28)
+    static let text3 = Color.adaptive(dark: 0x8C8C8C, light: 0x262626, darkAlpha: 1, lightAlpha: 0.56)
+    static let text4 = Color.adaptive(dark: 0x6B6B6B, light: 0x262626, darkAlpha: 1, lightAlpha: 0.38)
 
     static let accent = Color(nsColor: .consoleAccent)
-    static let accentSoft = Color.adaptive(dark: 0x38BDF8, light: 0xEBF4FF, darkAlpha: 0.14, lightAlpha: 1.0)
+    static let accentSoft = Color.adaptive(dark: 0x3B82F6, light: 0xEBF4FF, darkAlpha: 0.16, lightAlpha: 1.0)
 
     static let ok = Color.adaptive(dark: 0x3DD68C, light: 0x1E8A3E)
     static let warn = Color.adaptive(dark: 0xF59E0B, light: 0xE07B00)
@@ -188,6 +188,7 @@ private struct DSSurfaceModifier: ViewModifier {
     var hoverable: Bool
     var active: Bool
     @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         let shape = DS.rect(radius)
@@ -199,6 +200,9 @@ private struct DSSurfaceModifier: ViewModifier {
             .background {
                 ZStack {
                     shape.fill(baseFill)
+                    if hoverable && hovering {
+                        shape.fill(DS.hover)
+                    }
                     if let resolvedTint {
                         shape.fill(resolvedTint)
                     }
@@ -207,7 +211,11 @@ private struct DSSurfaceModifier: ViewModifier {
             .overlay(shape.strokeBorder(resolvedStroke, lineWidth: 1))
             .onHover { value in
                 guard hoverable else { return }
-                withAnimation(DS.Motion.snappy) { hovering = value }
+                if reduceMotion {
+                    hovering = value
+                } else {
+                    withAnimation(DS.Motion.snappy) { hovering = value }
+                }
             }
     }
 }
@@ -330,7 +338,10 @@ private struct DSButtonBody: View {
     let size: DSButtonStyle.Size
 
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
+
+    private var activeHover: Bool { hovering && isEnabled }
 
     private var height: CGFloat {
         switch size {
@@ -366,7 +377,7 @@ private struct DSButtonBody: View {
         switch kind {
         case .primary: return DS.inkText
         case .secondary: return DS.text
-        case .ghost: return hovering ? DS.text : DS.text2
+        case .ghost: return activeHover ? DS.text : DS.text2
         case .danger: return DS.err
         }
     }
@@ -374,22 +385,22 @@ private struct DSButtonBody: View {
     private var background: Color {
         switch kind {
         case .primary:
-            return hovering ? DS.ink.opacity(0.88) : DS.ink
+            return activeHover ? DS.ink.opacity(0.88) : DS.ink
         case .secondary:
-            return hovering ? DS.raised : DS.surface
+            return activeHover ? DS.raised : DS.surface
         case .ghost:
-            return hovering ? DS.hover : .clear
+            return activeHover ? DS.hover : .clear
         case .danger:
-            return DS.err.opacity(hovering ? 0.17 : 0.10)
+            return DS.err.opacity(activeHover ? 0.17 : 0.10)
         }
     }
 
     private var borderColor: Color {
         switch kind {
         case .primary: return .clear
-        case .secondary: return hovering ? DS.line3 : DS.line2
+        case .secondary: return activeHover ? DS.line3 : DS.line2
         case .ghost: return .clear
-        case .danger: return DS.err.opacity(hovering ? 0.42 : 0.26)
+        case .danger: return DS.err.opacity(activeHover ? 0.42 : 0.26)
         }
     }
 
@@ -403,17 +414,17 @@ private struct DSButtonBody: View {
             .background {
                 ZStack {
                     shape.fill(background)
-                    if kind == .secondary && hovering {
+                    if kind == .secondary && activeHover {
                         shape.fill(DS.hover)
                     }
                 }
             }
             .overlay(shape.strokeBorder(borderColor, lineWidth: 1))
             .contentShape(shape)
-            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .scaleEffect((!reduceMotion && configuration.isPressed && isEnabled) ? 0.985 : 1)
             .opacity(isEnabled ? 1 : 0.42)
-            .animation(DS.Motion.snappy, value: configuration.isPressed)
-            .animation(DS.Motion.snappy, value: hovering)
+            .animation(reduceMotion ? nil : DS.Motion.snappy, value: configuration.isPressed)
+            .animation(reduceMotion ? nil : DS.Motion.snappy, value: activeHover)
             .onHover { hovering = $0 }
     }
 }
@@ -441,7 +452,10 @@ struct DSIconButton: View {
     var action: () -> Void
 
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
+
+    private var activeHover: Bool { hovering && isEnabled }
 
     private var shape: RoundedRectangle {
         DS.rect(size <= 24 ? DS.Radius.sm : DS.Radius.md)
@@ -453,9 +467,9 @@ struct DSIconButton: View {
             return tint != nil ? .white : DS.inkText
         case .outlined:
             if active { return tint != nil ? .white : DS.inkText }
-            return tint ?? (hovering ? DS.text : DS.text2)
+            return tint ?? (activeHover ? DS.text : DS.text2)
         case .ghost:
-            return tint ?? (active ? DS.accent : (hovering ? DS.text : DS.text2))
+            return tint ?? (active ? DS.accent : (activeHover ? DS.text : DS.text2))
         }
     }
 
@@ -463,15 +477,15 @@ struct DSIconButton: View {
         switch style {
         case .primary:
             let base = tint ?? DS.ink
-            return hovering ? base.opacity(0.88) : base
+            return activeHover ? base.opacity(0.88) : base
         case .outlined:
             if active {
                 let base = tint ?? DS.ink
-                return hovering ? base.opacity(0.90) : base
+                return activeHover ? base.opacity(0.90) : base
             }
-            return hovering ? DS.raised : DS.surface
+            return activeHover ? DS.raised : DS.surface
         case .ghost:
-            return active ? DS.accentSoft : (hovering ? DS.hover : .clear)
+            return active ? DS.accentSoft : (activeHover ? DS.hover : .clear)
         }
     }
 
@@ -481,7 +495,7 @@ struct DSIconButton: View {
             return .clear
         case .outlined:
             if active { return .clear }
-            return hovering ? DS.line3 : DS.line2
+            return activeHover ? DS.line3 : DS.line2
         case .ghost:
             return .clear
         }
@@ -496,7 +510,7 @@ struct DSIconButton: View {
                 .background {
                     ZStack {
                         shape.fill(background)
-                        if style == .outlined && !active && hovering {
+                        if style == .outlined && !active && activeHover {
                             shape.fill(DS.hover)
                         }
                     }
@@ -508,17 +522,25 @@ struct DSIconButton: View {
         .opacity(isEnabled ? 1 : 0.4)
         .help(L10n.t(help))
         .accessibilityLabel(L10n.t(help))
-        .onHover { value in withAnimation(DS.Motion.snappy) { hovering = value } }
+        .onHover { value in
+            if reduceMotion {
+                hovering = value
+            } else {
+                withAnimation(DS.Motion.snappy) { hovering = value }
+            }
+        }
     }
 }
 
 /// 只有按压缩放、没有任何底色的按钮样式。
 struct DSPressStyle: ButtonStyle {
     var scale: CGFloat = 0.94
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? scale : 1)
-            .animation(DS.Motion.snappy, value: configuration.isPressed)
+            .scaleEffect((!reduceMotion && configuration.isPressed) ? scale : 1)
+            .animation(reduceMotion ? nil : DS.Motion.snappy, value: configuration.isPressed)
     }
 }
 
@@ -607,7 +629,10 @@ struct DSChip: View {
 
     var body: some View {
         HStack(spacing: 5) {
-            if let dot { DSStatusDot(color: dot, live: live, size: 6) }
+            if let dot {
+                DSStatusDot(color: dot, live: live, size: 6)
+                    .accessibilityHidden(true)
+            }
             Text(L10n.t(text))
                 .font(DS.Font.xs.weight(.medium))
                 .foregroundStyle(tint ?? DS.text2)
@@ -625,10 +650,12 @@ struct DSChip: View {
 struct DSMeter: View {
     var value: Double
     var tint: Color = DS.text2
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var clamped: Double { min(max(value, 0), 1) }
 
     var body: some View {
         GeometryReader { proxy in
-            let clamped = min(max(value, 0), 1)
             ZStack(alignment: .leading) {
                 Capsule().fill(DS.line2)
                 if clamped > 0 {
@@ -639,7 +666,9 @@ struct DSMeter: View {
             }
         }
         .frame(height: 3)
-        .animation(DS.Motion.smooth, value: value)
+        .animation(reduceMotion ? nil : DS.Motion.smooth, value: clamped)
+        .accessibilityElement(children: .ignore)
+        .accessibilityValue("\(Int((clamped * 100).rounded()))%")
     }
 }
 
@@ -764,7 +793,11 @@ struct DSMenu<Label: View, Content: View>: View {
     @ViewBuilder var label: () -> Label
     @ViewBuilder var content: () -> Content
 
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
+
+    private var activeHover: Bool { hovering && isEnabled }
 
     private var height: CGFloat {
         switch size {
@@ -787,40 +820,45 @@ struct DSMenu<Label: View, Content: View>: View {
 
     private var backgroundColor: Color {
         switch kind {
-        case .primary: return hovering ? DS.ink.opacity(0.88) : DS.ink
-        case .secondary: return hovering ? DS.raised : DS.surface
-        case .icon: return hovering ? DS.raised : DS.surface
-        case .ghost: return hovering ? DS.hover : .clear
+        case .primary: return activeHover ? DS.ink.opacity(0.88) : DS.ink
+        case .secondary: return activeHover ? DS.raised : DS.surface
+        case .icon: return activeHover ? DS.raised : DS.surface
+        case .ghost: return activeHover ? DS.hover : .clear
         }
     }
 
     private var borderColor: Color {
         switch kind {
         case .primary, .ghost: return .clear
-        case .secondary, .icon: return hovering ? DS.line3 : DS.line2
+        case .secondary, .icon: return activeHover ? DS.line3 : DS.line2
         }
     }
 
     var body: some View {
-        Menu(content: content, label: label)
-            .menuStyle(.button)
-            .menuIndicator(.hidden)
-            .buttonStyle(.plain)
-            .padding(.horizontal, horizontalPadding)
-            .frame(width: kind == .icon ? height : nil, height: height)
-            .background {
-                ZStack {
-                    shape.fill(backgroundColor)
-                    if (kind == .secondary || kind == .icon) && hovering {
-                        shape.fill(DS.hover)
+        Menu {
+            content()
+        } label: {
+            label()
+                .padding(.horizontal, horizontalPadding)
+                .frame(width: kind == .icon ? height : nil, height: height)
+                .background {
+                    ZStack {
+                        shape.fill(backgroundColor)
+                        if (kind == .secondary || kind == .icon) && activeHover {
+                            shape.fill(DS.hover)
+                        }
                     }
                 }
-            }
-            .overlay(shape.strokeBorder(borderColor, lineWidth: 1))
-            .contentShape(shape)
-            .fixedSize()
-            .onHover { hovering = $0 }
-            .animation(DS.Motion.snappy, value: hovering)
+                .overlay(shape.strokeBorder(borderColor, lineWidth: 1))
+                .contentShape(shape)
+        }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .fixedSize()
+        .opacity(isEnabled ? 1 : 0.42)
+        .onHover { hovering = $0 }
+        .animation(reduceMotion ? nil : DS.Motion.snappy, value: activeHover)
     }
 }
 
@@ -886,8 +924,12 @@ struct DSSearchField: View {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 11))
                         .foregroundStyle(DS.text3)
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .help(L10n.t("清除搜索"))
+                .accessibilityLabel(L10n.t("清除搜索"))
             }
         }
         .padding(.horizontal, 10)
@@ -899,6 +941,8 @@ struct DSSearchField: View {
                 .strokeBorder(focused ? DS.accent.opacity(0.16) : .clear, lineWidth: 2)
                 .padding(-1)
         )
+        .contentShape(shape)
+        .onTapGesture { focused = true }
         .animation(DS.Motion.snappy, value: focused)
     }
 }
@@ -1012,19 +1056,15 @@ struct DSAnimatedGrid: Layout {
         while index < subviews.count {
             let end = min(index + cols, subviews.count)
             var rowHeight: CGFloat = 0
-            var heights: [CGFloat] = []
-            heights.reserveCapacity(end - index)
             for i in index..<end {
-                let h = subviews[i].sizeThatFits(measureProposal).height
-                heights.append(h)
-                rowHeight = max(rowHeight, h)
+                rowHeight = max(rowHeight, subviews[i].sizeThatFits(measureProposal).height)
             }
             for offset in 0..<(end - index) {
                 let x = bounds.minX + CGFloat(offset) * (itemWidth + spacing)
                 subviews[index + offset].place(
                     at: CGPoint(x: x, y: y),
                     anchor: .topLeading,
-                    proposal: ProposedViewSize(width: itemWidth, height: heights[offset])
+                    proposal: ProposedViewSize(width: itemWidth, height: rowHeight)
                 )
             }
             y += rowHeight + spacing
@@ -1041,6 +1081,7 @@ private struct DSTrackColumnsModifier: ViewModifier {
     let horizontalPadding: CGFloat
 
     @State private var measuredWidth: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         content
@@ -1063,7 +1104,7 @@ private struct DSTrackColumnsModifier: ViewModifier {
             spacing: spacing,
             maxColumns: maxColumns)
         guard next != columns else { return }
-        if animate {
+        if animate && !reduceMotion {
             withAnimation(DS.Motion.smooth) { columns = next }
         } else {
             columns = next

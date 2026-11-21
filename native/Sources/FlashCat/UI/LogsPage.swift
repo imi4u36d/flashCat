@@ -20,20 +20,13 @@ struct LogsPage: View {
     @State private var paused = false
     @State private var frozen: [LogFeedEntry] = []
     @State private var expanded: Set<String> = []
-    @State private var hoveredId: String?
+    @State private var confirmingClear = false
 
     /// 选中的引擎被卸载后回落到「全部日志」：菜单里已经没有这一项了。
     private var effectiveSource: LogFeedSource {
         if case .engine(let id) = source, !state.availableEngines.contains(id) { return .all }
         return source
     }
-
-    /// 展开详情里的完整时间，和行首的 HH:mm:ss 互补。
-    private static let fullDateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        return formatter
-    }()
 
     private func display() -> LogsDigest {
         LogsDigest.make(
@@ -57,6 +50,16 @@ struct LogsPage: View {
             try? await Task.sleep(nanoseconds: 200_000_000)
             guard !Task.isCancelled else { return }
             appliedQuery = query
+        }
+        .alert(L10n.t("清空当前日志？"), isPresented: $confirmingClear) {
+            Button(L10n.t("清空"), role: .destructive) {
+                state.clearLogs(for: effectiveSource)
+                frozen = []
+                expanded = []
+            }
+            Button(L10n.t("取消"), role: .cancel) {}
+        } message: {
+            Text(L10n.format("将清空 %@ 中的内存日志视图，不影响磁盘上的历史记录。", effectiveSource.title))
         }
     }
 
@@ -90,7 +93,7 @@ struct LogsPage: View {
         DSFilterBar(
             selection: $level,
             options: LogsFilter.allCases.map { item in
-                (item, "\(item.label) (\(data.counts[item] ?? 0))")
+                (item, "\(L10n.t(item.label)) (\(data.counts[item] ?? 0))")
             },
             query: $query,
             placeholder: "搜索")
@@ -101,7 +104,7 @@ struct LogsPage: View {
         HStack(spacing: 8) {
             DSIconButton(systemName: "doc.on.doc", help: "复制筛选后的日志", size: 28, style: .outlined) {
                 let text = LogFeed.clipboardText(data.lines, tagged: effectiveSource == .all)
-                state.copy(text, label: "已复制筛选后的日志")
+                state.copy(text, label: L10n.t("已复制筛选后的日志"))
             }
             .disabled(data.lines.isEmpty)
 
@@ -127,10 +130,9 @@ struct LogsPage: View {
             .buttonStyle(.ds(.secondary, size: .regular))
 
             DSIconButton(systemName: "trash", help: "清空日志", size: 28, style: .outlined) {
-                state.clearLogs(for: effectiveSource)
-                frozen = []
-                expanded = []
+                confirmingClear = true
             }
+            .disabled((data.counts[.all] ?? 0) == 0)
         }
     }
 
@@ -138,7 +140,7 @@ struct LogsPage: View {
     private func openLogsLocation() {
         if let path = effectiveSource.filePath {
             guard Paths.fileExists(path) else {
-                state.toast("日志文件尚未创建")
+                state.toast(L10n.t("日志文件尚未创建"))
                 return
             }
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
@@ -146,7 +148,7 @@ struct LogsPage: View {
         }
         let directory = Paths.logsDirectory
         guard Paths.fileExists(directory) else {
-            state.toast("日志目录尚未创建")
+            state.toast(L10n.t("日志目录尚未创建"))
             return
         }
         NSWorkspace.shared.open(URL(fileURLWithPath: directory, isDirectory: true))
@@ -186,14 +188,13 @@ struct LogsPage: View {
         .help(L10n.t("切换日志来源"))
     }
 
-    /// 换来源等于换一份日志：暂停、展开、悬停都从零开始，免得带着上一份的 id。
+    /// 换来源等于换一份日志：暂停、展开都从零开始，免得带着上一份的 id。
     private func select(_ next: LogFeedSource) {
         guard next != effectiveSource else { return }
         source = next
         paused = false
         frozen = []
         expanded = []
-        hoveredId = nil
     }
 
     private func console(_ data: LogsDigest) -> some View {
@@ -207,7 +208,7 @@ struct LogsPage: View {
                         .foregroundStyle(paused ? DS.warn : DS.ok)
                     logSourceMenu
                     Spacer(minLength: 0)
-                    Text("\(data.lines.count) 行")
+                    Text(L10n.format("%lld 行", Int64(data.lines.count)))
                         .font(DS.Font.mono(11))
                         .foregroundStyle(DS.text3)
                         .monospacedDigit()
@@ -218,22 +219,58 @@ struct LogsPage: View {
                 DSDivider()
 
                 if data.lines.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "terminal")
-                            .font(.system(size: 18, weight: .light))
-                            .foregroundStyle(DS.text4)
-                        Text("启动引擎后，日志会实时出现在这里")
-                            .font(DS.Font.sm)
-                            .foregroundStyle(DS.text3)
+                    if (data.counts[.all] ?? 0) > 0 {
+                        VStack(spacing: 12) {
+                            EmptyHint(
+                                icon: "line.3.horizontal.decrease.circle",
+                                title: "没有匹配的日志",
+                                detail: "当前级别或搜索词下没有日志记录。"
+                            )
+                            Button(L10n.t("重置筛选")) {
+                                level = .all
+                                query = ""
+                                appliedQuery = ""
+                            }
+                            .buttonStyle(.ds(.secondary, size: .regular))
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        VStack(spacing: 8) {
+                            Image(systemName: "terminal")
+                                .font(.system(size: 18, weight: .light))
+                                .foregroundStyle(DS.text4)
+                            Text(L10n.t("启动引擎后，日志会实时出现在这里"))
+                                .font(DS.Font.sm)
+                                .foregroundStyle(DS.text3)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 1) {
                             // 新行从顶上插入，跟随「最新」的方式就是回到顶部。
                             Color.clear.frame(height: 1).id("logTop")
                             ForEach(data.lines) { line in
-                                row(line).id(line.id)
+                                LogRowView(
+                                    entry: line,
+                                    isExpanded: expanded.contains(line.id),
+                                    onToggle: {
+                                        if expanded.contains(line.id) {
+                                            expanded.remove(line.id)
+                                        } else {
+                                            expanded.insert(line.id)
+                                        }
+                                    },
+                                    onCopyLine: {
+                                        state.copy(line.text, label: L10n.t("已复制该行日志"))
+                                    },
+                                    onCopyFormatted: {
+                                        let prefix = line.tag.map { "[\($0)] " } ?? ""
+                                        let formatted = "\(line.clockText) \(prefix)[\(line.level.label)] \(line.text)"
+                                        state.copy(formatted, label: L10n.t("已复制该行日志"))
+                                    }
+                                )
+                                .id(line.id)
                             }
                         }
                         .padding(10)
@@ -251,18 +288,32 @@ struct LogsPage: View {
             .frame(maxHeight: .infinity)
         }
     }
+}
 
-    private func row(_ entry: LogFeedEntry) -> some View {
+/// 单行日志及其局部悬停/展开详情：把 `hovering` 留在行内，避免鼠标移动触发整个 `LogsPage` 重新过滤。
+private struct LogRowView: View {
+    let entry: LogFeedEntry
+    let isExpanded: Bool
+    let onToggle: () -> Void
+    let onCopyLine: () -> Void
+    let onCopyFormatted: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
+
+    private static let fullDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter
+    }()
+
+    private var highlighted: Bool { hovering || isExpanded }
+
+    var body: some View {
         let tone = Console.levelColor(entry.level)
-        let isExpanded = expanded.contains(entry.id)
-        let isHovered = hoveredId == entry.id
-        let highlighted = isHovered || isExpanded
-
         return VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(DS.Motion.smooth) {
-                    if isExpanded { expanded.remove(entry.id) } else { expanded.insert(entry.id) }
-                }
+                withAnimation(reduceMotion ? nil : DS.Motion.smooth, onToggle)
             } label: {
                 HStack(spacing: 10) {
                     Text(entry.clockText)
@@ -271,7 +322,6 @@ struct LogsPage: View {
                         .monospacedDigit()
                         .frame(width: 58, alignment: .leading)
 
-                    // 合并视图里行首标出来源；单引擎视图不占这一列。
                     if let tag = entry.tag {
                         Text(tag)
                             .font(DS.Font.mono(9.5))
@@ -319,36 +369,37 @@ struct LogsPage: View {
             .help(L10n.t(isExpanded ? "收起详情" : "展开详情"))
 
             if isExpanded {
-                detail(entry)
-                    .padding(.leading, detailIndent(entry))
+                detail
+                    .padding(.leading, detailIndent)
                     .padding(.trailing, 8)
                     .padding(.bottom, 8)
-                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+                    .transition(
+                        reduceMotion
+                            ? .opacity
+                            : .opacity.combined(with: .scale(scale: 0.98, anchor: .top))
+                    )
             }
         }
         .background {
             DS.rect(DS.Radius.sm)
                 .fill(highlighted ? DS.hover : .clear)
         }
-        .onHover { hovering in
-            withAnimation(DS.Motion.snappy) {
-                if hovering {
-                    hoveredId = entry.id
-                } else if hoveredId == entry.id {
-                    hoveredId = nil
-                }
+        .onHover { inside in
+            withAnimation(reduceMotion ? nil : DS.Motion.snappy) {
+                hovering = inside
             }
+        }
+        .contextMenu {
+            Button(L10n.t("复制该行"), action: onCopyLine)
+            Button(L10n.t("复制带时间与来源"), action: onCopyFormatted)
         }
     }
 
-    /// 详情正文与行内正文左对齐：时间列 58 + 间距 10 + 行内边距 8，合并视图
-    /// 再让出来源列（54 + 间距 10）。
-    private func detailIndent(_ entry: LogFeedEntry) -> CGFloat {
+    private var detailIndent: CGFloat {
         76 + (entry.tag == nil ? 0 : 64)
     }
 
-    /// 展开后的详情：可换行的完整正文 + 元信息 + 单行复制。
-    private func detail(_ entry: LogFeedEntry) -> some View {
+    private var detail: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(entry.text)
                 .font(DS.Font.mono(11.5))
@@ -362,12 +413,10 @@ struct LogsPage: View {
                 if let tag = entry.tag {
                     Label(tag, systemImage: "cpu")
                 }
-                Label("\(entry.text.count) 字符", systemImage: "textformat.size")
+                Label(L10n.format("%lld 字符", Int64(entry.text.count)), systemImage: "textformat.size")
                 Spacer(minLength: 0)
-                Button {
-                    state.copy(entry.text, label: "已复制该行日志")
-                } label: {
-                    Label("复制", systemImage: "doc.on.doc")
+                Button(action: onCopyLine) {
+                    Label(L10n.t("复制"), systemImage: "doc.on.doc")
                 }
                 .buttonStyle(.ds(.secondary, size: .small))
             }

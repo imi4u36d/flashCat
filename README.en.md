@@ -132,16 +132,18 @@ and how much context the current session occupies (e.g. `18K / 262K`). On the ri
 are the API gateway addresses (one line for OpenAI, one for Claude, each with a
 one-click copy).
 
-**Chat** — the built-in chat window. The top bar switches models, adjusts temperature /
-top-p / max output, and sets thinking mode. Every reply is labeled with tok/s and
-first-token latency. Transcripts stay local; start a new one or browse history anytime.
+**Chat** — the built-in chat window, laid out like Splash: a single transcript column,
+collapsible thinking, and copy / regenerate on hover. The composer switches models,
+adjusts temperature / top-p / max output, and sets thinking mode; every reply is
+labeled with its model, tok/s and first-token latency. Transcripts stay local and can
+be searched, pinned, renamed or browsed anytime.
 
 **Models** — one library per engine; pick the engine at the top first (engines you have
 not installed still show what they support). Installed weights get a "Use" button,
 missing ones a "Download" that pulls in place, and each card lists size, memory floor,
 and quantization format (`QUANT`: `Q4_K_M` / `oQ4e` / `8-bit` / `BF16`…).
-"Model Hub" in the top right opens search: Hugging Face or ModelScope repositories
-(switch from the header menu), keyword search, sort by downloads, filter by
+"Model Hub" in the top right opens search: Hugging Face, HF-Mirror or ModelScope
+repositories (switch from the header menu), keyword search, sort by downloads, filter by
 "All / MLX / GGUF", page through results (30 per page from HF, 24 from ModelScope),
 and click a row to open its model card (README / file list / tags) before deciding.
 When a GGUF repository has several quants, the download bar lets you pick one; only
@@ -298,8 +300,8 @@ at mode `0600`, so other users on the same machine cannot drive the app.
 
 ## Models
 
-Models are downloaded inside the app, from Hugging Face or ModelScope (switch under
-Settings → Model Source). The Models page puts weights
+Models are downloaded inside the app, from Hugging Face, HF-Mirror or ModelScope
+(switch under Settings → Model Source). The Models page puts weights
 that can load right away under "Local", and tiers this Mac's memory can hold but that
 have not been downloaded yet under "FlashCat Recommended":
 
@@ -320,8 +322,10 @@ model is the engine's own call, and the Models page keeps downloaded weights sep
 from not-yet-downloaded "FlashCat Recommended" tiers, tagging each local weight as
 "catalog" or "personal download".
 
-For mirrors or gated repositories, fill in the endpoint and token under
-Settings → Model Source; browsing and downloads share the same normalized endpoint.
+For mirror access, switch Model Source to HF-Mirror: hub browsing, model cards and
+engine-folder downloads all go through hf-mirror.com. For a custom mirror or gated
+repositories, fill in the endpoint and token under Settings → Model Source; browsing
+and downloads share the same normalized endpoint.
 The same two values can still be written from the command line (leave them alone for
 huggingface.co and anonymous access):
 
@@ -362,8 +366,8 @@ Where things live on disk (handy when cleaning up):
 | Thinking mode | Auto / off / on; whether thinking models emit reasoning first |
 | Reasoning Effort | Applies when thinking mode is on; the levels come from the engine |
 | Default model | Which model to load when the engine starts |
-| Model Source | Whether the Model Hub searches Hugging Face or ModelScope |
-| Mirror URL | Hugging Face endpoint; leave empty for the official host; used by browsing and downloads |
+| Model Source | Whether the Model Hub searches Hugging Face, HF-Mirror or ModelScope |
+| Mirror URL | Hugging Face endpoint; leave empty for the official host. HF-Mirror always uses hf-mirror.com |
 | Access Token | Hugging Face token for private / gated repositories |
 | Download cache folder | Where model downloads are cached |
 | Command-line Interface | Switch and port for the local `flashcat` connection (9100 by default) |

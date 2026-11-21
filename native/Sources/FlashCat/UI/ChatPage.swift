@@ -7,38 +7,32 @@ import FlashCatKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// 对话页：按 WebUI 版式——顶部模型行、居中空态、悬浮输入卡。
+/// 对话页：对齐 Splash 的版式——单列转录、用户淡色气泡、助手无气泡、思考折叠行、
+/// 悬停操作行，以及一张浮在页脚的输入卡。新会话只有品牌标记与输入卡，第一条消息
+/// 之后输入卡移到页脚，转录在它上方淡入。
 struct ChatPage: View {
     @ObservedObject var state: AppState
     @ObservedObject var chat: ChatStore
+    /// 每个会话的草稿。切会话、切页都只换一个键，草稿不会串。
+    @ObservedObject private var draftStore: ChatDraftStore
 
-    @State private var draft = ""
     @State private var showsParameters = false
     @State private var atBottom = true
+    /// 用户正在主动滚动时，内容长高不再把视图拽回底部。
     @State private var userScrolling = false
-    /// 超长对话只渲染最近这些消息，往上翻时再按批放出来。
-    @State private var messageLimit = 80
-    /// 对话区量到的真实高度。切页回来的头一两帧它是 0，那时候不能 scrollTo。
-    @State private var transcriptHeight: CGFloat = 0
-    /// 欠着一次「落到底部」：等对话区量出高度再补。
-    @State private var needsBottomRestore = false
+    /// 「加载更早」按会话记：换一段会话各算各的，删掉会话也只是留个用不到的键。
+    @State private var earlierBatches: [String: Int] = [:]
     /// 输入框的第一响应者状态由 `ChatComposerField` 回报。
     @State private var composerFocused = false
-    /// 图像模型的底图；视频模型下它是首帧。对话模型用不到这些。
-    @State private var imageAttachment: ChatImageAttachment?
-    /// 视频模型的尾帧。图像模型只用一张底图，这里始终为空。
-    @State private var lastFrameAttachment: ChatImageAttachment?
-    /// REF2VA 的参考图与参考视频。参考视频发送时只抽帧，原文件仍留在原处。
-    @State private var referenceImages: [ChatImageAttachment] = []
-    @State private var referenceClips: [VideoReferenceClip] = []
     @State private var imageOptions = ImageOptionsStore.load()
     @State private var videoOptions = VideoOptionsStore.load()
     @State private var showsImageOptions = false
     /// 拖拽悬停在输入卡上时给出投放提示；图像/视频模型才接受文件。
     @State private var isDropTargeted = false
 
-    /// 用户拖出来的对话列宽。默认 820 同时是最小宽度：不拖的时候版式
-    /// 和以前完全一样，列宽变了才跟着变。
+    /// 用户拖出来的对话列宽。默认 744（Splash 的 680pt 内容列 + 两侧 32pt），
+    /// 也是最小宽度：不拖的时候版式和 Splash 一致，列宽变了正文、气泡、输入卡
+    /// 一起跟着变。
     @AppStorage("chat.columnWidth") private var storedColumnWidth: Double =
         Double(ChatColumn.defaultWidth)
     /// 页面量到的可用宽度：决定列最宽能撑到哪里、拖柄骑在哪条边上。
@@ -53,35 +47,146 @@ struct ChatPage: View {
     @State private var columnCursorPushed = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
+
+    init(state: AppState, chat: ChatStore) {
+        self.state = state
+        self.chat = chat
+        _draftStore = ObservedObject(wrappedValue: state.chatDrafts)
+    }
+
+    /// 转录一次排进布局的正文上限（字符）。懒加载列表要靠估算高度定位，
+    /// 而一条长回答和一条短消息差着上百倍，估算值会在几十万点之间来回跳，
+    /// 底部锚点跟着它跑，切页回来就是一路快速滚动、最后停在半截或空白。
+    /// 换成精确布局后整段高度是量出来的，代价是要真的排每一行：9 万字排完
+    /// 要一秒多，所以按字数只留最近一段，更早的交给「加载更早」。
+    static let transcriptCharacterBudget = 16_000
+    /// 「加载更早」一次补多少条。每次补的也是一个布局批次，40 条大约
+    /// 300ms，够快，也不至于点很多次。
+    static let loadEarlierBatch = 40
+
+    /// 按正文预算从末尾往前数，能排多少条就排多少条。最后一条不算进预算：
+    /// 它再长也得显示，而且流式输出时它一直在长——算进去会让窗口每来一批
+    /// 字就缩一截，读者往上翻的位置也跟着跳。
+    static func budgetedMessageCount(_ messages: [ChatMessage]) -> Int {
+        var characters = 0
+        var count = 0
+        for message in messages.reversed() {
+            if count > 0 {
+                characters += message.content.count + (message.reasoning?.count ?? 0)
+            }
+            count += 1
+            if characters >= transcriptCharacterBudget { break }
+        }
+        return max(1, count)
+    }
+
+    // MARK: Drafts
+
+    /// 当前会话的草稿键。`currentThreadID` 在新会话开始时就已生成，首条消息前后
+    /// 不会变，所以不需要像 Splash 那样把新会话的草稿「搬运」到会话 id 上。
+    private var draftKey: String { state.currentThreadID }
+
+    private var draft: String {
+        get { draftStore.drafts[draftKey]?.text ?? "" }
+        nonmutating set {
+            var draft = draftStore.drafts[draftKey] ?? ChatDraft()
+            draft.text = newValue
+            // 用户一开始改字，上一次的附件回执就收起（Splash 的 `notice` 同理）。
+            draft.notice = nil
+            draftStore.drafts[draftKey] = draft
+        }
+    }
+
+    private func setDraftNotice(_ text: String) {
+        draftStore.drafts[draftKey, default: ChatDraft()].notice = text
+    }
+
+    private var imageAttachment: ChatImageAttachment? {
+        get { draftStore.drafts[draftKey]?.imageAttachment }
+        nonmutating set { draftStore.drafts[draftKey, default: ChatDraft()].imageAttachment = newValue }
+    }
+
+    private var lastFrameAttachment: ChatImageAttachment? {
+        get { draftStore.drafts[draftKey]?.lastFrameAttachment }
+        nonmutating set { draftStore.drafts[draftKey, default: ChatDraft()].lastFrameAttachment = newValue }
+    }
+
+    private var referenceImages: [ChatImageAttachment] {
+        get { draftStore.drafts[draftKey]?.referenceImages ?? [] }
+        nonmutating set { draftStore.drafts[draftKey, default: ChatDraft()].referenceImages = newValue }
+    }
+
+    private var referenceClips: [VideoReferenceClip] {
+        get { draftStore.drafts[draftKey]?.referenceClips ?? [] }
+        nonmutating set { draftStore.drafts[draftKey, default: ChatDraft()].referenceClips = newValue }
+    }
+
+    private var textBinding: Binding<String> {
+        Binding(
+            get: { draft },
+            set: { draft = $0 })
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            transcript
+            ChatStageView(newChat: chat.messages.isEmpty, column: columnWidth) {
+                ZStack {
+                    if chat.messages.isEmpty {
+                        emptyState
+                            .transition(.opacity)
+                    } else {
+                        transcript
+                            .transition(.opacity)
+                    }
+                }
+            } composer: {
+                composer
+                    .padding(.horizontal, ChatColumn.contentInset)
+            }
+            .animation(reduceMotion ? nil : Motion.settle, value: chat.messages.isEmpty)
         }
         // 页面切换时外层用 transition 重新插入视图。这里显式铺满可用空间，
-        // 保证 ScrollView 拿到确定高度；否则懒加载列表可能量到 0 高度，
-        // 整页只剩顶部模型行，看起来就是空白。
+        // 保证转录区拿到确定高度；否则懒加载列表可能量到 0 高度，整页只剩顶部。
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         // 页面宽度决定对话列最宽能撑到哪里。量在根视图上而不是对话区里：
-        // 输入卡是页面级浮层，两边必须读同一个数才不会一宽一窄。
+        // 输入卡与转录区两边必须读同一个数才不会一宽一窄。
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.width
         } action: { width in
             pageWidth = width
         }
-        .overlay(alignment: .bottom) {
-            composer
-                .padding(.horizontal, 40)
-                .padding(.bottom, Console.contentBottomInset)
+        .overlay(alignment: .trailing) {
+            columnResizeHandle
+                .padding(.trailing, max(6, columnEdgeInset - 11))
+                // 首帧还没量到页面宽度时先不画，免得竖条先落在页面中间再跳出去。
+                .opacity(pageWidth > 0 ? 1 : 0)
         }
         .sheet(isPresented: $showsParameters) { ChatParametersSheet(state: state) }
+        .onChange(of: state.selectedModel) { _, _ in
+            pruneIncompatibleAttachments()
+        }
         .onChange(of: imageOptions) { _, newValue in
             ImageOptionsStore.save(newValue)
         }
         .onChange(of: videoOptions) { _, newValue in
             VideoOptionsStore.save(newValue)
         }
+        .onChange(of: chat.messages.isEmpty) { _, empty in
+            // 新会话（新建 / 清空 / 删掉当前）把光标交回输入框，和 Splash 一致。
+            if empty { focusComposer() }
+        }
+        // 切到另一段会话时 `messages[0]` 会换；把光标交回输入框，接着写那段的草稿。
+        .onChange(of: chat.messages.first?.id) { _, _ in
+            focusComposer()
+        }
+        // 换会话：滚动视图会按新的 `currentThreadID` 重建并从底部开始。
+        // 「加载更早」的批次按会话记在 `earlierBatches` 里，不用在这里复位。
+        .onChange(of: state.currentThreadID) { _, _ in
+            atBottom = true
+        }
+        .onAppear { focusComposer() }
     }
 
     // MARK: Column width
@@ -94,15 +199,10 @@ struct ChatPage: View {
             pageWidth: pageWidth)
     }
 
-    /// 气泡最宽。默认列宽下是 660pt，列被拖宽后气泡按同样的增量一起放开，
-    /// 否则拖宽只会把消息之间推开，回答本身还是原来那么窄。
+    /// 气泡最宽。默认列宽下是 592pt（Splash 的 680 列再让出 88pt），列被拖宽后
+    /// 气泡按同样的增量一起放开，否则拖宽只会把消息之间推开，回答还是原来那么窄。
     private var bubbleMaxWidth: CGFloat {
         ChatColumn.bubbleWidth(column: columnWidth)
-    }
-
-    /// 输入卡宽度，恒比列窄 40pt（默认 820 → 780），跟着同一条列边收放。
-    private var composerMaxWidth: CGFloat {
-        ChatColumn.composerWidth(column: columnWidth)
     }
 
     /// 列右边缘离页面右边的距离。拖柄骑在这条边上：列越宽，它越靠外。
@@ -113,69 +213,60 @@ struct ChatPage: View {
 
     // MARK: Header
 
-    private var currentThreadTitle: String? {
-        chat.threads.first(where: { $0.id == state.currentThreadID })?.title
+    private var currentThread: ChatThread? {
+        chat.threads.first(where: { $0.id == state.currentThreadID })
     }
 
+    /// 恢复启动时的旧会话可能还没进「最近对话」（旧版本按轮次存、清理过副本），
+    /// 但正文已经在当前会话里。这种时候顶栏仍要显示标题，只是不挂操作菜单：
+    /// 置顶 / 改名 / 删除都要求历史里有对应条目。
+    private var restoredTitle: String? {
+        guard !chat.messages.isEmpty else { return nil }
+        if let thread = currentThread { return thread.title }
+        return ChatHistory.autoTitle(messages: chat.messages)
+    }
+
+    /// 顶栏只留 Splash 那样的会话标题：标题 + 下拉箭头，悬停高亮，点开是
+    /// 置顶 / 重命名 / 删除。标题左侧常驻「对话历史」，点开就是最近对话的
+    /// 搜索与分组列表；右侧常驻「新对话」。边栏收起、页面铺满窗口时不用把
+    /// 边栏叫回来也能换会话、开新对话；边栏展开时这两颗按钮只是同一条捷径。
     private var header: some View {
-        HStack(spacing: 10) {
-            DSMenu(size: .small) {
-                DSMenuTriggerLabel(
-                    title: currentThreadTitle ?? L10n.t("新对话"),
-                    systemImage: "bubble.left.and.bubble.right",
-                    imageTint: DS.accent,
-                    size: .small
-                )
-                .frame(maxWidth: 260, alignment: .leading)
-            } content: {
-                Button {
-                    state.newConversation()
-                } label: {
-                    Label(L10n.t("新对话"), systemImage: "square.and.pencil")
-                }
-
-                if !chat.threads.isEmpty {
-                    Divider()
-                    Section(L10n.t("最近对话")) {
-                        ForEach(chat.threads.prefix(20)) { thread in
-                            Button {
-                                state.openThread(thread)
-                            } label: {
-                                if thread.id == state.currentThreadID {
-                                    Label(thread.title, systemImage: "checkmark")
-                                } else {
-                                    Text(thread.title)
-                                }
-                            }
-                        }
-                    }
-                }
+        HStack(spacing: 8) {
+            ChatHistoryButton(state: state, chat: chat)
+            if let thread = currentThread, !chat.messages.isEmpty {
+                ChatTitleMenu(state: state, thread: thread)
+            } else if let title = restoredTitle {
+                Text(title)
+                    .font(DS.Font.prose(15, weight: .medium))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.horizontal, 8)
             }
-            .disabled(chat.generating)
-            .help(L10n.t("最近对话"))
-
             Spacer(minLength: 0)
 
-            Button {
+            DSIconButton(systemName: "square.and.pencil", help: "新对话", size: 26) {
                 state.newConversation()
-            } label: {
-                Label(L10n.t("新对话"), systemImage: "square.and.pencil")
+                state.section = .chat
             }
-            .buttonStyle(.ds(.secondary, size: .small))
         }
         .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar, base: DS.Space.lg))
         .padding(.trailing, DS.Space.lg)
         .frame(height: DS.Layout.titlebarHeight)
         .padding(.top, Console.pageTopPadding)
         .background(WindowDragArea())
-        .overlay(alignment: .bottom) { DSDivider() }
     }
 
     // MARK: Transcript
 
+    /// 这次要排进布局的条数：预算窗口 + 这一段会话已经点开的批次。
+    private var windowCount: Int {
+        Self.budgetedMessageCount(chat.messages) + (earlierBatches[state.currentThreadID] ?? 0)
+    }
+
     private var visibleMessages: [ChatMessage] {
-        guard chat.messages.count > messageLimit else { return chat.messages }
-        return Array(chat.messages.suffix(messageLimit))
+        guard chat.messages.count > windowCount else { return chat.messages }
+        return Array(chat.messages.suffix(windowCount))
     }
 
     private var streamingScrollKey: String {
@@ -187,56 +278,48 @@ struct ChatPage: View {
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    if !chat.messages.isEmpty {
-                        if chat.messages.count > visibleMessages.count {
-                            Button {
-                                let anchor = visibleMessages.first?.id
-                                messageLimit += 80
-                                if let anchor {
-                                    DispatchQueue.main.async {
-                                        proxy.scrollTo(anchor, anchor: .top)
-                                    }
+                VStack(alignment: .leading, spacing: 28) {
+                    if chat.messages.count > visibleMessages.count {
+                        Button {
+                            let anchor = visibleMessages.first?.id
+                            earlierBatches[state.currentThreadID, default: 0] += Self.loadEarlierBatch
+                            if let anchor {
+                                DispatchQueue.main.async {
+                                    proxy.scrollTo(anchor, anchor: .top)
                                 }
-                            } label: {
-                                Label(
-                                    "加载更早的 \(min(80, chat.messages.count - visibleMessages.count)) 条",
-                                    systemImage: "arrow.up")
                             }
-                            .buttonStyle(.ds(.ghost, size: .small))
-                            .frame(maxWidth: .infinity)
+                        } label: {
+                            Label(
+                                L10n.format(
+                                    "加载更早的 %lld 条",
+                                    Int64(min(Self.loadEarlierBatch, chat.messages.count - visibleMessages.count))),
+                                systemImage: "arrow.up")
                         }
-                        ForEach(visibleMessages) { message in
-                            MessageRow(
-                                message: message,
-                                modelName: message.model.map(state.shortModelName)
-                                    ?? state.activeEngine.displayName,
-                                startupStage: chat.chatStartupStage,
-                                maxBubbleWidth: bubbleMaxWidth
-                            )
-                            .equatable()
-                            .id(message.id)
-                            .transition(.opacity.combined(with: .offset(y: 10)))
-                        }
+                        .buttonStyle(.ds(.ghost, size: .small))
+                        .frame(maxWidth: .infinity)
                     }
-                    Color.clear.frame(height: 140).id("bottom")
+
+                    ForEach(visibleMessages) { message in
+                        messageRow(message)
+                    }
+
+                    // 底部哨兵：没有额外留白，输入卡在布局里自己占位。
+                    Color.clear
+                        .frame(height: 1)
+                        .id("bottom")
                 }
-                .padding(.horizontal, 40)
-                .padding(.top, 8)
-                .frame(maxWidth: columnWidth)
-                .frame(maxWidth: .infinity)
-                .id("top")
-                .animation(Motion.entrance, value: chat.messages.count)
+                .padding(.horizontal, ChatColumn.contentInset)
+                .padding(.top, 28)
+                .padding(.bottom, 28)
+                .animation(reduceMotion ? nil : Motion.entrance, value: chat.messages.count)
             }
             .scrollIndicators(.never)
-            // 内容长高时把底部锚在视口底部。贴底交给布局本身完成，不再只靠
-            // 布局之后一帧才执行的 scrollTo——那一帧的延迟会让整列内容（含
-            // 底部那行 tok/s、tokens、首字）在每次长高时上下颤一下。
-            //
-            // 只取 .sizeChanges 这一个角色：初始落位仍按默认（顶部），内容不
-            // 满一屏时的对齐也保持默认，否则新会话的第一句话会被按到对话区
-            // 底部、再往上长。锚点不会跟用户抢滚动：往上翻时它只是保持当前
+            // 底部锚点兼两件事：首次布局直接按底部落位，内容长高时把底部锚在
+            // 视口底部。落位不交给 `scrollTo`：它依赖列表此刻量出来的高度，
+            // 切页回来时窗口外的行还没量，算出的偏移会落在内容中段，甚至落到
+            // 内容之外（整块空白）。锚点不会跟用户抢滚动：往上翻时它只是保持
             // 偏移，人自己滚回底部后又自动接管。
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(.bottom, for: .sizeChanges)
             .onScrollPhaseChange { _, newPhase in
                 userScrolling = (newPhase == .interacting || newPhase == .tracking || newPhase == .decelerating)
@@ -244,32 +327,20 @@ struct ChatPage: View {
             .onScrollGeometryChange(for: Bool.self) { geometry in
                 geometry.contentSize.height <= geometry.containerSize.height
                     || geometry.contentOffset.y + geometry.containerSize.height
-                        >= geometry.contentSize.height - 90
+                        >= geometry.contentSize.height - 40
             } action: { _, bottom in
                 if bottom {
-                    if !atBottom { withAnimation(Motion.quick) { atBottom = true } }
-                } else if !needsBottomRestore, !chat.generating || userScrolling {
-                    // 只有非生成态或用户主动滚动离开底部时，才退出「跟随底部」；
-                    // 生成过程中内容撑高超过 90pt 或正在恢复底部时不应误判为用户上翻。
-                    if atBottom { withAnimation(Motion.quick) { atBottom = false } }
+                    if !atBottom { withAnimation(reduceMotion ? nil : Motion.quick) { atBottom = true } }
+                } else if !chat.generating || userScrolling {
+                    // 生成过程中内容撑高不应误判成用户上翻；只有非生成态或
+                    // 用户真的在滚动时，才退出「跟随底部」。
+                    if atBottom { withAnimation(reduceMotion ? nil : Motion.quick) { atBottom = false } }
                 }
-            }
-            // 对话区量出真实高度之后才补「落到底部」。切页回来时 ChatPage 刚
-            // 重建、过渡动画还在跑，ScrollView 报的是 0 高度；这时候 scrollTo
-            // 会按 0 视口算偏移，等高度补齐就落到内容之外——整块对话区空白。
-            .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                geometry.containerSize.height
-            } action: { _, height in
-                transcriptHeight = height
-                guard height > 0, needsBottomRestore, !chat.messages.isEmpty else { return }
-                restoreBottom(proxy)
             }
             .onScrollGeometryChange(for: CGFloat.self) { geometry in
                 geometry.contentSize.height
             } action: { oldHeight, newHeight in
-                guard chat.generating, atBottom, !needsBottomRestore,
-                    oldHeight > 0, newHeight > oldHeight + 1
-                else { return }
+                guard chat.generating, atBottom, oldHeight > 0, newHeight > oldHeight + 1 else { return }
                 DispatchQueue.main.async {
                     scroll(proxy, animated: false)
                 }
@@ -281,14 +352,15 @@ struct ChatPage: View {
                 }
             }
             .onChange(of: chat.messages.count) { _, count in
-                // 换会话 / 清空后内容高度骤变，等这一帧布局完成再定位，
-                // 否则会滚到尚不存在的旧位置。
+                // 同一段对话里追加 / 清空：等这一帧布局完成再定位，
+                // 否则会滚到尚不存在的旧位置。换会话不经过这里——滚动视图
+                // 随 `currentThreadID` 重建，初始锚点已经落到底部。
                 DispatchQueue.main.async {
                     if count == 0 {
                         atBottom = true
                         proxy.scrollTo("top", anchor: .top)
                     } else {
-                        scroll(proxy, animated: true, force: true)
+                        restoreBottom(proxy, animated: true)
                     }
                 }
             }
@@ -299,75 +371,54 @@ struct ChatPage: View {
                     }
                 }
             }
-            .onChange(of: state.currentThreadID) { _, _ in
-                messageLimit = 80
-                if chat.messages.isEmpty {
-                    atBottom = true
-                    proxy.scrollTo("top", anchor: .top)
-                } else {
-                    restoreBottom(proxy)
-                }
-            }
-            .onAppear {
-                // 切页回来时 ChatPage 会重建，此刻对话区还没有高度：先挂上
-                // 「等高度出来再落到底部」，由上面的几何回调补这一次滚动。
-                restoreBottom(proxy)
-            }
-            .overlay {
-                // 空会话只留一句问候，压在输入卡上方的视觉中心。
-                if chat.messages.isEmpty {
-                    emptyState
-                }
-            }
+            // 换一段对话就换一个滚动视图：新视图按 `initialOffset` 重新落到
+            // 底部，不用 `scrollTo` 猜位置（猜出来的位置会停在内容中段）。
+            // 上面的滚动回调都挂在这个 id 里面，换会话时随旧视图退场，只对
+            // 同一段对话里的增删生效。
+            .id(state.currentThreadID)
             .overlay(alignment: .bottom) {
                 if !atBottom {
-                    Button {
+                    LatestScrollButton {
                         scroll(proxy, animated: true, force: true)
-                    } label: {
-                        Label("回到最新", systemImage: "arrow.down")
                     }
-                    .buttonStyle(.ds(.secondary, size: .regular))
-                    .padding(.bottom, 150)
+                    .padding(.bottom, 12)
+                    .transition(.opacity.animation(reduceMotion ? nil : Motion.quick))
                 }
             }
-        }
-        // 宽度拖柄是页面级的：对话区滚动时它不能跟着上下跑，所以挂在
-        // ScrollView 外面，再用「列右边缘离页面右边多少」把它摆到边上。
-        .overlay(alignment: .trailing) {
-            columnResizeHandle
-                .padding(.trailing, max(6, columnEdgeInset - 11))
-                // 首帧还没量到页面宽度时先不画，免得竖条先落在页面中间再跳出去。
-                .opacity(pageWidth > 0 ? 1 : 0)
         }
     }
 
-    /// 把对话区落到底部。
-    ///
-    /// 高度还是 0 时不能动手：`scrollTo` 会按 0 视口算偏移，等布局补齐后整块
-    /// 对话区落在内容之外——看起来就是空白。这种情况先记一笔，由几何回调在
-    /// 高度出来之后补上。超大回答（长代码块）首次布局只量到一部分高度，滚动
-    /// 位置会在布局补齐后落回内容中段，所以再补一次，让人真的停在最后一条上。
-    private func restoreBottom(_ proxy: ScrollViewProxy) {
+    private func messageRow(_ message: ChatMessage) -> some View {
+        MessageRow(
+            message: message,
+            modelName: message.model.map(state.shortModelName)
+                ?? state.activeEngine.displayName,
+            startupStage: chat.chatStartupStage,
+            maxBubbleWidth: bubbleMaxWidth,
+            isLast: message.id == chat.messages.last?.id,
+            canRegenerate: !supportsVideo && !chat.generating
+        ) {
+            state.regenerate()
+        }
+        .equatable()
+        .id(message.id)
+        .transition(.opacity)
+    }
+
+    /// 把对话区落到底部。首次布局只量到一部分高度时，稍后再补一次，
+    /// 让超大回答（长代码块）也停在最后一条上；读者自己往上翻时不抢位置。
+    private func restoreBottom(_ proxy: ScrollViewProxy, animated: Bool) {
         guard !chat.messages.isEmpty else {
             atBottom = true
-            needsBottomRestore = false
             return
         }
-        guard transcriptHeight > 0 else {
-            needsBottomRestore = true
-            return
-        }
-        needsBottomRestore = false
-        DispatchQueue.main.async {
+        scroll(proxy, animated: false, force: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            guard atBottom else { return }
             scroll(proxy, animated: false, force: true)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                // 这 150ms 里读者自己往上翻了，就别把位置抢回来。
-                guard atBottom else { return }
-                scroll(proxy, animated: false, force: true)
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                // 等切页过渡动画（DS.Motion.smooth）完全落定后再补一次，
-                // 确保 LazyVStack 已真实展开底部消息而不是停在空白估算区。
+        }
+        if animated {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 guard atBottom else { return }
                 scroll(proxy, animated: false, force: true)
             }
@@ -376,174 +427,41 @@ struct ChatPage: View {
 
     private func scroll(_ proxy: ScrollViewProxy, animated: Bool, force: Bool = false) {
         guard force || atBottom else { return }
-        if animated {
-            withAnimation(Motion.standard) { proxy.scrollTo("bottom", anchor: .bottom) }
+        if animated, !reduceMotion {
+            withAnimation(Motion.glide) { proxy.scrollTo("bottom", anchor: .bottom) }
         } else {
             proxy.scrollTo("bottom", anchor: .bottom)
         }
         atBottom = true
     }
 
-    private struct StarterPrompt: Identifiable {
-        let id: String
-        let icon: String
-        let color: Color
-        let label: String
-        let prompt: String
-    }
+    // MARK: Empty
 
-    private var starterPrompts: [StarterPrompt] {
-        if supportsVideo {
-            return [
-                StarterPrompt(
-                    id: "video.cinema",
-                    icon: "film",
-                    color: DS.accent,
-                    label: "电影感镜头",
-                    prompt: "航拍云海中的雪山日出，金色光线缓慢掠过山脊"),
-                StarterPrompt(
-                    id: "video.macro",
-                    icon: "video",
-                    color: DS.info,
-                    label: "微距动态",
-                    prompt: "雨滴落在透明玻璃窗上缓缓滑落，城市霓虹散景"),
-            ]
-        }
-        if supportsImage {
-            return [
-                StarterPrompt(
-                    id: "image.concept",
-                    icon: "wand.and.stars",
-                    color: DS.accent,
-                    label: "概念插画",
-                    prompt: "极简玻璃质感的小猫雕塑，柔和清晨自然光，微距摄影"),
-                StarterPrompt(
-                    id: "image.arch",
-                    icon: "camera.aperture",
-                    color: DS.info,
-                    label: "建筑光影",
-                    prompt: "现代清水混凝土美术馆中庭，穿透天窗的丁达尔光线"),
-            ]
-        }
-        return [
-            StarterPrompt(
-                id: "text.code",
-                icon: "chevron.left.forwardslash.chevron.right",
-                color: DS.accent,
-                label: "编写代码",
-                prompt: "帮我写一个 SwiftUI 面板卡片组件，带悬停微动效"),
-            StarterPrompt(
-                id: "text.explain",
-                icon: "lightbulb",
-                color: DS.warn,
-                label: "概念拆解",
-                prompt: "用通俗易懂的比喻解释 Transformer 的注意力机制"),
-            StarterPrompt(
-                id: "text.summary",
-                icon: "doc.text.magnifyingglass",
-                color: DS.info,
-                label: "内容总结",
-                prompt: "帮我提炼下面这段文字的核心观点与行动项"),
-            StarterPrompt(
-                id: "text.polish",
-                icon: "pencil.and.outline",
-                color: DS.ok,
-                label: "文本润色",
-                prompt: "把这段技术说明改写得更精炼、清晰且有条理"),
-        ]
-    }
-
-    /// 空会话：品牌徽记 + 问候语 + 场景化快捷提示卡 + 最近对话快速接续。
+    /// 新会话只留品牌标记与一行状态，不再摆快捷提示卡——Splash 的空态就是
+    /// 这样，让输入卡成为页面唯一的动作入口。
     private var emptyState: some View {
-        VStack(spacing: 20) {
-            VStack(spacing: 12) {
-                BrandMark(size: 40)
-                    .frame(width: 56, height: 56)
-                    .dsSurface(radius: DS.Radius.xl)
-
-                Text(L10n.t("需要我为你做些什么?"))
-                    .font(DS.Font.prose(22, weight: .semibold))
-                    .tracking(-0.35)
-                    .foregroundStyle(DS.text)
-                    .multilineTextAlignment(.center)
-
-                DSChip(
-                    text:
-                        "\(state.activeEngine.displayName) · \(state.selectedModel.isEmpty ? L10n.t("未选择模型") : state.shortModelName(state.selectedModel))",
-                    dot: state.canChat ? DS.ok : (state.isModelBusy ? DS.warn : DS.text4),
-                    live: state.canChat)
-            }
-
-            LazyVGrid(
-                columns: [
-                    GridItem(.flexible(minimum: 180), spacing: 10),
-                    GridItem(.flexible(minimum: 180), spacing: 10),
-                ],
-                spacing: 10
-            ) {
-                ForEach(starterPrompts) { item in
-                    Button {
-                        draft = L10n.t(item.prompt)
-                        composerFocused = true
-                    } label: {
-                        HStack(spacing: 10) {
-                            IconTile(symbol: item.icon, color: item.color, size: 28)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(L10n.t(item.label))
-                                    .font(DS.Font.prose(12, weight: .medium))
-                                    .foregroundStyle(DS.text)
-                                    .lineLimit(1)
-                                Text(L10n.t(item.prompt))
-                                    .font(DS.Font.prose(11))
-                                    .foregroundStyle(DS.text3)
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                            }
-                            Spacer(minLength: 0)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .dsSurface(radius: DS.Radius.lg, hoverable: true)
-                        .contentShape(DS.rect(DS.Radius.lg))
-                    }
-                    .buttonStyle(DSPressStyle(scale: 0.985))
-                }
-            }
-            .frame(maxWidth: min(560, max(360, columnWidth - 80)))
-
-            if !chat.threads.isEmpty {
-                HStack(spacing: 8) {
-                    Text(L10n.t("最近对话"))
-                        .font(DS.Font.xs)
-                        .foregroundStyle(DS.text3)
-                    ForEach(chat.threads.prefix(3)) { thread in
-                        Button {
-                            state.openThread(thread)
-                        } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: "bubble.left")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(DS.text3)
-                                Text(thread.title)
-                                    .font(DS.Font.xs.weight(.medium))
-                                    .foregroundStyle(DS.text2)
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                            }
-                            .padding(.horizontal, 10)
-                            .frame(maxWidth: 150)
-                            .frame(height: 24)
-                            .dsSurface(radius: 12, hoverable: true)
-                            .contentShape(Capsule())
-                        }
-                        .buttonStyle(DSPressStyle(scale: 0.97))
-                    }
-                }
-            }
+        VStack(spacing: 0) {
+            BrandMark(size: 44)
+            Text(emptyStatusNote)
+                .font(DS.Font.prose(13))
+                .foregroundStyle(DS.text3)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .padding(.horizontal, 32)
+                .frame(height: 28)
         }
-        .padding(.horizontal, 32)
-        .padding(.bottom, 108)
+    }
+
+    private var emptyStatusNote: String {
+        if state.selectedModel.isEmpty { return L10n.t("还没有选择模型") }
+        if state.isModelBusy {
+            if let stage = state.chatStartupStage, !stage.isEmpty { return stage }
+            return L10n.t("模型正在启动…")
+        }
+        if state.canChat {
+            return "\(state.activeEngine.displayName) · \(state.shortModelName(state.selectedModel))"
+        }
+        return L10n.t("模型未运行")
     }
 
     // MARK: Column resize handle
@@ -625,7 +543,19 @@ struct ChatPage: View {
     // MARK: Composer
 
     private var composer: some View {
-        VStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 10) {
+            if let notice = draftStore.drafts[draftKey]?.notice, !notice.isEmpty {
+                // 和 Splash 的回执一样：警告图标 + 一句说明，压在输入文字上方。
+                Label {
+                    Text(notice).foregroundStyle(DS.text2)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .symbolRenderingMode(.multicolor)
+                }
+                .font(.system(size: 12))
+                .lineLimit(2)
+            }
+
             if supportsVideo {
                 if supportsVideoReferences {
                     referenceInputStrip
@@ -636,45 +566,62 @@ struct ChatPage: View {
             } else if let imageAttachment {
                 attachmentStrip(imageAttachment)
             }
-            // 自绘输入框：回车发送、⌘回车换行（见 `ChatComposerField`）。
-            ChatComposerField(
-                text: $draft,
-                isFocused: $composerFocused,
-                isEnabled: !chat.generating,
-                onSend: send,
-                onDropImage: { url in
-                    guard supportsMedia else { return false }
-                    if supportsVideoReferences,
-                        Self.videoExtensions.contains(url.pathExtension.lowercased())
-                    {
-                        let attached = attachReferenceClip(at: url)
-                        if attached { composerFocused = true }
-                        return attached
-                    }
-                    attachImage(at: url)
-                    composerFocused = true
-                    return true
-                },
-                onDragTargetChange: { targeted in
-                    withAnimation(reduceMotion ? nil : Motion.quick) {
-                        isDropTargeted = targeted && supportsMedia
-                    }
-                },
-                acceptsImageDrop: supportsMedia
-            )
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
 
-            HStack(spacing: 8) {
+            // 自绘输入框：回车发送、⇧回车换行，Escape 停止生成（见 `ChatComposerField`）。
+            ZStack(alignment: .topLeading) {
+                ChatComposerField(
+                    text: textBinding,
+                    isFocused: $composerFocused,
+                    isEnabled: true,
+                    conversation: draftKey,
+                    onSend: send,
+                    onCancel: {
+                        guard chat.generating else { return false }
+                        state.cancelGeneration()
+                        return true
+                    },
+                    onDropImage: { url in
+                        guard supportsMedia else { return false }
+                        if supportsVideoReferences,
+                            Self.videoExtensions.contains(url.pathExtension.lowercased())
+                        {
+                            let attached = attachReferenceClip(at: url)
+                            if attached { composerFocused = true }
+                            return attached
+                        }
+                        attachImage(at: url)
+                        composerFocused = true
+                        return true
+                    },
+                    onDragTargetChange: { targeted in
+                        withAnimation(reduceMotion ? nil : Motion.quick) {
+                            isDropTargeted = targeted && supportsMedia
+                        }
+                    },
+                    acceptsImageDrop: supportsMedia,
+                    acceptsVideoDrop: supportsVideoReferences
+                )
+                // 光标进来就收起占位提示：聚焦后留着会和插入点抢位置，看起来像
+                // 输入框里一直有字。清空草稿但还停在输入框里时同样不再显示。
+                if draft.isEmpty && !composerFocused {
+                    Text(L10n.t(composerPlaceholder))
+                        .font(DS.Font.prose(ChatComposerField.fontSize))
+                        .foregroundStyle(DS.text4)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .padding(.top, 2)
+                        .allowsHitTesting(false)
+                }
+            }
+
+            HStack(spacing: 4) {
                 // 图像模型没有采样参数：同一个按钮换成图像设置，别再弹文本模型的
                 // 温度/系统提示面板。
-                DSIconButton(
+                ComposerIconButton(
                     systemName: supportsVideo
                         ? "video"
                         : (supportsImage ? "wand.and.stars" : "slider.horizontal.3"),
-                    help: supportsVideo ? "视频参数" : (supportsImage ? "图像参数" : "生成参数"),
-                    size: 28,
-                    style: .outlined
+                    help: supportsVideo ? "视频参数" : (supportsImage ? "图像参数" : "生成参数")
                 ) {
                     if supportsMedia {
                         showsImageOptions = true
@@ -700,29 +647,22 @@ struct ChatPage: View {
                     }
                 }
 
-                contextReadout
-                    .padding(.leading, 2)
-
                 // 文本模型的「画」开关：开着就把画图工具挂进请求，模型自己决定
                 // 画几张、写什么分镜。默认开，关掉后模型只写字。
                 if state.supportsImageTool {
-                    DSIconButton(
+                    ComposerIconButton(
                         systemName: state.imageToolEnabled
                             ? "paintbrush.pointed.fill" : "paintbrush.pointed",
                         help: state.imageToolEnabled
                             ? "模型可以直接画图（点一下关掉）"
                             : "打开后模型可以在这轮对话里直接画图",
-                        size: 28,
-                        style: .outlined,
                         active: state.imageToolEnabled
                     ) {
                         state.imageToolEnabled.toggle()
                     }
                 }
 
-                // 画图模型就没法在页头选：页头那一栏一旦选中图像模型，这一轮
-                // 对话本身就变成图像模式了。所以给工具单独留一个选择器，只在
-                // 「画」开着时出现。
+                // 画图工具单独留一个模型选择器，只在「画」开着时出现。
                 if state.imageToolActive, !state.imageToolModels.isEmpty {
                     DSMenu(size: .small) {
                         DSMenuTriggerLabel(
@@ -749,13 +689,11 @@ struct ChatPage: View {
                 }
 
                 if supportsMedia {
-                    DSIconButton(
+                    ComposerIconButton(
                         systemName: "photo.badge.plus",
                         help: supportsVideoReferences
                             ? "添加参考图（最多 9 张）"
                             : (supportsVideo ? "添加首帧或尾帧" : "附上一张图片作重绘底图"),
-                        size: 28,
-                        style: .outlined,
                         active: hasAttachedMedia
                     ) {
                         if supportsVideoReferences {
@@ -767,76 +705,53 @@ struct ChatPage: View {
                 }
 
                 if supportsVideoReferences {
-                    DSIconButton(
+                    ComposerIconButton(
                         systemName: "video.badge.plus",
                         help: "添加参考视频（最多 3 段，每段至少 5 帧）",
-                        size: 28,
-                        style: .outlined,
                         active: !referenceClips.isEmpty
                     ) {
                         pickReferenceClip()
                     }
                 }
 
-                Spacer(minLength: 0)
-
-                if !draft.isEmpty {
-                    Text("≈ \(AppState.estimateTokens(draft)) tokens")
-                        .font(DS.Font.mono(10.5))
-                        .foregroundStyle(DS.text3)
-                }
-
                 ChatModelControl(state: state, chat: chat)
 
-                if chat.generating {
-                    DSIconButton(
-                        systemName: "stop.fill",
-                        help: "停止生成",
-                        size: 28,
-                        style: .outlined,
-                        tint: DS.err
-                    ) {
-                        state.cancelGeneration()
-                    }
-                } else {
-                    DSIconButton(
-                        systemName: "arrow.up",
-                        help: "回车发送 · ⌘回车换行",
-                        size: 28,
-                        style: canSend ? .primary : .outlined,
-                        action: send
-                    )
-                    .disabled(!canSend)
+                Spacer(minLength: 12)
+
+                if !supportsMedia {
+                    ChatContextRing(
+                        used: state.contextUsedTokens,
+                        ceiling: state.contextWindowCeiling)
                 }
+
+                if ChatComposerControls.showsThinkingLevel(for: state.activeModel) {
+                    ChatEffortControl(state: state)
+                }
+
+                sendStopButton
             }
-            .padding(.top, 2)
+            // 第一个控件的字形与正文左缘对齐。
+            .padding(.leading, -6)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .frame(maxWidth: composerMaxWidth)
-        .background(DS.rect(DS.Radius.xl).fill(DS.surface))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background {
+            DS.rect(22)
+                .fill(colorScheme == .dark ? DS.raised : DS.surface)
+        }
         .overlay {
-            DS.rect(DS.Radius.xl)
-                .strokeBorder(composerFocused ? DS.accent.opacity(0.65) : DS.line2, lineWidth: 1)
+            DS.rect(22).strokeBorder(DS.line, lineWidth: 1)
         }
-        .overlay {
-            if composerFocused {
-                DS.rect(DS.Radius.xl + 1)
-                    .strokeBorder(DS.accent.opacity(0.14), lineWidth: 2)
-                    .padding(-1)
-            }
-        }
-        .shadow(color: DS.shadow, radius: 10, y: 3)
-        .contentShape(DS.rect(DS.Radius.xl))
+        .shadow(
+            color: Color.black.opacity(colorScheme == .dark ? 0.28 : 0.06),
+            radius: 14, y: 4)
+        .contentShape(DS.rect(22))
         .onTapGesture { focusComposer() }
         .overlay {
             if isDropTargeted {
-                DS.rect(DS.Radius.xl)
+                DS.rect(22)
                     .strokeBorder(DS.accent.opacity(0.85), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-                    .background(
-                        DS.rect(DS.Radius.xl)
-                            .fill(DS.accentSoft)
-                    )
+                    .background(DS.rect(22).fill(DS.accentSoft))
                     .overlay(alignment: .topTrailing) {
                         Label(
                             supportsVideoReferences
@@ -875,13 +790,69 @@ struct ChatPage: View {
                 isDropTargeted = targeted && supportsMedia
             }
         }
-        .animation(reduceMotion ? nil : DS.Motion.smooth, value: composerFocused)
+    }
+
+    /// Splash 的发送键：一个实心圆，能发时用强调色，不能发时退成灰底；
+    /// 生成中原地变成停止键。
+    private var sendStopButton: some View {
+        let streaming = chat.generating
+        let enabled = streaming || canSend
+        return Button {
+            if streaming {
+                state.cancelGeneration()
+            } else {
+                send()
+            }
+        } label: {
+            Image(systemName: streaming ? "stop.fill" : "arrow.up")
+                .font(
+                    .system(
+                        size: streaming ? 9.5 : 12.5,
+                        weight: streaming ? .bold : .semibold))
+                .foregroundStyle(enabled ? Color.white : DS.text3)
+                .frame(width: 28, height: 28)
+                .background(
+                    Circle().fill(enabled ? DS.accent : DS.hover))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plainHit)
+        .disabled(!enabled)
+        .help(streaming ? "停止生成 (Esc)" : "发送（回车）· ⇧回车换行")
+        .accessibilityLabel(streaming ? L10n.t("停止生成") : L10n.t("发送"))
     }
 
     private var supportsImage: Bool { state.activeModelSupportsImage }
     private var supportsVideo: Bool { state.activeModelSupportsVideo }
     private var supportsVideoReferences: Bool { state.activeModelSupportsVideoReferences }
     private var supportsMedia: Bool { supportsImage || supportsVideo }
+
+    private var composerPlaceholder: String {
+        if supportsVideoReferences { return "描述想生成的视频内容，或拖入参考图 / 视频…" }
+        if supportsVideo { return "描述想生成的视频画面，可附首帧 / 尾帧…" }
+        if supportsImage { return "描述想生成的画面，或拖入底图重绘…" }
+        return "给 FlashCat 发消息"
+    }
+
+    /// 切换模型后清理不兼容的媒体附件，并收起旧模型的参数浮层。
+    private func pruneIncompatibleAttachments() {
+        if !supportsMedia {
+            imageAttachment = nil
+            lastFrameAttachment = nil
+            referenceImages = []
+            referenceClips = []
+            showsImageOptions = false
+        } else if supportsImage && !supportsVideo {
+            lastFrameAttachment = nil
+            referenceImages = []
+            referenceClips = []
+        } else if supportsVideo && !supportsVideoReferences {
+            referenceImages = []
+            referenceClips = []
+        } else if supportsVideoReferences {
+            imageAttachment = nil
+            lastFrameAttachment = nil
+        }
+    }
 
     /// REF2VA 的参考素材是否已经挂上至少一个。
     private var hasReferenceMedia: Bool {
@@ -904,21 +875,22 @@ struct ChatPage: View {
         return hasText
     }
 
-    /// 点输入卡的留白也把光标交给输入框；生成中不收输入，直接忽略。
+    /// 点输入卡的留白也把光标交给输入框；生成中也可以继续写下一句。
     private func focusComposer() {
-        guard !chat.generating else { return }
         composerFocused = true
-    }
-
-    private var conversationText: String {
-        chat.messages
-            .filter { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .map { "\($0.role == "user" ? "你" : "AI")\n\($0.content)" }
-            .joined(separator: "\n\n")
     }
 
     private func send() {
         guard !chat.generating else { return }
+        guard !state.needsEngineSetup else {
+            setDraftNotice(L10n.t("还没有安装推理引擎，请先在启动页选择一个"))
+            return
+        }
+        guard !state.selectedModel.isEmpty else {
+            setDraftNotice(L10n.t("还没有选择模型"))
+            return
+        }
+        draftStore.drafts[draftKey]?.notice = nil
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         if supportsVideo {
             // 只给首帧或尾帧也可以：引擎要求 prompt 非空，给它一句保守的运动描述。
@@ -926,7 +898,7 @@ struct ChatPage: View {
             if supportsVideoReferences {
                 // REF2VA 从参考素材生成新视频，不接受首尾帧；至少一个 ref 才能发。
                 guard hasReferenceMedia else {
-                    state.notice = "REF2VA 需要至少一张参考图或一段参考视频。"
+                    setDraftNotice("REF2VA 需要至少一张参考图或一段参考视频。")
                     return
                 }
                 let prompt = text.isEmpty ? "根据参考素材生成一段连贯的视频" : text
@@ -971,29 +943,6 @@ struct ChatPage: View {
         chat.messages.last(where: { $0.imageSeed != nil })?.imageSeed
     }
 
-    @ViewBuilder
-    private var contextReadout: some View {
-        if state.activeModelSupportsVideo {
-            Text(L10n.t("提示词 → 视频"))
-                .font(DS.Font.mono(11))
-                .foregroundStyle(DS.text3)
-                .fixedSize()
-        } else if state.activeModelSupportsImage {
-            Text(L10n.t("提示词 → 图像"))
-                .font(DS.Font.mono(11))
-                .foregroundStyle(DS.text3)
-                .fixedSize()
-        } else {
-            Text(
-                "\(Format.tokens(state.contextUsedTokens)) / \(state.contextWindowCeiling.map { Format.tokensShort($0) } ?? "—")"
-            )
-            .font(DS.Font.mono(11))
-            .foregroundStyle(DS.text3)
-            .monospacedDigit()
-            .fixedSize()
-        }
-    }
-
     private func pickImage(for slot: VideoFrameSlot?) {
         let panel = NSOpenPanel()
         panel.title = slot.map { "选择视频\($0.rawValue)" } ?? "选择一张图片"
@@ -1022,11 +971,11 @@ struct ChatPage: View {
         guard supportsVideoReferences else { return }
         guard Self.imageExtensions.contains(url.pathExtension.lowercased()) else { return }
         guard referenceImages.count < 9 else {
-            state.notice = "参考图最多 9 张。"
+            setDraftNotice("参考图最多 9 张。")
             return
         }
         guard referenceImages.count + referenceClips.count < 12 else {
-            state.notice = "参考素材最多 12 个（9 张图 + 3 段视频）。"
+            setDraftNotice("参考素材最多 12 个（9 张图 + 3 段视频）。")
             return
         }
         guard !referenceImages.contains(where: { $0.path == url.path }) else { return }
@@ -1050,7 +999,7 @@ struct ChatPage: View {
         }
     }
 
-    /// 面板与拖拽共用。读头失败或超出上限都走顶部提示，不打断当前输入。
+    /// 面板与拖拽共用。读头失败或超出上限都写在输入卡上方，不打断当前输入。
     private func addReferenceClip(_ url: URL) {
         guard supportsVideoReferences else { return }
         guard Self.videoExtensions.contains(url.pathExtension.lowercased()) else { return }
@@ -1060,11 +1009,11 @@ struct ChatPage: View {
                 guard supportsVideoReferences else { return }
                 guard !referenceClips.contains(where: { $0.path == url.path }) else { return }
                 guard referenceClips.count < 3 else {
-                    state.notice = "参考视频最多 3 段。"
+                    setDraftNotice("参考视频最多 3 段。")
                     return
                 }
                 guard referenceImages.count + referenceClips.count < 12 else {
-                    state.notice = "参考素材最多 12 个（9 张图 + 3 段视频）。"
+                    setDraftNotice("参考素材最多 12 个（9 张图 + 3 段视频）。")
                     return
                 }
                 referenceClips.append(
@@ -1076,7 +1025,7 @@ struct ChatPage: View {
                         posterJPEG: meta.posterJPEG))
                 composerFocused = true
             } catch {
-                state.notice = error.localizedDescription
+                setDraftNotice(error.localizedDescription)
             }
         }
     }
@@ -1088,7 +1037,7 @@ struct ChatPage: View {
             Self.videoExtensions.contains(url.pathExtension.lowercased())
         else { return false }
         guard referenceClips.count < 3 else {
-            state.notice = "参考视频最多 3 段。"
+            setDraftNotice("参考视频最多 3 段。")
             return false
         }
         addReferenceClip(url)
@@ -1139,7 +1088,6 @@ struct ChatPage: View {
             videoFrameSlot(.first, attachment: imageAttachment)
             videoFrameSlot(.last, attachment: lastFrameAttachment)
         }
-        .padding(.horizontal, 10)
     }
 
     private func videoFrameSlot(
@@ -1151,12 +1099,14 @@ struct ChatPage: View {
                 pickImage(for: slot)
             } label: {
                 Group {
-                    if let attachment,
-                        let image = ImageStore.thumbnail(atPath: attachment.path, maxPixel: 96)
-                    {
-                        Image(nsImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
+                    if let attachment {
+                        AsyncChatThumbnail(path: attachment.path, maxPixel: 96) {
+                            Color.clear
+                        } missingView: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(DS.text3)
+                        }
                     } else {
                         Image(systemName: "plus")
                             .font(.system(size: 10, weight: .semibold))
@@ -1176,13 +1126,13 @@ struct ChatPage: View {
                 .contentShape(DS.rect(DS.Radius.sm))
             }
             .buttonStyle(.plainHit)
-            .help("选择视频\(slot.rawValue)")
+            .help(L10n.format("选择视频%@", L10n.t(slot.rawValue)))
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(slot.rawValue)
+                Text(L10n.t(slot.rawValue))
                     .font(.system(size: 9.5, weight: .medium))
                     .foregroundStyle(DS.text2)
-                Text(attachment?.name ?? "点击选择")
+                Text(attachment?.name ?? L10n.t("点击选择"))
                     .font(.system(size: 9.5))
                     .foregroundStyle(attachment == nil ? DS.text3 : DS.text)
                     .lineLimit(1)
@@ -1267,7 +1217,6 @@ struct ChatPage: View {
             DS.rect(DS.Radius.md)
                 .strokeBorder(DS.line, lineWidth: 1)
         }
-        .padding(.horizontal, 10)
     }
 
     private func referenceAddButton(
@@ -1283,16 +1232,12 @@ struct ChatPage: View {
 
     private func referenceImageTile(_ attachment: ChatImageAttachment) -> some View {
         ZStack(alignment: .topTrailing) {
-            Group {
-                if let image = ImageStore.thumbnail(atPath: attachment.path, maxPixel: 96) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                } else {
-                    Image(systemName: "photo")
-                        .font(.system(size: 13))
-                        .foregroundStyle(DS.text3)
-                }
+            AsyncChatThumbnail(path: attachment.path, maxPixel: 96) {
+                DS.bg
+            } missingView: {
+                Image(systemName: "photo")
+                    .font(.system(size: 13))
+                    .foregroundStyle(DS.text3)
             }
             .frame(width: 44, height: 44)
             .background(DS.bg)
@@ -1313,7 +1258,7 @@ struct ChatPage: View {
             }
             .buttonStyle(.plainHit)
             .offset(x: 5, y: -5)
-            .help("移除参考图")
+            .help(L10n.t("移除参考图"))
         }
         .padding(.top, 5)
         .padding(.trailing, 5)
@@ -1392,22 +1337,25 @@ struct ChatPage: View {
 
     private func attachmentStrip(_ attachment: ChatImageAttachment) -> some View {
         HStack(spacing: 10) {
-            if let image = ImageStore.thumbnail(atPath: attachment.path, maxPixel: 96) {
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: 46, height: 46)
-                    .clipShape(DS.rect(DS.Radius.sm))
-                    .overlay {
-                        DS.rect(DS.Radius.sm).strokeBorder(DS.line, lineWidth: 1)
-                    }
+            AsyncChatThumbnail(path: attachment.path, maxPixel: 96) {
+                DS.bg
+            } missingView: {
+                Image(systemName: "photo")
+                    .font(.system(size: 13))
+                    .foregroundStyle(DS.text3)
+            }
+            .frame(width: 46, height: 46)
+            .background(DS.bg)
+            .clipShape(DS.rect(DS.Radius.sm))
+            .overlay {
+                DS.rect(DS.Radius.sm).strokeBorder(DS.line, lineWidth: 1)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(attachment.name)
                     .font(DS.Font.xs.weight(.medium))
                     .foregroundStyle(DS.text)
                     .lineLimit(1)
-                Text("重绘 · 强度 \(Int((imageOptions.strength * 100).rounded()))%")
+                Text(L10n.format("重绘 · 强度 %lld%%", Int64((imageOptions.strength * 100).rounded())))
                     .font(.system(size: 9.5))
                     .foregroundStyle(DS.text3)
             }
@@ -1421,7 +1369,7 @@ struct ChatPage: View {
                     .contentShape(Circle())
             }
             .buttonStyle(.plainHit)
-            .help("移除底图")
+            .help(L10n.t("移除底图"))
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1433,270 +1381,717 @@ struct ChatPage: View {
             DS.rect(DS.Radius.md)
                 .strokeBorder(DS.line, lineWidth: 1)
         }
-        .padding(.horizontal, 10)
+    }
+}
+
+/// 后台异步解码会话里的图片缩略图，并从内存缓存预填首帧，避免大 PNG/JPEG 阻塞主线程。
+private struct AsyncChatThumbnail<Placeholder: View, Missing: View>: View {
+    let path: String
+    let maxPixel: CGFloat
+    var contentMode: ContentMode = .fill
+    @ViewBuilder let placeholder: () -> Placeholder
+    @ViewBuilder let missingView: () -> Missing
+
+    @State private var image: NSImage?
+    @State private var missing = false
+
+    init(
+        path: String,
+        maxPixel: CGFloat,
+        contentMode: ContentMode = .fill,
+        @ViewBuilder placeholder: @escaping () -> Placeholder,
+        @ViewBuilder missingView: @escaping () -> Missing
+    ) {
+        self.path = path
+        self.maxPixel = maxPixel
+        self.contentMode = contentMode
+        self.placeholder = placeholder
+        self.missingView = missingView
+        _image = State(initialValue: ImageStore.cachedThumbnail(atPath: path, maxPixel: maxPixel))
+    }
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: contentMode)
+            } else if missing {
+                missingView()
+            } else {
+                placeholder()
+            }
+        }
+        .task(id: path) {
+            missing = false
+            if let cached = ImageStore.cachedThumbnail(atPath: path, maxPixel: maxPixel) {
+                image = cached
+                return
+            }
+            image = nil
+            let loaded = await ImageStore.thumbnailAsync(atPath: path, maxPixel: maxPixel)
+            image = loaded
+            missing = loaded == nil
+        }
+    }
+}
+
+// MARK: - Chat stage layout
+
+/// 把转录区与输入卡交给 `ChatStageLayout` 的容器。两个视图放进同一个
+/// `Group`，布局按 `subviews[0]` / `subviews[1]` 取用。
+private struct ChatStageView<Content: View, Composer: View>: View {
+    let newChat: Bool
+    let column: CGFloat
+    @ViewBuilder let content: Content
+    @ViewBuilder let composer: Composer
+
+    var body: some View {
+        ChatStageLayout(newChat: newChat, column: column) {
+            content
+            composer
+        }
+    }
+}
+
+/// 转录区与输入卡的布局，对齐 Splash 的 `ChatColumn`：
+/// - 有对话时，转录区占满输入卡上方的空间，输入卡贴在页脚上方 24pt；
+/// - 新会话时，品牌标记与输入卡作为一组放在剩余空间约 1/3 处，下留 2/3。
+///
+/// 两种状态共用同一个输入卡视图，所以首条消息发出后它只是「移动」，不会
+/// 重建——文本视图、输入法组字和光标都能原样保留。
+private struct ChatStageLayout: Layout {
+    let newChat: Bool
+    /// 列宽（含左右 32pt 内边距）。输入卡与转录区都按这个宽度居中。
+    let column: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        proposal.replacingUnspecifiedDimensions(by: CGSize(width: column, height: 600))
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        guard subviews.count == 2 else { return }
+        let content = subviews[0]
+        let composer = subviews[1]
+        let width = min(column, bounds.width)
+        let composerSize = composer.sizeThatFits(ProposedViewSize(width: width, height: nil))
+        let bottom: CGFloat = 24
+
+        if newChat {
+            let contentSize = content.sizeThatFits(ProposedViewSize(width: width, height: nil))
+            let gap: CGFloat = 20
+            let group = contentSize.height + gap + composerSize.height
+            let room = bounds.height - group - bottom
+            let top = max(0, min(room / 3, bounds.height - bottom - group))
+            content.place(
+                at: CGPoint(x: bounds.midX, y: bounds.minY + top),
+                anchor: .top,
+                proposal: ProposedViewSize(width: width, height: contentSize.height))
+            composer.place(
+                at: CGPoint(x: bounds.midX, y: bounds.minY + top + contentSize.height + gap),
+                anchor: .top,
+                proposal: ProposedViewSize(width: width, height: composerSize.height))
+        } else {
+            let contentHeight = max(0, bounds.height - composerSize.height - bottom)
+            content.place(
+                at: CGPoint(x: bounds.midX, y: bounds.minY),
+                anchor: .top,
+                proposal: ProposedViewSize(width: width, height: contentHeight))
+            composer.place(
+                at: CGPoint(x: bounds.midX, y: bounds.maxY - bottom - composerSize.height),
+                anchor: .top,
+                proposal: ProposedViewSize(width: width, height: composerSize.height))
+        }
+    }
+}
+
+// MARK: - Chat title
+
+/// 顶栏的会话标题：文字 + 下拉箭头，悬停高亮，点开是置顶 / 重命名 / 删除。
+/// 新会话没有标题，Splash 的工具栏也是这样留白。
+private struct ChatTitleMenu: View {
+    @ObservedObject var state: AppState
+    let thread: ChatThread
+    @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Menu {
+            Button(thread.pinned ? L10n.t("取消置顶") : L10n.t("置顶")) {
+                state.setThreadPinned(thread, !thread.pinned)
+            }
+            Button(L10n.t("重命名…")) {
+                state.requestThreadRename(thread)
+            }
+            Divider()
+            Button(L10n.t("删除…"), role: .destructive) {
+                state.requestThreadDelete(thread)
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Text(thread.title.isEmpty ? L10n.t("新对话") : thread.title)
+                    .font(DS.Font.prose(15, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(DS.text3)
+            }
+            .foregroundStyle(DS.text)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(DS.rect(7).fill(hovering ? DS.hover : .clear))
+            .contentShape(DS.rect(7))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .onHover { value in
+            if reduceMotion {
+                hovering = value
+            } else {
+                withAnimation(DS.Motion.snappy) { hovering = value }
+            }
+        }
+        .help(L10n.t("置顶、重命名或删除这段对话"))
+        .accessibilityLabel(thread.title.isEmpty ? L10n.t("新对话") : thread.title)
+    }
+}
+
+// MARK: - Composer bits
+
+/// 输入卡底排的图标按钮：Splash 的按钮是「无边框、悬停才浮出底色」，
+/// 不是一枚枚描边小方块。
+private struct ComposerIconButton: View {
+    let systemName: String
+    let help: String
+    var active: Bool = false
+    let action: () -> Void
+
+    @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(active ? DS.accent : (hovering ? DS.text : DS.text2))
+                .frame(width: 28, height: 28)
+                .background(DS.rect(7).fill(hovering || active ? DS.hover : .clear))
+                .contentShape(DS.rect(7))
+        }
+        .buttonStyle(.plainHit)
+        .onHover { value in
+            if reduceMotion {
+                hovering = value
+            } else {
+                withAnimation(DS.Motion.snappy) { hovering = value }
+            }
+        }
+        .help(L10n.t(help))
+        .accessibilityLabel(L10n.t(help))
+    }
+}
+
+/// 上下文占用环：Splash 输入卡右下角那枚 14pt 小环，悬停给出精确数字。
+private struct ChatContextRing: View {
+    let used: Int
+    let ceiling: Int?
+
+    private var fraction: Double {
+        guard let ceiling, ceiling > 0 else { return 0 }
+        return min(1, max(0, Double(used) / Double(ceiling)))
+    }
+
+    private var tint: Color {
+        if fraction >= 1 { return DS.err }
+        if fraction > 0.8 { return DS.warn }
+        return DS.text3
+    }
+
+    private var explanation: String {
+        let usedText = Format.tokens(used)
+        guard let ceiling, ceiling > 0 else {
+            return L10n.format("上下文 %@ tokens", usedText)
+        }
+        return L10n.format(
+            "上下文 %@ / %@（%.0f%%）",
+            usedText,
+            Format.tokensShort(ceiling),
+            fraction * 100)
+    }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(DS.line2, lineWidth: 2)
+            Circle()
+                .trim(from: 0, to: fraction)
+                .stroke(tint, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .frame(width: 14, height: 14)
+        // 环本身只有 14pt，周围留一圈命中区，悬停才容易碰到。
+        .padding(5)
+        .contentShape(Rectangle())
+        .help(explanation)
+        .accessibilityElement()
+        .accessibilityLabel(L10n.t("上下文"))
+        .accessibilityValue(explanation)
+    }
+}
+
+/// 读者滚离底部后浮出的「回到最新」圆钮，位置与造型对齐 Splash。
+private struct LatestScrollButton: View {
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "arrow.down")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(DS.text)
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(hovering ? DS.selected : DS.raised))
+                .overlay(Circle().strokeBorder(DS.line, lineWidth: 1))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plainHit)
+        .onHover { value in
+            withAnimation(DS.Motion.snappy) { hovering = value }
+        }
+        .help(L10n.t("回到最新"))
+        .accessibilityLabel(L10n.t("回到最新"))
     }
 }
 
 // MARK: - Message row
 
+/// 一条消息：用户消息是右侧淡色气泡，助手消息直接铺在画布上——上方是思考行，
+/// 中间是 Markdown / 图片 / 视频，下面悬停时浮出复制与重新生成。版式对齐
+/// Splash 的 `transcript.js`。
 private struct MessageRow: View, Equatable {
-    /// 行内需要的状态由父视图算好传入，配合 `Equatable` 让未变化的旧消息
-    /// 在流式期间跳过 body 求值。
     let message: ChatMessage
     let modelName: String
     let startupStage: String?
-    /// 气泡最宽。列宽被拖开时父视图会传更大的值，行必须跟着重算，
-    /// 否则拖宽只多出空白，回答还是原来那么窄。
+    /// 用户气泡最宽。列宽被拖开时父视图会传更大的值。
     let maxBubbleWidth: CGFloat
+    let isLast: Bool
+    let canRegenerate: Bool
+    let onRegenerate: () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
+    /// nil = 跟随状态：思考流式输出、正文还没开始时自动展开；true/false = 用户手动开关。
     @State private var manualThinking: Bool?
     @State private var hoveringRow = false
+    @State private var hoveringToggle = false
     @State private var copied = false
     @State private var seedCopied = false
+    /// 等待行在开始后 0.5 秒才出现，快速回答不会闪一下「读取提示词」。
+    @State private var waitingLineVisible = false
     @State private var copyResetTask: Task<Void, Never>?
+    @State private var seedResetTask: Task<Void, Never>?
 
     nonisolated static func == (lhs: MessageRow, rhs: MessageRow) -> Bool {
         lhs.message == rhs.message
             && lhs.modelName == rhs.modelName
             && lhs.startupStage == rhs.startupStage
             && lhs.maxBubbleWidth == rhs.maxBubbleWidth
+            && lhs.isLast == rhs.isLast
+            && lhs.canRegenerate == rhs.canRegenerate
     }
 
     private var isUser: Bool { message.role == "user" }
-    private var showsReasoning: Bool {
-        manualThinking ?? (message.streaming && message.content.isEmpty)
+    private var reasoning: String { message.reasoning ?? "" }
+    private var contentEmpty: Bool { message.content.isEmpty }
+    private var waiting: Bool { message.streaming && contentEmpty && reasoning.isEmpty }
+
+    private var isThinkingOpen: Bool {
+        manualThinking ?? (message.streaming && contentEmpty && !reasoning.isEmpty)
     }
 
-    private static let userBubbleFill = Color.adaptive(dark: 0x262626, light: 0xEFEFEF)
+    private var mediaWaiting: Bool {
+        message.imageProgress?.isEmpty == false
+            || message.videoProgress?.isEmpty == false
+            || message.toolStage?.isEmpty == false
+    }
 
-    private var bubbleBackground: some View {
-        DS.rect(DS.Radius.lg)
-            .fill(isUser ? Self.userBubbleFill : .clear)
-            .overlay(
-                DS.rect(DS.Radius.lg)
-                    .strokeBorder(isUser ? DS.line : .clear, lineWidth: 1)
-            )
+    private var showsThinkingLine: Bool {
+        if message.streaming && contentEmpty {
+            if !reasoning.isEmpty { return true }
+            // 图像 / 视频 / 工具进度已经有自己的阶段行，别再叠一句「读取提示词」。
+            if mediaWaiting { return false }
+            return waitingLineVisible || startupStage?.isEmpty == false
+        }
+        return !reasoning.isEmpty
+    }
+
+    private var showsActions: Bool {
+        hoveringRow || (isLast && !message.streaming)
+    }
+
+    private var waitingKey: String {
+        "\(message.streaming)-\(contentEmpty)-\(reasoning.isEmpty)-\(startupStage ?? "")"
     }
 
     var body: some View {
         Group {
             if isUser {
-                HStack(alignment: .bottom, spacing: 8) {
-                    Spacer(minLength: 64)
-                    if !message.content.isEmpty {
-                        Button(action: copyMessage) {
-                            Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                                .font(.system(size: 11, weight: copied ? .semibold : .regular))
-                                .contentTransition(.symbolEffect(.replace))
-                                .frame(width: 24, height: 24)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plainHit)
-                        .foregroundStyle(copied ? DS.accent : DS.text3)
-                        .opacity(hoveringRow || copied ? 1 : 0)
-                        .help(copied ? "已复制" : "复制提问")
-                        .animation(DS.Motion.snappy, value: copied)
-                    }
-                    VStack(alignment: .trailing, spacing: 8) {
-                        if hasReferences {
-                            referenceMessageStrip
-                        } else if let path = message.imagePath {
-                            if let last = message.videoLastFramePath {
-                                // 首尾帧一起发出去的：两张都留在这一问里，标清楚哪张是尾帧。
-                                HStack(alignment: .top, spacing: 8) {
-                                    labeledThumb(path: path, label: "首帧", maxWidth: 104)
-                                    labeledThumb(path: last, label: "尾帧", maxWidth: 104)
-                                }
-                            } else {
-                                imageThumb(path: path, maxWidth: 220)
-                            }
-                        } else if let last = message.videoLastFramePath {
-                            // 只给了尾帧：也把这张留在提问里，别让它只存在于引擎请求。
-                            labeledThumb(path: last, label: "尾帧", maxWidth: 220)
-                        }
-                        if !message.content.isEmpty {
-                            Text(message.content)
-                                .font(DS.Font.prose(13.5))
-                                .lineSpacing(5)
-                                .foregroundStyle(DS.text)
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .padding(.horizontal, 15)
-                                .padding(.vertical, 10)
-                                .background { bubbleBackground }
-                                .frame(maxWidth: maxBubbleWidth, alignment: .trailing)
-                        }
-                    }
-                }
+                userBody
             } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    // 说话人行：轻标 + 模型名，回复正文直接铺在画布上，去掉外框。
-                    HStack(spacing: 6) {
-                        BrandMark(size: 16)
-                        Text(modelName)
-                            .font(DS.Font.prose(12, weight: .medium))
-                            .foregroundStyle(DS.text2)
-                        if message.streaming {
-                            DSStatusDot(color: DS.accent, live: true, size: 5)
-                            Text(startupStage == nil ? "生成中" : "启动中")
-                                .font(DS.Font.prose(11))
-                                .foregroundStyle(DS.accent)
-                        } else if message.interrupted, !message.content.isEmpty {
-                            Text("已停止生成")
-                                .font(DS.Font.prose(11))
-                                .foregroundStyle(DS.text3)
-                        }
-                    }
-                    VStack(alignment: .leading, spacing: 8) {
-                        if let reasoning = message.reasoning, !reasoning.isEmpty {
-                            reasoningBlock(reasoning)
-                        }
-                        // 一轮工具调用可能画出一整组图：series 是这组，单图时
-                        // 只有一张，仍按原来那张大图显示。
-                        let series =
-                            message.imagePaths.isEmpty
-                            ? (message.imagePath.map { [$0] } ?? [])
-                            : message.imagePaths
-                        if !series.isEmpty {
-                            imageSeries(series)
-                        }
-                        if let path = message.videoPath {
-                            VideoBubble(path: path)
-                        }
-                        if message.content.isEmpty, !series.isEmpty || message.videoPath != nil {
-                            // 一组图是逐张画的：第一张落地后正文还是空的，但后面几张
-                            // 的进度不能就此消失，否则看上去像卡在图上了。
-                            if let stage = message.toolStage, !stage.isEmpty {
-                                HStack(spacing: 6) {
-                                    ProgressView().controlSize(.small)
-                                    Text(L10n.t(stage))
-                                        .font(.system(size: 11.5))
-                                        .foregroundStyle(DS.text3)
-                                }
-                            }
-                        } else if message.content.isEmpty, message.interrupted {
-                            // 一个字都没来时也得留下这一轮：换掉转圈，说清楚是用户
-                            // 停掉的，而不是让回答气泡凭空消失。
-                            HStack(spacing: 6) {
-                                Image(systemName: "stop.circle")
-                                    .font(.system(size: 11))
-                                Text("已停止生成")
-                                    .font(.system(size: 11.5))
-                            }
-                            .foregroundStyle(DS.text3)
-                        } else if message.content.isEmpty {
-                            HStack(spacing: 6) {
-                                ProgressView().controlSize(.small)
-                                Text(L10n.t(placeholderText))
-                                    .font(.system(size: 11.5))
-                                    .foregroundStyle(DS.text3)
-                            }
-                        } else {
-                            StreamingMarkdownView(
-                                text: message.content,
-                                streaming: message.streaming,
-                                fillsWidth: false)
-                        }
-                        if hasFooter {
-                            footer
-                        }
-                    }
-                    .padding(.vertical, 2)
-                    .frame(maxWidth: maxBubbleWidth, alignment: .leading)
-                }
+                assistantBody
             }
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         .onHover { value in
-            withAnimation(DS.Motion.snappy) { hoveringRow = value }
+            withAnimation(reduceMotion ? nil : Motion.quick) { hoveringRow = value }
+        }
+        .task(id: waitingKey) {
+            guard waiting else {
+                waitingLineVisible = true
+                return
+            }
+            waitingLineVisible = false
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled, waiting else { return }
+            withAnimation(reduceMotion ? nil : Motion.quick) { waitingLineVisible = true }
+        }
+        .onDisappear {
+            copyResetTask?.cancel()
+            copyResetTask = nil
+            seedResetTask?.cancel()
+            seedResetTask = nil
         }
     }
 
-    private func reasoningBlock(_ reasoning: String) -> some View {
+    // MARK: User
+
+    private var userBubbleFill: Color {
+        DS.accent.opacity(colorScheme == .dark ? 0.17 : 0.12)
+    }
+
+    private var userBody: some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            userAttachments
+
+            if !message.content.isEmpty {
+                Text(message.content)
+                    .font(DS.Font.prose(15))
+                    .lineSpacing(3)
+                    .foregroundStyle(DS.text)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8.5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(userBubbleFill))
+            }
+        }
+        .frame(maxWidth: maxBubbleWidth, alignment: .trailing)
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    @ViewBuilder private var userAttachments: some View {
+        if hasReferences {
+            referenceMessageStrip
+        } else if let path = message.imagePath {
+            if let last = message.videoLastFramePath {
+                HStack(alignment: .top, spacing: 8) {
+                    labeledThumb(path: path, label: L10n.t("首帧"), maxWidth: 120)
+                    labeledThumb(path: last, label: L10n.t("尾帧"), maxWidth: 120)
+                }
+            } else {
+                imageThumb(path: path, maxWidth: 120)
+            }
+        } else if let last = message.videoLastFramePath {
+            labeledThumb(path: last, label: L10n.t("尾帧"), maxWidth: 120)
+        }
+    }
+
+    // MARK: Assistant
+
+    private var assistantBody: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if showsThinkingLine {
+                thinkingLine
+            }
+
+            messageBody
+
+            if hasMediaNotes {
+                mediaNotes
+            }
+
+            if !isUser, !message.streaming, showsActions || isLast {
+                actionsRow
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private var messageBody: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            let series =
+                message.imagePaths.isEmpty
+                ? (message.imagePath.map { [$0] } ?? [])
+                : message.imagePaths
+            if !series.isEmpty {
+                imageSeries(series)
+            }
+            if let path = message.videoPath {
+                VideoBubble(path: path)
+            }
+
+            if message.content.isEmpty {
+                if message.interrupted {
+                    stoppedLine
+                } else if message.streaming {
+                    if let stage = message.toolStage, !stage.isEmpty {
+                        progressLine(stage)
+                    } else if let progress = message.imageProgress, !progress.isEmpty {
+                        progressLine(progress)
+                    } else if let progress = message.videoProgress, !progress.isEmpty {
+                        progressLine(progress)
+                    }
+                }
+            } else {
+                StreamingMarkdownView(
+                    text: message.content,
+                    streaming: message.streaming,
+                    fillsWidth: true,
+                    style: .chat)
+            }
+        }
+    }
+
+    private var stoppedLine: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "stop.circle")
+                .font(.system(size: 11))
+            Text(L10n.t("已停止生成"))
+                .font(.system(size: 12))
+        }
+        .foregroundStyle(DS.text3)
+    }
+
+    private func progressLine(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            ProgressView().controlSize(.mini)
+            Text(L10n.t(text))
+                .font(.system(size: 12))
+                .foregroundStyle(DS.text3)
+                .lineLimit(1)
+        }
+    }
+
+    // MARK: Thinking line
+
+    private var thinkingVerb: String {
+        if message.streaming && contentEmpty {
+            if !reasoning.isEmpty { return L10n.t("思考中") }
+            if startupStage?.isEmpty == false { return L10n.t("加载模型") }
+            return L10n.t("读取提示词")
+        }
+        return L10n.t("思考")
+    }
+
+    private var finishedThinkingFacts: String? {
+        var parts: [String] = []
+        if let tokens = message.usage?.reasoningTokens, tokens > 0 {
+            parts.append(L10n.format("%@ tokens", Format.tokens(tokens)))
+        }
+        if let seconds = message.thinkingSeconds, seconds > 0 {
+            parts.append(String(format: "%.1f 秒", seconds))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private var thinkingLine: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(DS.Motion.smooth) { manualThinking = !showsReasoning }
+                guard !reasoning.isEmpty else { return }
+                withAnimation(reduceMotion ? nil : Motion.settle) {
+                    manualThinking = !isThinkingOpen
+                }
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: 4) {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 8.5, weight: .bold))
-                        .rotationEffect(.degrees(showsReasoning ? 90 : 0))
-                    Text(thinkingLabel)
-                        .font(DS.Font.prose(11.5, weight: .medium))
+                        .rotationEffect(.degrees(isThinkingOpen ? 90 : 0))
+                        .opacity(reasoning.isEmpty ? 0 : 1)
+                        .frame(width: 10)
+
+                    Text(thinkingVerb)
+
                     if message.streaming {
-                        DSStatusDot(color: DS.accent, live: true, size: 5)
+                        ElapsedThinkingSeconds(since: message.createdAt ?? Date())
+                    } else if let facts = finishedThinkingFacts {
+                        Text("·").foregroundStyle(DS.text3)
+                        Text(facts).foregroundStyle(DS.text3)
                     }
-                    Spacer(minLength: 0)
                 }
-                .foregroundStyle(DS.text3)
-                .padding(.horizontal, 10)
-                .frame(height: 28)
+                .font(.system(size: 12))
+                .foregroundStyle(DS.text2)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(
+                    DS.rect(7).fill(
+                        hoveringToggle && !reasoning.isEmpty ? DS.hover : .clear))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plainHit)
+            .onHover { value in
+                withAnimation(reduceMotion ? nil : Motion.quick) { hoveringToggle = value }
+            }
+            .disabled(reasoning.isEmpty)
+            .help(reasoning.isEmpty ? "" : (isThinkingOpen ? L10n.t("收起思考") : L10n.t("展开思考")))
+            .accessibilityLabel(thinkingVerb)
+            .accessibilityValue(isThinkingOpen ? L10n.t("已展开") : L10n.t("已收起"))
 
-            if showsReasoning {
-                DSDivider()
-                Text(reasoning)
-                    .font(DS.Font.prose(12.5))
-                    .lineSpacing(5)
-                    .foregroundStyle(DS.text2)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            if isThinkingOpen, !reasoning.isEmpty {
+                reasoningBlock
+                    .transition(.opacity)
             }
         }
-        .background(DS.rect(DS.Radius.md).fill(DS.surface))
-        .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line, lineWidth: 1))
-        .clipShape(DS.rect(DS.Radius.md))
+        .padding(.leading, -6)
+        .animation(reduceMotion ? nil : Motion.settle, value: isThinkingOpen)
     }
 
-    private var thinkingLabel: String {
-        if let seconds = message.thinkingSeconds, seconds > 0 {
-            return L10n.format("思考了 %.1f 秒", seconds)
+    private var reasoningBlock: some View {
+        // 模型还在想、读者也没手动打开时，只显示最新几行并淡出顶部；一旦开始
+        // 回答或读者点开，就展开全文（Splash 的 `.latest` / `.thought`）。
+        let latest = message.streaming && contentEmpty && manualThinking == nil
+        return HStack(alignment: .top, spacing: 10) {
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(DS.text3.opacity(0.45))
+                .frame(width: 2)
+
+            PacedText(
+                text: reasoning,
+                streaming: message.streaming,
+                tail: latest)
+                .font(.system(size: 13))
+                .lineSpacing(3)
+                .foregroundStyle(DS.text2)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxHeight: latest ? 96 : nil, alignment: .bottom)
+                .clipped()
+                .mask {
+                    if latest {
+                        LinearGradient(
+                            colors: [.clear, .black.opacity(0.75), .black],
+                            startPoint: .top, endPoint: .bottom)
+                    } else {
+                        Rectangle()
+                    }
+                }
         }
-        return "思考过程"
+        .padding(.leading, 14)
+        .padding(.top, 8)
     }
 
-    /// 引擎还没就绪时优先显示启动阶段，就绪后才回到「思考中 / 等待首个 token」。
-    private var placeholderText: String {
-        if let stage = startupStage, !stage.isEmpty { return stage }
-        // 工具调用的阶段（「正在画第 2/3 张 · 去噪 8/20」）比静态提示有用得多：
-        // 换模型、画图的几十秒里，用户能看出停在哪一步。
-        if let stage = message.toolStage, !stage.isEmpty { return stage }
-        if let progress = message.imageProgress, !progress.isEmpty { return progress }
-        if let progress = message.videoProgress, !progress.isEmpty { return progress }
-        return message.reasoning?.isEmpty == false ? "思考中…" : "等待首个 token…"
+    // MARK: Actions
+
+    private var detailsText: String {
+        var parts: [String] = []
+        if !modelName.isEmpty { parts.append(modelName) }
+        if let rate = message.rateText { parts.append(rate) }
+        if message.tokenCount > 0 { parts.append("\(message.tokenCount) tokens") }
+        if let ttft = message.firstTokenSeconds, ttft > 0 {
+            parts.append(L10n.format("首字 %.0f ms", ttft * 1000))
+        }
+        if message.interrupted { parts.append(L10n.t("已停止")) }
+        return parts.joined(separator: " · ")
     }
 
-    /// 一次工具调用画出的一组图：横排缩略图，点开预览、右键存到访达。
-    /// 单张仍走原来的大图，别让「只画了一张」看起来像缩水的样子。
-    @ViewBuilder
-    private func imageSeries(_ paths: [String]) -> some View {
+    private var actionsRow: some View {
+        HStack(spacing: 2) {
+            if !message.content.isEmpty {
+                MessageActionButton(
+                    systemName: copied ? "checkmark" : "doc.on.doc",
+                    help: copied ? L10n.t("已复制") : L10n.t("复制回答"),
+                    tint: copied ? DS.accent : DS.text2,
+                    action: copyMessage)
+            }
+
+            if isLast, canRegenerate {
+                MessageActionButton(
+                    systemName: "arrow.clockwise",
+                    help: L10n.t("重新生成这轮回答"),
+                    tint: DS.text2,
+                    action: onRegenerate)
+            }
+
+            if !detailsText.isEmpty {
+                Text(detailsText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(DS.text3)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .padding(.leading, 6)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .frame(height: 24)
+        .opacity(showsActions ? 1 : 0)
+        .allowsHitTesting(showsActions)
+        .animation(reduceMotion ? nil : Motion.quick, value: showsActions)
+    }
+
+    // MARK: Media
+
+    private var hasMediaNotes: Bool {
+        message.imageNote?.isEmpty == false
+            || message.videoNote?.isEmpty == false
+            || message.imageSeed != nil
+    }
+
+    private var mediaNotes: some View {
+        HStack(spacing: 10) {
+            if let note = message.imageNote, !note.isEmpty {
+                Text(note)
+            }
+            if let seed = message.imageSeed {
+                seedBadge(seed)
+            }
+            if let note = message.videoNote, !note.isEmpty {
+                Text(note)
+            }
+        }
+        .font(DS.Font.proseNumber(11.5))
+        .foregroundStyle(DS.text3)
+        .lineLimit(1)
+    }
+
+    /// 一次工具调用画出的整组图：横排缩略图，单张仍按大图显示。
+    @ViewBuilder private func imageSeries(_ paths: [String]) -> some View {
         if paths.count == 1 {
             imageBubble(path: paths[0])
         } else {
-            VStack(alignment: .leading, spacing: 6) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(Array(paths.enumerated()), id: \.offset) { index, path in
-                            imageBubble(path: path, maxWidth: 240, maxHeight: 240)
-                                .overlay(alignment: .topLeading) {
-                                    Text("\(index + 1)")
-                                        .font(.system(size: 9, weight: .semibold))
-                                        .foregroundStyle(.white)
-                                        .padding(.horizontal, 5)
-                                        .padding(.vertical, 1.5)
-                                        .background(.black.opacity(0.42), in: Capsule())
-                                        .padding(6)
-                                }
-                        }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(Array(paths.enumerated()), id: \.offset) { index, path in
+                        imageBubble(path: path, maxWidth: 240, maxHeight: 240)
+                            .overlay(alignment: .topLeading) {
+                                Text("\(index + 1)")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1.5)
+                                    .background(.black.opacity(0.42), in: Capsule())
+                                    .padding(6)
+                            }
                     }
-                }
-                if let note = message.imageNote {
-                    Text(note)
-                        .font(.system(size: 10))
-                        .foregroundStyle(Console.tertiary)
                 }
             }
         }
@@ -1709,45 +2104,65 @@ private struct MessageRow: View, Equatable {
         maxWidth: CGFloat = 420,
         maxHeight: CGFloat = 420
     ) -> some View {
-        // 420pt 显示，取 840px 够用；原图只在你点开预览时由系统加载。
-        if let image = ImageStore.thumbnail(atPath: path, maxPixel: maxWidth * 2) {
-            Image(nsImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(maxWidth: maxWidth, maxHeight: maxHeight)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(Console.cardStroke, lineWidth: 1)
+        if FileManager.default.fileExists(atPath: path) {
+            AsyncChatThumbnail(
+                path: path,
+                maxPixel: maxWidth * 2,
+                contentMode: .fit
+            ) {
+                DS.rect(DS.Radius.lg)
+                    .fill(DS.bg)
+                    .frame(width: min(maxWidth, 240), height: min(maxHeight, 180))
+                    .overlay(ProgressView().controlSize(.small))
+            } missingView: {
+                Text(L10n.format("图片已被移除：%@", path))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(DS.text3)
+                    .textSelection(.enabled)
+            }
+            .frame(maxWidth: maxWidth, maxHeight: maxHeight)
+            .clipShape(DS.rect(DS.Radius.lg))
+            .overlay {
+                DS.rect(DS.Radius.lg)
+                    .strokeBorder(DS.line, lineWidth: 1)
+            }
+            .onTapGesture { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+            .help(L10n.t("点击用「预览」打开"))
+            .contextMenu {
+                Button(L10n.t("在访达中显示")) {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
                 }
-                .onTapGesture { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
-                .help("点击用「预览」打开")
-                .contextMenu {
-                    Button("在访达中显示") {
-                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
-                    }
-                    Button("复制图像") { copyImage(path: path) }
-                }
+                Button(L10n.t("复制图像")) { copyImage(path: path) }
+            }
         } else {
-            Text("图片已被移除：\(path)")
+            Text(L10n.format("图片已被移除：%@", path))
                 .font(.system(size: 10.5))
-                .foregroundStyle(Console.tertiary)
+                .foregroundStyle(DS.text3)
                 .textSelection(.enabled)
         }
     }
 
+    /// 用户提问里附的图：和 Splash 一样 120pt 见方、圆角 12、内侧一圈发丝线。
     @ViewBuilder
     private func imageThumb(path: String, maxWidth: CGFloat) -> some View {
-        if let image = ImageStore.thumbnail(atPath: path, maxPixel: maxWidth * 2) {
-            Image(nsImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(maxWidth: maxWidth)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Console.cardStroke, lineWidth: 1)
-                }
+        if FileManager.default.fileExists(atPath: path) {
+            AsyncChatThumbnail(
+                path: path,
+                maxPixel: maxWidth * 2,
+                contentMode: .fill
+            ) {
+                DS.rect(DS.Radius.xl)
+                    .fill(DS.bg)
+                    .frame(width: maxWidth, height: maxWidth)
+            } missingView: {
+                EmptyView()
+            }
+            .frame(width: maxWidth, height: maxWidth)
+            .clipShape(DS.rect(DS.Radius.xl))
+            .overlay {
+                DS.rect(DS.Radius.xl)
+                    .strokeBorder(DS.line, lineWidth: 1)
+            }
         }
     }
 
@@ -1757,7 +2172,7 @@ private struct MessageRow: View, Equatable {
             imageThumb(path: path, maxWidth: maxWidth)
             Text(label)
                 .font(.system(size: 9))
-                .foregroundStyle(Console.tertiary)
+                .foregroundStyle(DS.text3)
         }
     }
 
@@ -1775,26 +2190,26 @@ private struct MessageRow: View, Equatable {
                 ForEach(Array(referenceImagePaths.enumerated()), id: \.offset) { item in
                     labeledThumb(
                         path: item.element,
-                        label: "参考图 \(item.offset + 1)",
-                        maxWidth: 104)
+                        label: L10n.format("参考图 %lld", Int64(item.offset + 1)),
+                        maxWidth: 120)
                 }
                 ForEach(Array(referenceClipPaths.enumerated()), id: \.offset) { item in
                     VStack(alignment: .leading, spacing: 3) {
                         ZStack {
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(Console.inset)
+                            DS.rect(DS.Radius.xl)
+                                .fill(DS.bg)
                             Image(systemName: "film")
                                 .font(.system(size: 18))
-                                .foregroundStyle(Console.tertiary)
+                                .foregroundStyle(DS.text3)
                         }
-                        .frame(width: 104, height: 62)
+                        .frame(width: 120, height: 68)
                         .overlay {
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .strokeBorder(Console.cardStroke, lineWidth: 1)
+                            DS.rect(DS.Radius.xl)
+                                .strokeBorder(DS.line, lineWidth: 1)
                         }
-                        Text("参考视频 \(item.offset + 1)")
+                        Text(L10n.format("参考视频 %lld", Int64(item.offset + 1)))
                             .font(.system(size: 9))
-                            .foregroundStyle(Console.tertiary)
+                            .foregroundStyle(DS.text3)
                     }
                     .help((item.element as NSString).lastPathComponent)
                 }
@@ -1809,56 +2224,21 @@ private struct MessageRow: View, Equatable {
         NSPasteboard.general.writeObjects([image])
     }
 
-    /// 没有统计值、也没到可复制的时候，气泡里不额外留一行空白。
-    private var hasFooter: Bool {
-        message.rateText != nil
-            || message.tokenCount > 0
-            || message.imageNote?.isEmpty == false
-            || message.imageSeed != nil
-            || message.videoNote?.isEmpty == false
-            || (message.firstTokenSeconds ?? 0) > 0
-            || (!message.streaming && !message.content.isEmpty)
-    }
-
-    private var footer: some View {
-        HStack(spacing: 10) {
-            if let rate = message.rateText { Text(rate) }
-            if message.tokenCount > 0 { Text("\(message.tokenCount) tokens") }
-            if let note = message.imageNote, !note.isEmpty { Text(note) }
-            if let seed = message.imageSeed { seedBadge(seed) }
-            if let note = message.videoNote, !note.isEmpty { Text(note) }
-            if let ttft = message.firstTokenSeconds, ttft > 0 {
-                Text(L10n.format("首字 %.0f ms", ttft * 1000))
-            }
-            if !message.streaming, !message.content.isEmpty {
-                Button(action: copyMessage) {
-                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 10.5, weight: copied ? .semibold : .regular))
-                        .contentTransition(.symbolEffect(.replace))
-                }
-                .buttonStyle(.plainHit)
-                .foregroundStyle(copied ? DS.accent : DS.text3)
-                .opacity(hoveringRow || copied ? 1 : 0)
-                .help(copied ? "已复制" : "复制回答")
-                .animation(DS.Motion.snappy, value: copied)
-            }
-        }
-        .font(DS.Font.proseNumber(11.5))
-        .foregroundStyle(DS.text3)
-    }
-
     /// 图注里的 seed：点一下复制整数值，短暂变成「已复制」。
     private func seedBadge(_ seed: Int) -> some View {
         Button {
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             pasteboard.setString(String(seed), forType: .string)
-            seedCopied = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                seedCopied = false
+            seedResetTask?.cancel()
+            withAnimation(reduceMotion ? nil : Motion.quick) { seedCopied = true }
+            seedResetTask = Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                guard !Task.isCancelled else { return }
+                withAnimation(reduceMotion ? nil : Motion.quick) { seedCopied = false }
             }
         } label: {
-            Text(verbatim: seedCopied ? "已复制" : "seed " + String(seed))
+            Text(verbatim: seedCopied ? L10n.t("已复制") : "seed " + String(seed))
                 .font(DS.Font.mono(10.5))
                 .foregroundStyle(seedCopied ? DS.accent : DS.text2)
                 .padding(.horizontal, 6)
@@ -1868,8 +2248,8 @@ private struct MessageRow: View, Equatable {
                 .contentShape(DS.rect(DS.Radius.sm))
         }
         .buttonStyle(.plainHit)
-        .help("点击复制 seed")
-        .animation(DS.Motion.snappy, value: seedCopied)
+        .help(L10n.t("点击复制 seed"))
+        .animation(reduceMotion ? nil : Motion.quick, value: seedCopied)
     }
 
     /// 复制成功只让按钮短暂变成对号，不弹通知，避免打断连续选取与复制。
@@ -1877,11 +2257,67 @@ private struct MessageRow: View, Equatable {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(message.content, forType: .string)
         copyResetTask?.cancel()
-        withAnimation(DS.Motion.snappy) { copied = true }
+        withAnimation(reduceMotion ? nil : Motion.quick) { copied = true }
         copyResetTask = Task {
-            try? await Task.sleep(for: .seconds(1.2))
+            try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled else { return }
-            withAnimation(DS.Motion.snappy) { copied = false }
+            withAnimation(reduceMotion ? nil : Motion.quick) { copied = false }
+        }
+    }
+}
+
+/// 回复操作行里的小按钮：无边框，悬停浮出底色。
+private struct MessageActionButton: View {
+    let systemName: String
+    let help: String
+    var tint: Color = DS.text2
+    let action: () -> Void
+
+    @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 11))
+                .contentTransition(.symbolEffect(.replace))
+                .foregroundStyle(tint)
+                .frame(width: 24, height: 24)
+                .background(DS.rect(6).fill(hovering ? DS.hover : .clear))
+                .contentShape(DS.rect(6))
+        }
+        .buttonStyle(.plainHit)
+        .onHover { value in
+            if reduceMotion {
+                hovering = value
+            } else {
+                withAnimation(DS.Motion.snappy) { hovering = value }
+            }
+        }
+        .help(help)
+        .accessibilityLabel(help)
+    }
+}
+
+/// 流式等待时每秒更新的 `· 3s`；不足一秒不显示，避免刚发出就闪一个 0。
+private struct ElapsedThinkingSeconds: View {
+    let since: Date
+
+    var body: some View {
+        TimelineView(.periodic(from: since, by: 1)) { context in
+            let seconds = max(0, Int(context.date.timeIntervalSince(since)))
+            if seconds >= 1 {
+                // 闭包里直接返回两个 Text 会变成 TupleView，SwiftUI 按纵向排，
+                // 「·」和「1s」各占一行、标题行凭空长高一截。收进 HStack 再固定
+                // 单行宽度，秒数始终跟在动词后面。
+                HStack(spacing: 4) {
+                    Text("·")
+                    Text("\(seconds)s").monospacedDigit()
+                }
+                .foregroundStyle(DS.text3)
+                .lineLimit(1)
+                .fixedSize()
+            }
         }
     }
 }
@@ -1891,6 +2327,10 @@ private struct MessageRow: View, Equatable {
 struct ChatParametersSheet: View {
     @ObservedObject var state: AppState
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("chat.temperature") private var storedTemperature = 0.7
+    @AppStorage("chat.topP") private var storedTopP = 0.95
+    @AppStorage("chat.maxTokens") private var storedMaxTokens = 0
+    @AppStorage("chat.system") private var storedSystemPrompt = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1935,13 +2375,19 @@ struct ChatParametersSheet: View {
         Card("采样", subtitle: "每条消息都会带上这组默认值") {
             VStack(spacing: 14) {
                 SamplingSlider(
-                    label: "温度", value: state.settings.temperature, range: 0...2,
+                    label: "温度", value: storedTemperature, range: 0...2,
                     format: "%.2f"
-                ) { state.settings.setTemperature($0) }
+                ) {
+                    storedTemperature = $0
+                    state.settings.setTemperature($0)
+                }
                 SamplingSlider(
-                    label: "top-p", value: state.settings.topP, range: 0...1,
+                    label: "top-p", value: storedTopP, range: 0...1,
                     format: "%.2f"
-                ) { state.settings.setTopP($0) }
+                ) {
+                    storedTopP = $0
+                    state.settings.setTopP($0)
+                }
                 HStack(spacing: 10) {
                     Text("最大输出")
                         .font(DS.Font.md)
@@ -1950,8 +2396,13 @@ struct ChatParametersSheet: View {
                     TextField(
                         "模型上限",
                         text: Binding(
-                            get: { state.settings.maxTokens > 0 ? String(state.settings.maxTokens) : "" },
-                            set: { state.settings.setMaxTokens(Int($0) ?? 0) })
+                            get: { storedMaxTokens > 0 ? String(storedMaxTokens) : "" },
+                            set: { raw in
+                                let digits = raw.filter(\.isNumber)
+                                let value = Int(digits) ?? 0
+                                storedMaxTokens = value
+                                state.settings.setMaxTokens(value)
+                            })
                     )
                     .textFieldStyle(.plain)
                     .font(DS.Font.mono(11.5))
@@ -1959,7 +2410,7 @@ struct ChatParametersSheet: View {
                     .frame(height: 28)
                     .dsInputSurface()
                     .frame(width: 120)
-                    Text("生效 \(state.effectiveMaxTokens)")
+                    Text("生效 \(storedMaxTokens > 0 ? storedMaxTokens : (state.contextWindowTokens ?? 32_768))")
                         .font(DS.Font.mono(11))
                         .foregroundStyle(DS.text3)
                         .monospacedDigit()
@@ -1974,8 +2425,11 @@ struct ChatParametersSheet: View {
         Card("系统提示", subtitle: "作为系统消息置于每段对话之前") {
             TextEditor(
                 text: Binding(
-                    get: { state.settings.systemPrompt },
-                    set: { state.settings.setSystemPrompt($0) })
+                    get: { storedSystemPrompt },
+                    set: {
+                        storedSystemPrompt = $0
+                        state.settings.setSystemPrompt($0)
+                    })
             )
             .font(DS.Font.md)
             .foregroundStyle(DS.text)
@@ -2002,11 +2456,10 @@ struct ChatParametersSheet: View {
 
 /// 采样参数的一行：滑杆 + 右侧实时读数。
 ///
-/// 读数跟着滑杆走，靠的是本地 `@State`——`AppSettings` 直接把值写进
-/// UserDefaults，不会触发 SwiftUI 重绘；早先把 `value` 当常量传进来时，
-/// 拖动滑杆数字要等别的刷新才更新，看起来像「读数卡住了」。
+/// 读数跟着滑杆走，靠的是本地 `@State`——并在外层 `@AppStorage` 重置时同步回滑块。
 private struct SamplingSlider: View {
     let label: String
+    let value: Double
     let range: ClosedRange<Double>
     let format: String
     let commit: (Double) -> Void
@@ -2017,6 +2470,7 @@ private struct SamplingSlider: View {
         format: String, commit: @escaping (Double) -> Void
     ) {
         self.label = label
+        self.value = value
         self.range = range
         self.format = format
         self.commit = commit
@@ -2038,7 +2492,12 @@ private struct SamplingSlider: View {
                 .contentTransition(.numericText())
                 .frame(width: 40, alignment: .trailing)
         }
-        .onChange(of: current) { _, value in commit(value) }
+        .onChange(of: current) { _, newValue in commit(newValue) }
+        .onChange(of: value) { _, newValue in
+            if abs(current - newValue) > 0.0001 {
+                current = newValue
+            }
+        }
     }
 }
 
@@ -2122,6 +2581,7 @@ private struct VideoOptionsPopover: View {
     var supportsReferences = false
     var referenceCount = 0
     @State private var seedText = ""
+    @FocusState private var seedFocused: Bool
 
     private let sizes = ["512x384", "768x512", "1024x576", "1280x704"]
     private let framePresets: [(frames: Int, label: String)] = [
@@ -2131,7 +2591,7 @@ private struct VideoOptionsPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("视频参数")
+                Text(L10n.t("视频参数"))
                     .font(DS.Font.md.weight(.semibold))
                     .foregroundStyle(DS.text)
                 Text(headerSubtitle)
@@ -2160,9 +2620,11 @@ private struct VideoOptionsPopover: View {
                         options: VideoReferenceDetail.allCases.map { ($0, $0.title) },
                         size: .small)
                     Text(
-                        options.referenceDetail == .max
-                            ? "参考帧长边按 1280 发送：细节更多，上传与预处理更慢。"
-                            : "参考帧按生成画布缩放：上传更快，适合先试效果。"
+                        L10n.t(
+                            options.referenceDetail == .max
+                                ? "参考帧长边按 1280 发送：细节更多，上传与预处理更慢。"
+                                : "参考帧按生成画布缩放：上传更快，适合先试效果。"
+                        )
                     )
                     .font(.system(size: 9.5))
                     .foregroundStyle(DS.text3)
@@ -2177,7 +2639,7 @@ private struct VideoOptionsPopover: View {
                     }
                 }
                 HStack(spacing: 10) {
-                    Text("\(options.frames) 帧")
+                    Text(L10n.format("%lld 帧", Int64(options.frames)))
                         .font(DS.Font.mono(12, weight: .medium))
                         .foregroundStyle(DS.text)
                         .monospacedDigit()
@@ -2185,7 +2647,7 @@ private struct VideoOptionsPopover: View {
                     Stepper("", value: $options.frames, in: 9...249, step: 4)
                         .labelsHidden()
                     Spacer(minLength: 0)
-                    Text(String(format: "%.1f 秒", Double(options.frames) / 24.0))
+                    Text(L10n.format("%.1f 秒", Double(options.frames) / 24.0))
                         .font(DS.Font.mono(10.5))
                         .foregroundStyle(DS.text3)
                         .monospacedDigit()
@@ -2194,36 +2656,38 @@ private struct VideoOptionsPopover: View {
 
             section("步数") {
                 StepsControl(steps: $options.steps, range: 4...50)
-                Text("蒸馏 LTX 8 步够用；H3 一般给到 20 步。")
+                Text(L10n.t("蒸馏 LTX 8 步够用；H3 一般给到 20 步。"))
                     .font(.system(size: 9.5))
                     .foregroundStyle(DS.text3)
             }
 
             section("seed") {
                 HStack(spacing: 8) {
-                    TextField("留空则每次随机", text: $seedText)
+                    TextField(L10n.t("留空则每次随机"), text: $seedText)
                         .textFieldStyle(.plain)
                         .font(DS.Font.mono(11))
+                        .focused($seedFocused)
                         .padding(.horizontal, 8)
                         .frame(width: 126, height: 26)
-                        .background(DS.rect(DS.Radius.sm).fill(DS.bg))
-                        .overlay(DS.rect(DS.Radius.sm).strokeBorder(DS.line2, lineWidth: 1))
-                    Button("随机") { seedText = "" }
+                        .dsInputSurface(radius: DS.Radius.sm, focused: seedFocused)
+                    Button(L10n.t("随机")) { seedText = "" }
                         .buttonStyle(.link)
                         .font(DS.Font.xs)
                     Spacer(minLength: 0)
                 }
                 Text(
-                    options.seed == nil
-                        ? "留空时每段视频随机一个 seed；生成后视频下方会显示实际值。"
-                        : "固定 seed：提示词与参数相同时，结果基本可复现。"
+                    L10n.t(
+                        options.seed == nil
+                            ? "留空时每段视频随机一个 seed；生成后视频下方会显示实际值。"
+                            : "固定 seed：提示词与参数相同时，结果基本可复现。"
+                    )
                 )
                 .font(.system(size: 9.5))
                 .foregroundStyle(DS.text3)
                 .fixedSize(horizontal: false, vertical: true)
             }
 
-            Text("分辨率与帧数越大越吃显存；显存不足时先降尺寸，再减帧数。")
+            Text(L10n.t("分辨率与帧数越大越吃显存；显存不足时先降尺寸，再减帧数。"))
                 .font(.system(size: 9.5))
                 .foregroundStyle(DS.text3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -2232,8 +2696,9 @@ private struct VideoOptionsPopover: View {
         .frame(width: 344)
         .dsPopoverSurface()
         .onChange(of: seedText) { _, text in
-            let trimmed = text.trimmingCharacters(in: .whitespaces)
-            options.seed = trimmed.isEmpty ? nil : Int(trimmed)
+            let digits = text.filter(\.isNumber)
+            if digits != text { seedText = digits }
+            options.seed = digits.isEmpty ? nil : Int(digits)
         }
         .onAppear { seedText = options.seed.map(String.init) ?? "" }
     }
@@ -2241,12 +2706,14 @@ private struct VideoOptionsPopover: View {
     private var headerSubtitle: String {
         if supportsReferences {
             return referenceCount > 0
-                ? "已附 \(referenceCount) 个参考素材：REF2VA 会从素材生成新视频"
-                : "REF2VA 需要至少一个参考素材；首帧/尾帧不适用于这个包"
+                ? L10n.format("已附 %lld 个参考素材：REF2VA 会从素材生成新视频", Int64(referenceCount))
+                : L10n.t("REF2VA 需要至少一个参考素材；首帧/尾帧不适用于这个包")
         }
-        return hasSource
-            ? "已附参考帧：首帧定开头、尾帧定结尾，只给一边也可以"
-            : "不附帧直接按提示词生成；附首帧/尾帧可约束开头和结尾"
+        return L10n.t(
+            hasSource
+                ? "已附参考帧：首帧定开头、尾帧定结尾，只给一边也可以"
+                : "不附帧直接按提示词生成；附首帧/尾帧可约束开头和结尾"
+        )
     }
 
     private var detailBinding: Binding<VideoReferenceDetail> {
@@ -2260,7 +2727,7 @@ private struct VideoOptionsPopover: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(title)
+            Text(L10n.t(title))
                 .font(DS.Font.xs.weight(.medium))
                 .foregroundStyle(DS.text3)
             content()
@@ -2305,9 +2772,9 @@ private struct VideoOptionsPopover: View {
             options.frames = frames
         } label: {
             VStack(spacing: 1) {
-                Text("\(frames) 帧")
+                Text(L10n.format("%lld 帧", Int64(frames)))
                     .font(DS.Font.mono(10, weight: selected ? .semibold : .regular))
-                Text(label)
+                Text(L10n.t(label))
                     .font(.system(size: 9))
             }
             .foregroundStyle(selected ? DS.text : DS.text2)
@@ -2334,6 +2801,10 @@ private struct VideoOptionsPopover: View {
 /// 图像模型专用的小面板。只影响下一次发送，不做持久化：尺寸/步数这类
 /// 参数每次出图都可能想换，记住上次的值反而容易在没注意时多等几十秒。
 private struct ImageOptionsPopover: View {
+    private enum FocusField {
+        case seed, width, height
+    }
+
     @Binding var options: ImageOptions
     let model: EngineModel?
     let hasSource: Bool
@@ -2341,6 +2812,7 @@ private struct ImageOptionsPopover: View {
     @State private var seedText = ""
     @State private var widthText = ""
     @State private var heightText = ""
+    @FocusState private var focusedField: FocusField?
 
     private var profile: ImageModelProfile { ImageModelProfile(model: model) }
     private var presets: [ImageSizePreset] { profile.presets }
@@ -2349,10 +2821,10 @@ private struct ImageOptionsPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("图像参数")
+                Text(L10n.t("图像参数"))
                     .font(DS.Font.md.weight(.semibold))
                     .foregroundStyle(DS.text)
-                Text(hasSource ? "以附件为底图重绘，强度决定离原图多远" : "不附底图，直接按提示词出图")
+                Text(L10n.t(hasSource ? "以附件为底图重绘，强度决定离原图多远" : "不附底图，直接按提示词出图"))
                     .font(DS.Font.xs)
                     .foregroundStyle(DS.text3)
             }
@@ -2371,12 +2843,18 @@ private struct ImageOptionsPopover: View {
                 }
                 if profile.allowsCustomCanvas {
                     customSizeRow
-                    Text("也可以直接填宽高（256–\(profile.maximumSide)）；引擎会按 \(profile.alignment) 对齐，非预设画布也能出图。")
+                    Text(
+                        L10n.format(
+                            "也可以直接填宽高（256–%lld）；引擎会按 %lld 对齐，非预设画布也能出图。",
+                            Int64(profile.maximumSide),
+                            Int64(profile.alignment)
+                        )
+                    )
                         .font(.system(size: 9.5))
                         .foregroundStyle(DS.text3)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
-                    Text("Mage 的采样器只认上面的固定画布，不能自定宽高。")
+                    Text(L10n.t("Mage 的采样器只认上面的固定画布，不能自定宽高。"))
                         .font(.system(size: 9.5))
                         .foregroundStyle(DS.text3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -2389,17 +2867,17 @@ private struct ImageOptionsPopover: View {
                         Image(systemName: "lock.fill")
                             .font(.system(size: 9))
                             .foregroundStyle(DS.text3)
-                        Text("固定 \(fixed) 步")
+                        Text(L10n.format("固定 %lld 步", Int64(fixed)))
                             .font(DS.Font.mono(11, weight: .medium))
                             .foregroundStyle(DS.text)
                     }
-                    Text("这个模型是蒸馏加速版，采样表由权重写死；拖步数不会改变结果，出图就按 \(fixed) 步算。")
+                    Text(L10n.format("这个模型是蒸馏加速版，采样表由权重写死；拖步数不会改变结果，出图就按 %lld 步算。", Int64(fixed)))
                         .font(.system(size: 9.5))
                         .foregroundStyle(DS.text3)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     StepsControl(steps: $options.steps)
-                    Text("8 步能出草稿，20 步细节更稳；越高越慢。")
+                    Text(L10n.t("8 步能出草稿，20 步细节更稳；越高越慢。"))
                         .font(.system(size: 9.5))
                         .foregroundStyle(DS.text3)
                 }
@@ -2407,27 +2885,29 @@ private struct ImageOptionsPopover: View {
 
             section("seed") {
                 HStack(spacing: 8) {
-                    TextField("留空则每次随机", text: $seedText)
+                    TextField(L10n.t("留空则每次随机"), text: $seedText)
                         .textFieldStyle(.plain)
                         .font(DS.Font.mono(11))
+                        .focused($focusedField, equals: .seed)
                         .padding(.horizontal, 8)
                         .frame(width: 126, height: 26)
-                        .background(DS.rect(DS.Radius.sm).fill(DS.bg))
-                        .overlay(DS.rect(DS.Radius.sm).strokeBorder(DS.line2, lineWidth: 1))
-                    Button("随机") { seedText = "" }
+                        .dsInputSurface(radius: DS.Radius.sm, focused: focusedField == .seed)
+                    Button(L10n.t("随机")) { seedText = "" }
                         .buttonStyle(.link)
                         .font(DS.Font.xs)
                     if let lastSeed {
-                        Button("用上次 #\(lastSeed)") { seedText = String(lastSeed) }
+                        Button(L10n.format("用上次 #%lld", Int64(lastSeed))) { seedText = String(lastSeed) }
                             .buttonStyle(.link)
                             .font(DS.Font.xs)
                     }
                     Spacer(minLength: 0)
                 }
                 Text(
-                    options.seed == nil
-                        ? "留空时每张图随机一个 seed；生成后点图下方的 seed 复制，贴回这里即可复现。"
-                        : "固定 seed：提示词与参数相同时，结果基本可复现。"
+                    L10n.t(
+                        options.seed == nil
+                            ? "留空时每张图随机一个 seed；生成后点图下方的 seed 复制，贴回这里即可复现。"
+                            : "固定 seed：提示词与参数相同时，结果基本可复现。"
+                    )
                 )
                 .font(.system(size: 9.5))
                 .foregroundStyle(DS.text3)
@@ -2445,7 +2925,7 @@ private struct ImageOptionsPopover: View {
                             .monospacedDigit()
                             .frame(width: 40, alignment: .trailing)
                     }
-                    Text("越低越贴近原图，越高越放飞；0.55–0.65 适合换风格。")
+                    Text(L10n.t("越低越贴近原图，越高越放飞；0.55–0.65 适合换风格。"))
                         .font(.system(size: 9.5))
                         .foregroundStyle(DS.text3)
                         .fixedSize(horizontal: false, vertical: true)
@@ -2456,8 +2936,9 @@ private struct ImageOptionsPopover: View {
         .frame(width: 330)
         .dsPopoverSurface()
         .onChange(of: seedText) { _, text in
-            let trimmed = text.trimmingCharacters(in: .whitespaces)
-            options.seed = trimmed.isEmpty ? nil : Int(trimmed)
+            let digits = text.filter(\.isNumber)
+            if digits != text { seedText = digits }
+            options.seed = digits.isEmpty ? nil : Int(digits)
         }
         .onAppear {
             seedText = options.seed.map(String.init) ?? ""
@@ -2470,7 +2951,7 @@ private struct ImageOptionsPopover: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(title)
+            Text(L10n.t(title))
                 .font(DS.Font.xs.weight(.medium))
                 .foregroundStyle(DS.text3)
             content()
@@ -2481,31 +2962,31 @@ private struct ImageOptionsPopover: View {
     /// 引擎能算、但没进预设表的画布。
     private var customSizeRow: some View {
         HStack(spacing: 6) {
-            TextField("宽", text: $widthText)
+            TextField(L10n.t("宽"), text: $widthText)
                 .textFieldStyle(.plain)
                 .font(DS.Font.mono(10.5))
                 .multilineTextAlignment(.center)
+                .focused($focusedField, equals: .width)
                 .padding(.horizontal, 6)
                 .frame(width: 58, height: 26)
-                .background(DS.rect(DS.Radius.sm).fill(DS.bg))
-                .overlay(DS.rect(DS.Radius.sm).strokeBorder(DS.line2, lineWidth: 1))
+                .dsInputSurface(radius: DS.Radius.sm, focused: focusedField == .width)
             Text("×")
                 .font(DS.Font.xs)
                 .foregroundStyle(DS.text3)
-            TextField("高", text: $heightText)
+            TextField(L10n.t("高"), text: $heightText)
                 .textFieldStyle(.plain)
                 .font(DS.Font.mono(10.5))
                 .multilineTextAlignment(.center)
+                .focused($focusedField, equals: .height)
                 .padding(.horizontal, 6)
                 .frame(width: 58, height: 26)
-                .background(DS.rect(DS.Radius.sm).fill(DS.bg))
-                .overlay(DS.rect(DS.Radius.sm).strokeBorder(DS.line2, lineWidth: 1))
+                .dsInputSurface(radius: DS.Radius.sm, focused: focusedField == .height)
             Text("px")
                 .font(.system(size: 9.5))
                 .foregroundStyle(DS.text3)
             Spacer(minLength: 0)
             if isCustomSize {
-                Text("自定义")
+                Text(L10n.t("自定义"))
                     .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(DS.accent)
                     .padding(.horizontal, 6)
@@ -2513,14 +2994,22 @@ private struct ImageOptionsPopover: View {
                     .background(DS.rect(DS.Radius.sm).fill(DS.accentSoft))
                     .overlay(DS.rect(DS.Radius.sm).strokeBorder(DS.accent.opacity(0.25), lineWidth: 1))
             }
-            Button("应用") { commitCustomCanvas() }
+            Button(L10n.t("应用")) { commitCustomCanvas() }
                 .buttonStyle(.plain)
                 .font(DS.Font.xs.weight(.medium))
                 .foregroundStyle(DS.accent)
-                .help("把宽高限制在引擎支持的范围内并应用")
+                .help(L10n.t("把宽高限制在引擎支持的范围内并应用"))
         }
-        .onChange(of: widthText) { _, _ in applyCustomCanvas() }
-        .onChange(of: heightText) { _, _ in applyCustomCanvas() }
+        .onChange(of: widthText) { _, text in
+            let digits = text.filter(\.isNumber)
+            if digits != text { widthText = digits }
+            applyCustomCanvas()
+        }
+        .onChange(of: heightText) { _, text in
+            let digits = text.filter(\.isNumber)
+            if digits != text { heightText = digits }
+            applyCustomCanvas()
+        }
     }
 
     private func chooseSize(_ preset: ImageSizePreset) {
@@ -2620,21 +3109,13 @@ private struct StepsControl: View {
                     .font(DS.Font.mono(11, weight: .medium))
                     .multilineTextAlignment(.trailing)
                     .focused($editing)
-                Text("步")
+                Text(L10n.t("步"))
                     .font(.system(size: 9.5))
                     .foregroundStyle(DS.text3)
             }
             .padding(.horizontal, 7)
             .frame(width: 58, height: 24)
-            .background {
-                DS.rect(DS.Radius.sm).fill(DS.bg)
-            }
-            .overlay {
-                DS.rect(DS.Radius.sm)
-                    .strokeBorder(
-                        editing ? DS.line3 : DS.line2,
-                        lineWidth: 1)
-            }
+            .dsInputSurface(radius: DS.Radius.sm, focused: editing)
         }
         .onAppear { text = String(steps) }
         .onDisappear { commit() }
@@ -2646,8 +3127,10 @@ private struct StepsControl: View {
             if !focused { commit() }
         }
         .onChange(of: text) { _, value in
+            let digits = value.filter(\.isNumber)
+            if digits != value { text = digits }
             // 输入过程中只要已经是范围内的数字就即时同步，滑块跟着一起走。
-            if let number = Int(value), range.contains(number) {
+            if let number = Int(digits), range.contains(number) {
                 steps = number
             }
         }

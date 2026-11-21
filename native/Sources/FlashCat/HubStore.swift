@@ -53,7 +53,18 @@ final class HubStore: ObservableObject {
     /// overwrite a newer one.
     private var hubSearchTicket = 0
 
-    private static let hubClient = HubSearchClient()
+    /// 模型页的按引擎搜索走 `HubSearchClient`，端点跟设置里的下载通道走：
+    /// 官方、自填镜像和 HF-Mirror 各留一个客户端，缓存不串。ModelScope
+    /// 没有这套按格式筛选的接口，落到官方/自填端点那条。
+    private static var hubClients: [String: HubSearchClient] = [:]
+
+    private static func hubClient(for source: HubSource) -> HubSearchClient {
+        let endpoint = source.endpoint
+        if let client = hubClients[endpoint] { return client }
+        let client = HubSearchClient(baseURL: ConstantURL.make(endpoint))
+        hubClients[endpoint] = client
+        return client
+    }
 
     /// 换引擎栏时把按引擎的搜索清空。
     ///
@@ -79,11 +90,12 @@ final class HubStore: ObservableObject {
             return
         }
         hubSearch = HubSearchState(query: trimmed, phase: .loading)
+        let client = Self.hubClient(for: HubSource.downloadSource)
         Task { [weak self] in
             guard let self else { return }
             do {
-                let hits = try await Self.hubClient.search(trimmed)
-                let enriched = await Self.hubClient.enrich(hits)
+                let hits = try await client.search(trimmed)
+                let enriched = await client.enrich(hits)
                 let results = enriched.compactMap { HubSearchState.result(for: $0) }
                 guard ticket == self.hubSearchTicket else { return }
                 self.hubSearch = HubSearchState(query: trimmed, phase: .idle, results: results)
@@ -137,7 +149,8 @@ final class HubStore: ObservableObject {
                         query: query,
                         sort: value,
                         filter: bucket,
-                        page: current
+                        page: current,
+                        endpoint: origin.endpoint
                     )
                     models = hits
                     hasMore = hits.count >= HubClient.pageSize
@@ -146,11 +159,11 @@ final class HubStore: ObservableObject {
                 self?.hubResults = models
                 self?.hubHasMore = hasMore
                 self?.hubLoading = false
-                guard origin == .huggingFace else { return }
+                guard origin.isHuggingFaceCompatible else { return }
                 // Quantization and memory need real file sizes, which the list
                 // endpoint does not return. Show the rows immediately, then
                 // fill in metadata a few repositories at a time.
-                let enriched = await HubClient.enrich(models)
+                let enriched = await HubClient.enrich(models, endpoint: origin.endpoint)
                 guard !Task.isCancelled else { return }
                 self?.hubResults = enriched
             } catch {
@@ -174,8 +187,8 @@ final class HubStore: ObservableObject {
             do {
                 let detail: HubModel
                 switch origin {
-                case .huggingFace:
-                    detail = try await HubClient.detail(repo)
+                case .huggingFace, .hfMirror:
+                    detail = try await HubClient.detail(repo, endpoint: origin.endpoint)
                 case .modelScope:
                     detail = try await ModelScopeClient.detail(repo)
                 }
@@ -219,8 +232,8 @@ final class HubStore: ObservableObject {
             do {
                 let detail: HubModel
                 switch origin {
-                case .huggingFace:
-                    detail = try await HubClient.detail(name)
+                case .huggingFace, .hfMirror:
+                    detail = try await HubClient.detail(name, endpoint: origin.endpoint)
                 case .modelScope:
                     detail = try await ModelScopeClient.detail(name)
                 }

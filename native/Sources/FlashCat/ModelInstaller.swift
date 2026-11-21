@@ -78,29 +78,32 @@ enum ModelInstaller {
         engine: EngineID,
         model: String,
         draftRepository: String?,
-        cache: String
+        cache: String,
+        source: HubSource = .huggingFace
     ) throws -> Plan {
         switch engine.adapter {
         case .splash:
             return try splashPlan(
                 model: model,
                 draftRepository: draftRepository,
-                cache: cache)
+                cache: cache,
+                source: source)
         case .omlx, .mtplx:
-            return try snapshotPlan(engine: engine, model: model, cache: cache)
+            return try snapshotPlan(engine: engine, model: model, cache: cache, source: source)
         case .mlxServe:
-            return try mlxServePlan(engine: engine, model: model, cache: cache)
+            return try mlxServePlan(engine: engine, model: model, cache: cache, source: source)
         case .strata:
-            return try strataPlan(engine: engine, model: model, cache: cache)
+            return try strataPlan(engine: engine, model: model, cache: cache, source: source)
         default:
-            return try snapshotPlan(engine: engine, model: model, cache: cache)
+            return try snapshotPlan(engine: engine, model: model, cache: cache, source: source)
         }
     }
 
     private static func splashPlan(
         model: String,
         draftRepository: String?,
-        cache: String
+        cache: String,
+        source: HubSource
     ) throws -> Plan {
         guard let installation = EngineInstallations.newest(.splash, version: nil) else {
             throw Failure.message("还没有安装 Splash 引擎，无法下载模型")
@@ -128,7 +131,7 @@ enum ModelInstaller {
             executable: runtime.pythonPath,
             arguments: arguments,
             workingDirectory: runtime.root,
-            environment: environment(pythonRoot: runtime.root, cache: cache),
+            environment: environment(pythonRoot: runtime.root, cache: cache, source: source),
             watchDirectory: nil,
             destination: Paths.modelsDirectory,
             incompleteMarker: nil)
@@ -166,13 +169,19 @@ enum ModelInstaller {
             engines.contains(.mlxServe) || seen.contains(.mlxServe),
             let installation = EngineInstallations.newest(.mlxServe, version: nil)
         {
-            guard source == .huggingFace, include.isEmpty else {
+            guard source.isHuggingFaceCompatible, include.isEmpty else {
                 throw Failure.message("MLX-Serve 的原生下载器只能整仓下载 Hugging Face 仓库，选量化需要先装一个带 Python 的引擎包")
+            }
+            // 原生 puller 把 huggingface.co 写死了，不读 HF_ENDPOINT；要走镜像
+            // 得换一个 Python 下载器，否则会在国内不可达的官方端点上卡住。
+            guard source == .huggingFace else {
+                throw Failure.message("MLX-Serve 的原生下载器不支持镜像端点；要经 HF-Mirror 下载，请先装一个带 Python 的引擎包：Splash、oMLX、MTPLX 或 Strata")
             }
             return try mlxServeSharedPlan(
                 repo: repo,
                 installation: installation,
-                cache: cache)
+                cache: cache,
+                source: source)
         }
         guard let python, let root else {
             throw Failure.message("公共下载需要已安装的 MLX-Serve，或任意一个带 Python 的引擎包：Splash、oMLX、MTPLX、Strata")
@@ -181,11 +190,11 @@ enum ModelInstaller {
         let destination = sharedDestination(repo: name)
         let script: String
         switch source {
-        case .huggingFace: script = try scriptPath()
+        case .huggingFace, .hfMirror: script = try scriptPath()
         case .modelScope: script = try modelScopeScriptPath()
         }
         var arguments = [script, name, destination]
-        if source == .huggingFace {
+        if source.isHuggingFaceCompatible {
             let trimmed = cache.trimmingCharacters(in: .whitespaces)
             if !trimmed.isEmpty { arguments += ["--cache", trimmed] }
         }
@@ -198,7 +207,7 @@ enum ModelInstaller {
             executable: python,
             arguments: arguments,
             workingDirectory: root,
-            environment: environment(pythonRoot: root, cache: cache),
+            environment: environment(pythonRoot: root, cache: cache, source: source),
             watchDirectory: destination,
             destination: destination,
             incompleteMarker: incompleteMarker(for: destination))
@@ -209,7 +218,8 @@ enum ModelInstaller {
     private static func mlxServeSharedPlan(
         repo: String,
         installation: EngineInstallation,
-        cache: String
+        cache: String,
+        source: HubSource
     ) throws -> Plan {
         let name = repo.split(separator: ":", maxSplits: 1).first.map(String.init) ?? repo
         let home = Paths.supportDirectory + "/engine-homes/mlx-serve-shared"
@@ -218,7 +228,8 @@ enum ModelInstaller {
         let destination = sharedDestination(repo: name)
         Paths.ensureDirectory(stagingRoot)
         Paths.ensureDirectory((destination as NSString).deletingLastPathComponent)
-        var environment = self.environment(pythonRoot: installation.root.path, cache: cache)
+        var environment = self.environment(
+            pythonRoot: installation.root.path, cache: cache, source: source)
         environment["HOME"] = home
         environment["MLX_SERVE_NO_UPDATE_CHECK"] = "1"
         let script = """
@@ -242,7 +253,12 @@ enum ModelInstaller {
             incompleteMarker: incompleteMarker(for: destination))
     }
 
-    private static func snapshotPlan(engine: EngineID, model: String, cache: String) throws -> Plan {
+    private static func snapshotPlan(
+        engine: EngineID,
+        model: String,
+        cache: String,
+        source: HubSource
+    ) throws -> Plan {
         guard let installation = EngineInstallations.newest(engine, version: nil) else {
             throw Failure.message("还没有安装 \(engine.displayName) 引擎，无法下载模型")
         }
@@ -271,7 +287,8 @@ enum ModelInstaller {
             executable: python,
             arguments: arguments,
             workingDirectory: installation.root.path,
-            environment: environment(pythonRoot: installation.root.path, cache: cache),
+            environment: environment(
+                pythonRoot: installation.root.path, cache: cache, source: source),
             watchDirectory: destination,
             destination: destination,
             incompleteMarker: incompleteMarker(for: destination))
@@ -279,7 +296,17 @@ enum ModelInstaller {
 
     /// mlx-serve owns its downloader. Redirect its isolated HOME's model store
     /// to flashCat's model directory so the app remains the source of truth.
-    private static func mlxServePlan(engine: EngineID, model: String, cache: String) throws -> Plan {
+    private static func mlxServePlan(
+        engine: EngineID,
+        model: String,
+        cache: String,
+        source: HubSource
+    ) throws -> Plan {
+        // 原生 puller 不读 HF_ENDPOINT：镜像来源在这里只能明确拒绝，不能
+        // 悄悄退回官方端点。
+        guard source == .huggingFace else {
+            throw Failure.message("MLX-Serve 的原生下载器不支持镜像端点；请在「设置 → 模型来源」切回 Hugging Face，或先装一个带 Python 的引擎包，在模型广场把权重下到公共目录")
+        }
         guard let installation = EngineInstallations.newest(engine, version: nil) else {
             throw Failure.message("还没有安装 \(engine.displayName) 引擎，无法下载模型")
         }
@@ -297,7 +324,8 @@ enum ModelInstaller {
         }
         let repo = model.split(separator: ":", maxSplits: 1).first.map(String.init) ?? model
         let destination = modelsRoot + "/" + repo
-        var environment = self.environment(pythonRoot: installation.root.path, cache: cache)
+        var environment = self.environment(
+            pythonRoot: installation.root.path, cache: cache, source: source)
         environment["HOME"] = engineHome
         environment["MLX_SERVE_NO_UPDATE_CHECK"] = "1"
         return Plan(
@@ -315,7 +343,12 @@ enum ModelInstaller {
     /// Strata's installer knows which members of a sharded GGUF repository are
     /// required and prepares its own runtime pack. Do not feed it the generic
     /// full-repository snapshot downloader.
-    private static func strataPlan(engine: EngineID, model: String, cache: String) throws -> Plan {
+    private static func strataPlan(
+        engine: EngineID,
+        model: String,
+        cache: String,
+        source: HubSource
+    ) throws -> Plan {
         guard let installation = EngineInstallations.newest(engine, version: nil) else {
             throw Failure.message("还没有安装 \(engine.displayName) 引擎，无法下载模型")
         }
@@ -330,7 +363,7 @@ enum ModelInstaller {
         guard Paths.fileExists(wrapper), Paths.fileExists(installation.entrypoint.path) else {
             throw Failure.message("\(engine.displayName) 运行时缺少安装包装器或内置 Python")
         }
-        var environment = self.environment(pythonRoot: root, cache: cache)
+        var environment = self.environment(pythonRoot: root, cache: cache, source: source)
         environment["PYTHONPATH"] = root
         return Plan(
             engine: engine,
@@ -355,7 +388,11 @@ enum ModelInstaller {
 
     /// A pack must never inherit the user's Python environment; a stray
     /// `PYTHONPATH` would load a different mlx and break the engine.
-    static func environment(pythonRoot: String, cache: String) -> [String: String] {
+    static func environment(
+        pythonRoot: String,
+        cache: String,
+        source: HubSource = .huggingFace
+    ) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
         environment["PYTHONUNBUFFERED"] = "1"
@@ -384,9 +421,14 @@ enum ModelInstaller {
                 environment[key] = proxy
             }
         }
-        // 镜像端点同样是「设置里改了，下载器也得知道」的那一类。
-        let endpoint = HFEndpoint.normalized(UserDefaults.standard.string(forKey: "hfEndpoint") ?? "") ?? ""
-        if !endpoint.isEmpty { environment["HF_ENDPOINT"] = endpoint }
+        // 镜像端点同样是「来源选了什么，下载器就得知道」的那一类：HF-Mirror
+        // 固定写 hf-mirror.com，官方来源写设置里的自定义端点（空 = 官方）。
+        // huggingface_hub 在 import 时读这个变量，所以按来源注入才生效。
+        if let endpoint = HFEndpoint.resolved(for: source) {
+            environment["HF_ENDPOINT"] = endpoint
+        } else {
+            environment.removeValue(forKey: "HF_ENDPOINT")
+        }
         return environment
     }
 

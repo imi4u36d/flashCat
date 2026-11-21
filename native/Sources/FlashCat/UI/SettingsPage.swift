@@ -7,8 +7,16 @@ import SwiftUI
 
 /// 设置页：按 WebUI 版式——左右两列卡片，行内即改即生效。
 struct SettingsPage: View {
+    private enum FocusField: Hashable {
+        case enginePort(EngineID)
+        case gatewayPort
+        case controlPort
+        case endpoint
+        case token
+        case cachePath
+    }
+
     @ObservedObject var state: AppState
-    @ObservedObject private var background = BackgroundSettings.shared
     @State private var ports: [String: String] = [:]
     @State private var gatewayPort = ""
     @State private var controlPort = ""
@@ -16,13 +24,17 @@ struct SettingsPage: View {
     @State private var endpoint = ""
     @State private var token = ""
     @State private var showsChatParameters = false
-    @FocusState private var focusedPortEngine: EngineID?
+    @State private var confirmingResetDefaults = false
+    @FocusState private var focusedField: FocusField?
     /// 思考设置走 `@AppStorage` 而不是本地镜像：`AppSettings` 不是
     /// ObservableObject，只写 UserDefaults 不会触发 SwiftUI 重新求值。
     /// 观察这两个键之后，聊天浮层滑杆与这里的分段控件才能互相同步。
     @AppStorage("thinkingMode") private var storedThinkingMode = ThinkingMode.automatic.rawValue
     @AppStorage("reasoningEffort") private var storedReasoningEffort = ReasoningEffort.medium.rawValue
     @AppStorage("hubSource") private var storedHubSource = HubSource.huggingFace.rawValue
+    @AppStorage("chat.temperature") private var storedTemperature = 0.7
+    @AppStorage("chat.topP") private var storedTopP = 0.95
+    @AppStorage("chat.maxTokens") private var storedMaxTokens = 0
 
     private var hubSource: HubSource {
         HubSource(rawValue: storedHubSource) ?? .huggingFace
@@ -66,18 +78,27 @@ struct SettingsPage: View {
         .padding(.bottom, Console.contentBottomInset)
         .onAppear(perform: load)
         .onChange(of: state.activeEngine) { _, _ in load() }
-        .onChange(of: focusedPortEngine) { previous, _ in
-            if let previous { applyPort(previous) }
+        .onChange(of: focusedField) { previous, _ in
+            if case .enginePort(let id) = previous {
+                applyPort(id)
+            }
         }
         .sheet(isPresented: $showsChatParameters) {
             ChatParametersSheet(state: state)
+        }
+        .alert(L10n.t("确认恢复默认设置？"), isPresented: $confirmingResetDefaults) {
+            Button(L10n.t("恢复默认"), role: .destructive) {
+                resetAllDefaults()
+            }
+            Button(L10n.t("取消"), role: .cancel) {}
+        } message: {
+            Text(L10n.t("将恢复外观、随应用启动、API 网关、控制接口及默认对话参数，自定义系统提示也会清空。"))
         }
     }
 
     private func leftColumn(wide: Bool) -> some View {
         VStack(spacing: 16) {
             appearanceCard(wide: wide)
-            backgroundCard
             launchCard
             portsCard
             sourceCard(wide: wide)
@@ -127,92 +148,6 @@ struct SettingsPage: View {
         }
     }
 
-    private var backgroundCard: some View {
-        SettingsCard {
-            SettingsRow(
-                title: "自定义背景",
-                detail: background.isEnabled ? "使用自定义图片作为画布背景" : "选择一张图片作为画布背景"
-            ) {
-                HStack(spacing: 8) {
-                    if background.isEnabled {
-                        if let image = background.image {
-                            Image(nsImage: image)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 32, height: 32)
-                                .clipShape(DS.rect(DS.Radius.md))
-                                .overlay {
-                                    DS.rect(DS.Radius.md)
-                                        .strokeBorder(DS.line, lineWidth: 1)
-                                }
-                        }
-                        Button("更换") { background.chooseImage() }
-                            .buttonStyle(.ds(.secondary, size: .small))
-                            .fixedSize()
-                        Button("移除") { background.clear() }
-                            .buttonStyle(.ds(.danger, size: .small))
-                            .fixedSize()
-                    } else {
-                        Button("选择图片") { background.chooseImage() }
-                            .buttonStyle(.ds(.secondary, size: .small))
-                            .fixedSize()
-                    }
-                }
-            }
-            DSDivider()
-            SettingsRow(
-                title: "界面透明度",
-                detail: background.isEnabled
-                    ? "数值越高图片越清晰；会自动柔化以保证可读性"
-                    : "数值越高越透出桌面；会自动柔化以保证可读性"
-            ) {
-                HStack(spacing: 10) {
-                    Slider(value: $background.opacity, in: 0...1)
-                        .frame(width: 150)
-                        .tint(DS.accent)
-                    Text(verbatim: background.opacity.formatted(.percent.precision(.fractionLength(0))))
-                        .font(DS.Font.mono(11, weight: .medium))
-                        .foregroundStyle(DS.text3)
-                        .monospacedDigit()
-                        .frame(width: 36, alignment: .trailing)
-                }
-            }
-            DSDivider()
-            SettingsRow(
-                title: "背景模糊",
-                detail: blurDetail
-            ) {
-                HStack(spacing: 10) {
-                    Slider(value: $background.blur, in: 0...40)
-                        .frame(width: 150)
-                        .tint(DS.accent)
-                    Text(background.blur < 0.5 ? "关闭" : "\(Int(background.blur.rounded())) pt")
-                        .font(DS.Font.mono(11, weight: .medium))
-                        .foregroundStyle(DS.text3)
-                        .monospacedDigit()
-                        .frame(width: 36, alignment: .trailing)
-                }
-                // 没有图片、透明度又是 0 时整窗不透明，模糊确实没有任何可见效果。
-                // 以前这里照常可拖，拖完什么都没发生，看起来就像滑杆坏了。
-                .disabled(frostIsInert)
-                .opacity(frostIsInert ? 0.45 : 1)
-            }
-        }
-    }
-
-    /// 没有自定义图片、且 APP 透明度为 0：窗口完全不透明，桌面没露出来，
-    /// 模糊再怎么调也看不见。
-    private var frostIsInert: Bool {
-        !background.isEnabled && background.opacity <= 0.001
-    }
-
-    private var blurDetail: String {
-        if frostIsInert { return "先把界面透明度调高，桌面露出来之后模糊才可见" }
-        return background.isEnabled
-            ? "数值越高背景越柔和，文字越清晰"
-            : "数值越高桌面越柔和，文字越清晰"
-    }
-
     private var launchCard: some View {
         SettingsCard {
             SettingsRow(title: "登录时启动", detail: "加入 macOS 登录项") {
@@ -229,6 +164,7 @@ struct SettingsPage: View {
                 .controlSize(.small)
                 .labelsHidden()
                 .tint(DS.accent)
+                .accessibilityLabel(L10n.t("登录时启动"))
             }
             DSDivider()
             SettingsRow(title: "随应用启动引擎", detail: "打开应用时拉起默认引擎") {
@@ -242,6 +178,7 @@ struct SettingsPage: View {
                 .controlSize(.small)
                 .labelsHidden()
                 .tint(DS.accent)
+                .accessibilityLabel(L10n.t("随应用启动引擎"))
             }
         }
     }
@@ -274,21 +211,21 @@ struct SettingsPage: View {
     }
 
     private func portField(_ id: EngineID) -> some View {
-        let focused = focusedPortEngine == id
+        let focused = focusedField == .enginePort(id)
         return HStack(spacing: 4) {
             Text(":")
                 .font(DS.Font.mono(11))
                 .foregroundStyle(DS.text3)
             TextField(
-                "端口",
+                L10n.t("端口"),
                 text: Binding(
                     get: { ports[id.rawValue] ?? "" },
-                    set: { ports[id.rawValue] = $0 })
+                    set: { ports[id.rawValue] = $0.filter(\.isNumber) })
             )
             .textFieldStyle(.plain)
             .font(DS.Font.mono(11.5))
             .frame(width: 54)
-            .focused($focusedPortEngine, equals: id)
+            .focused($focusedField, equals: .enginePort(id))
             .onSubmit { applyPort(id) }
             VStack(spacing: 0) {
                 Button {
@@ -297,12 +234,14 @@ struct SettingsPage: View {
                     Image(systemName: "chevron.up").font(.system(size: 7, weight: .bold))
                 }
                 .buttonStyle(.plainHit)
+                .accessibilityLabel(L10n.t("增加端口"))
                 Button {
                     stepPort(id, by: -1)
                 } label: {
                     Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
                 }
                 .buttonStyle(.plainHit)
+                .accessibilityLabel(L10n.t("减小端口"))
             }
             .foregroundStyle(DS.text3)
         }
@@ -312,60 +251,120 @@ struct SettingsPage: View {
     }
 
     private func stepPort(_ id: EngineID, by delta: Int) {
-        let current = Int(ports[id.rawValue] ?? "") ?? id.defaultPort
-        ports[id.rawValue] = String(min(max(current + delta, 1024), 65535))
+        let range = id.portRange
+        let current = Int(ports[id.rawValue] ?? "")
+            ?? EngineStore.shared.configuration(for: id).port
+            ?? id.defaultPort
+        let next = min(max(current + delta, range.lowerBound), range.upperBound)
+        ports[id.rawValue] = String(next)
         applyPort(id)
     }
 
     private func applyPort(_ id: EngineID) {
-        guard let port = Int(ports[id.rawValue] ?? ""), (1024...65535).contains(port) else { return }
+        let storedPort = EngineStore.shared.configuration(for: id).port ?? id.defaultPort
+        guard let port = Int(ports[id.rawValue] ?? ""), id.portRange.contains(port) else {
+            ports[id.rawValue] = String(storedPort)
+            state.toast(
+                L10n.format(
+                    "端口需在 %lld–%lld 之间",
+                    Int64(id.portRange.lowerBound),
+                    Int64(id.portRange.upperBound)
+                )
+            )
+            return
+        }
+        guard port != storedPort else { return }
         state.switchEnginePort(id, port: port)
+        state.toast(L10n.format("%@ 端口已设为 %lld", id.displayName, Int64(port)))
     }
 
     /// 网关 / 控制端口的输入框。应用按钮放在输入框外面，和缓存行一样用「输入框 + 按钮」排布。
     private func portInput(
-        _ text: Binding<String>, placeholder: String,
+        _ text: Binding<String>,
+        placeholder: String,
+        focus: FocusField,
         onSubmit: @escaping () -> Void = {}
     ) -> some View {
         HStack(spacing: 4) {
             Text(":")
                 .font(DS.Font.mono(11))
                 .foregroundStyle(DS.text3)
-            TextField(placeholder, text: text)
-                .textFieldStyle(.plain)
-                .font(DS.Font.mono(11.5))
-                .frame(width: 54)
-                .onSubmit(onSubmit)
+            TextField(
+                placeholder,
+                text: Binding(
+                    get: { text.wrappedValue },
+                    set: { text.wrappedValue = $0.filter(\.isNumber) })
+            )
+            .textFieldStyle(.plain)
+            .font(DS.Font.mono(11.5))
+            .frame(width: 54)
+            .focused($focusedField, equals: focus)
+            .onSubmit(onSubmit)
         }
         .padding(.horizontal, 9)
         .frame(height: 28)
-        .dsInputSurface(radius: DS.Radius.sm)
+        .dsInputSurface(radius: DS.Radius.sm, focused: focusedField == focus)
     }
 
+    private var endpointDirty: Bool { endpoint != state.settings.hfEndpoint }
+    private var tokenDirty: Bool { token != state.settings.hfToken }
+    private var cachePathDirty: Bool { cachePath != state.settings.hfCache }
+    private var gatewayPortDirty: Bool { gatewayPort != String(state.settings.gatewayPort) }
+    private var controlPortDirty: Bool { controlPort != String(state.settings.controlPort) }
+
     private func applyCachePath() {
-        state.settings.setHfCache(cachePath.trimmingCharacters(in: .whitespaces))
-        state.toast("缓存目录已保存")
+        let trimmed = cachePath.trimmingCharacters(in: .whitespaces)
+        cachePath = trimmed
+        state.settings.setHfCache(trimmed)
+        state.toast(L10n.t("缓存目录已保存"))
+    }
+
+    private func pickCacheDirectory() {
+        let panel = NSOpenPanel()
+        panel.title = L10n.t("选择下载缓存目录")
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        let trimmed = cachePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            panel.directoryURL = URL(fileURLWithPath: trimmed, isDirectory: true)
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        cachePath = url.path
+        applyCachePath()
     }
 
     private func applyGatewayPort() {
-        if let port = Int(gatewayPort), (1024...65535).contains(port) {
-            state.settings.setGatewayPort(port)
-            state.applyGatewaySettings()
+        guard let port = Int(gatewayPort), (1024...65535).contains(port) else {
+            gatewayPort = String(state.settings.gatewayPort)
+            state.toast(L10n.t("端口需在 1024–65535 之间"))
+            return
         }
+        state.settings.setGatewayPort(port)
+        state.applyGatewaySettings()
+        state.toast(L10n.format("API 网关端口已设为 %lld", Int64(port)))
     }
 
     private func applyControlPort() {
-        if let port = Int(controlPort), (1024...65535).contains(port) {
-            state.settings.setControlPort(port)
-            state.applyControlSettings()
+        guard let port = Int(controlPort), (1024...65535).contains(port) else {
+            controlPort = String(state.settings.controlPort)
+            state.toast(L10n.t("端口需在 1024–65535 之间"))
+            return
         }
+        state.settings.setControlPort(port)
+        state.applyControlSettings()
+        state.toast(L10n.format("控制端口已设为 %lld", Int64(port)))
     }
 
-    /// 模型广场的来源与网络设置。镜像和 token 只影响 Hugging Face；ModelScope
-    /// 走官方地址，但共用同一份下载缓存与公共目录。
+    /// 模型广场的来源与网络设置。HF-Mirror 和 token 只影响 Hugging Face；
+    /// ModelScope 走官方地址，但共用同一份下载缓存与公共目录。
     private func sourceCard(wide: Bool) -> some View {
         SettingsCard {
-            SettingsRow(title: "模型来源", detail: "模型广场从哪个仓库搜索与下载") {
+            SettingsRow(
+                title: "模型来源",
+                detail: "广场从哪个仓库搜索与下载；HF-Mirror 是 Hugging Face 的国内镜像"
+            ) {
                 NativeSegmented(
                     selection: Binding(
                         get: { hubSource },
@@ -380,18 +379,23 @@ struct SettingsPage: View {
 
             DSDivider()
 
-            SettingsRow(title: "镜像地址", detail: "Hugging Face 端点，如 hf-mirror.com；留空用官方") {
+            SettingsRow(
+                title: "镜像地址",
+                detail: "Hugging Face 端点，留空用官方；选 HF-Mirror 时固定走 hf-mirror.com"
+            ) {
                 HStack(spacing: 8) {
                     TextField("https://huggingface.co", text: $endpoint)
                         .textFieldStyle(.plain)
                         .font(DS.Font.mono(11))
                         .frame(minWidth: 120, idealWidth: 190, maxWidth: 210)
+                        .focused($focusedField, equals: .endpoint)
                         .padding(.horizontal, 9)
                         .frame(height: 28)
-                        .dsInputSurface(radius: DS.Radius.sm)
+                        .dsInputSurface(radius: DS.Radius.sm, focused: focusedField == .endpoint)
                         .onSubmit { applyEndpoint() }
-                    Button("应用") { applyEndpoint() }
-                        .buttonStyle(.ds(.secondary, size: .small))
+                    Button(L10n.t("应用")) { applyEndpoint() }
+                        .buttonStyle(.ds(endpointDirty ? .primary : .secondary, size: .small))
+                        .disabled(!endpointDirty)
                         .fixedSize()
                 }
             }
@@ -404,12 +408,14 @@ struct SettingsPage: View {
                         .textFieldStyle(.plain)
                         .font(DS.Font.mono(11))
                         .frame(minWidth: 120, idealWidth: 190, maxWidth: 210)
+                        .focused($focusedField, equals: .token)
                         .padding(.horizontal, 9)
                         .frame(height: 28)
-                        .dsInputSurface(radius: DS.Radius.sm)
+                        .dsInputSurface(radius: DS.Radius.sm, focused: focusedField == .token)
                         .onSubmit { applyToken() }
-                    Button("应用") { applyToken() }
-                        .buttonStyle(.ds(.secondary, size: .small))
+                    Button(L10n.t("应用")) { applyToken() }
+                        .buttonStyle(.ds(tokenDirty ? .primary : .secondary, size: .small))
+                        .disabled(!tokenDirty)
                         .fixedSize()
                 }
             }
@@ -436,16 +442,21 @@ struct SettingsPage: View {
         SettingsCard {
             SettingsRow(title: "下载缓存", detail: "Hugging Face 缓存目录，留空用默认") {
                 HStack(spacing: 8) {
-                    TextField("默认使用 HF_HUB_CACHE", text: $cachePath)
+                    TextField(L10n.t("默认使用 HF_HUB_CACHE"), text: $cachePath)
                         .textFieldStyle(.plain)
                         .font(DS.Font.mono(11))
-                        .frame(minWidth: 120, idealWidth: 200, maxWidth: 220)
+                        .frame(minWidth: 120, idealWidth: 170, maxWidth: 195)
+                        .focused($focusedField, equals: .cachePath)
                         .padding(.horizontal, 9)
                         .frame(height: 28)
-                        .dsInputSurface(radius: DS.Radius.sm)
+                        .dsInputSurface(radius: DS.Radius.sm, focused: focusedField == .cachePath)
                         .onSubmit { applyCachePath() }
-                    Button("应用") { applyCachePath() }
-                        .buttonStyle(.ds(.secondary, size: .small))
+                    DSIconButton(systemName: "folder", help: "选择目录", size: 28, style: .outlined) {
+                        pickCacheDirectory()
+                    }
+                    Button(L10n.t("应用")) { applyCachePath() }
+                        .buttonStyle(.ds(cachePathDirty ? .primary : .secondary, size: .small))
+                        .disabled(!cachePathDirty)
                         .fixedSize()
                 }
             }
@@ -458,10 +469,10 @@ struct SettingsPage: View {
         SettingsCard {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("API 网关")
+                    Text(L10n.t("API 网关"))
                         .font(DS.Font.lg.weight(.semibold))
                         .foregroundStyle(DS.text)
-                    Text("OpenAI 与 Claude 双协议")
+                    Text(L10n.t("OpenAI 与 Claude 双协议"))
                         .font(DS.Font.xs)
                         .foregroundStyle(DS.text3)
                 }
@@ -479,6 +490,7 @@ struct SettingsPage: View {
                 .controlSize(.small)
                 .labelsHidden()
                 .tint(DS.accent)
+                .accessibilityLabel(L10n.t("API 网关"))
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -487,9 +499,10 @@ struct SettingsPage: View {
 
             SettingsRow(title: "网关端口", detail: "固定入口，客户端不用改") {
                 HStack(spacing: 8) {
-                    portInput($gatewayPort, placeholder: "9000", onSubmit: applyGatewayPort)
-                    Button("应用") { applyGatewayPort() }
-                        .buttonStyle(.ds(.secondary, size: .small))
+                    portInput($gatewayPort, placeholder: "9000", focus: .gatewayPort, onSubmit: applyGatewayPort)
+                    Button(L10n.t("应用")) { applyGatewayPort() }
+                        .buttonStyle(.ds(gatewayPortDirty ? .primary : .secondary, size: .small))
+                        .disabled(!gatewayPortDirty)
                         .fixedSize()
                 }
             }
@@ -521,6 +534,7 @@ struct SettingsPage: View {
                 .controlSize(.small)
                 .labelsHidden()
                 .tint(DS.accent)
+                .accessibilityLabel(L10n.t("命令行接口"))
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -529,9 +543,10 @@ struct SettingsPage: View {
 
             SettingsRow(title: "控制端口", detail: "被占用时会自动顺延，实际端口写在 control.json") {
                 HStack(spacing: 8) {
-                    portInput($controlPort, placeholder: "9100", onSubmit: applyControlPort)
-                    Button("应用") { applyControlPort() }
-                        .buttonStyle(.ds(.secondary, size: .small))
+                    portInput($controlPort, placeholder: "9100", focus: .controlPort, onSubmit: applyControlPort)
+                    Button(L10n.t("应用")) { applyControlPort() }
+                        .buttonStyle(.ds(controlPortDirty ? .primary : .secondary, size: .small))
+                        .disabled(!controlPortDirty)
                         .fixedSize()
                 }
             }
@@ -539,8 +554,8 @@ struct SettingsPage: View {
             DSDivider()
 
             SettingsRow(title: "命令行工具", detail: "在终端运行 flashcat --help 查看全部命令") {
-                Button("复制") {
-                    state.copy("flashcat --help", label: "命令行用法已复制")
+                Button(L10n.t("复制")) {
+                    state.copy("flashcat --help", label: L10n.t("命令行用法已复制"))
                 }
                 .buttonStyle(.ds(.secondary, size: .small))
             }
@@ -551,7 +566,7 @@ struct SettingsPage: View {
     /// not the one serving right now. Say so instead of showing a model id that
     /// looks like the live selection.
     private var defaultModelDetail: String {
-        guard let selection = state.defaultSelection else { return "未选择" }
+        guard let selection = state.defaultSelection else { return L10n.t("未选择") }
         let name = state.shortModelName(selection.model)
         guard selection.engine != state.activeEngine else { return name }
         return L10n.format("%@ · %@（下次启动）", name, selection.engine.displayName)
@@ -637,6 +652,7 @@ struct SettingsPage: View {
                 .controlSize(.small)
                 .labelsHidden()
                 .tint(DS.accent)
+                .accessibilityLabel(L10n.t("图像模型常驻"))
             }
         }
     }
@@ -652,38 +668,41 @@ struct SettingsPage: View {
             SettingsRow(
                 title: "对话参数",
                 detail: L10n.format(
-                    "温度 %.1f · Top P %.2f · 最大输出 %lld", state.settings.temperature, state.settings.topP,
-                    state.effectiveMaxTokens)
+                    "温度 %.1f · Top P %.2f · 最大输出 %lld",
+                    storedTemperature,
+                    storedTopP,
+                    Int64(storedMaxTokens > 0 ? storedMaxTokens : state.effectiveMaxTokens))
             ) {
-                Button("调整") { showsChatParameters = true }
+                Button(L10n.t("调整")) { showsChatParameters = true }
                     .buttonStyle(.ds(.secondary, size: .small))
             }
             DSDivider()
             SettingsRow(title: "首次启动引导", detail: "重新打开引擎安装页") {
-                Button("打开") { state.showsLaunchPage = true }
+                Button(L10n.t("打开")) { state.showsLaunchPage = true }
                     .buttonStyle(.ds(.secondary, size: .small))
             }
             DSDivider()
-            SettingsRow(title: "恢复默认", detail: "外观、背景、启动与网关设置") {
-                Button("恢复") {
-                    state.theme.set(.system)
-                    background.clear()
-                    background.opacity = 0.35
-                    background.blur = 18
-                    state.settings.setAutoStart(false)
-                    state.settings.setGatewayEnabled(true)
-                    state.settings.setGatewayPort(9000)
-                    state.settings.setControlAPIEnabled(true)
-                    state.settings.setControlPort(9100)
-                    state.resetChatParameters()
-                    state.applyGatewaySettings()
-                    state.applyControlSettings()
-                    load()
-                    state.toast("已恢复默认设置")
+            SettingsRow(title: "恢复默认", detail: "外观、启动、网关、控制接口与默认对话参数") {
+                Button(L10n.t("恢复")) {
+                    confirmingResetDefaults = true
                 }
                 .buttonStyle(.ds(.secondary, size: .small))
             }
         }
+    }
+
+    private func resetAllDefaults() {
+        state.theme.set(.system)
+        state.settings.setAutoStart(false)
+        state.settings.setGatewayEnabled(true)
+        state.settings.setGatewayPort(9000)
+        state.settings.setControlAPIEnabled(true)
+        state.settings.setControlPort(9100)
+        state.resetChatParameters()
+        state.applyGatewaySettings()
+        state.applyControlSettings()
+        load()
+        state.toast(L10n.t("已恢复默认设置"))
     }
 
     private func infoRow(_ title: String, detail: String, trailing: String) -> some View {

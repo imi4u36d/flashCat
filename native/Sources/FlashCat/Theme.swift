@@ -90,9 +90,6 @@ final class ThemeController: ObservableObject {
     /// （`willBeginSheetNotification` 发得太早，`attachedSheet` 还是 nil），
     /// 所以在每个 update 循环末尾补一次：只挑真正没皮肤的 sheet 窗口。
     nonisolated(unsafe) private var sheetObserver: NSObjectProtocol?
-    /// 桌面壁纸变化没有一个稳定的公开通知名，但系统实际会广播这个；
-    /// 监听它只是为了在壁纸切换后强制窗口重画，避免透明/玻璃层留下残影。
-    nonisolated(unsafe) private var desktopObserver: NSObjectProtocol?
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -106,9 +103,6 @@ final class ThemeController: ObservableObject {
         if let themeObserver { DistributedNotificationCenter.default().removeObserver(themeObserver) }
         if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) }
         if let sheetObserver { NotificationCenter.default.removeObserver(sheetObserver) }
-        if let desktopObserver {
-            NSWorkspace.shared.notificationCenter.removeObserver(desktopObserver)
-        }
     }
 
     func set(_ value: AppAppearance) {
@@ -172,10 +166,7 @@ final class ThemeController: ObservableObject {
             if window.contentView?.appearance !== skin {
                 window.contentView?.appearance = skin
             }
-            // 没有自定义图片时，透明度滑杆代表「透出桌面」。此时窗口需要非不透明，
-            // 但必须由全窗口的 NSVisualEffectView 兜底（见 DesktopBackdrop），
-            // 否则切换壁纸/外观后会残留旧画面。有图片时保持不透明画布，
-            // 避免桌面和图片叠在一起。具体逻辑与背景参数共用一份，见 BackgroundSurface。
+            // 主窗口始终保持不透明纯实色 ZCode 画布，底色随 contentView 外观同步更新。
             BackgroundSurface.shared.applyWindowSurface(to: window)
         } else if window.appearance !== skinAppearance {
             // sheet / 提示框这类独立窗口没有承载皮肤的层级，也不跟主窗口共享
@@ -201,13 +192,6 @@ final class ThemeController: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshSystemAppearance() }
-        }
-        desktopObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSNotification.Name("NSWorkspaceDesktopImageChangedNotification"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshWindowSurface() }
         }
         sheetObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didUpdateNotification,
@@ -236,17 +220,6 @@ final class ThemeController: ObservableObject {
         }
         guard mode == .system else { return }
         apply()
-    }
-
-    /// 壁纸切换后让主窗口重新解析外观并重排一次，清掉窗口服务器留下的旧画面。
-    private func refreshWindowSurface() {
-        for window in NSApp.windows where window.canBecomeMain {
-            apply(to: window)
-            window.contentView?.needsLayout = true
-            window.contentView?.needsDisplay = true
-            window.contentView?.layoutSubtreeIfNeeded()
-            window.contentView?.displayIfNeeded()
-        }
     }
 }
 

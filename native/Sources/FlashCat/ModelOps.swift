@@ -214,6 +214,13 @@ final class ModelOps {
         pendingRecommendedDownload = (engine: engine, model: pick.model)
     }
 
+    /// 记住用户选中的推荐引擎，等安装完 `adoptEngine` 时自动拉取推荐模型；
+    /// 刻意不在这里关掉推荐页，让用户在原位看到实时安装进度。
+    func armRecommendedDownload(for engine: EngineID) {
+        guard let pick = hardwareRecommendation?.pick(for: engine) else { return }
+        pendingRecommendedDownload = (engine: engine, model: pick.model)
+    }
+
     /// The recommendation tag the model page puts on a catalog entry, if this
     /// Mac was told to run that entry on that engine.
     ///
@@ -472,7 +479,8 @@ final class ModelOps {
                 engine: engine,
                 model: id,
                 draftRepository: draft,
-                cache: settings.hfCache)
+                cache: settings.hfCache,
+                source: HubSource.downloadSource)
         } catch {
             notice = (error as? ModelInstaller.Failure)?.message ?? "\(error)"
             return false
@@ -489,7 +497,7 @@ final class ModelOps {
     @discardableResult
     func downloadShared(
         _ repo: String, engines: [EngineID],
-        source: HubSource = .huggingFace,
+        source: HubSource = HubSource.downloadSource,
         include: [String] = []
     ) -> Bool {
         guard downloadingModel == nil else {
@@ -524,7 +532,9 @@ final class ModelOps {
             notice = (error as? ModelInstaller.Failure)?.message ?? "\(error)"
             return false
         }
-        return downloads.startDownload(plan, engine: engines.first ?? libraryEngine, id: target, shared: engines)
+        return downloads.startDownload(
+            plan, engine: engines.first ?? libraryEngine, id: target,
+            shared: engines, source: source, include: include.isEmpty ? nil : include)
     }
 
     /// 改一个共享模型能被哪些引擎看见：写授权表并同步链接，模型页随即重算。
@@ -648,7 +658,11 @@ final class ModelOps {
     func resumeDownload(_ task: ModelDownloadTask) {
         // 下进公共目录的任务要回到公共目录，否则续传会另起一份到引擎目录里。
         if let engines = task.shared, !engines.isEmpty {
-            downloadShared(task.model, engines: engines)
+            downloadShared(
+                task.model,
+                engines: engines,
+                source: task.source ?? HubSource.downloadSource,
+                include: task.include ?? [])
             return
         }
         downloadModel(task.model, engine: task.engine)

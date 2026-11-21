@@ -10,14 +10,57 @@ struct EngineConfigSheet: View {
     @ObservedObject var state: AppState
     let engine: EngineID
 
+    private enum ConfigField: Hashable {
+        case port
+        case maxMemory
+        case maxContext
+        case pleMemory
+        case mtpDepth
+        case mtpQuantBits
+        case prefixCacheDiskGB
+        case thinkingBudget
+        case extraArguments
+    }
+
     @Environment(\.dismiss) private var dismiss
     @State private var tuning = EngineTuning()
     @State private var portText = ""
     @State private var loaded = false
+    @FocusState private var focusedField: ConfigField?
 
     private var controller: EngineController? { state.engines?.controller(engine) }
     private var installedVersion: String? { controller?.installation.version }
     private var isActive: Bool { state.activeEngine == engine }
+
+    private var parsedPort: Int? {
+        guard let port = Int(portText.trimmingCharacters(in: .whitespaces)),
+            engine.portRange.contains(port)
+        else { return nil }
+        return port
+    }
+
+    private var portValidationError: String? {
+        parsedPort == nil
+            ? L10n.format(
+                "端口需在 %lld–%lld 之间",
+                Int64(engine.portRange.lowerBound),
+                Int64(engine.portRange.upperBound))
+            : nil
+    }
+
+    private var hasSwitchesCard: Bool {
+        switch engine.adapter {
+        case .splash, .omlx, .mtplx: return true
+        default: return false
+        }
+    }
+
+    private var supportsThinkingBudget: Bool {
+        switch engine.adapter {
+        case .splash, .omlx, .mtplx: return true
+        default: return false
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,7 +69,9 @@ struct EngineConfigSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     portCard
-                    switchesCard
+                    if hasSwitchesCard {
+                        switchesCard
+                    }
                     prefixCacheCard
                     advancedCard
                 }
@@ -36,7 +81,7 @@ struct EngineConfigSheet: View {
             DSDivider()
             footer
         }
-        .frame(width: 580, height: 640)
+        .frame(width: 560, height: 540)
         .sheetCanvas()
         .onAppear(perform: load)
     }
@@ -51,7 +96,12 @@ struct EngineConfigSheet: View {
                         .foregroundStyle(DS.text)
                     if isActive { Tag(text: "当前引擎", tone: .success) }
                 }
-                Text("\(installedVersion ?? L10n.t("未安装")) · 端口 \(portText.isEmpty ? "—" : portText)")
+                Text(
+                    L10n.format(
+                        "%@ · 端口 %@",
+                        installedVersion ?? L10n.t("未安装"),
+                        portText.isEmpty ? "—" : portText)
+                )
                     .font(DS.Font.xs)
                     .foregroundStyle(DS.text3)
             }
@@ -64,18 +114,31 @@ struct EngineConfigSheet: View {
 
     private var portCard: some View {
         Card("端口", subtitle: "只监听 127.0.0.1；同一段内会跳过被占领的端口") {
-            HStack(spacing: 10) {
-                TextField("端口", text: $portText)
-                    .textFieldStyle(.plain)
-                    .font(DS.Font.mono(11.5))
-                    .padding(.horizontal, 8)
-                    .frame(width: 110, height: 28)
-                    .background(DS.rect(DS.Radius.md).fill(DS.bg))
-                    .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line2, lineWidth: 1))
-                Text("默认 \(engine.defaultPort) · 允许 \(engine.portRange.lowerBound)–\(engine.portRange.upperBound)")
-                    .font(DS.Font.xs)
-                    .foregroundStyle(DS.text3)
-                Spacer(minLength: 0)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 10) {
+                    TextField("端口", text: $portText)
+                        .textFieldStyle(.plain)
+                        .font(DS.Font.mono(11.5))
+                        .padding(.horizontal, 8)
+                        .frame(width: 110, height: 28)
+                        .dsInputSurface(radius: DS.Radius.sm, focused: focusedField == .port)
+                        .focused($focusedField, equals: .port)
+                    Text(
+                        L10n.format(
+                            "默认 %lld · 允许 %lld–%lld",
+                            Int64(engine.defaultPort),
+                            Int64(engine.portRange.lowerBound),
+                            Int64(engine.portRange.upperBound))
+                    )
+                        .font(DS.Font.xs)
+                        .foregroundStyle(DS.text3)
+                    Spacer(minLength: 0)
+                }
+                if let portValidationError {
+                    Text(portValidationError)
+                        .font(DS.Font.xs)
+                        .foregroundStyle(DS.err)
+                }
             }
         }
     }
@@ -85,41 +148,77 @@ struct EngineConfigSheet: View {
             VStack(alignment: .leading, spacing: 2) {
                 switch engine.adapter {
                 case .splash:
+                    let explicitPLE = !(tuning.pleMemory ?? "").trimmingCharacters(in: .whitespaces).isEmpty
                     toggle("DFlash2 投机解码", binding: $tuning.dflash, default: EngineTuning.defaults(for: engine).dflash)
-                    textField("最大内存", text: optionalText(\.maxMemory), placeholder: "24G")
-                    textField("最大上下文", text: optionalText(\.maxContext), placeholder: "256K")
-                    textField("PLE 内存", text: optionalText(\.pleMemory), placeholder: "2G / off")
+                    textField("最大内存", text: optionalText(\.maxMemory), placeholder: "24G", field: .maxMemory)
+                    textField("最大上下文", text: optionalText(\.maxContext), placeholder: "256K", field: .maxContext)
+                    textField("PLE 内存", text: optionalText(\.pleMemory), placeholder: "2G / off", field: .pleMemory)
                     toggle(
                         "关闭视觉预处理", binding: $tuning.languageOnly, default: false,
                         detail: "language-only：跳过视觉侧准备，纯文本更快")
                     toggle(
                         "常驻权重", binding: $tuning.idleReleaseOff, default: false,
                         detail: "idle-release off：空闲时不卸下权重")
-                    toggle("PLE 表常驻 SSD", binding: $tuning.pleSSDOffload, default: true)
+                    toggle(
+                        "PLE 表常驻 SSD",
+                        binding: $tuning.pleSSDOffload,
+                        default: EngineTuning.defaults(for: engine).pleSSDOffload ?? true,
+                        detail: "留空「PLE 内存」时生效"
+                    )
+                    .disabled(explicitPLE)
+                    .opacity(explicitPLE ? 0.5 : 1)
                 case .omlx:
-                    toggle("MTP 预测", binding: $tuning.mtp, default: true)
-                    toggle("DFlash 草稿", binding: $tuning.dflash, default: false)
-                    toggle("PLE 表常驻 SSD", binding: $tuning.pleSSDOffload, default: true)
+                    let defaults = EngineTuning.defaults(for: engine)
+                    let mtpEnabled = tuning.mtp ?? defaults.mtp ?? true
+                    let dflashEnabled = tuning.dflash ?? defaults.dflash ?? false
+                    toggleRow(
+                        "MTP 预测",
+                        isOn: Binding(
+                            get: { mtpEnabled },
+                            set: { on in
+                                tuning.mtp = on
+                                if on { tuning.dflash = false }
+                            }),
+                        detail: nil
+                    )
+                    toggleRow(
+                        "DFlash 草稿",
+                        isOn: Binding(
+                            get: { dflashEnabled },
+                            set: { on in
+                                tuning.dflash = on
+                                if on { tuning.mtp = false }
+                            }),
+                        detail: nil
+                    )
+                    if !dflashEnabled && mtpEnabled {
+                        intField("MTP 深度", value: $tuning.mtpDepth, placeholder: "自适应", field: .mtpDepth)
+                    }
+                    toggle(
+                        "PLE 表常驻 SSD",
+                        binding: $tuning.pleSSDOffload,
+                        default: defaults.pleSSDOffload ?? true)
                 case .mtplx:
-                    toggle("预加载 MTP 头", binding: $tuning.loadMtp, default: true)
-                    intField("MTP 深度", value: $tuning.mtpDepth, placeholder: "自适应")
-                    intField("MTP 头量化位宽", value: $tuning.mtpQuantBits, placeholder: "引擎默认")
+                    let defaults = EngineTuning.defaults(for: engine)
+                    toggle("MTP 预测", binding: $tuning.mtp, default: defaults.mtp ?? true)
+                    toggle("预加载 MTP 头", binding: $tuning.loadMtp, default: defaults.loadMtp ?? true)
+                    intField("MTP 头量化位宽", value: $tuning.mtpQuantBits, placeholder: "引擎默认", field: .mtpQuantBits)
                 default:
-                    toggle("MTP 预测", binding: $tuning.mtp, default: true)
+                    EmptyView()
                 }
             }
         }
     }
 
     /// The disk tier is what turns "the app restarted, so the whole session is
-    /// re-prefilled from zero" into a restore. Only the engines that have one
+    /// re-prefilled from zero" into a restore. Only the adapters that have one
     /// get the card; strata serves without a prefix cache.
     @ViewBuilder
     private var prefixCacheCard: some View {
-        if engine != .strata {
+        if engine.adapter != .strata {
             Card("前缀缓存", subtitle: "把见过的前缀写到 SSD；App 重启后恢复而不是重算") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Toggle(isOn: prefixCacheEnabled) {
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(L10n.t("落盘"))
                                 .font(DS.Font.md)
@@ -128,13 +227,21 @@ struct EngineConfigSheet: View {
                                 .font(DS.Font.xs)
                                 .foregroundStyle(DS.text3)
                         }
+                        Spacer(minLength: 8)
+                        Toggle("", isOn: prefixCacheEnabled)
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .labelsHidden()
+                            .tint(DS.accent)
+                            .accessibilityLabel(L10n.t("落盘"))
                     }
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .tint(DS.accent)
 
                     if prefixCacheEnabled.wrappedValue {
-                        intField("磁盘预算 (GB)", value: $tuning.prefixCacheDiskGB, placeholder: "20")
+                        intField(
+                            "磁盘预算 (GB)",
+                            value: $tuning.prefixCacheDiskGB,
+                            placeholder: "20",
+                            field: .prefixCacheDiskGB)
                         Text(FlashCatPaths.prefixCacheDirectory(engine))
                             .font(DS.Font.mono(10))
                             .foregroundStyle(DS.text3)
@@ -154,7 +261,8 @@ struct EngineConfigSheet: View {
             set: { on in
                 guard !on else {
                     let fallback = EngineTuning.defaults(for: engine).prefixCacheDiskGB ?? 20
-                    tuning.prefixCacheDiskGB = tuning.prefixCacheDiskGB ?? fallback
+                    let current = tuning.prefixCacheDiskGB ?? 0
+                    tuning.prefixCacheDiskGB = current > 0 ? current : fallback
                     return
                 }
                 tuning.prefixCacheDiskGB = 0
@@ -162,21 +270,27 @@ struct EngineConfigSheet: View {
     }
 
     private var advancedCard: some View {
-        Card("高级", subtitle: "思考预算与额外命令行参数") {
+        Card("高级", subtitle: supportsThinkingBudget ? "思考预算与额外命令行参数" : "额外命令行参数") {
             VStack(alignment: .leading, spacing: 8) {
-                intField("思考 token 预算", value: $tuning.thinkingBudget, placeholder: "不限制")
-                HStack(alignment: .center, spacing: 8) {
+                if supportsThinkingBudget {
+                    intField(
+                        "思考 token 预算",
+                        value: $tuning.thinkingBudget,
+                        placeholder: "不限制",
+                        field: .thinkingBudget)
+                }
+                HStack(alignment: .center, spacing: 10) {
                     Text("额外参数")
                         .font(DS.Font.md)
-                        .foregroundStyle(DS.text2)
-                        .frame(width: 96, alignment: .leading)
+                        .foregroundStyle(DS.text)
+                        .frame(width: 110, alignment: .leading)
                     TextField("--flag value", text: optionalText(\.extraArguments))
                         .textFieldStyle(.plain)
                         .font(DS.Font.mono(11.5))
                         .padding(.horizontal, 8)
                         .frame(height: 28)
-                        .background(DS.rect(DS.Radius.md).fill(DS.bg))
-                        .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line2, lineWidth: 1))
+                        .dsInputSurface(radius: DS.Radius.sm, focused: focusedField == .extraArguments)
+                        .focused($focusedField, equals: .extraArguments)
                 }
             }
         }
@@ -186,6 +300,7 @@ struct EngineConfigSheet: View {
         HStack(spacing: 10) {
             Button("恢复默认") {
                 tuning = EngineTuning.defaults(for: engine)
+                portText = String(engine.defaultPort)
             }
             .buttonStyle(.ds(.secondary, size: .regular))
             Spacer(minLength: 0)
@@ -194,6 +309,7 @@ struct EngineConfigSheet: View {
                     .buttonStyle(.ds(.secondary, size: .regular))
                 Button("保存") { save() }
                     .buttonStyle(.ds(.primary, size: .regular))
+                    .disabled(parsedPort == nil)
             }
         }
         .padding(.horizontal, 18)
@@ -206,6 +322,15 @@ struct EngineConfigSheet: View {
         _ title: String, binding: Binding<Bool?>, default fallback: Bool? = nil,
         detail: String? = nil
     ) -> some View {
+        toggleRow(
+            title,
+            isOn: Binding(
+                get: { binding.wrappedValue ?? fallback ?? false },
+                set: { binding.wrappedValue = $0 }),
+            detail: detail)
+    }
+
+    private func toggleRow(_ title: String, isOn: Binding<Bool>, detail: String?) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(L10n.t(title))
@@ -218,21 +343,22 @@ struct EngineConfigSheet: View {
                 }
             }
             Spacer(minLength: 8)
-            Toggle(
-                "",
-                isOn: Binding(
-                    get: { binding.wrappedValue ?? fallback ?? false },
-                    set: { binding.wrappedValue = $0 })
-            )
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .labelsHidden()
-            .tint(DS.accent)
+            Toggle("", isOn: isOn)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+                .tint(DS.accent)
+                .accessibilityLabel(L10n.t(title))
         }
         .padding(.vertical, 5)
     }
 
-    private func textField(_ title: String, text: Binding<String>, placeholder: String) -> some View {
+    private func textField(
+        _ title: String,
+        text: Binding<String>,
+        placeholder: String,
+        field: ConfigField
+    ) -> some View {
         HStack(spacing: 10) {
             Text(L10n.t(title))
                 .font(DS.Font.md)
@@ -243,13 +369,18 @@ struct EngineConfigSheet: View {
                 .font(DS.Font.mono(11.5))
                 .padding(.horizontal, 8)
                 .frame(height: 28)
-                .background(DS.rect(DS.Radius.md).fill(DS.bg))
-                .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line2, lineWidth: 1))
+                .dsInputSurface(radius: DS.Radius.sm, focused: focusedField == field)
+                .focused($focusedField, equals: field)
         }
         .padding(.vertical, 3)
     }
 
-    private func intField(_ title: String, value: Binding<Int?>, placeholder: String) -> some View {
+    private func intField(
+        _ title: String,
+        value: Binding<Int?>,
+        placeholder: String,
+        field: ConfigField
+    ) -> some View {
         HStack(spacing: 10) {
             Text(L10n.t(title))
                 .font(DS.Font.md)
@@ -259,14 +390,21 @@ struct EngineConfigSheet: View {
                 placeholder,
                 text: Binding(
                     get: { value.wrappedValue.map(String.init) ?? "" },
-                    set: { value.wrappedValue = Int($0.trimmingCharacters(in: .whitespaces)) })
+                    set: { raw in
+                        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+                        if trimmed.isEmpty {
+                            value.wrappedValue = nil
+                        } else if let parsed = Int(trimmed) {
+                            value.wrappedValue = parsed
+                        }
+                    })
             )
             .textFieldStyle(.plain)
             .font(DS.Font.mono(11.5))
             .padding(.horizontal, 8)
             .frame(width: 140, height: 28)
-            .background(DS.rect(DS.Radius.md).fill(DS.bg))
-            .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line2, lineWidth: 1))
+            .dsInputSurface(radius: DS.Radius.sm, focused: focusedField == field)
+            .focused($focusedField, equals: field)
             Spacer(minLength: 0)
         }
         .padding(.vertical, 3)
@@ -287,15 +425,19 @@ struct EngineConfigSheet: View {
     }
 
     private func save() {
+        guard let port = parsedPort else { return }
+        let previousPort = EngineStore.shared.configuration(for: engine).port ?? engine.defaultPort
+        let portChanged = port != previousPort
         EngineStore.shared.setTuning(tuning.sanitized(), for: engine)
-        if let port = Int(portText.trimmingCharacters(in: .whitespaces)),
-            (1024...65535).contains(port),
-            port != (EngineStore.shared.configuration(for: engine).port ?? engine.defaultPort)
-        {
+        if portChanged {
             state.switchEnginePort(engine, port: port)
         }
         Task { await state.engines?.controller(engine)?.reapplyTuning() }
-        state.toast(L10n.format("%@ 的配置已保存", engine.displayName))
+        if isActive && state.isRunning && (portChanged || engine.adapter != .omlx) {
+            state.toast(L10n.format("%@ 的配置已保存，重启引擎后生效", engine.displayName))
+        } else {
+            state.toast(L10n.format("%@ 的配置已保存", engine.displayName))
+        }
         dismiss()
     }
 }

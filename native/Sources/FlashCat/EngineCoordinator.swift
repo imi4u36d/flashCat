@@ -195,6 +195,18 @@ final class EngineCoordinator {
         host.messages = host.conversation.load()
         // 旧版本留下的重复线程只在启动时清理一次，之后都走缓存。
         host.threads = host.history.load(pruneLegacy: true)
+        // 上次退出时的那段对话可能因为旧版 6 条上限被挤出了历史列表：
+        // 正文还在，但侧栏没有它、顶栏也没有改名 / 置顶入口。启动时补一条，
+        // 只在 id 确实缺失时写盘，已有条目不会被覆盖。
+        if !host.messages.isEmpty,
+            !host.threads.contains(where: { $0.id == host.currentThreadID })
+        {
+            host.history.save(
+                messages: host.messages,
+                threadID: host.currentThreadID,
+                updatedAt: host.messages.last?.createdAt ?? Date())
+            host.threads = host.history.load()
+        }
 
         attachEngines()
         // A crashed or force-quit session can leave an engine resident with its
@@ -393,7 +405,7 @@ final class EngineCoordinator {
     func confirmEngineInstall() {
         guard let host else { return }
         host.pendingEngineInstall = nil
-        host.section = .settings
+        host.section = .engines
     }
 
     func cancelEngineInstall() {
@@ -812,8 +824,7 @@ final class EngineCoordinator {
                 kind: .success,
                 transient: true)
         case .failed(let reason):
-            host.notice = reason
-            host.toast("模型切换失败，请查看日志")
+            host.notice = reason.isEmpty ? "模型切换失败，请查看日志" : reason
         }
     }
 

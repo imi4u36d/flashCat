@@ -195,8 +195,8 @@ final class StatusBarController: NSObject, NSWindowDelegate {
             }
             .store(in: &cancellables)
 
-        DistributedNotificationCenter.default()
-            .publisher(for: NSNotification.Name("AppleInterfaceThemeChangedNotification"))
+        state.theme.$systemIsDark
+            .removeDuplicates()
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.syncAppearance()

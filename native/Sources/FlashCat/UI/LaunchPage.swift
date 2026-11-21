@@ -11,41 +11,48 @@ import SwiftUI
 /// （没有可用运行时时）。安装完成由 `adoptEngine` 接管，页面自动让位给控制台。
 struct LaunchPage: View {
     @ObservedObject var state: AppState
+    @ObservedObject var installs: EngineInstallCenter
 
     @State private var busy: EngineID?
     @State private var appeared = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var installs: EngineInstallCenter { state.installs }
     private var recommendation: HardwareRecommendation? { state.hardwareRecommendation }
     private var isRecommendation: Bool { state.showsRecommendationPage }
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .top) {
             ConsoleBackdrop(accent: DS.accent)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    brand
-                        .launchEntrance(appeared, delay: 0, reduceMotion: reduceMotion)
-                    intro
-                        .launchEntrance(appeared, delay: 0.04, reduceMotion: reduceMotion)
-                    if isRecommendation, let recommendation {
-                        machineCard(recommendation)
-                            .launchEntrance(appeared, delay: 0.08, reduceMotion: reduceMotion)
-                        picks(recommendation)
-                    } else {
-                        engineList
+            VStack(spacing: 0) {
+                Color.clear
+                    .frame(height: DS.Layout.titlebarHeight)
+                    .background(WindowDragArea())
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        brand
+                            .launchEntrance(appeared, delay: 0, reduceMotion: reduceMotion)
+                        intro
+                            .launchEntrance(appeared, delay: 0.04, reduceMotion: reduceMotion)
+                        if isRecommendation, let recommendation {
+                            machineCard(recommendation)
+                                .launchEntrance(appeared, delay: 0.08, reduceMotion: reduceMotion)
+                            picks(recommendation)
+                        } else {
+                            engineList
+                        }
+                        footer
+                            .launchEntrance(appeared, delay: 0.16, reduceMotion: reduceMotion)
                     }
-                    footer
-                        .launchEntrance(appeared, delay: 0.16, reduceMotion: reduceMotion)
+                    .padding(.horizontal, 48)
+                    .padding(.top, 14)
+                    .padding(.bottom, 46)
+                    .frame(maxWidth: 820, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .center)
                 }
-                .padding(.horizontal, 48)
-                .padding(.vertical, 46)
-                .frame(maxWidth: 820, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .center)
+                .scrollIndicators(.never)
             }
-            .scrollIndicators(.never)
         }
         .onAppear { appeared = true }
         .task {
@@ -105,11 +112,18 @@ struct LaunchPage: View {
         }
     }
 
+    private func primaryPickEngineID(in recommendation: HardwareRecommendation) -> EngineID? {
+        let picks = EngineCatalog.allIDs.compactMap { recommendation.pick(for: $0) }
+        return picks.first(where: { $0.verdict == .good })?.engineID
+            ?? picks.first?.engineID
+    }
+
     private func picks(_ recommendation: HardwareRecommendation) -> some View {
-        VStack(spacing: 10) {
+        let primaryID = primaryPickEngineID(in: recommendation)
+        return VStack(spacing: 10) {
             ForEach(Array(EngineCatalog.allIDs.enumerated()), id: \.element) { index, id in
                 if let pick = recommendation.pick(for: id) {
-                    pickRow(pick)
+                    pickRow(pick, isPrimary: id == primaryID)
                         .launchEntrance(
                             appeared,
                             delay: 0.12 + Double(index) * 0.045,
@@ -119,9 +133,10 @@ struct LaunchPage: View {
         }
     }
 
-    private func pickRow(_ pick: HardwareRecommendation.Pick) -> some View {
+    private func pickRow(_ pick: HardwareRecommendation.Pick, isPrimary: Bool) -> some View {
         let id = pick.engineID
         let installed = id.map { state.engineIsInstalled($0) } ?? false
+        let failedMessage = id.flatMap { failureMessage(for: $0) }
         return HStack(spacing: 14) {
             IconTile(
                 symbol: id.map(engineSymbol) ?? "cpu",
@@ -142,10 +157,17 @@ struct LaunchPage: View {
                     .font(DS.Font.xs)
                     .foregroundStyle(DS.text3)
                     .lineLimit(2)
+                if let failedMessage {
+                    Text(failedMessage)
+                        .font(DS.Font.xs)
+                        .foregroundStyle(DS.err)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 8)
             if let id {
-                installButton(id, recommended: pick)
+                installButton(id, recommended: pick, isPrimary: isPrimary)
             }
         }
         .padding(14)
@@ -157,9 +179,10 @@ struct LaunchPage: View {
     }
 
     private var engineList: some View {
-        VStack(spacing: 10) {
+        let firstInstallable = EngineCatalog.allIDs.first { !state.engineIsInstalled($0) }
+        return VStack(spacing: 10) {
             ForEach(Array(EngineCatalog.allIDs.enumerated()), id: \.element) { index, id in
-                engineRow(id)
+                engineRow(id, isPrimary: installedCandidate == nil && id == firstInstallable)
                     .launchEntrance(
                         appeared,
                         delay: 0.10 + Double(index) * 0.045,
@@ -168,22 +191,30 @@ struct LaunchPage: View {
         }
     }
 
-    private func engineRow(_ id: EngineID) -> some View {
+    private func engineRow(_ id: EngineID, isPrimary: Bool) -> some View {
         let accent = engineAccent(id)
         let installed = state.engineIsInstalled(id)
+        let failedMessage = failureMessage(for: id)
         return HStack(spacing: 14) {
             IconTile(symbol: engineSymbol(id), color: accent, size: 34)
             VStack(alignment: .leading, spacing: 3) {
                 Text(id.displayName)
                     .font(DS.Font.md.weight(.semibold))
                     .foregroundStyle(DS.text)
-                Text(id.descriptor.summary)
+                Text(L10n.t(id.descriptor.summary))
                     .font(DS.Font.xs)
                     .foregroundStyle(DS.text3)
                     .lineLimit(2)
+                if let failedMessage {
+                    Text(failedMessage)
+                        .font(DS.Font.xs)
+                        .foregroundStyle(DS.err)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 8)
-            installButton(id, recommended: nil)
+            installButton(id, recommended: nil, isPrimary: isPrimary)
         }
         .padding(14)
         .dsSurface(
@@ -193,8 +224,19 @@ struct LaunchPage: View {
         )
     }
 
+    private func failureMessage(for id: EngineID) -> String? {
+        if case .failed(let message) = installs.phases[id] {
+            return message
+        }
+        return nil
+    }
+
     @ViewBuilder
-    private func installButton(_ id: EngineID, recommended: HardwareRecommendation.Pick?) -> some View {
+    private func installButton(
+        _ id: EngineID,
+        recommended: HardwareRecommendation.Pick?,
+        isPrimary: Bool
+    ) -> some View {
         let installed = state.engineIsInstalled(id)
         let phase = installs.phases[id] ?? .idle
         let fraction = installs.progress[id] ?? 0
@@ -218,14 +260,14 @@ struct LaunchPage: View {
                 } label: {
                     Text(L10n.t(recommended == nil ? "安装" : "安装并开始"))
                 }
-                .buttonStyle(.ds(.primary, size: .regular))
+                .buttonStyle(.ds(isPrimary ? .primary : .secondary, size: .regular))
                 .disabled(installs.building != nil || busy != nil)
                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
-        .animation(DS.Motion.smooth, value: installed)
-        .animation(DS.Motion.smooth, value: phase.isBusy)
-        .animation(DS.Motion.smooth, value: busy)
+        .animation(reduceMotion ? nil : DS.Motion.smooth, value: installed)
+        .animation(reduceMotion ? nil : DS.Motion.smooth, value: phase.isBusy)
+        .animation(reduceMotion ? nil : DS.Motion.smooth, value: busy)
     }
 
     private var footer: some View {
@@ -241,18 +283,19 @@ struct LaunchPage: View {
                 } label: {
                     Text("开始使用")
                 }
-                .buttonStyle(.ds(.primary, size: .large))
+                .buttonStyle(.ds(installedCandidate != nil ? .primary : .secondary, size: .large))
                 .help(
                     installedCandidate == nil
-                        ? "直接进入控制台，稍后再装引擎"
-                        : "以 \(installedCandidate?.displayName ?? "") 进入控制台")
+                        ? L10n.t("直接进入控制台，稍后再装引擎")
+                        : L10n.format("以 %@ 进入控制台", installedCandidate?.displayName ?? ""))
             }
 
             if let error = installs.indexError, !error.isEmpty {
                 Text(error)
                     .font(DS.Font.xs)
                     .foregroundStyle(DS.warn)
-                    .lineLimit(1)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
@@ -274,7 +317,8 @@ struct LaunchPage: View {
         if let id = installedCandidate {
             state.adoptEngine(id)
         } else {
-            // 淡出动画由 ConsoleShell 的 transition 统一驱动，这里不再各自 withAnimation。
+            // 未装引擎时先允许进入控制台浏览模型广场、日志与设置；后续仍可从引擎页安装。
+            state.dismissedInitialLaunch = true
             state.showsLaunchPage = false
         }
     }
@@ -286,7 +330,7 @@ struct LaunchPage: View {
         }
         busy = id
         if recommended != nil {
-            state.dismissRecommendation(engine: id)
+            state.armRecommendedDownload(for: id)
         }
         let center = installs
         center.onInstalled = { installed in
@@ -336,7 +380,7 @@ private struct LaunchEntrance: ViewModifier {
     func body(content: Content) -> some View {
         content
             .opacity(active ? 1 : 0)
-            .offset(y: active ? 0 : 12)
+            .offset(y: (active || reduceMotion) ? 0 : 12)
             .animation(reduceMotion ? nil : DS.Motion.smooth.delay(delay), value: active)
     }
 }
@@ -389,7 +433,7 @@ private struct LaunchProgressBadge: View {
                     .trim(from: 0, to: CGFloat(max(clamped, 0.06)))
                     .stroke(tint, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
-                    .animation(DS.Motion.smooth, value: clamped)
+                    .animation(reduceMotion ? nil : DS.Motion.smooth, value: clamped)
                 if !reduceMotion {
                     Circle()
                         .trim(from: 0, to: 0.18)
@@ -406,9 +450,9 @@ private struct LaunchProgressBadge: View {
                 .font(DS.Font.xs)
                 .foregroundStyle(DS.text2)
                 .lineLimit(1)
-                .frame(width: 96, alignment: .leading)
+                .frame(minWidth: 96, maxWidth: 160, alignment: .leading)
                 .contentTransition(.opacity)
-                .animation(DS.Motion.smooth, value: label)
+                .animation(reduceMotion ? nil : DS.Motion.smooth, value: label)
         }
         .padding(.horizontal, 10)
         .frame(height: 28)
@@ -421,5 +465,6 @@ private struct LaunchProgressBadge: View {
         .onAppear { spinning = true }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(label)
+        .accessibilityValue("\(Int((clamped * 100).rounded()))%")
     }
 }

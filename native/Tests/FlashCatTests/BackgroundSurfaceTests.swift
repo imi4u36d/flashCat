@@ -6,12 +6,7 @@ import XCTest
 
 @testable import FlashCat
 
-/// 背景参数要真的落到窗口和毛玻璃层上。
-///
-/// 这是那条「拖一个条，另一个条的改动才生效」的回归测试：窗口表面以前只在
-/// `DesktopBackdrop.updateNSView` 里更新，而入参只有 `blur`，所以只改透明度时
-/// 窗口一直是不透明的，桌面永远不出现，直到下一次拖模糊把它顺带刷出来。
-/// 现在参数一变（`didSet`）就必须立刻可见。
+/// 纯实色 ZCode 窗口画布：始终保持不透明，并按 `contentView` 的皮肤解析出静态 sRGB 底色。
 @MainActor
 final class BackgroundSurfaceTests: XCTestCase {
     private func makeWindow() -> NSWindow {
@@ -20,54 +15,33 @@ final class BackgroundSurfaceTests: XCTestCase {
             styleMask: [.titled], backing: .buffered, defer: false)
     }
 
-    func testOpacityAloneFlipsTheWindowSurface() {
-        let settings = BackgroundSettings.shared
-        let originalOpacity = settings.opacity
-        let originalBlur = settings.blur
-        defer {
-            settings.opacity = originalOpacity
-            settings.blur = originalBlur
-        }
-
+    func testWindowStaysOpaqueWithSolidCanvasColor() throws {
+        let light = try XCTUnwrap(NSAppearance(named: .aqua))
+        let dark = try XCTUnwrap(NSAppearance(named: .darkAqua))
         let window = makeWindow()
-        BackgroundSurface.shared.attach(window: window)
+        window.appearance = light
+        window.contentView?.appearance = light
+        window.isOpaque = false
+        window.backgroundColor = .clear
 
-        settings.opacity = 0
-        XCTAssertTrue(window.isOpaque, "透明度 0 时整窗按画布画，不该有桌面透出")
-
-        // 只动透明度：窗口必须立刻让位给桌面，不等任何视图重建。
-        settings.opacity = 0.85
-        XCTAssertFalse(window.isOpaque)
-        XCTAssertEqual(window.backgroundColor, .clear)
-
-        // 再收回去：画布重新不透明。
-        settings.opacity = 0
+        BackgroundSurface.shared.applyWindowSurface(to: window)
         XCTAssertTrue(window.isOpaque)
-        XCTAssertNotEqual(window.backgroundColor, .clear)
+        XCTAssertEqual(window.backgroundColor, BackgroundSurface.canvasColor(for: light))
+
+        window.contentView?.appearance = dark
+        BackgroundSurface.shared.applyWindowSurface(to: window)
+        XCTAssertTrue(window.isOpaque)
+        XCTAssertEqual(window.backgroundColor, BackgroundSurface.canvasColor(for: dark))
     }
 
-    func testBlurAloneReachesTheFrostLayer() {
-        let settings = BackgroundSettings.shared
-        let originalOpacity = settings.opacity
-        let originalBlur = settings.blur
-        defer {
-            settings.opacity = originalOpacity
-            settings.blur = originalBlur
-        }
+    func testLightAndDarkCanvasColorsAreDistinctStaticSRGB() throws {
+        let light = try XCTUnwrap(NSAppearance(named: .aqua))
+        let dark = try XCTUnwrap(NSAppearance(named: .darkAqua))
+        let lightColor = BackgroundSurface.canvasColor(for: light)
+        let darkColor = BackgroundSurface.canvasColor(for: dark)
 
-        let effect = NSVisualEffectView()
-        BackgroundSurface.shared.attach(effectView: effect)
-
-        settings.opacity = 0.5
-
-        settings.blur = 0
-        XCTAssertEqual(effect.alphaValue, 0, accuracy: 0.001)
-
-        // 只动模糊：毛玻璃强度立刻跟上。
-        settings.blur = 20
-        XCTAssertEqual(effect.alphaValue, 0.5, accuracy: 0.001)
-
-        settings.blur = 40
-        XCTAssertEqual(effect.alphaValue, 1, accuracy: 0.001)
+        XCTAssertNotEqual(lightColor, darkColor)
+        XCTAssertGreaterThan(lightColor.redComponent, 0.9)
+        XCTAssertLessThan(darkColor.redComponent, 0.15)
     }
 }

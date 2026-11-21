@@ -17,6 +17,7 @@ struct ModelsPage: View {
     @State private var removeTarget: ModelLibraryEntry?
     @State private var device = DeviceProfile.current()
     @State private var gridColumns = 0
+    @State private var rescanning = false
 
     private static let scrollTopAnchor = "models.scroll.top"
     private static let cardMinWidth: CGFloat = 320
@@ -34,7 +35,13 @@ struct ModelsPage: View {
         let filtered =
             text.isEmpty
             ? base
-            : base.filter { "\($0.model.shortName) \($0.model.id)".lowercased().contains(text) }
+            : base.filter { entry in
+                let tags = (entry.recommendation?.tags ?? []).joined(separator: " ")
+                let summary = entry.recommendation?.summary ?? ""
+                return "\(entry.model.shortName) \(entry.model.id) \(entry.engine.displayName) \(summary) \(tags)"
+                    .lowercased()
+                    .contains(text)
+            }
         // 使用中的模型置顶，其次是已下载的，最后是待下载的；组内保持原顺序。
         return filtered.enumerated()
             .sorted { lhs, rhs in
@@ -43,6 +50,13 @@ struct ModelsPage: View {
                 return l == r ? lhs.offset < rhs.offset : l < r
             }
             .map(\.element)
+    }
+
+    private var downloadCount: Int {
+        let pending = state.downloadTasks.filter { task in
+            !(task.model == state.downloadingModel && task.engine == state.downloadingEngine)
+        }.count
+        return pending + (state.downloadingModel == nil ? 0 : 1)
     }
 
     private var installedEntries: [ModelLibraryEntry] {
@@ -84,11 +98,9 @@ struct ModelsPage: View {
                             modelSection(title: splitSections ? "未下载" : nil, items: available)
                         }
                         if entries.isEmpty {
-                            Text(L10n.t("没有匹配的模型"))
-                                .font(DS.Font.sm)
-                                .foregroundStyle(DS.text3)
+                            emptyState
                                 .frame(maxWidth: .infinity)
-                                .padding(.vertical, 60)
+                                .padding(.vertical, 48)
                         }
                     }
                     .padding(.horizontal, Console.contentPadding)
@@ -104,23 +116,45 @@ struct ModelsPage: View {
             }
         }
         .padding(.bottom, Console.contentBottomInset)
-        .sheet(isPresented: $showingHub) { HubSheet(state: state, engine: scope.engine ?? engine) }
-        .sheet(isPresented: $showingDownloads) { DownloadCenterSheet(state: state) }
         .alert(
-            "删除 \(removeTarget?.model.shortName ?? "")？",
+            L10n.format("删除 %@？", removeTarget?.model.shortName ?? ""),
             isPresented: Binding(
                 get: { removeTarget != nil },
                 set: { if !$0 { removeTarget = nil } })
         ) {
-            Button("删除", role: .destructive) {
+            Button(L10n.t("删除"), role: .destructive) {
                 if let entry = removeTarget {
                     state.removeModel(entry.model.id, engine: entry.engine)
                 }
                 removeTarget = nil
             }
-            Button("取消", role: .cancel) { removeTarget = nil }
+            Button(L10n.t("取消"), role: .cancel) { removeTarget = nil }
         } message: {
             Text(removalMessage)
+        }
+    }
+
+    @ViewBuilder
+    private var emptyState: some View {
+        let hasQuery = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        VStack(spacing: 14) {
+            if hasQuery {
+                EmptyHint(
+                    icon: "magnifyingglass",
+                    title: "没有匹配的模型",
+                    detail: "换个关键词或切换引擎筛选试试。"
+                )
+                Button(L10n.t("清除筛选")) { query = "" }
+                    .buttonStyle(.ds(.secondary, size: .regular))
+            } else {
+                EmptyHint(
+                    icon: "square.stack.3d.up",
+                    title: "还没有本地模型",
+                    detail: "可以从模型广场浏览 Hugging Face / ModelScope 权重并下载。"
+                )
+                Button(L10n.t("打开模型广场"), action: openHub)
+                    .buttonStyle(.ds(.primary, size: .regular))
+            }
         }
     }
 
@@ -195,25 +229,54 @@ struct ModelsPage: View {
     private var actionControls: some View {
         HStack(spacing: 8) {
             Button {
-                showingHub = true
-                state.searchHub(
-                    state.hubQuery, sort: state.hubSort.rawValue,
-                    filter: state.hubFilter.rawValue, page: 0)
+                showingDownloads = true
             } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "arrow.down.circle")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(state.downloadingModel != nil ? DS.accent : DS.text2)
+                    Text(
+                        downloadCount > 0
+                            ? L10n.format("下载 %lld", Int64(downloadCount))
+                            : L10n.t("下载中心")
+                    )
+                }
+            }
+            .buttonStyle(.ds(.secondary, size: .regular))
+            .help(L10n.t("下载中心"))
+
+            Button(action: openHub) {
                 Label(L10n.t("模型广场"), systemImage: "sparkle.magnifyingglass")
             }
             .buttonStyle(.dsSecondary)
 
-            DSIconButton(systemName: "arrow.clockwise", help: "重新扫描", style: .outlined) {
+            DSIconButton(
+                systemName: "arrow.clockwise",
+                help: rescanning ? "正在扫描…" : "重新扫描",
+                style: .outlined
+            ) {
+                guard !rescanning else { return }
+                rescanning = true
                 let target = scope.engine ?? engine
                 _ = EngineModelStore.adoptExistingWeights(target)
                 state.reloadModels()
                 Task { @MainActor in
+                    defer { rescanning = false }
                     await state.engines?.controller(target)?.rescanModels()
                     state.reloadModels()
+                    state.toast(L10n.t("模型列表已刷新"))
                 }
             }
+            .disabled(rescanning)
         }
+    }
+
+    private func openHub() {
+        state.libraryEngine = scope.engine ?? engine
+        showingHub = true
+        state.searchHub(
+            state.hubQuery, sort: state.hubSort.rawValue,
+            filter: state.hubFilter.rawValue, page: 0)
     }
 
     private func isSelected(_ entry: ModelLibraryEntry) -> Bool {
@@ -258,6 +321,18 @@ private struct ModelCard: View {
         return nil
     }
 
+    private var isSwitchingThis: Bool {
+        state.switchingModel == model.id && state.activeEngine == entry.engine
+    }
+
+    private var capabilityBadge: (symbol: String, help: String)? {
+        let matched = state.engineModels(for: entry.engine).first(where: { $0.id == model.id })
+        if matched?.supportsVideo == true { return ("film", "视频模型") }
+        if matched?.supportsImage == true { return ("photo", "图像模型") }
+        if matched?.supportsVision == true || model.mmprojPath != nil { return ("eye", "视觉模型") }
+        return nil
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
@@ -277,16 +352,21 @@ private struct ModelCard: View {
         )
         .onHover { hovering = $0 }
         .contextMenu {
-            if !model.path.isEmpty {
-                Button("在 Finder 中显示") {
-                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: model.path)])
-                }
+            menuItems
+        }
+    }
+
+    @ViewBuilder
+    private var menuItems: some View {
+        if !model.path.isEmpty {
+            Button(L10n.t("在 Finder 中显示")) {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: model.path)])
             }
-            Button("复制模型 ID") { state.copy(model.id, label: "模型 ID 已复制") }
-            if entry.installed {
-                Divider()
-                Button("删除权重…", role: .destructive, action: remove)
-            }
+        }
+        Button(L10n.t("复制模型 ID")) { state.copy(model.id, label: L10n.t("模型 ID 已复制")) }
+        if entry.installed {
+            Divider()
+            Button(L10n.t("删除权重…"), role: .destructive, action: remove)
         }
     }
 
@@ -294,13 +374,22 @@ private struct ModelCard: View {
         HStack(alignment: .center, spacing: 10) {
             ModelFamilyIcon(family: family, size: 32)
             VStack(alignment: .leading, spacing: 2) {
-                Text(titleName)
-                    .font(DS.Font.md.weight(.semibold))
-                    .tracking(-0.15)
-                    .foregroundStyle(DS.text)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .help(titleHelp)
+                HStack(spacing: 5) {
+                    Text(titleName)
+                        .font(DS.Font.md.weight(.semibold))
+                        .tracking(-0.15)
+                        .foregroundStyle(DS.text)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .help(titleHelp)
+                    if let capability = capabilityBadge {
+                        Image(systemName: capability.symbol)
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(DS.text3)
+                            .help(L10n.t(capability.help))
+                            .accessibilityLabel(L10n.t(capability.help))
+                    }
+                }
                 Text(metaLine)
                     .font(DS.Font.mono(11))
                     .foregroundStyle(DS.text2)
@@ -311,17 +400,9 @@ private struct ModelCard: View {
             DSMenu(kind: .icon, size: .small) {
                 DSMenuTriggerLabel(systemImage: "ellipsis", kind: .icon, size: .small)
                     .opacity(hovering || selected ? 1 : 0.45)
+                    .accessibilityLabel(L10n.t("更多操作"))
             } content: {
-                if !model.path.isEmpty {
-                    Button("在 Finder 中显示") {
-                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: model.path)])
-                    }
-                }
-                Button("复制模型 ID") { state.copy(model.id, label: "模型 ID 已复制") }
-                if entry.installed {
-                    Divider()
-                    Button("删除权重…", role: .destructive, action: remove)
-                }
+                menuItems
             }
         }
     }
@@ -419,15 +500,19 @@ private struct ModelCard: View {
 
     @ViewBuilder private var action: some View {
         if let fraction = activeFraction {
+            let preparing = state.downloadFraction == nil || (fraction == 0 && state.downloadSpeed == 0)
             Button {
                 state.pauseDownload()
             } label: {
                 Label(
-                    L10n.format("下载 %@", fraction.formatted(.percent.precision(.fractionLength(0)))),
+                    preparing
+                        ? L10n.t("准备中…")
+                        : L10n.format("下载 %@", fraction.formatted(.percent.precision(.fractionLength(0)))),
                     systemImage: "pause.fill")
             }
             .buttonStyle(.ds(.secondary, size: .small))
         } else if let task {
+            let busy = state.downloadingModel != nil
             Button {
                 state.resumeDownload(task)
             } label: {
@@ -438,8 +523,23 @@ private struct ModelCard: View {
                     systemImage: "play.fill")
             }
             .buttonStyle(.ds(.secondary, size: .small))
+            .disabled(busy)
+            .help(
+                busy
+                    ? L10n.t("已有下载任务进行中，请稍候")
+                    : L10n.t(task.status == .paused ? "继续下载" : "重试")
+            )
         } else if entry.installed {
-            if selected {
+            if isSwitchingThis {
+                HStack(spacing: 5) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.65)
+                    Text(L10n.t(state.switchStage.isEmpty ? "加载中" : state.switchStage))
+                        .font(DS.Font.xs.weight(.medium))
+                        .foregroundStyle(DS.warn)
+                }
+            } else if selected {
                 DSChip(text: "使用中", dot: DS.ok, live: true, tint: DS.ok)
             } else {
                 Button {
@@ -448,6 +548,7 @@ private struct ModelCard: View {
                     Text(L10n.t("使用"))
                 }
                 .buttonStyle(.ds(.secondary, size: .small))
+                .disabled(state.isSwitchingModel)
             }
         } else {
             Button {

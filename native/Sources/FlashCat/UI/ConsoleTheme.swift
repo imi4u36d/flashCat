@@ -110,51 +110,12 @@ enum Console {
 
 struct ConsoleBackdrop: View {
     var accent: Color = Console.accent
-    @Environment(\.colorScheme) private var scheme
-    @ObservedObject private var background = BackgroundSettings.shared
 
     var body: some View {
-        ZStack {
-            // ZCode 风格纯色静谧画布（去除装饰性环境光晕）；
-            // 没有自定义图片时按「APP 透明度」让出桌面：0 = 完全不透明，1 = 完全透出桌面。
-            DS.canvas
-                .opacity(background.image == nil ? 1 - background.desktopReveal : 1)
-
-            if let image = background.image {
-                // 用透明视图定尺寸、图片只做 overlay：避免 `scaledToFill` 的图片把
-                // 画布撑高，进而把整个界面顶上去。
-                Color.clear
-                    .overlay {
-                        Image(nsImage: image)
-                            .resizable()
-                            .interpolation(.high)
-                            .scaledToFill()
-                            // 柔化：保留照片质感，又不让细节和高对比线条
-                            // 直接和侧栏、页面文字抢视觉。半径可在设置里调整。
-                            .blur(radius: background.blur)
-                            .scaleEffect(1.1)
-                        // 不要给这一层加 `.id`：半径一变就换身份，SwiftUI 会
-                        // 把整块图片图层销毁重建，拖动时窗口出帧掉到一半、
-                        // 画面整块跳变（用户看到的就是「拖模糊条闪屏」）。
-                        // 现在的 `.blur` 会跟着半径重绘，不需要抖身份。
-                    }
-                    .clipped()
-
-                // 无论图片多清晰，都盖一层画布渐变保底，保证文字始终有足够对比度。
-                // 「APP 透明度」越高，这层越淡，但不低于保底值；剩下的行程
-                // 线性铺开，滑杆不会有一半是空的。见 `BackgroundMath.veilOpacity`。
-                LinearGradient(
-                    colors: [Console.backgroundTop, Console.backgroundBottom],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                )
-                .opacity(
-                    BackgroundMath.veilOpacity(
-                        background.opacity,
-                        dark: scheme == .dark))
-            }
-        }
-        .ignoresSafeArea()
-        .allowsHitTesting(false)
+        // ZCode 风格纯色静谧画布（无桌面透明、无自定义背景图、无装饰性光晕）。
+        DS.canvas
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
     }
 }
 
@@ -248,7 +209,10 @@ private struct EngineColorButtonBody: View {
     let configuration: ButtonStyleConfiguration
     let color: Color
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
+
+    private var activeHover: Bool { hovering && isEnabled }
 
     var body: some View {
         let shape = DS.rect(DS.Radius.md)
@@ -258,12 +222,12 @@ private struct EngineColorButtonBody: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 12)
             .frame(height: 28)
-            .background(shape.fill(hovering ? color.opacity(0.88) : color))
+            .background(shape.fill(activeHover ? color.opacity(0.88) : color))
             .contentShape(shape)
-            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .scaleEffect((!reduceMotion && configuration.isPressed && isEnabled) ? 0.985 : 1)
             .opacity(isEnabled ? 1 : 0.42)
-            .animation(DS.Motion.snappy, value: configuration.isPressed)
-            .animation(DS.Motion.snappy, value: hovering)
+            .animation(reduceMotion ? nil : DS.Motion.snappy, value: configuration.isPressed)
+            .animation(reduceMotion ? nil : DS.Motion.snappy, value: activeHover)
             .onHover { hovering = $0 }
     }
 }
@@ -278,6 +242,7 @@ struct NativeSegmented<Value: Hashable>: View {
 
     @Environment(\.colorScheme) private var scheme
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var indicator
     @State private var hoveredIndex: Int?
 
@@ -341,11 +306,15 @@ struct NativeSegmented<Value: Hashable>: View {
         HStack(spacing: 2) {
             ForEach(Array(zip(options, labels).enumerated()), id: \.offset) { index, pair in
                 let isSelected = selection == pair.0
-                let isHovered = hoveredIndex == index && !isSelected
+                let isHovered = isEnabled && hoveredIndex == index && !isSelected
                 Button {
                     guard isEnabled, !isSelected else { return }
-                    withAnimation(DS.Motion.snappy) {
+                    if reduceMotion {
                         selection = pair.0
+                    } else {
+                        withAnimation(DS.Motion.snappy) {
+                            selection = pair.0
+                        }
                     }
                 } label: {
                     Text(L10n.t(pair.1))
@@ -373,9 +342,15 @@ struct NativeSegmented<Value: Hashable>: View {
                         .contentShape(segmentShape)
                 }
                 .buttonStyle(.plain)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
                 .onHover { inside in
-                    withAnimation(DS.Motion.snappy) {
-                        hoveredIndex = inside ? index : (hoveredIndex == index ? nil : hoveredIndex)
+                    let next = inside ? index : (hoveredIndex == index ? nil : hoveredIndex)
+                    if reduceMotion {
+                        hoveredIndex = next
+                    } else {
+                        withAnimation(DS.Motion.snappy) {
+                            hoveredIndex = next
+                        }
                     }
                 }
             }
@@ -385,7 +360,7 @@ struct NativeSegmented<Value: Hashable>: View {
         .background(trackShape.fill(trackFill))
         .overlay(trackShape.strokeBorder(DS.line, lineWidth: 1))
         .opacity(isEnabled ? 1 : 0.45)
-        .animation(DS.Motion.snappy, value: selection)
+        .animation(reduceMotion ? nil : DS.Motion.snappy, value: selection)
     }
 }
 

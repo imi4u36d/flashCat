@@ -127,7 +127,18 @@ struct EnginesPage: View {
                     installs.refreshInstalled()
                     await installs.loadIndexIfNeeded(force: true)
                     await installs.checkUpstream(force: true)
-                    state.toast(L10n.t("已检查引擎更新"))
+                    let failures = installs.upstreamErrors
+                    if failures.isEmpty {
+                        state.toast(L10n.t("已检查引擎更新"))
+                    } else {
+                        let first = EngineCatalog.allIDs.compactMap { id in
+                            failures[id].map { "\(id.displayName)：\($0)" }
+                        }.first ?? ""
+                        state.toast(
+                            L10n.format(
+                                "已检查引擎更新，%lld 个引擎失败：%@",
+                                Int64(failures.count), first))
+                    }
                 }
             }
             .disabled(refreshing)
@@ -189,6 +200,17 @@ struct EnginesPage: View {
                                 .foregroundStyle(accent)
                                 .lineLimit(1)
                                 .help(L10n.format("更新到 %@", newer.version))
+                        }
+                        if !busy, newer == nil, let error = installs.upstreamErrors[id] {
+                            HStack(spacing: 3) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 9))
+                                Text(L10n.t("检查失败"))
+                                    .font(DS.Font.xs)
+                            }
+                            .foregroundStyle(DS.warn)
+                            .lineLimit(1)
+                            .help(error)
                         }
                     }
                 } else {
@@ -357,6 +379,9 @@ struct EnginesPage: View {
     private func updateHelp(_ id: EngineID) -> String {
         if let release = installs.upstream[id]?.newerRelease {
             return L10n.format("更新到 %@", release.version)
+        }
+        if let error = installs.upstreamErrors[id] {
+            return L10n.format("检查失败：%@", error)
         }
         return L10n.t("检查更新")
     }

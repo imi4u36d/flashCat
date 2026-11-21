@@ -301,3 +301,43 @@ pack_ensure_uv() {
   printf '    uv -> %s\n' "$uv_bin" >&2
   printf '%s\n' "$uv_bin"
 }
+
+# ----------------------------------------- release assets without the REST API
+
+# `api.github.com` allows 60 unauthenticated requests per hour per IP. Behind a
+# shared proxy that budget belongs to every user of the exit node and is often
+# spent, which used to make every update check/build fail with a 403. The public
+# `releases/expanded_assets/<tag>` page lists the same files, URLs and sha256
+# digests as the API and is not rate limited.
+#
+# Usage: pack_release_assets <owner/repo> <tag>
+# Output: one TSV row per asset: <name>\t<absolute-url>\t<sha256-or-empty>
+pack_release_assets() {
+  local repo="$1" tag="$2" html
+  html="$(mktemp "${TMPDIR:-/tmp}/flashcat-assets.XXXXXX.html")"
+  pack_cleanup_add "$html"
+  if ! curl -fsSL --retry 2 -o "$html" \
+      "https://github.com/${repo}/releases/expanded_assets/${tag}"; then
+    rm -f "$html"
+    return 1
+  fi
+  /usr/bin/python3 - "$html" <<'PY'
+import re, sys
+from urllib.parse import unquote
+
+html = open(sys.argv[1], encoding="utf-8").read()
+for block in re.split(r'<li\b', html):
+    link = re.search(r'href="([^"]*/releases/download/[^"]+)"', block)
+    if not link:
+        continue
+    href = link.group(1).replace("&amp;", "&")
+    if href.startswith("/"):
+        href = "https://github.com" + href
+    name = unquote(href.rsplit("/", 1)[-1])
+    digest = re.search(r'sha256:([0-9a-fA-F]{64})', block)
+    print("\t".join([name, href, digest.group(1) if digest else ""]))
+PY
+  local rc=$?
+  rm -f "$html"
+  return "$rc"
+}

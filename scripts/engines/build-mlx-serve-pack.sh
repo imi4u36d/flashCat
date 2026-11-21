@@ -83,9 +83,9 @@ if [[ -z "$EXPECTED_SHA" ]]; then
   step "Resolving upstream sha256"
   API_JSON="$(mktemp "${TMPDIR:-/tmp}/mlx-serve-release.XXXXXX.json")"
   pack_cleanup_add "$API_JSON"
-  curl -fsSL --retry 2 -o "$API_JSON" \
-    "https://api.github.com/repos/$UPSTREAM_REPO/releases/tags/v$VERSION"
-  EXPECTED_SHA="$(/usr/bin/python3 - "$ASSET" "$API_JSON" <<'PY'
+  if curl -fsSL --retry 2 -o "$API_JSON" \
+      "https://api.github.com/repos/$UPSTREAM_REPO/releases/tags/v$VERSION"; then
+    EXPECTED_SHA="$(/usr/bin/python3 - "$ASSET" "$API_JSON" <<'PY'
 import json, sys
 asset, path = sys.argv[1], sys.argv[2]
 with open(path, encoding="utf-8") as handle:
@@ -98,8 +98,17 @@ for item in release.get("assets", []):
             raise SystemExit(0)
 raise SystemExit(1)
 PY
-)" || die "could not resolve sha256 for $ASSET; pass --sha256 HEX explicitly"
+)" || true
+  fi
   rm -f "$API_JSON"
+  if [[ -z "$EXPECTED_SHA" ]]; then
+    # The API is capped at 60 unauthenticated requests/hour per IP; a shared
+    # proxy exhausts that quickly. The asset page reports the same digest.
+    step "Release API unavailable (rate limit?); reading the asset page"
+    EXPECTED_SHA="$(pack_release_assets "$UPSTREAM_REPO" "v$VERSION" \
+      | awk -F '\t' -v asset="$ASSET" '$1 == asset && $3 != "" { print $3; exit }')"
+  fi
+  [[ -n "$EXPECTED_SHA" ]] || die "could not resolve sha256 for $ASSET; pass --sha256 HEX explicitly"
 fi
 
 ACTUAL_SHA="$(shasum -a 256 "$TARBALL" | awk '{print $1}')"

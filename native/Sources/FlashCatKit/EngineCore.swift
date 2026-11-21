@@ -324,7 +324,8 @@ public enum EngineTemplate {
 
 public enum EngineVersionOrder {
     /// Numeric-aware comparison ("0.7.10" > "0.7.2") that does not choke on
-    /// pre-release suffixes: anything after `-` sorts below the bare release.
+    /// pre-release suffixes: a `-rc1` tail and an inline `0.8.0rc1` tail both
+    /// sort below the bare release.
     public static func compare(_ lhs: String, _ rhs: String) -> ComparisonResult {
         let left = split(lhs)
         let right = split(rhs)
@@ -344,14 +345,22 @@ public enum EngineVersionOrder {
     }
 
     private static func split(_ value: String) -> (numbers: [Int], isPrerelease: Bool, suffix: String) {
-        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        var trimmed = value.trimmingCharacters(in: .whitespaces)
+        if trimmed.hasPrefix("v") || trimmed.hasPrefix("V") { trimmed.removeFirst() }
         let parts = trimmed.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
         let core = String(parts.first ?? "")
-        let suffix = parts.count > 1 ? String(parts[1]) : ""
+        var suffix = parts.count > 1 ? String(parts[1]) : ""
         var numbers: [Int] = []
         for piece in core.split(whereSeparator: { $0 == "." || $0 == "_" }) {
             let digits = piece.prefix { $0.isNumber }
-            numbers.append(Int(digits) ?? 0)
+            let tail = piece.dropFirst(digits.count)
+            if !digits.isEmpty { numbers.append(Int(digits) ?? 0) }
+            // oMLX 把预发布后缀直接粘在版本段里（`0.8.0rc1`、`0.7.4.dev1`），
+            // 没有 `-` 分隔。把它当数字段的一部分会让 rc 排在正式版之上；
+            // 这里把非数字尾巴收进 suffix，交给上面的预发布规则判断。
+            if !tail.isEmpty {
+                suffix = suffix.isEmpty ? String(tail) : suffix + "." + String(tail)
+            }
         }
         return (numbers, !suffix.isEmpty, suffix)
     }

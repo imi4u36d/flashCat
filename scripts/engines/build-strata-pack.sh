@@ -51,32 +51,55 @@ pack_begin "pass --force"
 # Two assets, one release: the control archive carries the bundled interpreter
 # and the CLI, the Metal archive carries the compiled engine. Which asset is
 # which is only encoded in the asset names, so the release API is the authority.
-mkdir -p "$ROOT/vendor"
-API_JSON="$(mktemp "${TMPDIR:-/tmp}/strata-release.XXXXXX.json")"
-pack_cleanup_add "$API_JSON"
-step "Resolving Strata $VERSION release assets"
-curl -fsSL --retry 2 -o "$API_JSON" \
-  "https://api.github.com/repos/$UPSTREAM_REPO/releases/tags/v$VERSION"
-ASSETS="$(/usr/bin/python3 - "$API_JSON" <<'PY'
-import json, sys
-with open(sys.argv[1], encoding="utf-8") as handle:
-    release = json.load(handle)
+# Pick the control and engine rows out of a `name\turl\tsha256` stream.
+select_assets() {
+  /usr/bin/python3 - <<'PY'
+import sys
 control = engine = None
-for asset in release.get("assets", []):
-    name = asset.get("name", "")
-    digest = asset.get("digest") or ""
-    row = (name, asset.get("browser_download_url", ""), digest.split(":", 1)[-1])
+for line in sys.stdin:
+    parts = line.rstrip("\n").split("\t")
+    if len(parts) < 3:
+        continue
+    name, url, sha = parts
+    row = (name, url, sha)
     if name.startswith("strata-control-") and name.endswith("-macos-arm64.tar.gz"):
         control = row
     elif name.startswith("strata-engine-") and name.endswith("-macos-arm64-metal.tar.gz"):
         engine = row
 if not control or not engine:
-    raise SystemExit("missing control or Metal engine asset")
+    raise SystemExit(1)
 print("\t".join(control))
 print("\t".join(engine))
 PY
-)" || die "could not resolve release assets"
+}
+
+mkdir -p "$ROOT/vendor"
+API_JSON="$(mktemp "${TMPDIR:-/tmp}/strata-release.XXXXXX.json")"
+pack_cleanup_add "$API_JSON"
+step "Resolving Strata $VERSION release assets"
+ASSETS=""
+if curl -fsSL --retry 2 -o "$API_JSON" \
+    "https://api.github.com/repos/$UPSTREAM_REPO/releases/tags/v$VERSION"; then
+  ASSETS="$(/usr/bin/python3 - "$API_JSON" <<'PY' | select_assets
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    release = json.load(handle)
+for asset in release.get("assets", []):
+    name = asset.get("name", "")
+    digest = asset.get("digest") or ""
+    print("\t".join([name, asset.get("browser_download_url", ""), digest.split(":", 1)[-1]]))
+PY
+)" || true
+fi
 rm -f "$API_JSON"
+if [[ -z "$ASSETS" ]]; then
+  # The API is capped at 60 unauthenticated requests/hour per IP; a shared
+  # proxy exhausts that quickly. The asset page has the same names, links and
+  # digests.
+  step "Release API unavailable (rate limit?); reading the asset page"
+  ASSETS="$(pack_release_assets "$UPSTREAM_REPO" "v$VERSION" | select_assets)" || true
+fi
+[[ -n "$ASSETS" ]] || die "could not resolve release assets"
 
 CONTROL_NAME="$(printf '%s\n' "$ASSETS" | sed -n '1p' | cut -f1)"
 CONTROL_URL="$(printf '%s\n' "$ASSETS" | sed -n '1p' | cut -f2)"

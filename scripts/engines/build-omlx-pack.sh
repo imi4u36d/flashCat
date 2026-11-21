@@ -108,8 +108,15 @@ PYEOF
 if [[ -z "$WHEEL_SHA" ]]; then
   step "Resolving the wheel sha256 from the ${UPSTREAM_REPO} release API"
   WHEEL_SHA="$(expected_sha_from_notes || true)"
-  [[ -n "$WHEEL_SHA" ]] || die "could not read a sha256 for $WHEEL_NAME from the GitHub release API
-       (unreachable or rate-limited?). Pass --sha256 HEX explicitly."
+  if [[ -z "$WHEEL_SHA" ]]; then
+    # The API is capped at 60 unauthenticated requests/hour per IP; a shared
+    # proxy exhausts that quickly. The asset page reports the same digest.
+    step "Release API unavailable (rate limit?); reading the asset page"
+    WHEEL_SHA="$(pack_release_assets "$UPSTREAM_REPO" "v${VERSION}" \
+      | awk -F '\t' -v wheel="$WHEEL_NAME" '$1 == wheel && $3 != "" { print $3; exit }')"
+  fi
+  [[ -n "$WHEEL_SHA" ]] || die "could not read a sha256 for $WHEEL_NAME from the GitHub release
+       (API and asset page both unavailable). Pass --sha256 HEX explicitly."
   printf '    expected: %s\n' "$WHEEL_SHA"
 fi
 

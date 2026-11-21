@@ -103,6 +103,15 @@ final class EngineCoreTests: XCTestCase {
         XCTAssertFalse(EngineVersionOrder.isNewer("0.7.2", than: "0.7.2"))
         // A prerelease sorts before its release, so an RC never shadows it.
         XCTAssertFalse(EngineVersionOrder.isNewer("1.0.0-rc1", than: "1.0.0"))
+        // oMLX does not use a dash: `0.8.0rc1` must still sort below `0.8.0`.
+        XCTAssertFalse(EngineVersionOrder.isNewer("0.8.0rc1", than: "0.8.0"))
+        XCTAssertTrue(EngineVersionOrder.isNewer("0.8.0", than: "0.8.0rc1"))
+        XCTAssertTrue(EngineVersionOrder.isNewer("0.8.1", than: "0.8.0rc1"))
+        // Inline development suffixes follow the same rule.
+        XCTAssertFalse(EngineVersionOrder.isNewer("0.7.4.dev1", than: "0.7.4"))
+        XCTAssertTrue(EngineVersionOrder.isNewer("0.7.4.dev2", than: "0.7.4.dev1"))
+        // Numeric segments still win over the suffix.
+        XCTAssertTrue(EngineVersionOrder.isNewer("0.7.4.dev1", than: "0.7.3"))
     }
 
     // MARK: manifest

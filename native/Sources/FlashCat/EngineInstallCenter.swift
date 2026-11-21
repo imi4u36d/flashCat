@@ -17,7 +17,13 @@ final class EngineInstallCenter: ObservableObject {
     @Published private(set) var indexLoaded = false
     /// One GitHub probe per engine, so a card can say "newer than what you have".
     @Published private(set) var upstream: [EngineID: EngineUpstreamStatus] = [:]
-    @Published private(set) var upstreamCheckedAt: Date?
+    /// Last failed check per engine. Kept separate from `upstream` so a
+    /// transient 403/offline does not erase a previously known update.
+    @Published private(set) var upstreamErrors: [EngineID: String] = [:]
+    /// When each engine last answered successfully. Failures are deliberately
+    /// not recorded: they must retry on the next visit instead of being cached
+    /// for six hours like a successful answer.
+    private var upstreamCheckedAt: [EngineID: Date] = [:]
     /// The engine whose pack is being built right now (builds run one at a time).
     @Published private(set) var building: EngineID?
     /// One continuous 0…1 fraction per engine covering the whole build-then-install
@@ -266,46 +272,50 @@ final class EngineInstallCenter: ObservableObject {
 
     // MARK: Upstream check
 
-    /// Probes GitHub for the newest release of every engine. Unauthenticated and
-    /// rate limited (60/h), so the result is reused for a few hours unless the
-    /// user explicitly asks to check again.
+    /// Probes GitHub for the newest release of every engine that has not
+    /// answered in the last six hours. The Atom feed carries no API quota, but
+    /// the error path still reuses a successful answer instead of hammering
+    /// github.com on every page visit.
     func checkUpstream(force: Bool = false) async {
-        if !force, let checkedAt = upstreamCheckedAt,
-            Date().timeIntervalSince(checkedAt) < 6 * 3600, !upstream.isEmpty
-        {
-            return
-        }
         refreshInstalled()
-        var result: [EngineID: EngineUpstreamStatus] = [:]
         for id in EngineCatalog.allIDs {
-            do {
-                let release = try await checker.latest(for: id)
-                upstreamReleases[id] = release
-                result[id] = EngineUpstreamComparison.status(installed: installed[id] ?? [], release: release)
-            } catch {
-                result[id] = .unavailable(error.localizedDescription)
+            if Task.isCancelled { return }
+            if !force, let checkedAt = upstreamCheckedAt[id],
+                Date().timeIntervalSince(checkedAt) < 6 * 3600, upstream[id] != nil
+            {
+                continue
             }
+            await checkUpstreamNow(for: id)
         }
-        upstream = result
-        upstreamCheckedAt = Date()
     }
 
     /// 只检查一个引擎的更新，供引擎卡上的更新按钮使用——比整页刷新少发
     /// 几次 GitHub 请求，也更不容易撞上未登录接口的限额。
     func checkUpstream(for id: EngineID, force: Bool = false) async {
-        if !force, let checkedAt = upstreamCheckedAt,
+        if !force, let checkedAt = upstreamCheckedAt[id],
             Date().timeIntervalSince(checkedAt) < 6 * 3600, upstream[id] != nil
         {
             return
         }
         refreshInstalled()
+        await checkUpstreamNow(for: id)
+    }
+
+    private func checkUpstreamNow(for id: EngineID) async {
         do {
             let release = try await checker.latest(for: id)
             upstreamReleases[id] = release
             upstream[id] = EngineUpstreamComparison.status(installed: installed[id] ?? [], release: release)
-            upstreamCheckedAt = Date()
+            upstreamErrors[id] = nil
+            upstreamCheckedAt[id] = Date()
+        } catch is CancellationError {
+            return
+        } catch let error as URLError where error.code == .cancelled {
+            return
         } catch {
-            upstream[id] = .unavailable(error.localizedDescription)
+            // A failed check leaves `upstream` untouched: if we already knew
+            // about an update, keep offering it. The card shows the error.
+            upstreamErrors[id] = error.localizedDescription
         }
     }
 
@@ -324,16 +334,12 @@ final class EngineInstallCenter: ObservableObject {
         progress[id] = 0
         progressStep[id] = "检查上游版本"
 
-        let release: EngineUpstreamRelease
+        var release: EngineUpstreamRelease
         if let cached = upstreamReleases[id] {
             release = cached
         } else {
             do {
                 release = try await checker.latest(for: id)
-                upstreamReleases[id] = release
-                upstream[id] = EngineUpstreamComparison.status(
-                    installed: installed[id] ?? [],
-                    release: release)
             } catch {
                 phases[id] = .failed(message: error.localizedDescription)
                 progress[id] = nil
@@ -343,6 +349,16 @@ final class EngineInstallCenter: ObservableObject {
                 return false
             }
         }
+        // The Atom feed only carries the tag. Fetch the release assets before
+        // the build plan runs: splash's plan downloads its tarball by name and
+        // silently degrades to "no download step" when the list is empty.
+        if release.assets.isEmpty {
+            release = await checker.hydrate(release, for: id)
+        }
+        upstreamReleases[id] = release
+        upstream[id] = EngineUpstreamComparison.status(
+            installed: installed[id] ?? [],
+            release: release)
 
         let started = buildAndInstall(release, for: id)
         // `buildAndInstall` reports its own failures except the "another build is

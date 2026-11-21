@@ -3821,6 +3821,16 @@
         }
       }
     },
+    "已检查引擎更新，%lld 个引擎失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checked for engine updates; %lld failed: %@"
+          }
+        }
+      }
+    },
     "已清除 %@ 的辅助模型，跟随引擎设置": {
       "localizations": {
         "en": {
@@ -5657,6 +5667,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Checking upstream version"
+          }
+        }
+      }
+    },
+    "检查失败": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check failed"
+          }
+        }
+      }
+    },
+    "检查失败：%@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check failed: %@"
           }
         }
       }

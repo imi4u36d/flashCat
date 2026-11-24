@@ -14,7 +14,6 @@ final class EngineCoreTests: XCTestCase {
         XCTAssertEqual(EngineID.omlx.defaultPort, 8100)
         XCTAssertEqual(EngineID.mtplx.defaultPort, 8200)
         XCTAssertEqual(EngineID.mlxServe.defaultPort, 8300)
-        XCTAssertEqual(EngineID.strata.defaultPort, 8400)
         for id in EngineCatalog.allIDs {
             XCTAssertEqual(id.portRange.count, 20)
             XCTAssertEqual(id.portRange.first, id.defaultPort)
@@ -26,17 +25,15 @@ final class EngineCoreTests: XCTestCase {
         XCTAssertEqual(EngineID.mtplx.switchMode, .restart)
         XCTAssertEqual(EngineID.splash.switchMode, .restart)
         XCTAssertEqual(EngineID.mlxServe.switchMode, .hot)
-        XCTAssertEqual(EngineID.strata.switchMode, .restart)
         XCTAssertEqual(EngineID.splash.descriptor.modelLayout, .nested)
         XCTAssertTrue(EngineID.omlx.capabilities.contains(.hotLoad))
         XCTAssertTrue(EngineID.mtplx.capabilities.contains(.mtp))
         XCTAssertTrue(EngineID.mlxServe.capabilities.contains(.hotLoad))
-        XCTAssertTrue(EngineID.strata.capabilities.contains(.mtp))
     }
 
     func testFirstPartyEngineCatalogIsCompleteAndPortBandsDoNotCollide() {
         let ids = EngineCatalog.allIDs
-        XCTAssertEqual(ids, [.splash, .omlx, .mtplx, .mlxServe, .strata])
+        XCTAssertEqual(ids, [.splash, .omlx, .mtplx, .mlxServe])
         var seen = Set<Int>()
         for id in ids {
             let descriptor = EngineCatalog.descriptor(for: id)

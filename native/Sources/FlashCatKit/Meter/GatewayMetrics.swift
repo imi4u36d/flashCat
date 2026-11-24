@@ -116,6 +116,11 @@ public struct GatewaySessionSnapshot: Sendable {
     public let id: Int
     public let model: String
     public let dialect: String
+    /// 请求方自报的名字（HTTP `User-Agent`），内置对话固定为 `flashCat`。
+    /// 网关只在本机回环上收请求，这是区分「谁在用接口」的唯一线索。
+    public let client: String
+    /// 最后一次活动时刻：在跑请求取当前时间，已结束的停在收尾那一刻。
+    public let lastActivity: Date
     public let state: State
     public let elapsed: TimeInterval
     public let ttftMilliseconds: Double?
@@ -132,6 +137,8 @@ public struct GatewaySessionSnapshot: Sendable {
         id: Int,
         model: String,
         dialect: String,
+        client: String,
+        lastActivity: Date,
         state: State,
         elapsed: TimeInterval,
         ttftMilliseconds: Double?,
@@ -144,6 +151,8 @@ public struct GatewaySessionSnapshot: Sendable {
         self.id = id
         self.model = model
         self.dialect = dialect
+        self.client = client
+        self.lastActivity = lastActivity
         self.state = state
         self.elapsed = elapsed
         self.ttftMilliseconds = ttftMilliseconds

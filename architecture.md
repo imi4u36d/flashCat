@@ -22,7 +22,7 @@ graph TD
   GW["Gateway<br/>双方言本地 API"]
   Packs["scripts/engines<br/>pack 构建与发布"]
   Contract["manifest.json 契约<br/>schemaVersion 1"]
-  Engine["引擎 pack（外部）<br/>Splash / oMLX / MTPLX / MLX-Serve / Strata"]
+  Engine["引擎 pack（外部）<br/>Splash / oMLX / MTPLX / MLX-Serve"]
 
   App --> Kit
   App --> Control
@@ -54,7 +54,7 @@ graph TD
 
 1. **`FlashCatKit` 不许引 UI。** 它只 `import` `Foundation` / `Network` / `CryptoKit`。这决定它能在无窗口的测试进程里跑——`FlashCatKitTests` 有 20 个测试文件、252 个测试函数，`FlashCatTests` 覆盖壳层纯函数与「不得再出现快捷键」的源码守卫，`FlashCatCLICoreTests` 覆盖命令行解析、SSE 解码与控制协议。
 2. **依赖单向。** `FlashCat` 与 `FlashCatCLICore` → `FlashCatKit`；CLI 不 import 应用目标，Kit 里出现任何应用侧符号都是破坏。
-3. **端口段不重叠。** 默认端口由引擎 descriptor/manifest 声明：`splash 8000` / `omlx 8100` / `mtplx 8200` / `mlx-serve 8300` / `strata 8400`，可用范围默认是 `defaultPort...defaultPort+19`；分配器在段内跳过被占端口，段外放弃。
+3. **端口段不重叠。** 默认端口由引擎 descriptor/manifest 声明：`splash 8000` / `omlx 8100` / `mtplx 8200` / `mlx-serve 8300`，可用范围默认是 `defaultPort...defaultPort+19`；分配器在段内跳过被占端口，段外放弃。
 4. **切换方式是能力，不是选项。** `omlx` 与 `mlx-serve` 是 `hot`，其余当前为 `restart`。应用只按 descriptor 声明的能力执行，不按引擎 id 猜测。
 5. **未知枚举值降级而非失败。** 新版本 pack 带来的未知 `capability` 解成 `.chat`，未知 `modelArgument` 解成 `.name`——一个旧版应用不会因为清单多了个词就装不上。
 6. **路径与控制协议只有一份。** 应用与 `flashcat` 都从 `FlashCatKit` 取 `FlashCatPaths`、`EngineInstallations` 和 `Control/*` 文档；CLI 不复制支持目录、模型目录或端口规则。控制接口与网关是两个服务器：网关可关闭，控制接口负责驱动应用。
@@ -69,7 +69,7 @@ graph TD
 
 **引擎运行时永不随应用打包。** 三个原因共同决定：pack 是 GB 级（oMLX 一个就 590 MB，全塞进来应用会从 15 MB 变成数 GB，签名与分发一起变复杂）；引擎有自己的上游发布节奏，做成 pack 才能让引擎页比对上游、单独更新而不发新版应用；引擎是上游项目的成果，重分发二进制存在许可与合规顾虑，所以仓库只发构建脚本、让用户机器自己装。
 
-**引擎差异收敛在 descriptor + adapter 两层。** descriptor 描述显示、端口、能力、模型目录布局、控制端点和遥测源；通用 OpenAI 兼容引擎可以只靠一份 manifest 接入。splash 的本地装配、Strata 的多组件安装与后台服务生命周期这类真实差异，放进各自的编译期 adapter。业务层不再为具体引擎增加散落分支。
+**引擎差异收敛在 descriptor + adapter 两层。** descriptor 描述显示、端口、能力、模型目录布局、控制端点和遥测源；通用 OpenAI 兼容引擎可以只靠一份 manifest 接入。splash 的本地装配、oMLX 的多模型热加载这类真实差异，放进各自的编译期 adapter。业务层不再为具体引擎增加散落分支。
 
 **网关自己打点。** 引擎层没有 per-session 指标：splash 只报累计比值，oMLX 只给聚合吞吐，MTPLX 连排队数都并进在跑数。唯一知道「每个请求什么时候进来、首个 token 何时到、一共吐了多少字」的地方就是网关本身，所以会话级读数在网关侧统计。
 

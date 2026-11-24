@@ -14,7 +14,7 @@ import XCTest
 /// 出现一个没配齐 descriptor / 调优表 / 解析表的 id，测试当场红。
 final class EngineDescriptorConformanceTests: XCTestCase {
 
-    /// 五个内置引擎都必须有 descriptor，且 id 与 catalog 一致。
+    /// 四个内置引擎都必须有 descriptor，且 id 与 catalog 一致。
     func testEveryCatalogEngineResolvesToADescriptor() {
         for id in EngineCatalog.allIDs {
             let descriptor = EngineCatalog.descriptor(for: id)
@@ -66,7 +66,7 @@ final class EngineDescriptorConformanceTests: XCTestCase {
         for id in EngineCatalog.allIDs {
             let descriptor = EngineCatalog.descriptor(for: id)
             XCTAssertFalse(descriptor.capabilities.isEmpty, "\(id.rawValue) 没有能力位")
-            // 内置引擎的端口都在 8000 段：默认值取 8000/8100/8200/8300/8400。
+            // 内置引擎的端口都在 8000 段：默认值取 8000/8100/8200/8300。
             XCTAssertTrue(
                 (8_000..<9_000).contains(descriptor.defaultPort),
                 "\(id.rawValue) 的默认端口 \(descriptor.defaultPort) 不在 8000 段")

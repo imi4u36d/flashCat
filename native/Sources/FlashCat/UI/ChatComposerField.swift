@@ -25,6 +25,8 @@ struct ChatComposerField: NSViewRepresentable {
     var onCancel: (() -> Bool)? = nil
     /// 图片文件拖进输入框：返回 true 表示已接手，AppKit 不再按文本拖放处理。
     var onDropImage: ((URL) -> Bool)?
+    /// 剪贴板里的图片（截图 / 复制图像）粘贴进输入框：返回 true 表示已接手。
+    var onPasteImage: ((NSImage) -> Bool)?
     /// 拖拽悬停状态，交给外层画投放高亮。
     var onDragTargetChange: ((Bool) -> Void)?
     /// 当前模型能不能收图；不能时把文件拖放原样还给 NSTextView。
@@ -81,6 +83,9 @@ struct ChatComposerField: NSViewRepresentable {
         context.coordinator.container = container
         textView.onDropImage = { [weak coordinator = context.coordinator] url in
             coordinator?.parent.onDropImage?(url) ?? false
+        }
+        textView.onPasteImage = { [weak coordinator = context.coordinator] image in
+            coordinator?.parent.onPasteImage?(image) ?? false
         }
         textView.onDragTargetChange = { [weak coordinator = context.coordinator] targeted in
             coordinator?.parent.onDragTargetChange?(targeted)
@@ -262,6 +267,7 @@ final class ComposerTextView: NSTextView {
     var onCancel: (() -> Bool)?
     var onFocusChange: ((Bool) -> Void)?
     var onDropImage: ((URL) -> Bool)?
+    var onPasteImage: ((NSImage) -> Bool)?
     var onDragTargetChange: ((Bool) -> Void)?
     var acceptsImageDrop = false
     var acceptsVideoDrop = false
@@ -322,6 +328,30 @@ final class ComposerTextView: NSTextView {
 
     /// Return（主键盘）与 Enter（小键盘）。
     private static let returnKeyCodes: Set<UInt16> = [36, 76]
+
+    /// 截图 / 复制图像后 ⌘V：剪贴板里没有文本、只有位图时，当成附件而不是
+    /// 让 NSTextView 插一张不可见的 NSTextAttachment。有文本时仍按文本粘贴。
+    override func paste(_ sender: Any?) {
+        let text = NSPasteboard.general.string(forType: .string)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if acceptsImageDrop, text?.isEmpty != false, let image = Self.clipboardImage(),
+            onPasteImage?(image) == true
+        {
+            return
+        }
+        super.paste(sender)
+    }
+
+    private static func clipboardImage() -> NSImage? {
+        let pasteboard = NSPasteboard.general
+        if let data = pasteboard.data(forType: .png), let image = NSImage(data: data) {
+            return image
+        }
+        if let data = pasteboard.data(forType: .tiff), let image = NSImage(data: data) {
+            return image
+        }
+        return pasteboard.readObjects(forClasses: [NSImage.self])?.first as? NSImage
+    }
 
     override func keyDown(with event: NSEvent) {
         // 组字中：回车是候选确认，不发送。

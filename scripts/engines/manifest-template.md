@@ -52,7 +52,7 @@ Nothing else in the pack is interpreted by the app.
 | Field | Type | Meaning |
 |---|---|---|
 | `schemaVersion` | int | Manifest format version. `1` for everything described here; bump only on breaking changes. |
-| `id` | string | Engine id, lowercase, stable across versions. First-party ids are `splash`, `omlx`, `mtplx`, `mlx-serve`, `strata`. Matches the directory name and is used as the app-side engine key. |
+| `id` | string | Engine id, lowercase, stable across versions. First-party ids are `splash`, `omlx`, `mtplx`, `mlx-serve`. Matches the directory name and is used as the app-side engine key. |
 | `name` | string | Human-readable engine name shown in the UI. |
 | `version` | string | Exact engine version shipped in this pack. Must equal the `<version>` directory and the version the engine itself prints. |
 | `kind` | `bundled` \| `download` | `bundled`: the pack ships with (or is built into) the app. `download`: the app fetches the pack separately. |
@@ -73,7 +73,7 @@ Nothing else in the pack is interpreted by the app.
 | `defaultPort` | int | Preferred localhost port. The app may pick another one and pass it via `{port}`. |
 | `modelSwitch` | `hot` \| `restart` | `hot`: the engine can load/unload models in-process. `restart`: a model change requires restarting the process with a new `{model}`. |
 | `capabilities` | string[] | Open capability tokens used to gate UI: `chat`, `streaming`, `vision`, `reasoning`, `multi-model`, `single-model`, `hot-load`, `hot-unload`, `model-rescan`, `draft`, `mtp`, `tool-use`, `serial`. Unknown tokens are preserved. |
-| `adapter` | string? | Compiled lifecycle adapter: `splash`, `omlx`, `mtplx`, `mlx-serve`, `strata`. Omit for the generic manifest-driven adapter. |
+| `adapter` | string? | Compiled lifecycle adapter: `splash`, `omlx`, `mtplx`, `mlx-serve`. Omit for the generic manifest-driven adapter. |
 | `startupTimeout` | number? | Seconds allowed for a cold start. Overrides the first-party descriptor default. |
 | `portRangeSize` | int? | Number of ports in this engine's allocation band. Defaults to 20. |
 | `modelLayout` | string? | `flat`, `nested`, or `external`. Selects how model folders are scanned and linked. |
@@ -131,9 +131,8 @@ model id. A `null` body sends no JSON payload.
 
 Telemetry sources are fetched independently and merged by role. First-party
 formats currently include `splash.status`, `omlx.status`, `omlx.models`,
-`mtplx.snapshot`, `openai.models`, `prometheus.json`, `llama.props`,
-`strata.health`, `strata.status`, and `strata.metrics`. A manifest may omit
-sources when its first-party descriptor already defines them.
+`mtplx.snapshot`, `openai.models`, `prometheus.json`, and `llama.props`. A manifest
+may omit sources when its first-party descriptor already defines them.
 
 ## Rules and gotchas
 

@@ -25,7 +25,6 @@ pack 的统一形状是 `vendor/engines/<engine-id>/<version>/`。入口可以�
 | mtplx | PyPI `mtplx==<v>` | CPython **3.13 / cp313** | 原生扩展 `_paged_ops` 在构建期编译进 `cache/`，并由清单的 `warmup` 声明，目标机无需编译器 |
 | omlx | 上游 GitHub release 的 **cp311 wheel** | CPython **3.11 / cp311** | 不在 PyPI；wheel 平台 tag 是 `macosx_15_0`，故清单 `minMacOS` 为 15.0 |
 | mlx-serve | 官方 `mlx-serve-bin-macos-arm64.tar.gz` | 无 Python | 只接签名 CLI server，不接 DMG；入口是原生二进制 |
-| strata | 官方 Control + Metal engine component | Control 自带 **CPython 3.12** | Control 必须复制到可写 support 目录；模型和 engine 由 Strata 受管 |
 
 - **`uv` 取 CPython。** 两个脚本都用 `uv` 拿 python-build-standalone，且 **不要求本机预装**：首次运行自动把独立二进制缓存到 `.tools/uv`（已 gitignore），整条链路只依赖 macOS 自带的 `curl` / `tar` / `shasum` 和网络，**不依赖 Homebrew**。
 - **mlx 版本钉死决定缓存指纹。** mtplx 的 `mlx` / `mlx-metal` / `mlx-lm` / `nanobind` 必须钉住版本——mlx 版本会改变原生扩展的缓存指纹，浮动的依赖会让「构建期编译好、运行期免编译」这一招失效。

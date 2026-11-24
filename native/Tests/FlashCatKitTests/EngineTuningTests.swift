@@ -16,13 +16,11 @@ final class EngineTuningTests: XCTestCase {
 
     func testDefaultTuningAddsOnlyTheDiskTier() {
         for id in EngineCatalog.allIDs {
-            // An all-nil tuning still inherits the factory disk-tier default;
-            // strata advertises no tier at all, so it stays empty.
+            // An all-nil tuning still inherits the factory disk-tier default.
             XCTAssertEqual(
                 EngineTuning().arguments(for: id), cacheArgs(id),
                 "unexpected arguments on \(id)")
         }
-        XCTAssertEqual(EngineTuning().arguments(for: .strata), [])
     }
 
     func testSplashArgumentsCarryTheSplashOnlySwitches() {
@@ -433,12 +431,10 @@ final class EngineTuningMigrationTests: XCTestCase {
 /// each engine spells — are worth pinning down.
 final class PrefixCacheTuningTests: XCTestCase {
 
-    func testEveryAdapterButStrataGetsATierByDefault() {
+    func testEveryAdapterGetsATierByDefault() {
         for id in EngineCatalog.allIDs {
             let arguments = EngineTuning().prefixCacheArguments(for: id)
             switch id {
-            case .strata:
-                XCTAssertEqual(arguments, [], "strata advertises no disk tier")
             case .mlxServe:
                 // Its location is fixed at `$HOME/.mlx-serve/kv-cache`; the
                 // shared root reaches it through a link, not an argument.
@@ -488,6 +484,5 @@ final class PrefixCacheTuningTests: XCTestCase {
     func testAnUnsetBudgetInheritsTheFactoryDefault() {
         let tuning = EngineTuning()
         XCTAssertEqual(tuning.effectivePrefixCacheDiskGB(for: .splash), 20)
-        XCTAssertEqual(tuning.effectivePrefixCacheDiskGB(for: .strata), nil)
     }
 }

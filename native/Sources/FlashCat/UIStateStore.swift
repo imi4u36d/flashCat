@@ -15,6 +15,9 @@ import SwiftUI
 @MainActor
 final class UIStateStore: ObservableObject {
     @Published var section: Page = .overview
+    /// 设置页当前分区。放在这里是为了让命令面板能「跳到设置 · 模型来源」，
+    /// 而不是只打开设置的第一屏。
+    @Published var settingsSection: SettingsSection = .general
     /// Re-open the launch page from the engines tab; the page is also shown
     /// automatically while no engine is installed.
     @Published var showsLaunchPage = false

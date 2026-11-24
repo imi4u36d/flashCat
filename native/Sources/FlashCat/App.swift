@@ -76,11 +76,11 @@ struct FlashCatApp: App {
                 Divider()
                 Button("对话") { state.section = .chat }
                     .keyboardShortcut("1", modifiers: .command)
-                Button("实验") { state.section = .lab }
+                Button("画廊") { state.section = .lab }
                     .keyboardShortcut("2", modifiers: .command)
                 Button("概览") { state.section = .overview }
                     .keyboardShortcut("3", modifiers: .command)
-                Button("模型") { state.section = .models }
+                Button("模型库") { state.section = .models }
                     .keyboardShortcut("4", modifiers: .command)
                 Button("引擎") { state.section = .engines }
                     .keyboardShortcut("5", modifiers: .command)

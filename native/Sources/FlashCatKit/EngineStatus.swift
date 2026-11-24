@@ -7,7 +7,7 @@ import Foundation
 
 /// 一个速率读数的**来源与粒度**。
 ///
-/// 「这个数字是不是引擎量过的」问得不够：五家引擎全都自报速率，但粒度和新鲜度
+/// 「这个数字是不是引擎量过的」问得不够：四家引擎全都自报速率，但粒度和新鲜度
 /// 完全不同，同一个数字放在 1 秒的轮询里可能含义相反。所以这里编码的是
 /// 「这个数字回答的是哪个问题」，界层据此决定该不该打 `LIVE`、`LAST`、`AVG`。
 ///
@@ -19,8 +19,8 @@ public enum EngineRateKind: String, Codable, Sendable {
     ///
     /// 两个来源：累计计数器的相邻差分（mlx-serve 的
     /// `prefill_tokens_total` / `prefill_time_seconds`），以及引擎自报的瞬时场
-    /// （splash 的 `current_*_batch.tokens_per_second`、strata 的
-    /// `live.prefill_tok_s_mean`、mtplx 的 `in_flight[].prefill_state`）。
+    /// （splash 的 `current_*_batch.tokens_per_second`、mtplx 的
+    /// `in_flight[].prefill_state`）。
     case live
 
     /// 上一个已完成请求的实测值。数字是真的，但它描述的是过去那一次，

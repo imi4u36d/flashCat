@@ -36,6 +36,16 @@ struct SettingsPage: View {
     @AppStorage("chat.topP") private var storedTopP = 0.95
     @AppStorage("chat.maxTokens") private var storedMaxTokens = 0
 
+    private enum AppUpdateState {
+        case idle
+        case checking
+        case upToDate
+        case available(AppUpdateChecker.Release)
+        case failed(String)
+    }
+
+    @State private var appUpdate: AppUpdateState = .idle
+
     private var hubSource: HubSource {
         HubSource(rawValue: storedHubSource) ?? .huggingFace
     }
@@ -51,30 +61,48 @@ struct SettingsPage: View {
     var body: some View {
         GeometryReader { proxy in
             let wide = proxy.size.width >= Console.compactContentWidth
-            ScrollView {
-                // 窄窗口下两列会互相挤压，改为单列依次排布并交给滚动承载。
-                if !wide {
-                    VStack(alignment: .leading, spacing: 16) {
-                        leftColumn(wide: false)
-                        rightColumn(wide: false)
+            VStack(alignment: .leading, spacing: 0) {
+                DSPageHeader(
+                    title: "设置",
+                    subtitle: "flashCat v\(appVersion) · \(device.chipName)"
+                )
+                .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
+                .padding(.trailing, Console.contentPadding)
+                .padding(.top, Console.pageTopPadding)
+                .padding(.bottom, 10)
+                .background(WindowDragArea())
+
+                ScrollView {
+                    if wide {
+                        HStack(alignment: .top, spacing: 20) {
+                            settingsNav
+                                .frame(width: 148)
+
+                            Rectangle()
+                                .fill(DS.line)
+                                .frame(width: 1)
+
+                            sectionContent(wide: true)
+                                .frame(maxWidth: 760, alignment: .leading)
+
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, Console.contentPadding)
+                        .padding(.top, 2)
+                    } else {
+                        VStack(alignment: .leading, spacing: 12) {
+                            settingsMenu
+                            sectionContent(wide: false)
+                        }
+                        .padding(.horizontal, Console.contentPadding)
+                        .padding(.top, 2)
                     }
-                    .padding(.horizontal, Console.contentPadding)
-                    .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
-                } else {
-                    HStack(alignment: .top, spacing: 16) {
-                        leftColumn(wide: true)
-                        rightColumn(wide: true)
-                    }
-                    .padding(.horizontal, Console.contentPadding)
-                    .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
                 }
-            }
-            .scrollIndicators(.never)
-            .overlay(alignment: .top) {
-                WindowDragArea().frame(height: state.showsSidebar ? DS.Space.lg : DS.Layout.titlebarHeight)
+                .scrollIndicators(.never)
             }
         }
-        // 设置页没有独立标题栏，滚动视口的下沿同样收在侧栏底边上。
+        // 设置页滚动视口的下沿同样收在侧栏底边上。
+        .dsPageColumn()
         .padding(.bottom, Console.contentBottomInset)
         .onAppear(perform: load)
         .onChange(of: state.activeEngine) { _, _ in load() }
@@ -96,24 +124,101 @@ struct SettingsPage: View {
         }
     }
 
-    private func leftColumn(wide: Bool) -> some View {
-        VStack(spacing: 16) {
-            appearanceCard(wide: wide)
-            launchCard
-            portsCard
-            sourceCard(wide: wide)
-            cacheCard
+    /// 设置不再是一页两列的长表：左侧分区，右侧只显示当前分区。
+    /// 端口回到引擎的配置里、token 留在模型来源，设置页只保留真正全局的东西。
+    private var settingsNav: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(SettingsSection.allCases) { item in
+                Button {
+                    withAnimation(DS.Motion.snappy) { section = item }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: item.symbol)
+                            .font(.system(size: 11.5, weight: .medium))
+                            .frame(width: 15)
+                            .foregroundStyle(section == item ? DS.text : DS.text3)
+                        Text(L10n.t(item.title))
+                            .font(DS.Font.prose(12.5, weight: section == item ? .medium : .regular))
+                            .foregroundStyle(section == item ? DS.text : DS.text2)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 9)
+                    .frame(height: 30)
+                    .background(
+                        DS.rect(DS.Radius.sm)
+                            .fill(section == item ? DS.selected : .clear))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 
-    private func rightColumn(wide: Bool) -> some View {
-        VStack(spacing: 16) {
-            gatewayCard
-            cliCard
-            thinkingCard(wide: wide)
-            imageCard
-            infoCard
+    /// 窄窗口下左侧分区栏会吃掉三分之一宽度，折叠成一个分区下拉。
+    private var settingsMenu: some View {
+        DSMenu(size: .regular) {
+            DSMenuTriggerLabel(
+                title: section.title,
+                systemImage: section.symbol,
+                kind: .secondary,
+                size: .regular)
+        } content: {
+            ForEach(SettingsSection.allCases) { item in
+                Button {
+                    withAnimation(DS.Motion.snappy) { section = item }
+                } label: {
+                    if section == item {
+                        Label(L10n.t(item.title), systemImage: "checkmark")
+                    } else {
+                        Text(L10n.t(item.title))
+                    }
+                }
+            }
         }
+        .help(L10n.t("切换设置分区"))
+        .accessibilityLabel(L10n.t("切换设置分区"))
+    }
+
+    @ViewBuilder
+    private func sectionContent(wide: Bool) -> some View {
+        VStack(spacing: 16) {
+            switch section {
+            case .general:
+                appearanceCard(wide: wide)
+                launchCard
+                maintenanceCard
+            case .engine:
+                settingsHint("端口点「应用」后生效；正在运行的引擎需要重启。")
+                portsCard
+            case .models:
+                sourceCard(wide: wide)
+                cacheCard
+            case .api:
+                settingsHint("开关即时生效；改网关端口会重启网关。")
+                gatewayCard
+                cliCard
+            case .chat:
+                thinkingCard(wide: wide)
+                imageCard
+                chatDefaultsCard
+            case .about:
+                infoCard
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func settingsHint(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 10.5))
+            Text(L10n.t(text))
+                .font(DS.Font.prose(11))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(DS.text3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 2)
     }
 
     private func load() {
@@ -134,16 +239,38 @@ struct SettingsPage: View {
     private func appearanceCard(wide: Bool) -> some View {
         SettingsCard {
             SettingsRow(title: "外观", detail: "跟随系统或固定外观") {
-                NativeSegmented(
-                    selection: Binding(
-                        get: { state.theme.mode },
-                        set: { state.theme.set($0) }),
-                    options: AppAppearance.allCases.map { ($0, $0.label) }
-                )
-                // 宽版式里把宽度交给标签：不参与行内剩余空间的分配，
-                // 切换选中项时才不会把整行挤得一宽一窄。窄版式留出压缩
-                // 余地，免得控件把文字列挤出卡片。
-                .fixedSizeWhen(wide)
+                if wide {
+                    NativeSegmented(
+                        selection: Binding(
+                            get: { state.theme.mode },
+                            set: { state.theme.set($0) }),
+                        options: AppAppearance.allCases.map { ($0, $0.label) }
+                    )
+                    // 宽版式里把宽度交给标签：不参与行内剩余空间的分配，
+                    // 切换选中项时才不会把整行挤得一宽一窄。
+                    .fixedSize()
+                } else {
+                    // 窄版式里三段控件会被压成一个看不清的胶囊，改成下拉。
+                    DSMenu(size: .regular) {
+                        DSMenuTriggerLabel(
+                            title: state.theme.mode.label,
+                            systemImage: state.theme.mode.symbol,
+                            kind: .secondary,
+                            size: .regular)
+                    } content: {
+                        ForEach(AppAppearance.allCases) { mode in
+                            Button {
+                                state.theme.set(mode)
+                            } label: {
+                                if state.theme.mode == mode {
+                                    Label(L10n.t(mode.label), systemImage: "checkmark")
+                                } else {
+                                    Text(L10n.t(mode.label))
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -469,7 +596,7 @@ struct SettingsPage: View {
         SettingsCard {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(L10n.t("API 网关"))
+                    Text(L10n.t("接口"))
                         .font(DS.Font.lg.weight(.semibold))
                         .foregroundStyle(DS.text)
                     Text(L10n.t("OpenAI 与 Claude 双协议"))
@@ -657,6 +784,7 @@ struct SettingsPage: View {
         }
     }
 
+    /// 「关于」只回答版本与硬件；对话参数和维护动作各有自己的分区。
     private var infoCard: some View {
         SettingsCard {
             infoRow("flashCat", detail: L10n.format("本地推理控制台 · v%@", appVersion), trailing: device.chipName)
@@ -665,6 +793,68 @@ struct SettingsPage: View {
                 "这台 Mac", detail: L10n.format("%@ · %lld GB 统一内存", device.chipName, device.memoryGB),
                 trailing: L10n.format("可用 %@", Format.size(Int(device.freeDiskBytes))))
             DSDivider()
+            SettingsRow(title: "应用更新", detail: appUpdateDetail) {
+                updateAction
+            }
+        }
+    }
+
+    private var appUpdateDetail: String {
+        switch appUpdate {
+        case .idle:
+            return L10n.format("当前 v%@ · 从 GitHub Releases 检查", appVersion)
+        case .checking:
+            return L10n.t("正在检查…")
+        case .upToDate:
+            return L10n.t("已是最新版本")
+        case .available(let release):
+            if let date = release.publishedAt {
+                return L10n.format("v%@ 可用 · %@", release.version, Format.relative(date))
+            }
+            return L10n.format("v%@ 可用", release.version)
+        case .failed(let message):
+            return L10n.format("检查失败：%@", message)
+        }
+    }
+
+    @ViewBuilder
+    private var updateAction: some View {
+        switch appUpdate {
+        case .checking:
+            ProgressView()
+                .controlSize(.small)
+        case .available(let release):
+            Button(L10n.t("打开发布页")) {
+                NSWorkspace.shared.open(release.url)
+            }
+            .buttonStyle(.ds(.secondary, size: .small))
+        case .failed:
+            Button(L10n.t("重试")) { checkForAppUpdate() }
+                .buttonStyle(.ds(.secondary, size: .small))
+        case .idle, .upToDate:
+            Button(L10n.t("检查更新")) { checkForAppUpdate() }
+                .buttonStyle(.ds(.secondary, size: .small))
+        }
+    }
+
+    private func checkForAppUpdate() {
+        if case .checking = appUpdate { return }
+        appUpdate = .checking
+        Task { @MainActor in
+            do {
+                if let release = try await AppUpdateChecker.check(current: appVersion) {
+                    appUpdate = .available(release)
+                } else {
+                    appUpdate = .upToDate
+                }
+            } catch {
+                appUpdate = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    private var chatDefaultsCard: some View {
+        SettingsCard {
             SettingsRow(
                 title: "对话参数",
                 detail: L10n.format(
@@ -676,7 +866,11 @@ struct SettingsPage: View {
                 Button(L10n.t("调整")) { showsChatParameters = true }
                     .buttonStyle(.ds(.secondary, size: .small))
             }
-            DSDivider()
+        }
+    }
+
+    private var maintenanceCard: some View {
+        SettingsCard {
             SettingsRow(title: "首次启动引导", detail: "重新打开引擎安装页") {
                 Button(L10n.t("打开")) { state.showsLaunchPage = true }
                     .buttonStyle(.ds(.secondary, size: .small))
@@ -727,6 +921,11 @@ struct SettingsPage: View {
     /// 芯片/内存/磁盘在会话内基本不变，不必每次重绘都跑一遍 sysctl + statfs。
     @State private var device = DeviceProfile.current()
 
+    private var section: SettingsSection {
+        get { state.settingsSection }
+        nonmutating set { state.settingsSection = newValue }
+    }
+
     private var appVersion: String {
         (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "—"
     }
@@ -736,6 +935,41 @@ struct SettingsPage: View {
 }
 
 // MARK: - Settings chrome
+
+/// 设置页的分区。每一区只回答一类问题，不再把外观、端口、token 和关于
+/// 排成同一张两列长表。
+enum SettingsSection: String, CaseIterable, Identifiable {
+    case general
+    case engine
+    case models
+    case api
+    case chat
+    case about
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general: return "通用"
+        case .engine: return "引擎"
+        case .models: return "模型来源"
+        case .api: return "接口"
+        case .chat: return "对话"
+        case .about: return "关于"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .general: return "gearshape"
+        case .engine: return "cpu"
+        case .models: return "square.stack.3d.up"
+        case .api: return "network"
+        case .chat: return "bubble.left.and.bubble.right"
+        case .about: return "info.circle"
+        }
+    }
+}
 
 struct SettingsCard<Content: View>: View {
     @ViewBuilder var content: () -> Content

@@ -37,4 +37,20 @@ final class ModelLibraryTests: XCTestCase {
         )
         XCTAssertEqual(entry.identity, "omlx/owner/repo")
     }
+
+    /// HF 缓存目录把仓库压成 `owner--repo`；卡片标题只应该显示仓库名，
+    /// 否则 340pt 宽的卡片会把作者前缀当成模型名的一部分。
+    func testShortNameDropsHuggingFaceOwnerPrefix() {
+        func name(_ id: String) -> String {
+            ModelInfo(
+                id: id, path: "", bytes: 0, origin: .recommended, targetName: ""
+            ).shortName
+        }
+        XCTAssertEqual(
+            name("Youssofal--Qwen3.8-27B-MTPLX-Optimized-Speed"),
+            "Qwen3.8-27B-MTPLX-Optimized-Speed")
+        XCTAssertEqual(name("owner/repo"), "repo")
+        XCTAssertEqual(name("Qwen3.8-Flash-Next"), "Qwen3.8-Flash-Next")
+        XCTAssertEqual(name("--leading"), "leading")
+    }
 }

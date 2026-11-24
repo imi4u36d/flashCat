@@ -531,7 +531,7 @@ struct MenuBarPanel: View {
                     if state.selectedModel.isEmpty {
                         NoticeRow(
                             symbol: "pause.circle",
-                            text: "还没有选择模型，在模型页选一个即可启动",
+                            text: "还没有选择模型，在模型库选一个即可启动",
                             tint: DS.text2,
                             showsSpinner: false
                         )

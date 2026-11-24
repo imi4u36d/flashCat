@@ -19,6 +19,10 @@ final class AppState: ObservableObject {
         get { ui.section }
         set { ui.section = newValue }
     }
+    var settingsSection: SettingsSection {
+        get { ui.settingsSection }
+        set { ui.settingsSection = newValue }
+    }
     /// Re-open the launch page from the engines tab; the page is also shown
     /// automatically while no engine is installed.
     var showsLaunchPage: Bool {
@@ -727,6 +731,12 @@ final class AppState: ObservableObject {
     func cancelGeneration() { runner.cancelGeneration() }
     func regenerate() { runner.regenerate() }
     func newConversation() { runner.newConversation() }
+    func editAndResend(messageID: UUID, text: String) {
+        runner.editAndResend(messageID: messageID, text: text)
+    }
+    func branchThread(from messageID: UUID) {
+        runner.branchThread(from: messageID)
+    }
     func openThread(_ thread: ChatThread) { runner.openThread(thread) }
     func requestThreadDelete(_ thread: ChatThread) { runner.requestThreadDelete(thread) }
     func cancelThreadDelete() { runner.cancelThreadDelete() }

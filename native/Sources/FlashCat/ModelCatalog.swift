@@ -27,7 +27,15 @@ struct ModelInfo: Identifiable {
     /// weights' `config.json`. Nil when no name or config states one.
     var quantization: String? = nil
 
-    var shortName: String { id.split(separator: "/").last.map(String.init) ?? id }
+    /// 卡片、对话顶栏与选择器里显示的名字。HF 缓存目录把仓库压成
+    /// `owner--repo`，只按 `/` 切会把作者名当成标题的一部分（`Youssofal--Qwen…`
+    /// 在 340pt 宽的卡上会挤掉真正的模型名），所以 `--` 也当作分隔符。
+    var shortName: String {
+        let base = id.split(separator: "/").last.map(String.init) ?? id
+        guard let flat = base.range(of: "--", options: .backwards) else { return base }
+        let repo = String(base[flat.upperBound...])
+        return repo.isEmpty ? base : repo
+    }
     var sizeText: String { bytes > 0 && approximateSize ? "≈" + Format.size(bytes) : Format.size(bytes) }
     var exists: Bool { Paths.fileExists(path) }
 }

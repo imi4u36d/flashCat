@@ -211,43 +211,40 @@ struct EngineConfigSheet: View {
     }
 
     /// The disk tier is what turns "the app restarted, so the whole session is
-    /// re-prefilled from zero" into a restore. Only the adapters that have one
-    /// get the card; strata serves without a prefix cache.
+    /// re-prefilled from zero" into a restore.
     @ViewBuilder
     private var prefixCacheCard: some View {
-        if engine.adapter != .strata {
-            Card("前缀缓存", subtitle: "把见过的前缀写到 SSD；App 重启后恢复而不是重算") {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(L10n.t("落盘"))
-                                .font(DS.Font.md)
-                                .foregroundStyle(DS.text)
-                            Text(L10n.t("关闭后每次重启都要从零重算整段历史"))
-                                .font(DS.Font.xs)
-                                .foregroundStyle(DS.text3)
-                        }
-                        Spacer(minLength: 8)
-                        Toggle("", isOn: prefixCacheEnabled)
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
-                            .labelsHidden()
-                            .tint(DS.accent)
-                            .accessibilityLabel(L10n.t("落盘"))
-                    }
-
-                    if prefixCacheEnabled.wrappedValue {
-                        intField(
-                            "磁盘预算 (GB)",
-                            value: $tuning.prefixCacheDiskGB,
-                            placeholder: "20",
-                            field: .prefixCacheDiskGB)
-                        Text(FlashCatPaths.prefixCacheDirectory(engine))
-                            .font(DS.Font.mono(10))
+        Card("前缀缓存", subtitle: "把见过的前缀写到 SSD；App 重启后恢复而不是重算") {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L10n.t("落盘"))
+                            .font(DS.Font.md)
+                            .foregroundStyle(DS.text)
+                        Text(L10n.t("关闭后每次重启都要从零重算整段历史"))
+                            .font(DS.Font.xs)
                             .foregroundStyle(DS.text3)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
                     }
+                    Spacer(minLength: 8)
+                    Toggle("", isOn: prefixCacheEnabled)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .labelsHidden()
+                        .tint(DS.accent)
+                        .accessibilityLabel(L10n.t("落盘"))
+                }
+
+                if prefixCacheEnabled.wrappedValue {
+                    intField(
+                        "磁盘预算 (GB)",
+                        value: $tuning.prefixCacheDiskGB,
+                        placeholder: "20",
+                        field: .prefixCacheDiskGB)
+                    Text(FlashCatPaths.prefixCacheDirectory(engine))
+                        .font(DS.Font.mono(10))
+                        .foregroundStyle(DS.text3)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
             }
         }

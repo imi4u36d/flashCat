@@ -27,7 +27,7 @@ enum LocalEngineModels {
             }
             guard isRealDirectory(path) else { continue }
             if EngineModelStore.isWeightsDirectory(path, engine: engine) {
-                models.append(model(id: canonicalID(entry, engine: engine), path: path, engine: engine))
+                models.append(model(id: entry, path: path, engine: engine))
                 continue
             }
             guard engine.descriptor.modelLayout == .nested else { continue }
@@ -43,22 +43,12 @@ enum LocalEngineModels {
                 else { continue }
                 models.append(
                     model(
-                        id: canonicalID(entry + "/" + child, engine: engine),
+                        id: entry + "/" + child,
                         path: childPath,
                         engine: engine))
             }
         }
         return models
-    }
-
-    private static func canonicalID(_ raw: String, engine: EngineID) -> String {
-        guard engine.adapter == .strata else { return raw }
-        let lower = raw.lowercased()
-        guard lower.contains("qwen3.8-flash-next") else { return raw }
-        if lower.contains("iq3_xxs") { return "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_XXS" }
-        if lower.contains("iq3_s") { return "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ3_S" }
-        if lower.contains("iq2_xs") { return "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF:IQ2_XS" }
-        return "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF:Q2_0"
     }
 
     private static func model(id: String, path: String, engine: EngineID) -> EngineModel {

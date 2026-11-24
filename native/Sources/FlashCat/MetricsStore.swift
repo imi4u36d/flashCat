@@ -67,7 +67,7 @@ struct MetricReading: Equatable {
 ///
 /// 首字和预填充一样是一次性观测，但它没有 `MetricOrigin` 那套速度语义：
 /// 引擎 status 里有样本时优先（splash 给 p50，mlx-serve 给直方图均值，
-/// MTPLX 给上一请求值），引擎没有这个字段（oMLX / strata）或还没有样本
+/// MTPLX 给上一请求值），引擎没有这个字段（oMLX）或还没有样本
 /// （splash 首个请求前 p50 = 0）时，退回网关逐请求量到的最近一次首字。
 /// 两侧都没有才是 「—」。
 struct TTFTReading: Equatable {
@@ -143,7 +143,7 @@ final class MetricsStore: ObservableObject {
     /// 0 = 还没有可用的实测值。
     @Published private(set) var gatewayPrefillRate: Double = 0
     /// 网关自己量出来的最近一次首字耗时（毫秒）。引擎 status 里没有 TTFT
-    /// （oMLX / strata），或还没有样本（splash 首个请求前 p50 = 0）时，
+    /// （oMLX），或还没有样本（splash 首个请求前 p50 = 0）时，
     /// 首字格退到这条按请求的实测值。0 = 还没有可用的实测值。
     @Published private(set) var gatewayTTFTMilliseconds: Double = 0
     /// 网关按代累计的缓存命中率（0…1）。分子是 usage 里的前缀缓存命中量，
@@ -315,7 +315,7 @@ final class MetricsStore: ObservableObject {
     /// 首字延迟格的 owner 表输出：引擎 status → 网关最近一次实测 → 没有。
     ///
     /// 引擎的 TTFT 统计是首选：它有样本时覆盖所有经过引擎的请求，splash 还给
-    /// 的是 p50。但它不是每家都有——oMLX / strata 的 status 没有这个字段，
+    /// 的是 p50。但它不是每家都有——oMLX 的 status 没有这个字段，
     /// splash 在首个请求之前报 0——这时退到网关逐请求量到的首字（应用内对话
     /// 也注册在网关里）。两侧都没有才画「—」：0 不是「首字很快」。
     func ttftReading(stats: ServerStats?, isRunning: Bool) -> TTFTReading {

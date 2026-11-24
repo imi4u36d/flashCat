@@ -3,6 +3,14 @@
   "engines": {
     "mlx-serve": [
       {
+        "version": "26.11.3",
+        "url": "mlx-serve-26.11.3-arm64-macos26.4.tar.gz",
+        "sha256": "4473936c1aad734ac67228b96090d64a2b38cfa73b4f3a3779bc034a761261fa",
+        "bytes": 103344646,
+        "minMacOS": "26.4",
+        "notes": ""
+      },
+      {
         "version": "26.11.2",
         "url": "mlx-serve-26.11.2-arm64-macos26.4.tar.gz",
         "sha256": "59664345789d95548876efef5f85dc8984d271f3fad744840ad43530a0ee82fb",
@@ -20,6 +28,22 @@
       }
     ],
     "mtplx": [
+      {
+        "version": "2.13.2",
+        "url": "mtplx-2.13.2-arm64-macos26.0.tar.gz",
+        "sha256": "91cba5830f505bb097154c8c124c51ea40eb02148eee8a0278c798c2a757ebbd",
+        "bytes": 133961969,
+        "minMacOS": "26.0",
+        "notes": ""
+      },
+      {
+        "version": "2.13.1",
+        "url": "mtplx-2.13.1-arm64-macos26.0.tar.gz",
+        "sha256": "900072c0a5316f428c9f0cbd9c8599ca768115d91cdbb7789eddc32bda5425d9",
+        "bytes": 133937462,
+        "minMacOS": "26.0",
+        "notes": ""
+      },
       {
         "version": "2.12.3",
         "url": "mtplx-2.12.3-arm64-macos26.0.tar.gz",
@@ -43,6 +67,14 @@
         "url": "omlx-0.8.0rc1-arm64-macos15.0.tar.gz",
         "sha256": "e713603612af35dadb5a0399a0fb488c1e040ff75ebeedfded6c06a767876b5a",
         "bytes": 401205722,
+        "minMacOS": "15.0",
+        "notes": ""
+      },
+      {
+        "version": "0.8.3",
+        "url": "omlx-0.8.3-arm64-macos15.0.tar.gz",
+        "sha256": "c803bbe66d397c333dff3c6a8ae4507b21b9505b0eaa36a78339f33a0384ddcd",
+        "bytes": 380954322,
         "minMacOS": "15.0",
         "notes": ""
       },
@@ -72,6 +104,14 @@
       }
     ],
     "splash": [
+      {
+        "version": "1.7.1",
+        "url": "splash-1.7.1-arm64-macos26.0.tar.gz",
+        "sha256": "2671df0ffa0e58a427aa6cbd9aa6892e457f5f91dae48a27f0f8bff27e25fafa",
+        "bytes": 81653117,
+        "minMacOS": "26.0",
+        "notes": ""
+      },
       {
         "version": "1.7.0",
         "url": "splash-1.7.0-arm64-macos26.0.tar.gz",
@@ -118,40 +158,6 @@
         "sha256": "afbbda45a4491e1d26220c12b2672901278536a5b65607b3ef51f9288a1e1e82",
         "bytes": 77257310,
         "minMacOS": "26.0",
-        "notes": ""
-      }
-    ],
-    "strata": [
-      {
-        "version": "0.2.16",
-        "url": "strata-0.2.16-arm64-macos15.0.tar.gz",
-        "sha256": "2e83de438fc581f194f21bf9e684d3d5758393ce9c871045e1882b781d74fd9a",
-        "bytes": 49029443,
-        "minMacOS": "15.0",
-        "notes": ""
-      },
-      {
-        "version": "0.2.14",
-        "url": "strata-0.2.14-arm64-macos15.0.tar.gz",
-        "sha256": "7b869c1695fe830235672d042332099a533eecb7c20e7543fe89ca079640c1c4",
-        "bytes": 55353006,
-        "minMacOS": "15.0",
-        "notes": ""
-      },
-      {
-        "version": "0.2.11",
-        "url": "strata-0.2.11-arm64-macos15.0.tar.gz",
-        "sha256": "a31862af38087f29cafc25d212e400b90168c21ac477dd3eb2252a8210b5eb39",
-        "bytes": 54562741,
-        "minMacOS": "15.0",
-        "notes": ""
-      },
-      {
-        "version": "0.2.10",
-        "url": "strata-0.2.10-arm64-macos15.0.tar.gz",
-        "sha256": "5738d83206ec47769c43d73b2c0ce3d0bc3859f6968ca02230058f7183748513",
-        "bytes": 54401352,
-        "minMacOS": "15.0",
         "notes": ""
       }
     ]

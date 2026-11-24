@@ -5,34 +5,71 @@ import AppKit
 import FlashCatKit
 import SwiftUI
 
-/// 模型页：单行筛选操作栏 + ZCode 风格实色卡片网格。
+/// 模型页：本地库与推荐分成两种模式，各自按家族列出紧凑的变体行。
+/// 默认只看本地库（已装权重）；没有下载的推荐不再和本地权重同格混排。
 struct ModelsPage: View {
     @ObservedObject var state: AppState
     let engine: EngineID
     @Binding var showingHub: Bool
     @Binding var showingDownloads: Bool
 
+    /// 本地库模式只列已落盘的权重；推荐模式只列尚未下载的精选条目。
+    private enum LibraryMode: String, CaseIterable, Identifiable {
+        case installed
+        case recommended
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .installed: return "本地库"
+            case .recommended: return "推荐"
+            }
+        }
+    }
+
+    private enum LibrarySort: String, CaseIterable, Identifiable {
+        case curated
+        case size
+        case memory
+        case name
+
+        var id: String { rawValue }
+
+        var label: String {
+            switch self {
+            case .curated: return "推荐顺序"
+            case .size: return "体积"
+            case .memory: return "内存下限"
+            case .name: return "名称"
+            }
+        }
+    }
+
     @State private var scope: ModelScope = .all
+    @State private var mode: LibraryMode = .installed
+    @State private var sort: LibrarySort = .curated
+    @State private var runnableOnly = false
     @State private var query = ""
     @State private var removeTarget: ModelLibraryEntry?
     @State private var device = DeviceProfile.current()
-    @State private var gridColumns = 0
     @State private var rescanning = false
 
     private static let scrollTopAnchor = "models.scroll.top"
-    private static let cardMinWidth: CGFloat = 320
-    private static let cardSpacing: CGFloat = 12
 
-    private var entries: [ModelLibraryEntry] {
-        let base: [ModelLibraryEntry]
+    private var scopedEntries: [ModelLibraryEntry] {
         switch scope {
         case .all:
-            base = EngineCatalog.allIDs.flatMap { state.libraryEntries(for: $0) }
+            return EngineCatalog.allIDs.flatMap { state.libraryEntries(for: $0) }
         case .engine(let id):
-            base = state.libraryEntries(for: id)
+            return state.libraryEntries(for: id)
         }
+    }
+
+    private var entries: [ModelLibraryEntry] {
+        let base = scopedEntries
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let filtered =
+        var filtered =
             text.isEmpty
             ? base
             : base.filter { entry in
@@ -42,14 +79,63 @@ struct ModelsPage: View {
                     .lowercased()
                     .contains(text)
             }
-        // 使用中的模型置顶，其次是已下载的，最后是待下载的；组内保持原顺序。
-        return filtered.enumerated()
-            .sorted { lhs, rhs in
-                let l = rank(lhs.element)
-                let r = rank(rhs.element)
-                return l == r ? lhs.offset < rhs.offset : l < r
+        if runnableOnly, device.memoryGB > 0 {
+            filtered = filtered.filter {
+                let required = modelRequiredMemoryGB($0)
+                return required == 0 || required <= device.memoryGB
             }
-            .map(\.element)
+        }
+        switch sort {
+        case .curated:
+            // 使用中的模型置顶，其次是已下载的，最后是待下载的；组内保持原顺序。
+            return filtered.enumerated()
+                .sorted { lhs, rhs in
+                    let l = rank(lhs.element)
+                    let r = rank(rhs.element)
+                    return l == r ? lhs.offset < rhs.offset : l < r
+                }
+                .map(\.element)
+        case .size:
+            return filtered.sorted { lhs, rhs in
+                sortByMetric(lhs, rhs, lhs.model.bytes, rhs.model.bytes)
+            }
+        case .memory:
+            return filtered.sorted { lhs, rhs in
+                sortByMetric(
+                    lhs, rhs,
+                    modelRequiredMemoryGB(lhs), modelRequiredMemoryGB(rhs))
+            }
+        case .name:
+            return filtered.sorted {
+                $0.model.shortName.localizedStandardCompare($1.model.shortName) == .orderedAscending
+            }
+        }
+    }
+
+    /// 未知值（0）排在最后；相等时按名称，避免每次刷新顺序乱跳。
+    private func sortByMetric(
+        _ lhs: ModelLibraryEntry, _ rhs: ModelLibraryEntry, _ l: Int, _ r: Int
+    ) -> Bool {
+        if l == 0 && r == 0 {
+            return lhs.model.shortName.localizedStandardCompare(rhs.model.shortName)
+                == .orderedAscending
+        }
+        if l == 0 { return false }
+        if r == 0 { return true }
+        if l == r {
+            return lhs.model.shortName.localizedStandardCompare(rhs.model.shortName)
+                == .orderedAscending
+        }
+        return l < r
+    }
+
+    private var visibleEntries: [ModelLibraryEntry] {
+        entries.filter { entry in
+            switch mode {
+            case .installed: return entry.installed
+            case .recommended: return !entry.installed
+            }
+        }
     }
 
     private var downloadCount: Int {
@@ -59,12 +145,13 @@ struct ModelsPage: View {
         return pending + (state.downloadingModel == nil ? 0 : 1)
     }
 
+    /// 模式切换上的计数按引擎筛选算，不跟着搜索词跳动。
     private var installedEntries: [ModelLibraryEntry] {
-        entries.filter(\.installed)
+        scopedEntries.filter(\.installed)
     }
 
     private var availableEntries: [ModelLibraryEntry] {
-        entries.filter { !$0.installed }
+        scopedEntries.filter { !$0.installed }
     }
 
     private func rank(_ entry: ModelLibraryEntry) -> Int {
@@ -75,10 +162,19 @@ struct ModelsPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            topBar
-                .padding(.top, Console.pageTopPadding)
+            DSPageHeader(title: "模型库", subtitle: librarySummary) {
+                actionControls
+            }
+            .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
+            .padding(.trailing, Console.contentPadding)
+            .padding(.top, Console.pageTopPadding)
+            .padding(.bottom, 10)
+            .background(WindowDragArea())
+
+            filterRow
+                .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
+                .padding(.trailing, Console.contentPadding)
                 .padding(.bottom, 12)
-                .background(WindowDragArea())
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -87,17 +183,14 @@ struct ModelsPage: View {
                             .frame(height: 0)
                             .id(Self.scrollTopAnchor)
 
-                        let installed = installedEntries
-                        let available = availableEntries
-                        let splitSections = !installed.isEmpty && !available.isEmpty
+                        if mode == .installed, downloadCount > 0 {
+                            downloadingBanner
+                        }
 
-                        if !installed.isEmpty {
-                            modelSection(title: splitSections ? "已安装" : nil, items: installed)
+                        ForEach(familyGroups) { group in
+                            familySection(group)
                         }
-                        if !available.isEmpty {
-                            modelSection(title: splitSections ? "未下载" : nil, items: available)
-                        }
-                        if entries.isEmpty {
+                        if visibleEntries.isEmpty {
                             emptyState
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 48)
@@ -107,14 +200,19 @@ struct ModelsPage: View {
                     .padding(.top, 2)
                 }
                 .scrollIndicators(.never)
-                .dsTrackColumns($gridColumns, minWidth: Self.cardMinWidth, spacing: Self.cardSpacing)
                 .onChange(of: scope) { _, _ in
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(Self.scrollTopAnchor, anchor: .top)
+                    }
+                }
+                .onChange(of: mode) { _, _ in
                     DispatchQueue.main.async {
                         proxy.scrollTo(Self.scrollTopAnchor, anchor: .top)
                     }
                 }
             }
         }
+        .dsPageColumn()
         .padding(.bottom, Console.contentBottomInset)
         .alert(
             L10n.format("删除 %@？", removeTarget?.model.shortName ?? ""),
@@ -142,15 +240,29 @@ struct ModelsPage: View {
                 EmptyHint(
                     icon: "magnifyingglass",
                     title: "没有匹配的模型",
-                    detail: "换个关键词或切换引擎筛选试试。"
+                    detail: "换个关键词，或切换引擎 / 本地库模式试试。"
                 )
                 Button(L10n.t("清除筛选")) { query = "" }
                     .buttonStyle(.ds(.secondary, size: .regular))
-            } else {
+            } else if mode == .installed {
                 EmptyHint(
                     icon: "square.stack.3d.up",
                     title: "还没有本地模型",
-                    detail: "可以从模型广场浏览 Hugging Face / ModelScope 权重并下载。"
+                    detail: "本地库只列已经落盘的权重；推荐里是还没下载的精选档位。"
+                )
+                HStack(spacing: 8) {
+                    Button(L10n.t("看看推荐")) {
+                        mode = .recommended
+                    }
+                    .buttonStyle(.ds(.primary, size: .regular))
+                    Button(L10n.t("打开模型广场"), action: openHub)
+                        .buttonStyle(.ds(.secondary, size: .regular))
+                }
+            } else {
+                EmptyHint(
+                    icon: "sparkle.magnifyingglass",
+                    title: "没有待下载的推荐",
+                    detail: "模型广场可以搜索 Hugging Face / ModelScope 的权重。"
                 )
                 Button(L10n.t("打开模型广场"), action: openHub)
                     .buttonStyle(.ds(.primary, size: .regular))
@@ -158,71 +270,204 @@ struct ModelsPage: View {
         }
     }
 
+    private var librarySummary: String {
+        var parts = ["\(L10n.t("已安装")) \(installedEntries.count)"]
+        let available = availableEntries.count
+        if available > 0 { parts.append("\(L10n.t("未下载")) \(available)") }
+        return parts.joined(separator: " · ")
+    }
+
+    /// 按家族聚合：同一个家族的不同量化并排放在一起，读者比较的是「哪一档
+    /// 能在本机跑」，而不是在几十张同名卡片里认 `Q4_K_M` 和 `oQ4e`。
+    /// 家族顺序沿用已排好序的条目（使用中的模型所在家族自然排在最前）。
+    private var familyGroups: [FamilyGroup] {
+        var order: [ModelFamily] = []
+        var buckets: [ModelFamily: [ModelLibraryEntry]] = [:]
+        for entry in visibleEntries {
+            let family = ModelFamily.resolve(
+                id: entry.model.id,
+                hint: entry.model.family,
+                tags: entry.recommendation?.tags ?? [])
+            if buckets[family] == nil { order.append(family) }
+            buckets[family, default: []].append(entry)
+        }
+        return order.map { FamilyGroup(family: $0, entries: buckets[$0] ?? []) }
+    }
+
     @ViewBuilder
-    private func modelSection(title: String?, items: [ModelLibraryEntry]) -> some View {
+    private func familySection(_ group: FamilyGroup) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let title {
-                HStack(spacing: 6) {
-                    Text(L10n.t(title))
-                        .font(DS.Font.xs.weight(.medium))
-                        .foregroundStyle(DS.text3)
-                    Text("\(items.count)")
-                        .font(DS.Font.mono(10.5))
-                        .foregroundStyle(DS.text3)
-                }
-                .padding(.horizontal, 2)
+            HStack(spacing: 8) {
+                ModelFamilyIcon(family: group.family, size: 18)
+                Text(verbatim: group.family.name)
+                    .font(DS.Font.prose(13, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                Text(verbatim: "\(group.entries.count)")
+                    .font(DS.Font.mono(10.5))
+                    .foregroundStyle(DS.text3)
+                Spacer(minLength: 0)
             }
-            DSAnimatedGrid(
-                columns: gridColumns,
-                minWidth: Self.cardMinWidth,
-                maxWidth: 540,
-                spacing: Self.cardSpacing
-            ) {
-                ForEach(items, id: \.identity) { entry in
-                    ModelCard(
+            .padding(.horizontal, 2)
+
+            VStack(spacing: 0) {
+                ForEach(Array(group.entries.enumerated()), id: \.element.identity) { index, entry in
+                    ModelRow(
                         state: state,
                         entry: entry,
                         selected: isSelected(entry),
                         device: device,
                         remove: { removeTarget = entry })
+                    if index != group.entries.count - 1 {
+                        DSDivider()
+                            .padding(.leading, 12)
+                    }
                 }
             }
+            .dsSurface(radius: DS.Radius.lg)
+            .clipShape(DS.rect(DS.Radius.lg))
         }
     }
 
-    private var topBar: some View {
+    /// 一行放得下时把模式、引擎、排序与搜索并排；窄窗口折成两行。
+    private var filterRow: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) {
-                filterControl
+            HStack(spacing: 8) {
+                modeControl
+                engineFilter
+                sortMenu
+                runnableToggle
+                DSSearchField(query: $query, placeholder: "搜索模型", width: 180)
                 Spacer(minLength: 0)
-                actionControls
             }
-            .frame(height: DS.Layout.titlebarHeight)
-            .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
-            .padding(.trailing, Console.contentPadding)
-
-            VStack(alignment: .leading, spacing: 10) {
-                filterControl
-                    .frame(height: DS.Layout.titlebarHeight)
-                    .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
-                    .padding(.trailing, Console.contentPadding)
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
-                    Spacer(minLength: 0)
-                    actionControls
+                    modeControl
+                    engineMenu
                 }
-                .padding(.horizontal, Console.contentPadding)
+                HStack(spacing: 8) {
+                    sortMenu
+                    runnableToggle
+                    DSSearchField(query: $query, placeholder: "搜索模型", width: 180)
+                }
             }
         }
     }
 
-    private var filterControl: some View {
-        DSFilterBar(
+    private var sortMenu: some View {
+        DSMenu(kind: .icon, size: .regular) {
+            DSMenuTriggerLabel(
+                systemImage: "arrow.up.arrow.down",
+                kind: .icon,
+                size: .regular)
+        } content: {
+            ForEach(LibrarySort.allCases) { option in
+                Button {
+                    sort = option
+                } label: {
+                    if sort == option {
+                        Label(L10n.t(option.label), systemImage: "checkmark")
+                    } else {
+                        Text(L10n.t(option.label))
+                    }
+                }
+            }
+        }
+        .help(L10n.t("排序"))
+        .accessibilityLabel(L10n.t("排序"))
+    }
+
+    private var runnableToggle: some View {
+        Button {
+            runnableOnly.toggle()
+        } label: {
+            Label(
+                "能跑",
+                systemImage: runnableOnly ? "checkmark.circle.fill" : "circle")
+        }
+        .buttonStyle(.ds(runnableOnly ? .primary : .secondary, size: .small))
+        .help(L10n.t("只看本机内存能跑的模型"))
+        .accessibilityLabel(L10n.t("只看本机内存能跑的模型"))
+    }
+
+    /// 下载中的条目属于「推荐」模式，停在本地库的人看不到进度；给一条常驻入口。
+    private var downloadingBanner: some View {
+        Button {
+            showingDownloads = true
+        } label: {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                    .scaleEffect(0.75)
+                Text(L10n.format("正在下载 %lld 项", Int64(downloadCount)))
+                    .font(DS.Font.prose(12))
+                    .foregroundStyle(DS.text2)
+                Spacer(minLength: 8)
+                Text(L10n.t("查看"))
+                    .font(DS.Font.prose(11.5, weight: .medium))
+                    .foregroundStyle(DS.text2)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(DS.text3)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background(DS.rect(DS.Radius.md).fill(DS.raised))
+            .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line, lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var modeControl: some View {
+        DSSegmented(
+            selection: $mode,
+            options: [
+                (.installed, "\(L10n.t("本地库")) \(installedEntries.count)"),
+                (.recommended, "\(L10n.t("推荐")) \(availableEntries.count)"),
+            ])
+    }
+
+    private var engineFilter: some View {
+        DSSegmented(
             selection: $scope,
             options: [(ModelScope.all, "全部")]
-                + EngineCatalog.allIDs.map { (ModelScope.engine($0), $0.displayName) },
-            query: $query,
-            placeholder: "搜索模型",
-            maxSearchWidth: 160)
+                + EngineCatalog.allIDs.map { (ModelScope.engine($0), $0.displayName) })
+    }
+
+    /// 窄窗口下的引擎筛选：分段控件会把 `Splash / oMLX / MTPLX…` 压成
+    /// `Sp… / o… / M…`，换成下拉菜单，菜单里始终是完整名字。
+    private var engineMenu: some View {
+        DSMenu(size: .regular) {
+            DSMenuTriggerLabel(
+                title: scope.engine?.displayName ?? L10n.t("全部引擎"),
+                systemImage: "cpu",
+                kind: .secondary,
+                size: .regular)
+        } content: {
+            Button {
+                scope = .all
+            } label: {
+                if scope == .all {
+                    Label(L10n.t("全部引擎"), systemImage: "checkmark")
+                } else {
+                    Text(L10n.t("全部引擎"))
+                }
+            }
+            Divider()
+            ForEach(EngineCatalog.allIDs, id: \.self) { id in
+                Button {
+                    scope = .engine(id)
+                } label: {
+                    if scope == .engine(id) {
+                        Label(id.displayName, systemImage: "checkmark")
+                    } else {
+                        Text(id.displayName)
+                    }
+                }
+            }
+        }
+        .help(L10n.t("按引擎筛选"))
+        .accessibilityLabel(L10n.t("按引擎筛选"))
     }
 
     @ViewBuilder
@@ -292,7 +537,7 @@ struct ModelsPage: View {
 
 // MARK: - Card
 
-private struct ModelCard: View {
+private struct ModelRow: View {
     @ObservedObject var state: AppState
     let entry: ModelLibraryEntry
     let selected: Bool
@@ -334,22 +579,78 @@ private struct ModelCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            header
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 5) {
+                        Text(titleName)
+                            .font(DS.Font.prose(13, weight: .medium))
+                            .tracking(-0.1)
+                            .foregroundStyle(DS.text)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .help(titleHelp)
+                        if let capability = capabilityBadge {
+                            Image(systemName: capability.symbol)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(DS.text3)
+                                .help(L10n.t(capability.help))
+                                .accessibilityLabel(L10n.t(capability.help))
+                        }
+                        if exceedsMemory {
+                            Image(systemName: "memorychip")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(DS.warn)
+                                .help(memoryText)
+                                .accessibilityLabel(memoryText)
+                        }
+                    }
+                    HStack(spacing: 6) {
+                        Text(metaLine)
+                            .font(DS.Font.mono(10.5))
+                            .foregroundStyle(DS.text3)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text(L10n.t(entry.source == .recommended ? "推荐" : "个人下载"))
+                            .font(DS.Font.mono(10))
+                            .foregroundStyle(DS.text2)
+                            .padding(.horizontal, 5)
+                            .frame(height: 16)
+                            .background(DS.rect(4).fill(DS.hover))
+                            .fixedSize()
+                    }
+                }
+
+                Spacer(minLength: 8)
+
+                action
+
+                DSMenu(kind: .icon, size: .small) {
+                    DSMenuTriggerLabel(systemImage: "ellipsis", kind: .icon, size: .small)
+                        .opacity(hovering || selected ? 1 : 0.45)
+                        .accessibilityLabel(L10n.t("更多操作"))
+                } content: {
+                    menuItems
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 46)
 
             if let progressValue {
-                DSMeter(value: progressValue, tint: DS.accent)
+                DSMeter(value: progressValue, tint: engineTint)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
             }
-
-            footer
         }
-        .padding(14)
-        .dsSurface(
-            radius: DS.Radius.lg,
-            stroke: selected ? DS.accent.opacity(0.45) : nil,
-            hoverable: true,
-            active: selected
-        )
+        .background(selected ? engineTint.opacity(0.07) : (hovering ? DS.hover : .clear))
+        .overlay(alignment: .leading) {
+            if selected {
+                Rectangle()
+                    .fill(engineTint)
+                    .frame(width: 2)
+            }
+        }
+        .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .contextMenu {
             menuItems
@@ -367,61 +668,6 @@ private struct ModelCard: View {
         if entry.installed {
             Divider()
             Button(L10n.t("删除权重…"), role: .destructive, action: remove)
-        }
-    }
-
-    private var header: some View {
-        HStack(alignment: .center, spacing: 10) {
-            ModelFamilyIcon(family: family, size: 32)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 5) {
-                    Text(titleName)
-                        .font(DS.Font.md.weight(.semibold))
-                        .tracking(-0.15)
-                        .foregroundStyle(DS.text)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .help(titleHelp)
-                    if let capability = capabilityBadge {
-                        Image(systemName: capability.symbol)
-                            .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(DS.text3)
-                            .help(L10n.t(capability.help))
-                            .accessibilityLabel(L10n.t(capability.help))
-                    }
-                }
-                Text(metaLine)
-                    .font(DS.Font.mono(11))
-                    .foregroundStyle(DS.text2)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            Spacer(minLength: 4)
-            DSMenu(kind: .icon, size: .small) {
-                DSMenuTriggerLabel(systemImage: "ellipsis", kind: .icon, size: .small)
-                    .opacity(hovering || selected ? 1 : 0.45)
-                    .accessibilityLabel(L10n.t("更多操作"))
-            } content: {
-                menuItems
-            }
-        }
-    }
-
-    private var footer: some View {
-        HStack(spacing: 8) {
-            if requiredMemoryGB > 0 {
-                HStack(spacing: 4) {
-                    Image(systemName: "memorychip")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(exceedsMemory ? DS.warn : DS.text3)
-                    Text(memoryText)
-                        .font(DS.Font.xs)
-                        .foregroundStyle(exceedsMemory ? DS.warn : DS.text2)
-                        .lineLimit(1)
-                }
-            }
-            Spacer(minLength: 4)
-            action
         }
     }
 
@@ -450,6 +696,9 @@ private struct ModelCard: View {
         if model.bytes > 0 {
             parts.append(model.sizeText)
         }
+        if requiredMemoryGB > 0 {
+            parts.append(memoryText)
+        }
         return parts.joined(separator: " · ")
     }
 
@@ -473,18 +722,11 @@ private struct ModelCard: View {
         return "GGUF"
     }
 
-    private var family: ModelFamily {
-        ModelFamily.resolve(
-            id: model.id,
-            hint: model.family,
-            tags: entry.recommendation?.tags ?? [])
-    }
+    /// 选中的卡片用引擎色而不是通用蓝：同一份权重可能由多台引擎驱动，
+    /// 颜色要回答「它属于谁」，不是「它被选中了」。
+    private var engineTint: Color { engineAccent(entry.engine) }
 
-    private var requiredMemoryGB: Int {
-        let catalog = entry.recommendation?.minimumMemory ?? 0
-        let weightsGB = model.bytes > 0 ? Int((Double(model.bytes) / 1_000_000_000).rounded(.up)) : 0
-        return max(catalog, weightsGB)
-    }
+    private var requiredMemoryGB: Int { modelRequiredMemoryGB(entry) }
 
     private var exceedsMemory: Bool {
         device.memoryGB > 0 && requiredMemoryGB > device.memoryGB
@@ -540,7 +782,7 @@ private struct ModelCard: View {
                         .foregroundStyle(DS.warn)
                 }
             } else if selected {
-                DSChip(text: "使用中", dot: DS.ok, live: true, tint: DS.ok)
+                DSChip(text: "使用中", dot: engineTint, live: true, tint: engineTint)
             } else {
                 Button {
                     state.useModel(model.id, engine: entry.engine)
@@ -571,4 +813,23 @@ enum ModelScope: Hashable {
         if case .engine(let id) = self { return id }
         return nil
     }
+}
+
+/// 一个模型需要的内存下限：目录推荐值与权重体积取较大者。「能跑」过滤、
+/// 内存排序与行内徽标共用这一处口径。
+private func modelRequiredMemoryGB(_ entry: ModelLibraryEntry) -> Int {
+    let catalog = entry.recommendation?.minimumMemory ?? 0
+    let weightsGB =
+        entry.model.bytes > 0
+        ? Int((Double(entry.model.bytes) / 1_000_000_000).rounded(.up))
+        : 0
+    return max(catalog, weightsGB)
+}
+
+/// 模型页的一个家族分组。家族内部保留原有排序（使用中 → 已安装 → 待下载）。
+private struct FamilyGroup: Identifiable {
+    let family: ModelFamily
+    let entries: [ModelLibraryEntry]
+
+    var id: String { family.rawValue }
 }

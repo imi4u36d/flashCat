@@ -39,13 +39,6 @@ final class EnginePackBuildPlannerTests: XCTestCase {
         XCTAssertTrue(steps[1].command.contains("--min-macos '26.4'"))
     }
 
-    func testStrataPlanUsesItsPackScriptAndMinimumMacOS() {
-        let steps = EnginePackBuildPlanner.steps(for: .strata, version: "0.2.10", release: nil)
-        XCTAssertEqual(steps.map(\.id), ["build", "release"])
-        XCTAssertTrue(steps[0].command.contains("build-strata-pack.sh --version '0.2.10'"))
-        XCTAssertTrue(steps[1].command.contains("--min-macos '15.0'"))
-    }
-
     func testSplashPlanDownloadsTheAssetAndVerifiesItsChecksum() {
         let landing = EngineUpstreamRelease(
             version: "1.4.1",

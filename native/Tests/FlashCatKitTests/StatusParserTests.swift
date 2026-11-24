@@ -381,7 +381,7 @@ final class StatusParserTests: XCTestCase {
         XCTAssertEqual(status.prefillRateKind, .none)
     }
 
-    // MARK: Strata
+    // MARK: MTPLX 速率
 
     /// MTPLX 的 `latest.prefill_tok_s` 只在请求结束时落一次，空闲时会原样重复
     /// 上一请求的终值——那正是「一个恒定不变的几千」的来历，所以它只能是
@@ -461,23 +461,28 @@ final class StatusParserTests: XCTestCase {
     /// 覆盖前面已经拿到的实时值——否则会出现「数值是均值、角标却写 LIVE」，
     /// 或反过来让均值冒充实时。
     func testMergeDoesNotLetALaterMeanOverwriteALiveRate() {
-        let metrics = EngineTelemetrySource(role: .metrics, path: "/live", format: .strataMetrics)
-        let props = EngineTelemetrySource(role: .props, path: "/props", format: .llamaProps)
+        let snapshot = EngineTelemetrySource(
+            role: .health, path: "/v1/mtplx/snapshot", format: .mtplxSnapshot)
         let status = EngineStatusParser.parse(documents: [
             EngineTelemetryDocument(
-                source: metrics,
-                json: ["live": ["tok_s": 42.0, "prefill_tok_s_mean": 640.0]]),
-            // props 排在后（rank 3），带一个累计均值：数值更强但粒度更弱。
-            EngineTelemetryDocument(
-                source: props,
+                source: snapshot,
                 json: [
-                    "timings": [
-                        "predicted_per_second": 31.0,
-                        "prompt_per_second": 200.0,
-                    ]
+                    "rolling": ["mean": 42.0],
+                    "in_flight": [
+                        [
+                            "prefill_state": [
+                                "phase": "chunk", "tokens_done": 4_096,
+                                "elapsed_s": 2.0, "prefill_tok_s": 640.0,
+                            ]
+                        ]
+                    ],
                 ]),
+            // oMLX 排在后，带的是进程累计均值：数值更强但粒度更弱。
+            EngineTelemetryDocument(
+                source: EngineTelemetrySource(role: .status, path: "/api/status", format: .omlxStatus),
+                json: ["avg_generation_tps": 31.0, "avg_prefill_tps": 200.0]),
         ])
-        // .live(3) 不被 .lastRequest(2) 覆盖。
+        // .live(3) 不被 .lifetimeMean(1) 覆盖。
         XCTAssertEqual(status.decodeTokensPerSecond, 42.0)
         XCTAssertEqual(status.decodeRateKind, .live)
         XCTAssertEqual(status.prefillTokensPerSecond, 640.0)
@@ -496,26 +501,6 @@ final class StatusParserTests: XCTestCase {
         XCTAssertEqual(status.decodeRateKind, .lifetimeMean)
     }
 
-    func testStrataMetricsMapLiveAndTotals() {
-        let status = EngineStatusParser.strataMetrics([
-            "engine": ["model": "strata-qwen", "max_context": 32_768],
-            "live": [
-                "state": "generating", "tok_s": 41.5,
-                "prefill_tok_s_mean": 640, "running": 1, "queued": 2, "waiting": 1,
-            ],
-            "totals": ["requests": 9, "output_tokens": 500, "decode_ms": 10_000],
-            "requests": [["decode_tok_s": 50]],
-        ])
-        XCTAssertEqual(status.model, "strata-qwen")
-        XCTAssertEqual(status.maximumContextTokens, 32_768)
-        XCTAssertEqual(status.decodeTokensPerSecond, 41.5)
-        XCTAssertEqual(status.prefillTokensPerSecond, 640)
-        XCTAssertEqual(status.decodeRateKind, .live)
-        XCTAssertEqual(status.prefillRateKind, .live)
-        XCTAssertEqual(status.activeRequests, 1)
-        XCTAssertEqual(status.queuedRequests, 3)
-        XCTAssertEqual(status.requestsCompleted, 9)
-    }
     /// 视觉对话模型只有能力位被认出来，对话页才会把成品图回传给模型。
     /// 三家引擎的写法各不相同，这里把见过的形状都过一遍。
     func testModelCapabilitiesRecognizeVisionSpellings() {
@@ -596,12 +581,6 @@ final class StatusParserTests: XCTestCase {
         ])
         XCTAssertEqual(mlx.ttftKind, .lifetimeMean)
         XCTAssertEqual(mlx.lifetimeDecodeTokensPerSecond ?? 0, 50.0, accuracy: 0.001)
-
-        // Strata: totals.output_tokens / totals.decode_ms 暴露为 lifetimeDecodeTokensPerSecond。
-        let strata = EngineStatusParser.strataMetrics([
-            "totals": ["prompt_ms": 100, "output_tokens": 500, "decode_ms": 10_000]
-        ])
-        XCTAssertEqual(strata.lifetimeDecodeTokensPerSecond ?? 0, 50.0, accuracy: 0.001)
     }
 
     /// 引擎上报的数值是外部数据（引擎 JSON / `--props`）：`"nan"`、`"inf"`、

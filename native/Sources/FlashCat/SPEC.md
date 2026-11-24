@@ -14,9 +14,9 @@ depends-on: [flashcat-kit, flashcat-manifest-contract]
 macOS 壳。它持有全部可变状态，驱动引擎进程，并把自己画成七个原生页面。界面与状态在同一进程、同一语言里，没有网页层。
 
 - **状态中枢。** `AppState`（`@MainActor` 单例）——当前页面、服务状态与统计、模型选择与切换阶段、会话与线程、下载队列、设置、外观、侧栏。表现层的每一帧数据都从它出来。
-- **进程编排。** `EngineController` / `EngineManager` / `EngineRuntime` —— 把 pack 清单和 engine descriptor 解析成启动计划、spawn 入口、健康轮询、pid 文件、日志采集、启停与切换。模型 load/unload/rescan 由 descriptor 的 `modelControl` 驱动，状态由多个 telemetry source 合并；Strata 这类特例只允许出现在专用 adapter。
+- **进程编排。** `EngineController` / `EngineManager` / `EngineRuntime` —— 把 pack 清单和 engine descriptor 解析成启动计划、spawn 入口、健康轮询、pid 文件、日志采集、启停与切换。模型 load/unload/rescan 由 descriptor 的 `modelControl` 驱动，状态由多个 telemetry source 合并；引擎特例只允许出现在专用 adapter。
 - **装机。** `EngineInstallCenter` —— 读发布索引，串行执行安装（三次安装写同一棵目录树，不能并行）。
-- **模型。** `ModelCatalog` / `ModelLibrary` / `ModelInstaller` / `ModelRecommendations` / `ModelDownloadTask` / `LocalEngineModels` / `DeviceProfile` —— 内置目录中的一条模型可以同时标记多个引擎；Splash、oMLX、MTPLX、MLX-Serve 和 Strata 都是平级 engine descriptor。归属靠 `ModelRecommendation.engines`，下载与模型布局按 descriptor 决定。Hub 搜索结果同样可以服务多个兼容引擎。splash 的 DFlash2 draft 随主模型一起下，缺了就在启动前补齐。库是「目录 ∪ 磁盘扫描」：盘上有、这一栏没有的权重照样成行并标「未收录」。
+- **模型。** `ModelCatalog` / `ModelLibrary` / `ModelInstaller` / `ModelRecommendations` / `ModelDownloadTask` / `LocalEngineModels` / `DeviceProfile` —— 内置目录中的一条模型可以同时标记多个引擎；Splash、oMLX、MTPLX、MLX-Serve 都是平级 engine descriptor。归属靠 `ModelRecommendation.engines`，下载与模型布局按 descriptor 决定。Hub 搜索结果同样可以服务多个兼容引擎。splash 的 DFlash2 draft 随主模型一起下，缺了就在启动前补齐。库是「目录 ∪ 磁盘扫描」：盘上有、这一栏没有的权重照样成行并标「未收录」。
 - **对话。** `Chat` / `ChatHistory` / `LocalAPI` —— `URLSession` 流式、usage 与 `finish_reason`、本地历史（上限 6 条）。
 - **网关控制。** `GatewayController` 持有网关对象与路由，`GatewayMeter` 打点。
 - **命令行控制接口。** `ControlServer` / `ControlServer+Documents` —— 只在回环上监听的控制通道，供随包的 `flashcat` 使用：状态、引擎启停与切换、模型加载/下载/删除、日志、设置、医生检查与退出。令牌每次启动随机生成并写入 `control.json`（`0600`）；它与推理网关是两个服务器，网关可以关闭，控制接口负责驱动应用。

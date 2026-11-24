@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
+import AVFoundation
 import AppKit
 import SwiftUI
 
@@ -29,18 +30,43 @@ struct LabPage: View {
     @State private var videos: [GalleryVideo] = []
     @State private var detail: GalleryDetailItem?
     @State private var gridColumns = 0
+    @State private var selecting = false
+    @State private var selectedPaths: Set<String> = []
+    @State private var confirmingBulkDelete = false
 
     private static let gridSpacing: CGFloat = 16
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            DSPageHeader(
+                title: "画廊",
+                subtitle: "\(L10n.format("图片 %lld", Int64(images.count))) · \(L10n.format("视频 %lld", Int64(videos.count)))"
+            ) {
+                DSIconButton(
+                    systemName: selecting ? "xmark.circle" : "checkmark.circle",
+                    help: selecting ? "取消选择" : "选择作品",
+                    style: .outlined
+                ) {
+                    toggleSelecting()
+                }
+                DSIconButton(systemName: "arrow.clockwise", help: "刷新", style: .outlined) { reload() }
+                Button(L10n.t("打开文件夹")) {
+                    let folder = tab == .images ? ImageStore.directory : VideoStore.directory
+                    Paths.ensureDirectory(folder)
+                    NSWorkspace.shared.open(URL(fileURLWithPath: folder))
+                }
+                .buttonStyle(.ds(.secondary, size: .regular))
+            }
+            .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
+            .padding(.trailing, Console.contentPadding)
+            .padding(.top, Console.pageTopPadding)
+            .padding(.bottom, 8)
+            .background(WindowDragArea())
+
             header
-                .frame(height: DS.Layout.titlebarHeight)
                 .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
                 .padding(.trailing, Console.contentPadding)
-                .padding(.top, Console.pageTopPadding)
                 .padding(.bottom, 12)
-                .background(WindowDragArea())
 
             if itemCount == 0 {
                 emptyState
@@ -76,6 +102,7 @@ struct LabPage: View {
                 .scrollIndicators(.never)
             }
         }
+        .dsPageColumn()
         .dsTrackColumns(
             $gridColumns,
             minWidth: tab.kind.minCellWidth,
@@ -84,6 +111,8 @@ struct LabPage: View {
         )
         .onAppear(perform: reload)
         .onChange(of: tab) { _, _ in
+            selecting = false
+            selectedPaths.removeAll()
             reload()
         }
         .onChange(of: state.threads.count) { _, _ in
@@ -96,6 +125,15 @@ struct LabPage: View {
                 onSelect: { detail = $0 }
             )
         }
+        .alert("删除所选作品？", isPresented: $confirmingBulkDelete) {
+            Button(L10n.t("删除"), role: .destructive) { deleteSelected() }
+            Button(L10n.t("取消"), role: .cancel) {}
+        } message: {
+            Text(
+                L10n.format(
+                    "会从图库移除并从磁盘删除 %lld 个文件，无法恢复。",
+                    Int64(selectedPaths.count)))
+        }
     }
 
     private var header: some View {
@@ -103,8 +141,8 @@ struct LabPage: View {
             DSSegmented(
                 selection: $tab,
                 options: [
-                    (.images, L10n.format("图片 %lld", Int64(images.count))),
-                    (.videos, L10n.format("视频 %lld", Int64(videos.count))),
+                    (.images, "图片"),
+                    (.videos, "视频"),
                 ])
             if filteredCount > 0 {
                 Text(
@@ -119,21 +157,44 @@ struct LabPage: View {
 
             Spacer(minLength: 8)
 
-            HStack(spacing: 8) {
-                if itemCount > 0 {
-                    DSSearchField(
-                        query: $query,
-                        placeholder: "筛选提示词、模型或 seed",
-                        width: 220
-                    )
+            if selecting {
+                HStack(spacing: 8) {
+                    Text(L10n.format("已选 %lld 项", Int64(selectedPaths.count)))
+                        .font(DS.Font.prose(11.5))
+                        .foregroundStyle(DS.text3)
+                        .monospacedDigit()
+                    DSIconButton(
+                        systemName: "checkmark.circle",
+                        help: L10n.t("全选"),
+                        style: .outlined
+                    ) {
+                        selectAllVisible()
+                    }
+                    DSIconButton(
+                        systemName: "square.and.arrow.up",
+                        help: L10n.t("导出…"),
+                        style: .outlined
+                    ) {
+                        exportSelected()
+                    }
+                    .disabled(selectedPaths.isEmpty)
+                    DSIconButton(
+                        systemName: "trash",
+                        help: L10n.t("删除…"),
+                        style: .outlined,
+                        tint: DS.err
+                    ) {
+                        confirmingBulkDelete = true
+                    }
+                    .disabled(selectedPaths.isEmpty)
                 }
-                DSIconButton(systemName: "arrow.clockwise", help: "刷新", style: .outlined) { reload() }
-                Button(L10n.t("打开文件夹")) {
-                    let folder = tab == .images ? ImageStore.directory : VideoStore.directory
-                    Paths.ensureDirectory(folder)
-                    NSWorkspace.shared.open(URL(fileURLWithPath: folder))
-                }
-                .buttonStyle(.ds(.secondary, size: .regular))
+                .fixedSize()
+            } else if itemCount > 0 {
+                DSSearchField(
+                    query: $query,
+                    placeholder: "筛选提示词、模型或 seed",
+                    width: 220
+                )
             }
         }
     }
@@ -211,6 +272,9 @@ struct LabPage: View {
                     image: image,
                     modelName: modelLabel(image.model),
                     maxPixel: 640,
+                    selecting: selecting,
+                    selected: selectedPaths.contains(image.path),
+                    toggleSelect: { toggleSelection(image.path) },
                     openDetail: { detail = .image(image) },
                     copyPrompt: { state.copy(image.prompt, label: L10n.t("已复制提示词")) })
             }
@@ -220,6 +284,9 @@ struct LabPage: View {
                     video: video,
                     modelName: modelLabel(video.model),
                     maxPixel: 800,
+                    selecting: selecting,
+                    selected: selectedPaths.contains(video.path),
+                    toggleSelect: { toggleSelection(video.path) },
                     openDetail: { detail = .video(video) },
                     copyPrompt: { state.copy(video.prompt, label: L10n.t("已复制提示词")) })
             }
@@ -234,6 +301,92 @@ struct LabPage: View {
     private func reload() {
         images = ImageGalleryStore.shared.merge(threads: state.threads)
         videos = VideoGalleryStore.shared.merge(threads: state.threads)
+        selectedPaths = selectedPaths.filter { path in
+            images.contains { $0.path == path } || videos.contains { $0.path == path }
+        }
+        if selectedPaths.isEmpty { selecting = false }
+    }
+
+    // MARK: Selection
+
+    private func toggleSelecting() {
+        selecting.toggle()
+        if !selecting { selectedPaths.removeAll() }
+    }
+
+    private func toggleSelection(_ path: String) {
+        if selectedPaths.contains(path) {
+            selectedPaths.remove(path)
+        } else {
+            selectedPaths.insert(path)
+        }
+    }
+
+    private var visiblePaths: [String] {
+        switch tab {
+        case .images: return filteredImages.map(\.path)
+        case .videos: return filteredVideos.map(\.path)
+        }
+    }
+
+    private func selectAllVisible() {
+        if selectedPaths.count == visiblePaths.count {
+            selectedPaths.removeAll()
+        } else {
+            selectedPaths = Set(visiblePaths)
+        }
+    }
+
+    /// 多选后批量导出：复制到用户选的目录，不移动、不删除，原作品和对话都还在。
+    private func exportSelected() {
+        guard !selectedPaths.isEmpty else { return }
+        let panel = NSOpenPanel()
+        panel.title = L10n.t("导出所选作品")
+        panel.prompt = L10n.t("导出")
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let directory = panel.url else { return }
+
+        var exported = 0
+        for path in selectedPaths {
+            let source = URL(fileURLWithPath: path)
+            guard FileManager.default.fileExists(atPath: path) else { continue }
+            var destination = directory.appendingPathComponent(source.lastPathComponent)
+            var suffix = 2
+            while FileManager.default.fileExists(atPath: destination.path) {
+                let stem = source.deletingPathExtension().lastPathComponent
+                let ext = source.pathExtension
+                destination =
+                    directory
+                    .appendingPathComponent("\(stem)-\(suffix)")
+                    .appendingPathExtension(ext)
+                suffix += 1
+            }
+            do {
+                try FileManager.default.copyItem(at: source, to: destination)
+                exported += 1
+            } catch {
+                continue
+            }
+        }
+        state.toast(L10n.format("已导出 %lld 项", Int64(exported)))
+        selecting = false
+        selectedPaths.removeAll()
+    }
+
+    /// 批量删除：索引与落盘文件一起删。删完重新 merge 一次，聊天历史里仍指向
+    /// 已删除文件的条目会被 `fileExists` 挡掉，不会重新长回图库。
+    private func deleteSelected() {
+        guard !selectedPaths.isEmpty else { return }
+        let paths = selectedPaths
+        let images = ImageGalleryStore.shared.delete(paths: paths)
+        let videos = VideoGalleryStore.shared.delete(paths: paths)
+        selecting = false
+        selectedPaths.removeAll()
+        reload()
+        state.toast(L10n.format("已删除 %lld 项", Int64(images + videos)))
     }
 }
 
@@ -369,11 +522,18 @@ private struct GalleryImageTile: View {
     let image: GalleryImage
     let modelName: String
     let maxPixel: CGFloat
+    let selecting: Bool
+    let selected: Bool
+    let toggleSelect: () -> Void
     let openDetail: () -> Void
     let copyPrompt: () -> Void
 
+    @State private var hovering = false
+
     var body: some View {
-        Button(action: openDetail) {
+        Button {
+            if selecting { toggleSelect() } else { openDetail() }
+        } label: {
             VStack(alignment: .leading, spacing: 5) {
                 GalleryImageCover(path: image.path, maxPixel: maxPixel)
                     .frame(maxWidth: .infinity)
@@ -382,7 +542,19 @@ private struct GalleryImageTile: View {
                     .clipShape(DS.rect(DS.Radius.md))
                     .overlay {
                         DS.rect(DS.Radius.md)
-                            .strokeBorder(DS.line, lineWidth: 1)
+                            .strokeBorder(
+                                selected ? DS.accent.opacity(0.8) : DS.line,
+                                lineWidth: selected ? 2 : 1)
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        if selecting {
+                            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(selected ? DS.accent : .white.opacity(0.85))
+                                .background(Circle().fill(Color.black.opacity(0.35)))
+                                .padding(8)
+                                .accessibilityHidden(true)
+                        }
                     }
 
                 Text(image.prompt.isEmpty ? L10n.t("（无提示词）") : image.prompt)
@@ -404,6 +576,7 @@ private struct GalleryImageTile: View {
                 }
                 .font(DS.Font.mono(10))
                 .foregroundStyle(DS.text3)
+                .opacity(hovering || selecting ? 1 : 0.55)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(LabGridLayout.cardInset)
@@ -411,6 +584,7 @@ private struct GalleryImageTile: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
         .dsSurface(radius: DS.Radius.lg, hoverable: true)
         .help(image.prompt.isEmpty ? L10n.t("查看详情") : image.prompt)
         .contextMenu {
@@ -487,31 +661,44 @@ private struct GalleryVideoTile: View {
     let video: GalleryVideo
     let modelName: String
     let maxPixel: CGFloat
+    let selecting: Bool
+    let selected: Bool
+    let toggleSelect: () -> Void
     let openDetail: () -> Void
     let copyPrompt: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
     @State private var cover: NSImage?
     @State private var loading = false
     @State private var missing = false
+    @State private var duration: String?
 
     init(
         video: GalleryVideo,
         modelName: String,
         maxPixel: CGFloat,
+        selecting: Bool,
+        selected: Bool,
+        toggleSelect: @escaping () -> Void,
         openDetail: @escaping () -> Void,
         copyPrompt: @escaping () -> Void
     ) {
         self.video = video
         self.modelName = modelName
         self.maxPixel = maxPixel
+        self.selecting = selecting
+        self.selected = selected
+        self.toggleSelect = toggleSelect
         self.openDetail = openDetail
         self.copyPrompt = copyPrompt
         _cover = State(initialValue: VideoThumbnailStore.cachedThumbnail(atPath: video.path, maxPixel: maxPixel))
     }
 
     var body: some View {
-        Button(action: openDetail) {
+        Button {
+            if selecting { toggleSelect() } else { openDetail() }
+        } label: {
             VStack(alignment: .leading, spacing: 5) {
                 Color.clear
                     .frame(maxWidth: .infinity)
@@ -540,7 +727,30 @@ private struct GalleryVideoTile: View {
                     .clipShape(DS.rect(DS.Radius.md))
                     .overlay {
                         DS.rect(DS.Radius.md)
-                            .strokeBorder(DS.line, lineWidth: 1)
+                            .strokeBorder(
+                                selected ? DS.accent.opacity(0.8) : DS.line,
+                                lineWidth: selected ? 2 : 1)
+                    }
+                    .overlay(alignment: .bottomTrailing) {
+                        if let duration {
+                            Text(verbatim: duration)
+                                .font(DS.Font.mono(9.5, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 5)
+                                .frame(height: 16)
+                                .background(Capsule().fill(Color.black.opacity(0.62)))
+                                .padding(8)
+                        }
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        if selecting {
+                            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(selected ? DS.accent : .white.opacity(0.85))
+                                .background(Circle().fill(Color.black.opacity(0.35)))
+                                .padding(8)
+                                .accessibilityHidden(true)
+                        }
                     }
                     .overlay {
                         if !missing {
@@ -573,6 +783,16 @@ private struct GalleryVideoTile: View {
                         cover = loaded
                         missing = loaded == nil
                     }
+                    .task(id: video.path) {
+                        duration = nil
+                        guard FileManager.default.fileExists(atPath: video.path) else { return }
+                        let asset = AVURLAsset(url: URL(fileURLWithPath: video.path))
+                        guard let value = try? await asset.load(.duration) else { return }
+                        let seconds = CMTimeGetSeconds(value)
+                        guard seconds.isFinite, seconds > 0 else { return }
+                        duration = String(
+                            format: "%d:%02d", Int(seconds) / 60, Int(seconds) % 60)
+                    }
 
                 Text(video.prompt.isEmpty ? L10n.t("（无提示词）") : video.prompt)
                     .font(DS.Font.sm)
@@ -593,6 +813,7 @@ private struct GalleryVideoTile: View {
                 }
                 .font(DS.Font.mono(10))
                 .foregroundStyle(DS.text3)
+                .opacity(hovering || selecting ? 1 : 0.55)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(LabGridLayout.cardInset)
@@ -600,6 +821,7 @@ private struct GalleryVideoTile: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
         .dsSurface(radius: DS.Radius.lg, hoverable: true)
         .help(video.prompt.isEmpty ? L10n.t("查看详情") : video.prompt)
         .contextMenu {

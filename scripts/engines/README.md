@@ -12,11 +12,10 @@ scripts/engines/build-mtplx-pack.sh     # -> vendor/engines/mtplx/2.12.2  (~434 
 scripts/engines/build-omlx-pack.sh      # -> vendor/engines/omlx/0.7.2   (~1.7 GB)
 scripts/engines/build-splash-pack.sh    # -> vendor/engines/splash/1.4.0
 scripts/engines/build-mlx-serve-pack.sh # -> vendor/engines/mlx-serve/26.11.1 (~265 MB)
-scripts/engines/build-strata-pack.sh    # -> vendor/engines/strata/0.2.10 (~161 MB)
 # 选项：--version VER | --out DIR | --force（覆盖已有 pack）
 ```
 
-五个脚本共用 [lib-pack.sh](lib-pack.sh)：参数解析（`pack_parse_common_args`）、步骤日志与
+四个脚本共用 [lib-pack.sh](lib-pack.sh)：参数解析（`pack_parse_common_args`）、步骤日志与
 计时（`pack_step` / `pack_elapsed`）、依赖检查（`pack_require_tools`）、解包（`pack_extract`）、
 清单校验（`pack_validate_manifest`）、rpath 修正（`pack_fix_rpaths`）、收尾摘要
 （`pack_print_summary` / `pack_next_release_cmd`）都在那里，引擎专属的部分只留常量、
@@ -57,8 +56,6 @@ scripts/engines/lib-pack-selftest.sh    # lib 自身的行为回归（29 个用�
 - wheel 的平台 tag 是 `macosx_15_0`，pack 的 `minMacOS` 相应为 **15.0**。
 - pack **不可移动**：`_paged_ops` 的 rpath 是绝对路径，安装位置必须含版本号。
 - MLX-Serve 只使用上游签名 CLI tarball，不接 DMG；运行时是原生二进制，无 Python。
-- Strata pack 合并官方 Control 与 Metal engine component。Control 在首次使用时
-  复制到可写 support 目录，因为 `strata install/launch` 会写入自己的安装目录。
 
 ## 校验（用产物里的 python 起服务，验完杀进程释放端口）
 

@@ -449,17 +449,7 @@ private struct CodeBlockView: View {
                 .fill(DS.line)
                 .frame(height: 1)
 
-            ScrollView(.horizontal, showsIndicators: true) {
-                Text(code.isEmpty ? " " : code)
-                    .font(DS.Font.mono(style.chat ? 13 : 12))
-                    .foregroundStyle(DS.text)
-                    .lineSpacing(style.chat ? 4 : 4.5)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: true, vertical: true)
-                    .padding(.horizontal, style.chat ? 14 : 12)
-                    .padding(.vertical, style.chat ? 12.5 : 10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            HighlightedCode(code: code, language: language, style: style)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(DS.rect(style.chat ? 10 : DS.Radius.md).fill(style.chat ? Color.clear : DS.bg))
@@ -483,6 +473,65 @@ private struct CodeBlockView: View {
             guard !Task.isCancelled else { return }
             withAnimation(reduceMotion ? nil : DS.Motion.snappy) { copied = false }
         }
+    }
+}
+
+/// 带语言高亮与行号的代码正文。行号栏固定不横滚，代码列单独横滚；
+/// 两列共用同一个行高，逐行渲染，长代码横向拖动时序号不会跟着跑掉。
+private struct HighlightedCode: View {
+    let code: String
+    let language: String?
+    var style: MarkdownStyle
+
+    private var lines: [AttributedString] {
+        CodeHighlighter.lines(code, language: language)
+    }
+    private var fontSize: CGFloat { style.chat ? 13 : 12 }
+    private var lineHeight: CGFloat { (fontSize * 1.55).rounded() }
+    private var verticalPadding: CGFloat { style.chat ? 10 : 8 }
+    private var showsGutter: Bool { lines.count > 1 }
+    private var gutterWidth: CGFloat {
+        CGFloat(max(2, String(lines.count).count)) * 7 + 8
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 0) {
+            if showsGutter {
+                VStack(alignment: .trailing, spacing: 0) {
+                    ForEach(lines.indices, id: \.self) { index in
+                        Text(verbatim: "\(index + 1)")
+                            .font(DS.Font.mono(fontSize - 1.5))
+                            .foregroundStyle(DS.text4)
+                            .frame(
+                                width: gutterWidth, height: lineHeight,
+                                alignment: .trailing)
+                    }
+                }
+                .padding(.vertical, verticalPadding)
+                .background(DS.bg.opacity(0.55))
+                .accessibilityHidden(true)
+
+                Rectangle()
+                    .fill(DS.line)
+                    .frame(width: 1)
+            }
+
+            ScrollView(.horizontal, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(lines.indices, id: \.self) { index in
+                        Text(lines[index])
+                            .font(DS.Font.mono(fontSize))
+                            .foregroundStyle(DS.text)
+                            .frame(height: lineHeight, alignment: .leading)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+                .padding(.horizontal, style.chat ? 12 : 10)
+                .padding(.vertical, verticalPadding)
+                .textSelection(.enabled)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

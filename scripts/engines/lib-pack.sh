@@ -5,7 +5,7 @@
 # `set -euo pipefail`, so a pack build behaves the same way no matter which
 # engine it targets.
 #
-# What lives here is only what was byte-for-byte identical in all five scripts:
+# What lives here is only what was byte-for-byte identical in all four scripts:
 # path discovery, die/step/elapsed, the common option loop, the target path and
 # --force gate, staging + atomic swap, manifest JSON validation, artifact
 # cleanup, rpath rewriting, the summary, and the "what do I run next" hint.
@@ -86,7 +86,7 @@ pack_require_tools() {
 # eaten (1 for a flag, 2 for an option with a value) and return 0.
 pack_parse_engine_arg() { return 1; }
 
-# The option loop shared by all five scripts. Handles the flags every builder
+# The option loop shared by all four scripts. Handles the flags every builder
 # understands and delegates everything else to the engine hook above.
 #
 # Option values are checked with pack_die instead of the shorter ${2:?word}
@@ -214,7 +214,7 @@ pack_extract() {
 # --------------------------------------------------------------- verification
 
 # The manifest has to be parseable JSON for the installer; that check is the
-# same for all five engines, so it lives here. Field-level assertions are engine
+# same for all engines, so it lives here. Field-level assertions are engine
 # specific and stay in the scripts.
 # pack_validate_manifest <python> [manifest path]
 pack_validate_manifest() {

@@ -2,7 +2,7 @@
 
 **简体中文** | [English](CONTRIBUTING.en.md)
 
-flashCat 把「装引擎、下模型、聊天、对外提供本地接口」收进一个窗口。它的价值不在功能数量，而在**把五个推理引擎的差异收敛成一层**——所以这里最重要的规矩都跟"别把差异漏回业务层"有关。
+flashCat 把「装引擎、下模型、聊天、对外提供本地接口」收进一个窗口。它的价值不在功能数量，而在**把四个推理引擎的差异收敛成一层**——所以这里最重要的规矩都跟"别把差异漏回业务层"有关。
 
 ## 环境
 
@@ -62,7 +62,7 @@ make app                          # 组装 /Applications 里的 .app（或 INSTA
 Conventional Commits，scope 用模块名：
 
 ```
-feat(engines): 接入 MLX-Serve 与 Strata 多引擎架构
+feat(engines): 接入 MLX-Serve 多引擎架构
 fix(kit): 根目录的拆分 GGUF 不再当成一档量化
 docs(spec): 记录 DFlash2 随主模型下载与启动前补齐
 ```

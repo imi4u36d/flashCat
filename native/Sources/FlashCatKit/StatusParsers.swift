@@ -17,9 +17,10 @@ public struct EngineTelemetryDocument: @unchecked Sendable {
 
 /// 把各引擎自报的遥测折成引擎中立的 `EngineStatus`。
 ///
-/// 三家引擎几乎没有一致的地方：splash 把一切嵌在 `metrics`/`instance` 下，oMLX
+/// 各家引擎几乎没有一致的地方：splash 把一切嵌在 `metrics`/`instance` 下，oMLX
 /// 是一份扁平的 `/api/status`，MTPLX 的真相分散在 `/health`（pid、模型）、
-/// `/v1/mtplx/snapshot`（实时数字）与 `/v1/models`（上下文长度）里。
+/// `/v1/mtplx/snapshot`（实时数字）与 `/v1/models`（上下文长度）里，mlx-serve
+/// 走 Prometheus 指标与 llama.cpp 的 `/props`。
 ///
 /// 「谁长什么样」现在只写在 `EngineStatusDialects` 的方言表里；这里只负责按
 /// descriptor 声明的角色顺序折叠、合并（`merge`）与排序（`rank`），不再认识
@@ -114,9 +115,9 @@ public enum EngineStatusParser {
         health: [String: Any]?,
         fallbackState: EngineRunState = .ready
     ) -> EngineStatus {
-        // 「只有一份状态文档」的引擎走这张 adapter → 格式的表。strata 与
-        // mlx-serve 的状态分散在多份文档里，这份老接口对它们只能给空状态，
-        // 上层应当改用 `parse(documents:)`。
+        // 「只有一份状态文档」的引擎走这张 adapter → 格式的表。mlx-serve 的
+        // 状态分散在多份文档里，这份老接口对它只能给空状态，上层应当改用
+        // `parse(documents:)`。
         guard let format = EngineStatusDialects.primaryStatusFormat[engine.adapter] else {
             return EngineStatus(state: fallbackState)
         }
@@ -159,7 +160,7 @@ public enum EngineStatusParser {
     }
 
     /// 从 `/v1/models`（或 `/v1/models/status`）的一条记录里读能力位。
-    /// 各引擎写法不一致：mlx-serve/strata 报 `capabilities`，Splash 报
+    /// 各引擎写法不一致：mlx-serve 报 `capabilities`，Splash 报
     /// `vision` + `input_modalities`，MTPLX 报 `supports_vision` +
     /// `modalities.input`。视觉模型统一补 `chat`，否则按能力位筛对话模型的
     /// 界面会把它当成非对话权重藏起来。
@@ -302,27 +303,6 @@ public enum EngineStatusParser {
         fallbackState: EngineRunState = .ready
     ) -> EngineStatus {
         EngineStatusDialects.fold(.llamaProps, json: json, fallbackState: fallbackState)
-    }
-
-    public static func strataHealth(
-        _ json: [String: Any],
-        fallbackState: EngineRunState = .ready
-    ) -> EngineStatus {
-        EngineStatusDialects.fold(.strataHealth, json: json, fallbackState: fallbackState)
-    }
-
-    public static func strataStatus(
-        _ json: [String: Any],
-        fallbackState: EngineRunState = .ready
-    ) -> EngineStatus {
-        EngineStatusDialects.fold(.strataStatus, json: json, fallbackState: fallbackState)
-    }
-
-    public static func strataMetrics(
-        _ json: [String: Any],
-        fallbackState: EngineRunState = .ready
-    ) -> EngineStatus {
-        EngineStatusDialects.fold(.strataMetrics, json: json, fallbackState: fallbackState)
     }
 
     private static func omlxModelStatus(

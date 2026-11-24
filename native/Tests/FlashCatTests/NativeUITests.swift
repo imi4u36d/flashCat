@@ -202,8 +202,8 @@ final class NativeUITests: XCTestCase {
 
     func testPageCommandPaletteOrderAndShortcutsMatchApp() throws {
         XCTAssertEqual(Page.primaryPages, [.chat, .lab])
-        XCTAssertEqual(Page.consolePages, [.overview, .models, .engines, .logs])
-        XCTAssertEqual(Page.orderedForCommandPalette, Page.primaryPages + Page.consolePages + [.settings])
+        XCTAssertEqual(Page.consolePages, [.overview, .models, .engines, .logs, .settings])
+        XCTAssertEqual(Page.orderedForCommandPalette, Page.primaryPages + Page.consolePages)
         XCTAssertEqual(Set(Page.orderedForCommandPalette), Set(Page.allCases))
         XCTAssertEqual(Page.orderedForCommandPalette.count, Page.allCases.count)
 

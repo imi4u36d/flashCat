@@ -17,6 +17,7 @@ struct EnginesPage: View {
     @State private var checking: Set<EngineID> = []
     @State private var gridColumns = 0
     @State private var refreshing = false
+    @State private var hoveringEngine: EngineID?
 
     private static let cardMinWidth: CGFloat = 400
     private static let cardSpacing: CGFloat = 14
@@ -55,6 +56,7 @@ struct EnginesPage: View {
             .dsTrackColumns($gridColumns, minWidth: Self.cardMinWidth, spacing: Self.cardSpacing)
         }
         // 和侧栏同一条下边界，滚动视口不会一直贴到窗口底沿。
+        .dsPageColumn()
         .padding(.bottom, Console.contentBottomInset)
         .task {
             installs.refreshInstalled()
@@ -99,22 +101,16 @@ struct EnginesPage: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 10) {
-            Text(L10n.t("运行时"))
-                .font(DS.Font.title)
-                .foregroundStyle(DS.text)
-            DSStatusDot(color: runningCount > 0 ? DS.ok : DS.text4, live: runningCount > 0, size: 6)
-            Text(L10n.format("%lld 运行中", Int64(runningCount)))
-                .font(DS.Font.sm)
-                .foregroundStyle(DS.text2)
-                .monospacedDigit()
-            DSDivider(vertical: true)
-                .frame(height: 12)
-            Text(L10n.format("%lld / %lld 已安装", Int64(installedCount), Int64(EngineCatalog.allIDs.count)))
-                .font(DS.Font.sm)
-                .foregroundStyle(DS.text2)
-                .monospacedDigit()
-            Spacer(minLength: 0)
+        DSPageHeader(
+            title: "引擎",
+            subtitle: L10n.format(
+                "%lld / %lld 已安装",
+                Int64(installedCount), Int64(EngineCatalog.allIDs.count)),
+            status: DSPageStatus(
+                L10n.format("%lld 运行中", Int64(runningCount)),
+                color: runningCount > 0 ? DS.ok : DS.text4,
+                live: runningCount > 0)
+        ) {
             DSIconButton(
                 systemName: "arrow.clockwise",
                 help: refreshing ? "正在检查更新…" : "检查更新",
@@ -255,25 +251,35 @@ struct EnginesPage: View {
                     }
                     .disabled(busy || checking.contains(id))
 
-                    DSIconButton(
-                        systemName: "slider.horizontal.3",
-                        help: "配置",
-                        size: 28,
-                        style: .outlined
-                    ) {
-                        configuring = id
-                    }
-                    .disabled(versions.isEmpty)
+                    // 配置与删除收进「…」：四个等权动作常驻，垃圾桶会和
+                    // 主操作抢注意力，也容易误触。主操作与更新仍留在外面。
+                    DSMenu(kind: .icon, size: .regular) {
+                        DSMenuTriggerLabel(
+                            systemImage: "ellipsis",
+                            kind: .icon,
+                            size: .regular)
+                            .opacity(hoveringEngine == id ? 1 : 0.5)
+                    } content: {
+                        Button(L10n.t("配置…")) {
+                            configuring = id
+                        }
+                        .disabled(versions.isEmpty || busy)
 
-                    DSIconButton(
-                        systemName: "trash",
-                        help: (isActive && state.isRunning) ? "请先停止运行中的引擎再删除" : "删除",
-                        size: 28,
-                        style: .outlined
-                    ) {
-                        pendingRemoval = id
+                        Divider()
+
+                        Button(
+                            isActive && state.isRunning
+                                ? L10n.t("请先停止引擎再删除")
+                                : L10n.t("删除运行时…"),
+                            role: .destructive
+                        ) {
+                            pendingRemoval = id
+                        }
+                        .disabled(
+                            busy || versions.isEmpty || (isActive && state.isRunning))
                     }
-                    .disabled(busy || versions.isEmpty || (isActive && state.isRunning))
+                    .help(L10n.t("更多操作"))
+                    .accessibilityLabel(L10n.t("更多操作"))
 
                     Group {
                         if isActive {
@@ -333,6 +339,9 @@ struct EnginesPage: View {
             hoverable: true,
             active: isActive
         )
+        .onHover { inside in
+            hoveringEngine = inside ? id : (hoveringEngine == id ? nil : hoveringEngine)
+        }
     }
 
     @ViewBuilder
@@ -437,6 +446,11 @@ private struct EngineGlyph: View {
             }
         }
         .frame(width: size, height: size)
+        // 官方图标本身的配色不动，用一圈引擎色描边把「这台是谁」带出来。
+        .overlay {
+            RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
+                .strokeBorder(color.opacity(0.28), lineWidth: 1)
+        }
         .accessibilityHidden(true)
     }
 }
@@ -447,7 +461,6 @@ func engineArtwork(_ id: EngineID) -> String? {
     case .omlx: return "engine-omlx"
     case .mtplx: return "engine-mtplx"
     case .mlxServe: return "engine-mlxserve"
-    case .strata: return "engine-strata"
     default: return nil
     }
 }
@@ -460,7 +473,6 @@ func engineAccent(_ id: EngineID) -> Color {
     case .omlx: return Color(console: 0x2F8C99)
     case .mtplx: return Color(console: 0x5B57C9)
     case .mlxServe: return Color(console: 0x2F7CF6)
-    case .strata: return Color(console: 0x3FAE7A)
     default: return DS.accent
     }
 }
@@ -471,7 +483,6 @@ func engineSymbol(_ id: EngineID) -> String {
     case .omlx: return "cpu"
     case .mtplx: return "square.stack.3d.up.fill"
     case .mlxServe: return "shippingbox.fill"
-    case .strata: return "externaldrive.fill"
     default: return "cpu"
     }
 }

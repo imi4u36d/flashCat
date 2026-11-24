@@ -11,7 +11,7 @@ import Foundation
 /// on two runtimes says so, and the page filter is a `contains` on that set.
 ///
 /// The tags are a product split, not a capability one. oMLX and MLX-Serve are
-/// the general MLX engines; Splash, MTPLX and Strata have narrower product-fit
+/// the general MLX engines; Splash and MTPLX have narrower product-fit
 /// policies. A repository may be tagged for more than one engine, but search
 /// and recommendation only show it where the product chooses to expose it.
 struct ModelRecommendation: Identifiable, Hashable {
@@ -108,11 +108,11 @@ enum ModelRecommendations {
         ModelRecommendation(
             id: "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF:Q2_0",
             bytes: 66_423_878_624, minimumMemory: 64,
-            summary: "125B MoE，Flash-Next 的 GGUF 包，Splash 与 Strata 可共享",
+            summary: "125B MoE，Flash-Next 的 GGUF 包，走 Splash 的 DFlash2 通道",
             tags: ["GGUF", "Q2_0", "2.4 bpw", "MoE", "视觉"],
             draftRepository: "incoai/Qwen3.8-Flash-Next-DFlash2",
             rank: 3,
-            engines: [.splash, .strata]),
+            engines: [.splash]),
         ModelRecommendation(
             id: "Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed",
             bytes: 21_014_908_552, minimumMemory: 32,

@@ -29,6 +29,12 @@ struct ChatPage: View {
     @State private var showsImageOptions = false
     /// 拖拽悬停在输入卡上时给出投放提示；图像/视频模型才接受文件。
     @State private var isDropTargeted = false
+    /// 正在编辑的用户消息；非 nil 时发送键改为「保存并重发」。
+    @State private var editingMessageID: UUID?
+    /// 编辑会删掉后面的回答：先挂起，等壳层确认。
+    @State private var pendingEditMessage: ChatMessage?
+    /// 上下文快满的提示按会话关一次；切会话重新计算。
+    @State private var contextWarningDismissed = false
 
     /// 用户拖出来的对话列宽。默认 744（Splash 的 680pt 内容列 + 两侧 32pt），
     /// 也是最小宽度：不拖的时候版式和 Splash 一致，列宽变了正文、气泡、输入卡
@@ -164,6 +170,19 @@ struct ChatPage: View {
                 .opacity(pageWidth > 0 ? 1 : 0)
         }
         .sheet(isPresented: $showsParameters) { ChatParametersSheet(state: state) }
+        .alert("编辑并重发？", isPresented: editConfirmationShown, presenting: pendingEditMessage) {
+            message in
+            Button(L10n.t("重发")) {
+                pendingEditMessage = nil
+                startEditing(message)
+            }
+            Button(L10n.t("取消"), role: .cancel) { pendingEditMessage = nil }
+        } message: { message in
+            Text(
+                L10n.format(
+                    "发送后会删除这条消息之后的 %lld 条回答，再按新内容重新生成。",
+                    Int64(laterMessageCount(for: message))))
+        }
         .onChange(of: state.selectedModel) { _, _ in
             pruneIncompatibleAttachments()
         }
@@ -185,6 +204,8 @@ struct ChatPage: View {
         // 「加载更早」的批次按会话记在 `earlierBatches` 里，不用在这里复位。
         .onChange(of: state.currentThreadID) { _, _ in
             atBottom = true
+            editingMessageID = nil
+            contextWarningDismissed = false
         }
         .onAppear { focusComposer() }
     }
@@ -310,7 +331,8 @@ struct ChatPage: View {
                 }
                 .padding(.horizontal, ChatColumn.contentInset)
                 .padding(.top, 28)
-                .padding(.bottom, 28)
+                // 输入卡是浮层，底部多留一段，最后一行不会贴到卡的阴影上。
+                .padding(.bottom, 44)
                 .animation(reduceMotion ? nil : Motion.entrance, value: chat.messages.count)
             }
             .scrollIndicators(.never)
@@ -381,7 +403,7 @@ struct ChatPage: View {
                     LatestScrollButton {
                         scroll(proxy, animated: true, force: true)
                     }
-                    .padding(.bottom, 12)
+                    .padding(.bottom, 20)
                     .transition(.opacity.animation(reduceMotion ? nil : Motion.quick))
                 }
             }
@@ -396,13 +418,94 @@ struct ChatPage: View {
             startupStage: chat.chatStartupStage,
             maxBubbleWidth: bubbleMaxWidth,
             isLast: message.id == chat.messages.last?.id,
-            canRegenerate: !supportsVideo && !chat.generating
+            canRegenerate: !supportsVideo && !chat.generating,
+            onEdit: { requestEdit(message) },
+            onBranch: { state.branchThread(from: message.id) }
         ) {
             state.regenerate()
         }
         .equatable()
         .id(message.id)
         .transition(.opacity)
+    }
+
+    // MARK: Editing
+
+    private var editConfirmationShown: Binding<Bool> {
+        Binding(
+            get: { pendingEditMessage != nil },
+            set: { if !$0 { pendingEditMessage = nil } })
+    }
+
+    private func laterMessageCount(for message: ChatMessage) -> Int {
+        guard let index = chat.messages.firstIndex(where: { $0.id == message.id }) else {
+            return 0
+        }
+        return max(0, chat.messages.count - index - 1)
+    }
+
+    private func requestEdit(_ message: ChatMessage) {
+        guard !chat.generating, message.role == "user" else { return }
+        if laterMessageCount(for: message) > 0 {
+            pendingEditMessage = message
+        } else {
+            startEditing(message)
+        }
+    }
+
+    private func startEditing(_ message: ChatMessage) {
+        editingMessageID = message.id
+        draft = message.content
+        composerFocused = true
+    }
+
+    private func cancelEditing() {
+        editingMessageID = nil
+        draft = ""
+        focusComposer()
+    }
+
+    /// 接近上下文上限时在输入卡上方提示；按会话关一次，切走再回来会重新判断。
+    private var contextWarning: some View {
+        Group {
+            if let ratio = contextUsageRatio, ratio >= 0.8, !contextWarningDismissed {
+                HStack(spacing: 8) {
+                    Image(systemName: ratio >= 0.95 ? "exclamationmark.triangle.fill" : "info.circle")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(ratio >= 0.95 ? DS.warn : DS.text2)
+                    Text(
+                        L10n.format(
+                            "上下文已用 %lld%%，再长就会顶到窗口上限。",
+                            Int64((ratio * 100).rounded())))
+                        .font(DS.Font.prose(11.5))
+                        .foregroundStyle(DS.text2)
+                    Spacer(minLength: 6)
+                    Button(L10n.t("新建对话")) {
+                        state.newConversation()
+                    }
+                    .buttonStyle(.ds(.secondary, size: .small))
+                    Button {
+                        contextWarningDismissed = true
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(DS.text3)
+                    .accessibilityLabel(L10n.t("关闭通知"))
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(DS.rect(DS.Radius.sm).fill(DS.raised))
+                .overlay(DS.rect(DS.Radius.sm).strokeBorder(DS.line, lineWidth: 1))
+            }
+        }
+    }
+
+    private var contextUsageRatio: Double? {
+        guard let ceiling = state.contextWindowCeiling, ceiling > 0 else { return nil }
+        let used = state.contextUsedTokens
+        guard used > 0 else { return nil }
+        return min(1.5, Double(used) / Double(ceiling))
     }
 
     /// 把对话区落到底部。首次布局只量到一部分高度时，稍后再补一次，
@@ -542,8 +645,38 @@ struct ChatPage: View {
 
     // MARK: Composer
 
+    /// 未聚焦且草稿为空时只留一行高度；光标进来或已有内容才长到可写多行。
+    /// 卡片因此是「安静时矮、要写字时高」，而不是一直占着一块空白。
+    private var composerFieldHeight: CGFloat {
+        if composerFocused || !draft.isEmpty || hasAttachedMedia { return 40 }
+        return 22
+    }
+
+    private var editBanner: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "pencil")
+                .font(.system(size: 10.5, weight: .semibold))
+            Text(L10n.t("正在编辑这条消息，发送后重跑这一轮"))
+                .font(DS.Font.prose(11.5))
+            Spacer(minLength: 6)
+            Button(L10n.t("取消")) { cancelEditing() }
+                .buttonStyle(.dsGhost)
+                .font(DS.Font.prose(11.5, weight: .medium))
+        }
+        .foregroundStyle(DS.text2)
+        .padding(.leading, 10)
+        .padding(.trailing, 4)
+        .frame(height: 28)
+        .background(DS.rect(DS.Radius.sm).fill(DS.hover))
+    }
+
     private var composer: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
+            if editingMessageID != nil {
+                editBanner
+            }
+            contextWarning
+
             if let notice = draftStore.drafts[draftKey]?.notice, !notice.isEmpty {
                 // 和 Splash 的回执一样：警告图标 + 一句说明，压在输入文字上方。
                 Label {
@@ -593,6 +726,9 @@ struct ChatPage: View {
                         composerFocused = true
                         return true
                     },
+                    onPasteImage: { image in
+                        attachPastedImage(image)
+                    },
                     onDragTargetChange: { targeted in
                         withAnimation(reduceMotion ? nil : Motion.quick) {
                             isDropTargeted = targeted && supportsMedia
@@ -613,6 +749,8 @@ struct ChatPage: View {
                         .allowsHitTesting(false)
                 }
             }
+            .frame(minHeight: composerFieldHeight, alignment: .topLeading)
+            .animation(reduceMotion ? nil : Motion.quick, value: composerFieldHeight)
 
             HStack(spacing: 4) {
                 // 图像模型没有采样参数：同一个按钮换成图像设置，别再弹文本模型的
@@ -724,17 +862,13 @@ struct ChatPage: View {
                         ceiling: state.contextWindowCeiling)
                 }
 
-                if ChatComposerControls.showsThinkingLevel(for: state.activeModel) {
-                    ChatEffortControl(state: state)
-                }
-
                 sendStopButton
             }
             // 第一个控件的字形与正文左缘对齐。
             .padding(.leading, -6)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
         .background {
             DS.rect(22)
                 .fill(colorScheme == .dark ? DS.raised : DS.surface)
@@ -888,6 +1022,15 @@ struct ChatPage: View {
         }
         guard !state.selectedModel.isEmpty else {
             setDraftNotice(L10n.t("还没有选择模型"))
+            return
+        }
+        // 编辑模式：发送键改为「保存并重发」，由 runner 截断后续回答再跑一轮。
+        if let messageID = editingMessageID {
+            let edited = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !edited.isEmpty else { return }
+            draft = ""
+            editingMessageID = nil
+            state.editAndResend(messageID: messageID, text: edited)
             return
         }
         draftStore.drafts[draftKey]?.notice = nil
@@ -1046,8 +1189,29 @@ struct ChatPage: View {
 
     /// Finder 拖入与面板选择共用一条入口：记路径、名字和像素尺寸，
     /// 发送时才把文件拷进作品目录。
-    private func attachImage(at url: URL, slot: VideoFrameSlot? = nil) {
-        if supportsVideoReferences {
+    /// ⌘V 粘贴剪贴板图片：落成文件后走和拖拽相同的附件路径。临时文件放在
+    /// 支持目录而不是系统 temp，发送前不会因为系统清理而丢。
+    private func attachPastedImage(_ image: NSImage) -> Bool {
+        guard supportsMedia,
+            let tiff = image.tiffRepresentation,
+            let rep = NSBitmapImageRep(data: tiff),
+            let png = rep.representation(using: .png, properties: [:])
+        else { return false }
+        let directory = Paths.supportDirectory + "/pasted-images"
+        Paths.ensureDirectory(directory)
+        let url = URL(fileURLWithPath: directory)
+            .appendingPathComponent("paste-\(UUID().uuidString).png")
+        do {
+            try png.write(to: url)
+        } catch {
+            return false
+        }
+        attachImage(at: url)
+        composerFocused = true
+        return true
+    }
+
+    private func attachImage(at url: URL, slot: VideoFrameSlot? = nil) {        if supportsVideoReferences {
             attachReferenceImage(at: url)
             return
         }
@@ -1683,6 +1847,8 @@ private struct MessageRow: View, Equatable {
     let maxBubbleWidth: CGFloat
     let isLast: Bool
     let canRegenerate: Bool
+    let onEdit: () -> Void
+    let onBranch: () -> Void
     let onRegenerate: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -1733,7 +1899,9 @@ private struct MessageRow: View, Equatable {
     }
 
     private var showsActions: Bool {
-        hoveringRow || (isLast && !message.streaming)
+        // 最后一轮常显（流式期间也显示）：复制是最高频动作，不该等鼠标悬停；
+        // 更早的消息仍然悬停才浮出，免得整页挂满操作行。
+        hoveringRow || isLast
     }
 
     private var waitingKey: String {
@@ -1793,9 +1961,35 @@ private struct MessageRow: View, Equatable {
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
                             .fill(userBubbleFill))
             }
+
+            if !message.streaming {
+                userActionsRow
+                    .opacity(hoveringRow || isLast ? 1 : 0)
+                    .allowsHitTesting(hoveringRow || isLast)
+                    .animation(reduceMotion ? nil : Motion.quick, value: hoveringRow)
+            }
         }
         .frame(maxWidth: maxBubbleWidth, alignment: .trailing)
         .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    private var userActionsRow: some View {
+        HStack(spacing: 2) {
+            MessageActionButton(
+                systemName: copied ? "checkmark" : "doc.on.doc",
+                help: copied ? L10n.t("已复制") : L10n.t("复制问题"),
+                tint: copied ? DS.accent : DS.text2,
+                action: copyMessage)
+            MessageActionButton(
+                systemName: "pencil",
+                help: L10n.t("编辑并重发"),
+                action: onEdit)
+            MessageActionButton(
+                systemName: "arrow.triangle.branch",
+                help: L10n.t("从这里分支"),
+                action: onBranch)
+        }
+        .frame(height: 20)
     }
 
     @ViewBuilder private var userAttachments: some View {
@@ -2331,6 +2525,16 @@ struct ChatParametersSheet: View {
     @AppStorage("chat.topP") private var storedTopP = 0.95
     @AppStorage("chat.maxTokens") private var storedMaxTokens = 0
     @AppStorage("chat.system") private var storedSystemPrompt = ""
+    @AppStorage("thinkingMode") private var storedThinkingMode = ThinkingMode.automatic.rawValue
+    @AppStorage("reasoningEffort") private var storedReasoningEffort = ReasoningEffort.medium.rawValue
+
+    private var thinkingMode: ThinkingMode {
+        ThinkingMode(rawValue: storedThinkingMode) ?? .automatic
+    }
+
+    private var reasoningEffort: ReasoningEffort {
+        ReasoningEffort.stored(storedReasoningEffort)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2339,6 +2543,9 @@ struct ChatParametersSheet: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    if ChatComposerControls.showsThinkingLevel(for: state.activeModel) {
+                        thinkingCard
+                    }
                     samplingCard
                     systemPromptCard
                 }
@@ -2368,6 +2575,53 @@ struct ChatParametersSheet: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
+    }
+
+    /// 思考设置从输入卡底排收进这里：底排只留模型、上下文与发送，
+    /// 思考模式与等级是「偶尔调一次」的参数，不该和每轮都要点的发送键抢位置。
+    private var thinkingCard: some View {
+        Card("思考", subtitle: "回答前是否输出推理过程") {
+            VStack(spacing: 12) {
+                HStack(spacing: 12) {
+                    Text("模式")
+                        .font(DS.Font.sm)
+                        .foregroundStyle(DS.text3)
+                    Spacer(minLength: 8)
+                    NativeSegmented(
+                        selection: Binding(
+                            get: { thinkingMode },
+                            set: { mode in
+                                storedThinkingMode = mode.rawValue
+                                state.settings.setThinkingMode(mode)
+                            }),
+                        options: ThinkingMode.allCases.map { ($0, $0.label) })
+                    .accessibilityLabel(L10n.t("思考等级"))
+                    .accessibilityValue(
+                        ChatThinkingLevel.text(mode: thinkingMode, effort: reasoningEffort))
+                }
+                if thinkingMode == .on {
+                    HStack(spacing: 12) {
+                        Text("等级")
+                            .font(DS.Font.sm)
+                            .foregroundStyle(DS.text3)
+                        Spacer(minLength: 8)
+                        NativeSegmented(
+                            selection: Binding(
+                                get: { reasoningEffort },
+                                set: { effort in
+                                    storedReasoningEffort = effort.rawValue
+                                    state.settings.setReasoningEffort(effort)
+                                }),
+                            options: ReasoningEffort.allCases.map { ($0, $0.label) })
+                    }
+                } else {
+                    Text(L10n.t(thinkingMode.detail))
+                        .font(DS.Font.xs)
+                        .foregroundStyle(DS.text3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
     }
 
     /// 采样参数：卡片里放两行滑杆和一个托底输入框。

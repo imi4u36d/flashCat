@@ -483,7 +483,7 @@ struct HubSheet: View {
                     .foregroundStyle(DS.text)
                 Text(
                     local
-                        ? "公共目录里已有这份权重，可直接在模型页使用"
+                        ? "公共目录里已有这份权重，可直接在模型库使用"
                         : variant.map { L10n.format("只下 %@，其余量化不占盘", variantLabel($0)) }
                             ?? L10n.format(
                                 "一份权重供所有引擎共用，推荐用 %@ 运行",

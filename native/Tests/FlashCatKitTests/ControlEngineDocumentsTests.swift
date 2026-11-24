@@ -22,7 +22,6 @@ final class ControlEngineDocumentsTests: XCTestCase {
     func testPortFallsBackToEngineDefaultWhenUnset() {
         XCTAssertEqual(ControlEngineDocuments.port(ControlEngineDocumentInput(id: .omlx)), 8100)
         XCTAssertEqual(ControlEngineDocuments.port(ControlEngineDocumentInput(id: .splash)), 8000)
-        XCTAssertEqual(ControlEngineDocuments.port(ControlEngineDocumentInput(id: .strata)), 8400)
     }
 
     func testPortTreatsZeroAsUnset() {
@@ -123,7 +122,7 @@ final class ControlEngineDocumentsTests: XCTestCase {
     }
 
     func testUninstalledEngineUsesPlaceholderVersion() {
-        let engine = ControlEngineDocuments.engine(ControlEngineDocumentInput(id: .strata))
+        let engine = ControlEngineDocuments.engine(ControlEngineDocumentInput(id: .mlxServe))
         XCTAssertEqual(engine.version, "—")
         XCTAssertFalse(engine.isInstalled)
         XCTAssertEqual(engine.installedVersions, [])

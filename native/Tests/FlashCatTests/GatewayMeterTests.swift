@@ -727,6 +727,22 @@ final class GatewayMeterTests: XCTestCase {
         XCTAssertEqual(meter.snapshot().first { $0.id == id }?.state, .done)
     }
 
+    /// 网关只监听回环，`User-Agent` 是「最近客户端」唯一的身份来源。
+    /// 快照必须把登记时的客户端与最后活动时刻一起带出来，UI 才能聚合。
+    func testSnapshotCarriesClientAndLastActivity() {
+        let meter = GatewayMeter()
+        let start = Date(timeIntervalSince1970: 1_000)
+        let id = meter.begin(
+            model: "m", dialect: "openai", promptTokens: 3,
+            client: "curl/8.7.1", at: start)
+        meter.finish(id, at: start.addingTimeInterval(2))
+
+        let row = meter.snapshot(now: start.addingTimeInterval(10))
+            .first { $0.id == id }
+        XCTAssertEqual(row?.client, "curl/8.7.1")
+        XCTAssertEqual(row?.lastActivity, start.addingTimeInterval(2))
+    }
+
     /// 模拟 `session.write` 恒失败（连接已断）：这一帧没有发出去。
     private static func clientGoneWriting(_ frame: String) -> Bool {
         _ = frame

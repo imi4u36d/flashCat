@@ -104,7 +104,7 @@ The full procedure for adding an engine is in "Adding a new engine" in
 Conventional Commits, with the module name as the scope:
 
 ```
-feat(engines): add MLX-Serve and Strata to the multi-engine architecture
+feat(engines): add MLX-Serve to the multi-engine architecture
 fix(kit): stop treating split GGUF in the root as a separate quantization
 docs(spec): record that DFlash2 ships with the main model and is filled in before start
 ```

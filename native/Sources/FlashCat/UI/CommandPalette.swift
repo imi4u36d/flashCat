@@ -19,6 +19,12 @@ struct CommandPalette: View {
     @State private var query = ""
     @State private var selectedIndex = 0
     @State private var presented = false
+    /// 每次打开换一个 id：命令列表会记住上次的滚动位置，重新打开时容易停在
+    /// 中间（第一行被裁掉）。换 id 让 ScrollView 从顶部重新开始。
+    @State private var session = UUID()
+    /// 只有键盘上下键才滚动列表；鼠标划过只换高亮，否则面板一出现就会被
+    /// 指针所在的行带偏，第一行被裁掉。
+    @State private var scrollToSelection = false
     @FocusState private var focused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -65,6 +71,7 @@ struct CommandPalette: View {
         }
         .onAppear {
             selectedIndex = 0
+            session = UUID()
             focused = true
             if reduceMotion {
                 presented = true
@@ -88,10 +95,12 @@ struct CommandPalette: View {
                 .focused($focused)
                 .onSubmit { runSelected() }
                 .onKeyPress(.upArrow) {
+                    scrollToSelection = true
                     moveSelection(-1)
                     return .handled
                 }
                 .onKeyPress(.downArrow) {
+                    scrollToSelection = true
                     moveSelection(1)
                     return .handled
                 }
@@ -131,6 +140,7 @@ struct CommandPalette: View {
                             .id(item.id)
                             .onHover { inside in
                                 if inside {
+                                    scrollToSelection = false
                                     selectedIndex = index
                                 }
                             }
@@ -140,13 +150,21 @@ struct CommandPalette: View {
                 .padding(6)
             }
             .frame(maxHeight: maxHeight)
+            .id(session)
+            .onChange(of: query) { _, _ in
+                if let first = items.first {
+                    scroll.scrollTo(first.id, anchor: .top)
+                }
+            }
             .onChange(of: selectedIndex) { _, newValue in
-                guard newValue >= 0, newValue < items.count else { return }
+                guard scrollToSelection, newValue >= 0, newValue < items.count else { return }
+                scrollToSelection = false
+                let anchor: UnitPoint = newValue == 0 ? .top : .center
                 if reduceMotion {
-                    scroll.scrollTo(items[newValue].id, anchor: .center)
+                    scroll.scrollTo(items[newValue].id, anchor: anchor)
                 } else {
                     withAnimation(DS.Motion.snappy) {
-                        scroll.scrollTo(items[newValue].id, anchor: .center)
+                        scroll.scrollTo(items[newValue].id, anchor: anchor)
                     }
                 }
             }
@@ -282,6 +300,50 @@ struct CommandPalette: View {
             ) {
                 state.toggleSidebar()
             })
+
+        // 全站搜索：模型与最近对话也进命令面板，不必先跳到对应页面再找。
+        for section in SettingsSection.allCases {
+            list.append(
+                CommandItem(
+                    id: "settings.\(section.rawValue)",
+                    title: "\(L10n.t("设置")) · \(L10n.t(section.title))",
+                    detail: L10n.t("跳到设置分区"),
+                    icon: section.symbol
+                ) {
+                    state.settingsSection = section
+                    state.section = .settings
+                })
+        }
+        var seenModels = Set<String>()
+        let engines = [state.activeEngine]
+            + EngineCatalog.allIDs.filter { $0 != state.activeEngine }
+        for engine in engines {
+            for entry in state.libraryEntries(for: engine).filter({ $0.installed && !$0.isDraft }) {
+                guard seenModels.insert(entry.model.id).inserted else { continue }
+                list.append(
+                    CommandItem(
+                        id: "model.\(entry.model.id)",
+                        title: "\(L10n.t("使用模型")) \(entry.model.shortName)",
+                        detail: "\(entry.engine.displayName) · \(entry.model.sizeText)",
+                        icon: "square.stack.3d.up"
+                    ) {
+                        state.useModel(entry.model.id, engine: entry.engine)
+                    })
+            }
+        }
+        for thread in state.threads.prefix(20) {
+            let title = thread.title.isEmpty ? L10n.t("未命名对话") : thread.title
+            list.append(
+                CommandItem(
+                    id: "thread.\(thread.id)",
+                    title: title,
+                    detail: "\(L10n.t("对话")) · \(Format.relative(thread.updatedAt))",
+                    icon: "bubble.left"
+                ) {
+                    state.openThread(thread)
+                    state.section = .chat
+                })
+        }
         return list
     }
 

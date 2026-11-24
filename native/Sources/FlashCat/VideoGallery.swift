@@ -39,9 +39,15 @@ final class VideoGalleryStore: Sendable {
     }
 
     private let fileURL: URL
+    /// 只有落在作品目录里的文件才允许由图库删除。
+    private let mediaDirectory: String
 
-    init(fileURL: URL = URL(fileURLWithPath: Paths.supportDirectory + "/video-gallery.json")) {
+    init(
+        fileURL: URL = URL(fileURLWithPath: Paths.supportDirectory + "/video-gallery.json"),
+        mediaDirectory: String = VideoStore.directory
+    ) {
         self.fileURL = fileURL
+        self.mediaDirectory = mediaDirectory
     }
 
     /// 新片在前。指向已删除文件的条目先跳过，文件放回来还能重新出现。
@@ -104,6 +110,28 @@ final class VideoGalleryStore: Sendable {
             return Int(text.dropFirst(5))
         }
         return nil
+    }
+
+    /// 批量删除：先把条目移出索引，再删作品目录里的落盘文件。返回真正删掉的
+    /// 文件数；目录之外只清索引，不碰文件。
+    @discardableResult
+    func delete(paths: Set<String>) -> Int {
+        guard !paths.isEmpty else { return 0 }
+        var values = Self.read(fileURL)
+        let doomed = values.filter { paths.contains($0.path) }
+        values.removeAll { paths.contains($0.path) }
+        write(values)
+
+        let root = (mediaDirectory as NSString).standardizingPath
+        var removed = 0
+        for entry in doomed {
+            let path = (entry.path as NSString).standardizingPath
+            guard path.hasPrefix(root + "/") else { continue }
+            guard FileManager.default.fileExists(atPath: path) else { continue }
+            try? FileManager.default.removeItem(atPath: path)
+            if !FileManager.default.fileExists(atPath: path) { removed += 1 }
+        }
+        return removed
     }
 
     /// 只用于展示：文件不在的条目跳过。索引本身原样保留。

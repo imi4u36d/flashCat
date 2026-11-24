@@ -22,15 +22,16 @@ once and script status, start/stop, models, and chat.
 
 ## Highlights
 
-**1. Dynamic Island.** A glass capsule sits permanently at the top of the window:
-engine name, real phase (starting / loading weights / warming up), live tok/s, and
-start/stop. Notifications pop up in place, graded info / success / warning / error,
-and return to engine status after 3.2 seconds; click to expand notification history
-or engine details right there, click anywhere else to collapse. It replaces three
-surfaces at once — the status bar, toasts, and a details page.
+**1. Status stays visible with the sidebar collapsed.** A compact pill in the bottom-left
+corner shows the engine and its real phase (starting / loading weights / warming up), the
+current model, live tok/s, the gateway's online state, and unread notices. Click it to
+expand engine details, start/stop, copy the endpoint, and read notification history;
+receipts for copying an address or saving a setting float in the same corner and fade
+after three seconds. With the sidebar open, recent chats run all the way to the bottom —
+no permanent status strip.
 
 **2. Multi-engine aggregation, transparent model switching.** Splash, oMLX, MTPLX,
-MLX-Serve, and Strata coexist as peers, each with its own port range, runtime, logs,
+and MLX-Serve coexist as peers, each with its own port range, runtime, logs,
 and model directory. Hot-swap engines keep their process alive; restart-style engines
 still show their phase and an "elapsed m:ss" counter. Clients notice none of it — the
 gateway address is fixed, so switching engines or ports never means editing a Base URL.
@@ -55,8 +56,8 @@ draft acceptance, cache hit rate, and current context usage (e.g. `18K / 262K`) 
 screen. Total decode is a 60-second live curve; recent requests are listed one by one
 with status, decode speed, and context, and the last row stays put after a request
 finishes instead of the page resetting to zero. Overview readings all tick at 1 Hz:
-the curve draws "how fast right now" and freezes when the request ends, while the hero
-number only shows the average since the model started. Every metric has exactly one
+the curve draws "how fast right now" and freezes when the request ends, while the
+"average decode" cell only shows the average since the model started. Every metric has exactly one
 source: speed metrics are timed by the gateway per request (measured over wall-clock
 windows, so a batch arriving at once does not flicker); prefill prefers the per-request
 timing the engine reports itself (`timings`, carried by streaming and non-streaming
@@ -78,7 +79,7 @@ with one shared seed, hangs each image in the thread as it lands, then returns t
 results to the chat model to keep writing — vision-capable models look at the images
 first and decide whether to draw more. Image and video models get their own composer:
 size, steps, seed, first and last frame; REF2VA models can also take reference images
-and reference videos. Outputs go to the Lab with their prompt, model, and seed
+and reference videos. Outputs go to the Gallery with their prompt, model, and seed
 attached, and survive a restart.
 
 ## Requirements
@@ -109,7 +110,7 @@ connection to download an engine runtime (80 MB – 600 MB, depending on the eng
    for it to finish installing.
 2. It becomes the default engine and the window moves into the console automatically.
 3. From then on you can install other engines on the **Engines** page, change the
-   default there, or download models on the **Models** page.
+   default there, or download models on the **Model Library** page.
 
 Every engine is a peer:
 
@@ -119,7 +120,6 @@ Every engine is a peer:
 | **oMLX** | 8100 | Keeping several models resident, switching without a restart | Hot swap |
 | **MTPLX** | 8200 | Long context, multi-token prediction | Restarts the engine |
 | **MLX-Serve** | 8300 | General MLX / GGUF, multi-model hot loading, tool calling | Hot swap |
-| **Strata** | 8400 | SSD expert streaming, large MoE, multiple hardware backends | Restarts the engine |
 
 Every engine supports chat and streaming; vision, thinking, tool calling, and
 multi-model support are declared item by item in each engine descriptor, and the UI
@@ -127,21 +127,32 @@ never assumes an engine has them. Each engine owns a port block, so they never c
 
 ## A tour of the interface
 
-**Overview** — engine status, current model, live speed curve, memory and port usage,
-and how much context the current session occupies (e.g. `18K / 262K`). On the right
-are the API gateway addresses (one line for OpenAI, one for Claude, each with a
-one-click copy).
+**Overview** — the header names the page and the engine's live state (name, port, real
+phase, start/stop, switch model); below it a current-model strip carries context usage
+(e.g. `18K / 262K`), then three readings (average decode / first-token / prefill) and
+the 60-second curve; when the engine is stopped, a "Last run" card takes its place.
+On the right are the API gateway addresses (one line for OpenAI, one for Claude, each
+with a one-click copy); the chevron beside each endpoint copies a curl or Python call
+snippet, the bolt button sends a real test request, and "Recent clients" below groups
+requests by `User-Agent` — who connected, which dialect, how many requests. Below that
+is a table of engine facts.
 
 **Chat** — the built-in chat window, laid out like Splash: a single transcript column,
-collapsible thinking, and copy / regenerate on hover. The composer switches models,
-adjusts temperature / top-p / max output, and sets thinking mode; every reply is
-labeled with its model, tok/s and first-token latency. Transcripts stay local and can
-be searched, pinned, renamed or browsed anytime.
+collapsible thinking, syntax-highlighted code with line numbers, and copy / edit-resend /
+branch on hover; ⌘V pastes a screenshot as an attachment, and a warning appears above the
+composer as the context fills up. The composer switches models;
+the generation-parameters sheet adjusts temperature / top-p / max output and thinking
+level; every reply is labeled with its model, tok/s and first-token latency. Transcripts
+stay local and can be searched, pinned, renamed or browsed anytime.
 
-**Models** — one library per engine; pick the engine at the top first (engines you have
-not installed still show what they support). Installed weights get a "Use" button,
-missing ones a "Download" that pulls in place, and each card lists size, memory floor,
-and quantization format (`QUANT`: `Q4_K_M` / `oQ4e` / `8-bit` / `BF16`…).
+**Model Library** — the default "Local Library" mode lists only weights already on disk
+(sort by curated order / size / memory floor / name, and turn on "Fits" to show only what
+this Mac can run);
+pick the engine at the top first (engines you have not installed still show what they
+support), grouped by family: Qwen / MiMo / DeepSeek… each section is a set of compact
+variant rows showing engine, quantization (`Q4_K_M` / `oQ4e` / `8-bit` / `BF16`…), size,
+memory floor, and source. Recommendations that are not downloaded yet live in a separate
+"Recommended" mode instead of sharing the local grid.
 "Model Hub" in the top right opens search: Hugging Face, HF-Mirror or ModelScope
 repositories (switch from the header menu), keyword search, sort by downloads, filter by
 "All / MLX / GGUF", page through results (30 per page from HF, 24 from ModelScope),
@@ -155,16 +166,19 @@ single copy and are visible to every engine by default; each card's origin is ei
 the upstream version, plus one-click update, open install folder, view logs, and
 removal of a specific version.
 
-**Logs** — live output from the current engine, filterable by "All / Info / Warning /
-Error", with search, pause scrolling, and clear.
+**Logs** — live output from all engines merged by time by default. Source, level
+("All / Info / Warning / Error"), and search share one row, with hits highlighted; pause
+scrolling, copy the filtered lines, or clear.
 
-**Settings** — appearance, background image and opacity, ports, launch at login,
-thinking mode, reasoning effort, default model, download cache folder, keeping the
-image model resident, and more; every row applies as you change it.
+**Settings** — a section rail on the left (General / Engines / Model Source / Endpoint /
+Chat / About) with only the current section on the right: appearance, launch at login,
+ports, download cache folder, mirror and token, gateway, thinking mode and default chat
+parameters; every row applies as you change it, and About can check for flashCat updates.
 
-**Lab** — the library of generated results. Switch between "Images / Videos" at the
-top, one page of thumbnails per screen, page back from the top left; open one to view
-the full image or play the video, with prompt, model, and seed attached so you can
+**Gallery** — the library of generated results. Switch between "Images / Videos" below the
+page header; thumbnails fill a grid sized to the window and load as you scroll, and video
+covers show their duration. A selection mode can select all, then export or delete in bulk. Open one
+to view the full image or play the video, with prompt, model, and seed attached so you can
 copy it back into the composer and draw again. Only outputs generated in a chat land
 here — background and first-frame images you drag into the composer stay out.
 
@@ -249,7 +263,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ```bash
 flashcat                            # Status: app, engine, gateway, downloads
-flashcat engines list               # Installed version and state of all five engines
+flashcat engines list               # Installed version and state of all four engines
 flashcat engines install omlx       # Download and install a runtime without the GUI
 flashcat engines start omlx         # Switch to it and wait until weights really load
 flashcat models list --all          # Local weights plus recommended tiers
@@ -298,10 +312,10 @@ follows it automatically — no reinstall needed. The interface listens only on
 `127.0.0.1`, rotates to a fresh random token on every launch, and keeps `control.json`
 at mode `0600`, so other users on the same machine cannot drive the app.
 
-## Models
+## Model Library
 
 Models are downloaded inside the app, from Hugging Face, HF-Mirror or ModelScope
-(switch under Settings → Model Source). The Models page puts weights
+(switch under Settings → Model Source). The Model Library page puts weights
 that can load right away under "Local", and tiers this Mac's memory can hold but that
 have not been downloaded yet under "FlashCat Recommended":
 
@@ -314,11 +328,11 @@ have not been downloaded yet under "FlashCat Recommended":
 Splash runs GGUF builds of the 27B IQ3_S and Flash-Next Q2_0; oMLX uses Jundot's `oQ4e`
 quantization; MTPLX additionally falls back to two Youssofal-optimized packs, MiMo 9B
 and Qwen3.5 4B, on low-memory machines. To run something else, open the Model Hub from
-"＋ Download Model" in the top right of the Models page, search or browse Hugging Face
+"＋ Download Model" in the top right of the Model Library page, search or browse Hugging Face
 or ModelScope repositories, open the model card, and download from there: weights land
 in a shared folder as a single copy and are visible to every engine by default (files
 are never copied). Whether a given engine can load a
-model is the engine's own call, and the Models page keeps downloaded weights separate
+model is the engine's own call, and the Model Library page keeps downloaded weights separate
 from not-yet-downloaded "FlashCat Recommended" tiers, tagging each local weight as
 "catalog" or "personal download".
 
@@ -394,7 +408,7 @@ reverse proxy in front of it; do not expose the port directly to the internet.
 **The app will not open, saying it is damaged or from an unknown developer?**
 Right-click → Open, or go to System Settings → Privacy & Security and click "Open Anyway".
 
-**A model does not show up for an engine on the Models page?**
+**A model does not show up for an engine on the Model Library page?**
 Switch engines at the top; engines you have not installed can still show the curated
 tiers they support.
 
@@ -438,6 +452,5 @@ handles downloading, installing, and orchestrating their runtimes:
 [Splash](https://github.com/incoai/splash),
 [oMLX](https://github.com/jundot/omlx),
 [MTPLX](https://github.com/youssofal/mtplx),
-[MLX-Serve](https://github.com/ddalcu/mlx-serve),
-[Strata](https://github.com/Niko1221/Strata).
+[MLX-Serve](https://github.com/ddalcu/mlx-serve).
 Model copyrights belong to their respective publishers.

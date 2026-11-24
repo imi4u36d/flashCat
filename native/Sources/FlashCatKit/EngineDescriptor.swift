@@ -95,7 +95,6 @@ public struct EngineAdapterID: RawRepresentable, Codable, Hashable, Sendable {
     public static let omlx = EngineAdapterID("omlx")
     public static let mtplx = EngineAdapterID("mtplx")
     public static let mlxServe = EngineAdapterID("mlx-serve")
-    public static let strata = EngineAdapterID("strata")
 }
 
 public enum EngineModelLayout: String, Codable, Sendable {
@@ -123,9 +122,6 @@ public enum EngineTelemetryFormat: String, Codable, Sendable {
     case openAIModels = "openai.models"
     case prometheusJSON = "prometheus.json"
     case llamaProps = "llama.props"
-    case strataHealth = "strata.health"
-    case strataStatus = "strata.status"
-    case strataMetrics = "strata.metrics"
 }
 
 public struct EngineTelemetrySource: Codable, Hashable, Sendable {
@@ -293,7 +289,6 @@ public struct EngineDescriptor: Codable, Hashable, Sendable, Identifiable {
             switch base.adapter {
             case .omlx: format = .omlxStatus
             case .mtplx: format = .mtplxSnapshot
-            case .strata: format = .strataMetrics
             default: format = .splashStatus
             }
             inferredTelemetry = [EngineTelemetrySource(role: .status, path: status[0], format: format)]
@@ -390,21 +385,6 @@ public enum EngineCatalog {
                 EngineTelemetrySource(role: .props, path: "/props", format: .llamaProps),
             ],
             license: "MIT", upstreamRepository: "ddalcu/mlx-serve"),
-        EngineDescriptor(
-            id: .strata, displayName: "Strata",
-            summary: "面向大规模 MoE 的 SSD 流式推理引擎，支持 Metal / CUDA / HIP。",
-            accentColor: "#0AB887", adapter: .strata,
-            defaultPort: 8400, minMacOS: "15.0", startupTimeout: 1800, switchMode: .restart,
-            capabilities: [.chat, .streaming, .vision, .reasoning, .singleModel, .mtp],
-            modelLayout: .external,
-            telemetry: [
-                EngineTelemetrySource(role: .health, path: "/health", format: .strataHealth),
-                EngineTelemetrySource(role: .status, path: "/v1/status", format: .strataStatus),
-                EngineTelemetrySource(role: .metrics, path: "/metrics", format: .strataMetrics),
-                EngineTelemetrySource(role: .props, path: "/props", format: .llamaProps),
-                EngineTelemetrySource(role: .inventory, path: "/v1/models", format: .openAIModels),
-            ],
-            license: "MIT", upstreamRepository: "Niko1221/Strata"),
     ]
 
     /// The complete set of engines supported by this application. Adding an

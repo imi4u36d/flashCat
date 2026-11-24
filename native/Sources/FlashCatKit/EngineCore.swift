@@ -48,7 +48,6 @@ public struct EngineID: RawRepresentable, Codable, Hashable, Identifiable,
     public static let omlx = EngineID("omlx")
     public static let mtplx = EngineID("mtplx")
     public static let mlxServe = EngineID("mlx-serve")
-    public static let strata = EngineID("strata")
 
     public var descriptor: EngineDescriptor { EngineCatalog.descriptor(for: self) }
     public var displayName: String { descriptor.displayName }

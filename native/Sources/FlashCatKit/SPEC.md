@@ -38,13 +38,13 @@ depends-on: [flashcat-manifest-contract]
 
 1. 在 `EngineCatalog.builtIns` 增加一个 descriptor（稳定 id、显示、端口、切换模式、能力、模型布局、控制端点、遥测源）和对应的 `EngineID` 便利常量。
 2. 产出 pack 的 `manifest.json`。标准 OpenAI 兼容引擎到此为止；它的 load/unload/rescan、模型清单和指标应全部由 manifest 描述。
-3. 只有真实生命周期差异才新增 adapter，例如 Splash 的本地装配、Strata 的受管 Control/engine。adapter 也不能把 `if engine == ...` 扩散回 `EngineManager`、安装中心或页面。
+3. 只有真实生命周期差异才新增 adapter，例如 Splash 的本地装配、oMLX 的多模型热加载。adapter 也不能把 `if engine == ...` 扩散回 `EngineManager`、安装中心或页面。
 4. 用 `PackInstallIntegrationTests` 指向真实归档，验证安装、入口和 manifest；为每种新的 `telemetry.format` 增加解析测试。
 5. UI 不增加引擎数组；它只消费快照中的 `engineCatalog`。
 
 ## 不变量与代价
 
-- **端口几何刻意避开上游默认值。** 当前为 splash 8000 / omlx 8100 / mtplx 8200 / mlx-serve 8300 / strata 8400，每段默认 20 个端口。默认端口、段大小和切换模式都来自 descriptor；段外不放宽是刻意的。
+- **端口几何刻意避开上游默认值。** 当前为 splash 8000 / omlx 8100 / mtplx 8200 / mlx-serve 8300，每段默认 20 个端口。默认端口、段大小和切换模式都来自 descriptor；段外不放宽是刻意的。
 - **家族声明 `None` 就是没有 draft。** `families.py` 里 `ModelFamily("x", None, …)` 与「表里没这个家族」是两件事：前者以家族的回答为准，不许被应用里写死的已知表覆盖成「其实没发布过的 draft」；后者才回落到已知表，再没有就按无加速处理。
 - **未知开放值不失败。** `EngineID` 与 `EngineCapability` 是开放值；新 pack 带来的未知 capability 会保留原文，未知 `modelArgument` 才回落到 `.name`。引擎仍然装得上、起得来。
 - **解析器是唯一知道状态形状的地方。** 各家状态报文的字段知识只许存在于 `StatusParsers`；控制器只按 descriptor 拉取 source，再交给解析器按 `format` 合并。
@@ -74,7 +74,7 @@ depends-on: [flashcat-manifest-contract]
   两套估计器各管各的界面，不再混用（旧实现共用低通，概览的闪烁与对话页的
   平滑互相牵制，参数两头不讨好）。
 
-- **「是不是实时」不是布尔，是粒度。** 五家引擎全都自报速率，但它们回答的不是同一个问题，一个 `isLive` 分不出来。`EngineRateKind` 编码三档：`.live`（采样窗口内的计数差分，或引擎自报的瞬时场：splash 的 `current_*_batch.tokens_per_second`、strata 的 `live.prefill_tok_s_mean`、mtplx 的 `in_flight[].prefill_state`）、`.lastRequest`（上一个已完成请求的实测值：mtplx 的 `latest.*`、llama.cpp 风格的 `timings`）、`.lifetimeMean`（进程累计比值：splash 的 `metrics.*_tokens_per_second` 是 `prefillTokens_ * 1000 / prefillWallMilliseconds_` 两个只增不减的量相除，oMLX 的 `avg_*_tps` 同）。预填充天然不是连续量：请求一做完计数器就不动，"此刻多快"没有定义。概览层因此**取消 LAST 采集入口**：当前速度与预填充都只认 `LIVE`；预填充另保留引擎真的累计过的 `AVG`（文案写明「开机以来均值」），空闲时画「—」，绝不把上一请求的终值挂成当前速度。
+- **「是不是实时」不是布尔，是粒度。** 四家引擎全都自报速率，但它们回答的不是同一个问题，一个 `isLive` 分不出来。`EngineRateKind` 编码三档：`.live`（采样窗口内的计数差分，或引擎自报的瞬时场：splash 的 `current_*_batch.tokens_per_second`、mtplx 的 `in_flight[].prefill_state`）、`.lastRequest`（上一个已完成请求的实测值：mtplx 的 `latest.*`、llama.cpp 风格的 `timings`）、`.lifetimeMean`（进程累计比值：splash 的 `metrics.*_tokens_per_second` 是 `prefillTokens_ * 1000 / prefillWallMilliseconds_` 两个只增不减的量相除，oMLX 的 `avg_*_tps` 同）。预填充天然不是连续量：请求一做完计数器就不动，"此刻多快"没有定义。概览层因此**取消 LAST 采集入口**：当前速度与预填充都只认 `LIVE`；预填充另保留引擎真的累计过的 `AVG`（文案写明「开机以来均值」），空闲时画「—」，绝不把上一请求的终值挂成当前速度。
 - **速率与粒度必须成对合并。** `merge` 按 health → status → metrics → props → inventory 折叠，后到的文档会覆盖数值。如果只让数值覆盖、粒度在旁边独立地取最强，就会出现「数值是后来的累计均值、角标却写着 `LIVE`」。所以只有来源粒度 `rank` 不弱于当前时才整对替换（`.live` > `.lastRequest` > `.lifetimeMean` > `.none`）：更好的来源不会被后面端点的均值洗掉，均值也不会冒充实时。
 - **MTPLX 的预填充按「越接近此刻越优先」排序。** `in_flight[].prefill_state`（每 chunk 刷新）→ `.live`；`latest.prefill_tok_s`（上一请求终值）→ `.lastRequest`；`prefill_rates.tokens / compute_time_s`（最近 ≤100 chunk 的滚动均值）→ `.lifetimeMean`。同处的 `peak_tok_s` 是单 chunk 最大值，**不能**当读数——那正是「恒定不变的大数字」的来源，只留作诊断。解析层仍如实标注 `.lastRequest`（数据本身是真的）；概览 owner 表不再把这一档当作可显示来源。
 - **预填充没有网关回落。** 1.5.2 起不再用「(整段提示词 − 缓存命中) / 首字耗时」估算：分母是 TTFT，混着排队与缓存恢复，分子要等末帧 `usage` 才知道命中量，请求进行中算不出可靠读数。引擎不上报该方向速率时显示「—」。

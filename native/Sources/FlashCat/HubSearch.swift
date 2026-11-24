@@ -127,7 +127,7 @@ struct HubSearchState {
     /// engine's.
     static func engines(for kind: HubModelKind) -> Set<EngineID> {
         switch kind {
-        case .gguf: return [.splash, .strata]
+        case .gguf: return [.splash]
         case .mtplx: return [.mtplx]
         case .mlx, .unmarked: return [.omlx, .mlxServe]
         case .unknown: return []

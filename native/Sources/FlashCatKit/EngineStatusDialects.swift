@@ -5,9 +5,9 @@ import Foundation
 
 // MARK: - 说明
 //
-// 五家引擎的遥测形状彼此不同，但差异只有两类：**同一件事叫什么**（路径拼写）
+// 四家引擎的遥测形状彼此不同，但差异只有两类：**同一件事叫什么**（路径拼写）
 // 和**少数几个复合读法**（数组遍历、跨字段相除、跨文档回落）。这份文件把第一类
-// 写成表（`EngineStatusDialect`），第二类写成 7 个具名 refinement；`StatusParsers`
+// 写成表（`EngineStatusDialect`），第二类写成 5 个具名 refinement；`StatusParsers`
 // 里的折叠核心因此不含任何引擎 id / adapter 分支。
 //
 // 新增引擎时有两种情况：复用已有格式（llama.cpp 系、OpenAI `/v1/models` 系）
@@ -361,12 +361,6 @@ struct StatusExtraRule: Sendable {
 /// 有条件覆盖：条件命中时改写状态或摘要。这些是「状态机规则」，不是字段映射。
 struct StatusOverrideRule: Sendable {
     enum When: Sendable {
-        /// 某字段为 false（strata 的 `loaded: false` = 还在预热）。
-        case boolFalse([String])
-        /// 某字段为 true。
-        case boolTrue([String])
-        /// 某字段等于给定字符串（大小写不敏感）。
-        case stringEquals(path: String, value: String)
         /// 有模型在加载、但还没有可用的常驻模型（oMLX 的 `models_loading`）。
         case loadingWithoutLoadedModels([String])
         /// 没有任何模型身份（MTPLX 的 supervisor 已起、模型尚未就绪）。
@@ -382,12 +376,6 @@ struct StatusOverrideRule: Sendable {
     func apply(to status: inout EngineStatus, json: [String: Any]) {
         let hit: Bool
         switch when {
-        case .boolFalse(let paths):
-            hit = JSONValue.firstBool(json, paths) == false
-        case .boolTrue(let paths):
-            hit = JSONValue.firstBool(json, paths) == true
-        case .stringEquals(let path, let value):
-            hit = JSONValue.firstString(json, [path])?.lowercased() == value.lowercased()
         case .loadingWithoutLoadedModels(let paths):
             let count = JSONValue.firstInt(json, paths) ?? 0
             hit = count > 0 && status.state == .ready && status.loadedModels.isEmpty
@@ -413,8 +401,6 @@ enum StatusRefinement: Sendable {
     case mtplxTail
     /// Prometheus 的内存口径、失败计数合并、uptime 反推。
     case prometheusGauges
-    /// strata `/metrics` 的均值、摘要、最近请求兜底。
-    case strataMetricsTail
     /// 从 OpenAI `/v1/models` 的行推出常驻模型与当前模型。
     case openAIModelsStatus
 }
@@ -458,9 +444,9 @@ private func tier(
 /// 全部方言，键就是 descriptor 的 `telemetry[].format`。
 enum EngineStatusDialects {
 
-    /// 「只有一份状态文档」的引擎走 `parse(engine:)`；strata 与 mlx-serve 的状态
-    /// 分散在 health / status / metrics / inventory 多份文档里，必须走
-    /// `parse(documents:)`，所以不在这张表里。
+    /// 「只有一份状态文档」的引擎走 `parse(engine:)`；mlx-serve 的状态分散在
+    /// metrics / props / inventory 多份文档里，必须走 `parse(documents:)`，
+    /// 所以不在这张表里。
     static let primaryStatusFormat: [EngineAdapterID: EngineTelemetryFormat] = [
         .splash: .splashStatus,
         .omlx: .omlxStatus,
@@ -475,9 +461,6 @@ enum EngineStatusDialects {
         .openAIModels: openAIModelsStatus,
         .prometheusJSON: prometheusJSONStatus,
         .llamaProps: llamaPropsStatus,
-        .strataHealth: strataHealthStatus,
-        .strataStatus: strataStatusStatus,
-        .strataMetrics: strataMetricsStatus,
     ]
 
     static func dialect(for format: EngineTelemetryFormat) -> EngineStatusDialect? {
@@ -730,70 +713,6 @@ enum EngineStatusDialects {
 
     private static let openAIModelsStatus = EngineStatusDialect(refinements: [.openAIModelsStatus])
 
-    // MARK: strata
-
-    private static let strataHealthStatus = EngineStatusDialect(
-        fields: [
-            .model: ["model"],
-            .maximumContextTokens: ["max_context"],
-            .processIdentifier: ["pid"],
-        ],
-        overrides: [StatusOverrideRule(when: .boolFalse(["loaded"]), state: .loading)])
-
-    /// strata 的 `/v1/status`：`timings` 是上一个请求的终值（llama.cpp 口径），
-    /// 不是此刻的速度。
-    private static let strataStatusStatus = EngineStatusDialect(
-        fields: [
-            .model: ["model.id", "model", "engine.model"],
-            .maximumContextTokens: ["max_context", "engine.max_context"],
-            .activeRequests: ["running", "live.running", "active_requests"],
-            .queuedRequests: ["queued", "live.queued", "waiting"],
-        ],
-        rates: [
-            StatusRateRule(
-                target: .decode,
-                tiers: [
-                    tier(
-                        .paths(["timings.predicted_per_second"]),
-                        .whenPositive(.lastRequest), requiresPositive: false)
-                ]),
-            StatusRateRule(
-                target: .prefill,
-                tiers: [
-                    tier(
-                        .paths(["timings.prompt_per_second"]),
-                        .whenPositive(.lastRequest), requiresPositive: false)
-                ]),
-        ],
-        overrides: [StatusOverrideRule(when: .boolTrue(["busy"]), detail: "生成中")])
-
-    /// strata 的 `/metrics`：`live.*` 是 serve 层逐 chunk 刷新的真·当前值。
-    private static let strataMetricsStatus = EngineStatusDialect(
-        fields: [
-            .model: ["engine.model"],
-            .maximumContextTokens: ["engine.max_context"],
-            .activeRequests: ["live.running"],
-            .requestsCompleted: ["totals.requests"],
-        ],
-        rates: [
-            StatusRateRule(
-                target: .decode,
-                tiers: [
-                    tier(.paths(["live.tok_s"]), .whenPositive(.live), requiresPositive: false)
-                ]),
-            StatusRateRule(
-                target: .prefill,
-                tiers: [
-                    tier(.paths(["live.prefill_tok_s_mean"]), .whenPositive(.live), requiresPositive: false)
-                ]),
-        ],
-        overrides: [
-            StatusOverrideRule(
-                when: .stringEquals(path: "live.state", value: "reading"),
-                state: .loading)
-        ],
-        refinements: [.strataMetricsTail])
-
     // MARK: 折叠
 
     /// 按方言把一份文档折成 `EngineStatus`。
@@ -924,30 +843,6 @@ extension StatusRefinement {
             }
             if let startedAt = status.startedAt {
                 status.uptimeSeconds = max(0, Date().timeIntervalSince1970 - startedAt)
-            }
-        case .strataMetricsTail:
-            status.queuedRequests =
-                (JSONValue.firstInt(json, ["live.queued"]) ?? 0)
-                + (JSONValue.firstInt(json, ["live.waiting"]) ?? 0)
-            let drafts = JSONValue.firstInt(json, ["totals.drafts_offered"]) ?? 0
-            let accepted = JSONValue.firstInt(json, ["totals.drafts_accepted"]) ?? 0
-            if drafts > 0 { status.draftAcceptance = Double(accepted) / Double(drafts) }
-            if let output = JSONValue.firstNumber(json, ["totals.output_tokens"]),
-                let decodeMs = JSONValue.firstNumber(json, ["totals.decode_ms"]),
-                decodeMs > 0
-            {
-                let mean = output / (decodeMs / 1000)
-                status.detail = String(format: "%.1f tok/s", mean)
-                if mean > 0 { status.lifetimeDecodeTokensPerSecond = mean }
-            }
-            if status.decodeTokensPerSecond == nil,
-                let requests = json["requests"] as? [[String: Any]],
-                let latest = requests.first
-            {
-                // `live.tok_s` 缺位时才回落到最近一次请求的终值。
-                status.decodeTokensPerSecond = JSONValue.firstNumber(latest, ["decode_tok_s"])
-                status.decodeRateKind =
-                    (status.decodeTokensPerSecond ?? 0) > 0 ? .lastRequest : .none
             }
         case .openAIModelsStatus:
             let entries = (json["data"] as? [[String: Any]]) ?? []

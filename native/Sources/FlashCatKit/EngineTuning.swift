@@ -133,7 +133,7 @@ public struct EngineTuning: Codable, Equatable, Sendable {
     }
 
     /// Arguments that turn the engine's on-disk prefix cache on and point it at
-    /// the shared root. Strata has no such tier, so it gets nothing.
+    /// the shared root.
     public func prefixCacheArguments(for id: EngineID) -> [String] {
         let profile = EngineTuningProfile.resolved(for: id)
         guard let gb = effectivePrefixCacheDiskGB(for: id) else {
@@ -349,7 +349,7 @@ public enum EngineSettingValue: Equatable, Sendable {
 
 /// 一个适配器的参数拼写表。
 ///
-/// 同一件事在五家引擎上叫法不同：落盘前缀缓存对 Splash 是
+/// 同一件事在各家引擎上叫法不同：落盘前缀缓存对 Splash 是
 /// `--max-cache-disk 20G --persistent-cache --cache-dir <dir>`，对 oMLX 是
 /// `--paged-ssd-cache-dir <dir> --paged-ssd-cache-max-size 20GB`。这些差异以前是
 /// 四个公开函数里各一张并列的 `switch id.adapter`：加一个引擎要在四五处各补一个
@@ -483,10 +483,6 @@ struct EngineTuningProfile: Sendable {
                 // 共享根上，所以这里只给预算，不给路径。
                 ["--prefix-cache-disk", "\(gigabytes)GB"]
             }),
-        .strata: EngineTuningProfile(
-            // Strata 没有落盘前缀缓存这一层，所以三个缓存字段全空。
-            defaults: EngineTuning(mtp: true),
-            mtpWhenUnset: true),
     ]
 
     /// 走 descriptor 的 adapter 查表；未登记的适配器退回 `generic`。

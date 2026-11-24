@@ -404,7 +404,8 @@ final class ChatRunner {
         let meterID = GatewayMeter.shared.begin(
             model: model,
             dialect: "chat",
-            promptTokens: promptTokens)
+            promptTokens: promptTokens,
+            client: "flashCat")
 
         Task {
             if needsStartup {
@@ -687,7 +688,7 @@ final class ChatRunner {
 
             let meterID = GatewayMeter.shared.begin(
                 model: model, dialect: "image",
-                promptTokens: 0)
+                promptTokens: 0, client: "flashCat")
             GatewayMeter.shared.markStarted(meterID, at: Date())
             self.generationStatus = sourceBase64 == nil ? "正在生成图像" : "正在重绘图像"
             let request = ImageGenerationRequest(
@@ -872,7 +873,7 @@ final class ChatRunner {
                 self.livePromptTokens = promptTokens
                 let meterID = GatewayMeter.shared.begin(
                     model: chatModel, dialect: "chat",
-                    promptTokens: promptTokens)
+                    promptTokens: promptTokens, client: "flashCat")
                 GatewayMeter.shared.markStarted(meterID, at: started)
 
                 let result = await self.chatClient.send(
@@ -1088,7 +1089,7 @@ final class ChatRunner {
             setToolStage("正在画第 \(index + 1)/\(prompts.count) 张…", generation: generation)
             let meterID = GatewayMeter.shared.begin(
                 model: imageModel.id, dialect: "image",
-                promptTokens: TokenEstimator.estimate(prompt))
+                promptTokens: TokenEstimator.estimate(prompt), client: "flashCat")
             GatewayMeter.shared.markStarted(meterID)
             let request = ImageGenerationRequest(
                 model: imageModel.id,
@@ -1499,7 +1500,7 @@ final class ChatRunner {
 
             let meterID = GatewayMeter.shared.begin(
                 model: model, dialect: "video",
-                promptTokens: 0)
+                promptTokens: 0, client: "flashCat")
             GatewayMeter.shared.markStarted(meterID, at: Date())
             if usesReferences {
                 self.generationStatus = "正在生成视频（\(referenceImagesBase64.count) 张参考图 · \(referencePayloads.count) 段参考视频）"
@@ -1819,6 +1820,32 @@ final class ChatRunner {
         messages.removeAll()
         conversation.clear()
         threadID = Self.newThreadID()
+    }
+
+    /// 编辑一条用户消息并重发：删掉它以及之后的回答，再用新文本跑一轮。
+    /// 编辑会丢掉后续上下文，界面侧会先确认「这之后的 N 条会被删除」。
+    func editAndResend(messageID: UUID, text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !generating, !trimmed.isEmpty,
+            let index = messages.firstIndex(where: { $0.id == messageID }),
+            messages[index].role == "user"
+        else { return }
+        messages.removeSubrange(index...)
+        history.save(messages: messages, threadID: threadID)
+        threads = history.load()
+        send(trimmed)
+    }
+
+    /// 从某条消息处分叉：把到这条为止的对话复制到新会话，原会话不动。
+    func branchThread(from messageID: UUID) {
+        guard !generating,
+            let index = messages.firstIndex(where: { $0.id == messageID })
+        else { return }
+        let prefix = Array(messages.prefix(through: index))
+        newConversation()
+        messages = prefix
+        history.save(messages: messages, threadID: threadID)
+        threads = history.load()
     }
 
     func openThread(_ thread: ChatThread) {

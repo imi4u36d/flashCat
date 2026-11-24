@@ -515,7 +515,7 @@ final class EngineCoordinator {
                 }
         }
         let scanned = LocalEngineModels.scan(engine: id, directory: EnginePaths.modelsDirectory(id))
-        // Flat-layout packs (oMLX, MTPLX, Strata) scan as `owner--repo` while
+        // Flat-layout packs (oMLX, MTPLX) scan as `owner--repo` while
         // the download task is keyed by `owner/repo`. Canonicalise both sides
         // or the partial folder slips through and the card flips to "使用"
         // before the transfer is done.

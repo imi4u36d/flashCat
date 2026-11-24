@@ -189,7 +189,7 @@ final class DecodeRateTotalTests: XCTestCase {
         XCTAssertEqual(reading.source, .engine)
     }
 
-    /// 引擎没有样本（oMLX / strata 没有 TTFT 字段，splash 首个请求前报 0）
+    /// 引擎没有样本（oMLX 没有 TTFT 字段，splash 首个请求前报 0）
     /// 时，网关最近一次实测让这一格仍然有值。
     func testTTFTFallsBackToGatewayMeasurement() {
         let reading = AppState.ttftReading(engine: 0, gateway: 250)

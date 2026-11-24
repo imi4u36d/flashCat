@@ -236,7 +236,8 @@ final class GatewayController: ObservableObject {
         let meterID = GatewayMeter.shared.begin(
             model: (openaiPayload?["model"] as? String) ?? "",
             dialect: "openai",
-            promptTokens: TokenEstimator.promptTokens(messages: openaiPayload?["messages"]))
+            promptTokens: TokenEstimator.promptTokens(messages: openaiPayload?["messages"]),
+            client: request.header("user-agent") ?? "")
         if wantsStream {
             let response: GatewayUpstream.StreamResponse
             switch await GatewayUpstream.postStreaming(
@@ -351,7 +352,8 @@ final class GatewayController: ObservableObject {
         let meterID = GatewayMeter.shared.begin(
             model: model,
             dialect: "claude",
-            promptTokens: inputTokens)
+            promptTokens: inputTokens,
+            client: request.header("user-agent") ?? "")
 
         if stream {
             let response: GatewayUpstream.StreamResponse

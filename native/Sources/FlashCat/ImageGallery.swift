@@ -41,10 +41,16 @@ final class ImageGalleryStore: Sendable {
     }
 
     private let fileURL: URL
+    /// 只有落在作品目录里的文件才允许由图库删除；索引被手改也不越界删别人的文件。
+    private let mediaDirectory: String
 
     /// 测试可以指向临时目录；应用里用支持目录下的固定文件。
-    init(fileURL: URL = URL(fileURLWithPath: Paths.supportDirectory + "/image-gallery.json")) {
+    init(
+        fileURL: URL = URL(fileURLWithPath: Paths.supportDirectory + "/image-gallery.json"),
+        mediaDirectory: String = ImageStore.directory
+    ) {
         self.fileURL = fileURL
+        self.mediaDirectory = mediaDirectory
     }
 
     /// 新图在前。指向已删除文件的条目先跳过：用户可能只是把文件挪走了，
@@ -98,6 +104,29 @@ final class ImageGalleryStore: Sendable {
         let sorted = values.sorted { $0.createdAt > $1.createdAt }
         write(sorted)
         return Self.visible(sorted)
+    }
+
+    /// 批量删除：先把条目移出索引，再删作品目录里的落盘文件。返回真正删掉
+    /// 的文件数（文件早已不在的条目只清索引，不计数）。目录之外的路径只清索引，
+    /// 不碰文件——索引被手改时不能变成任意文件删除器。
+    @discardableResult
+    func delete(paths: Set<String>) -> Int {
+        guard !paths.isEmpty else { return 0 }
+        var values = Self.read(fileURL)
+        let doomed = values.filter { paths.contains($0.path) }
+        values.removeAll { paths.contains($0.path) }
+        write(values)
+
+        let root = (mediaDirectory as NSString).standardizingPath
+        var removed = 0
+        for entry in doomed {
+            let path = (entry.path as NSString).standardizingPath
+            guard path.hasPrefix(root + "/") else { continue }
+            guard FileManager.default.fileExists(atPath: path) else { continue }
+            try? FileManager.default.removeItem(atPath: path)
+            if !FileManager.default.fileExists(atPath: path) { removed += 1 }
+        }
+        return removed
     }
 
     /// 只用于展示：文件不在的条目跳过。索引本身由 `read`/`write` 原样保留。

@@ -85,6 +85,22 @@ struct ConsoleView: View {
                 .transition(.opacity)
             }
         }
+        // 侧栏收起时窗口左下角常驻一枚紧凑状态；通知到达时原地换成 toast。
+        // 侧栏展开时没有状态脊柱，通知同样浮在左下角，不再有第二个出口。
+        .overlay(alignment: .bottomLeading) {
+            if !isShowingOnboarding {
+                if let notice = state.islandNotice {
+                    FloatingNoticeToast(notice: notice) { state.dismissToast() }
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else if !state.showsSidebar {
+                    CompactStatusPill(state: state)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 20)
+                        .transition(.opacity)
+                }
+            }
+        }
+        .animation(reduceMotion ? nil : DS.Motion.smooth, value: state.islandNotice?.id)
         .sheet(isPresented: $showDownloads) { DownloadCenterSheet(state: state) }
         .sheet(isPresented: $showHub) { HubSheet(state: state, engine: state.libraryEngine) }
         .onReceive(NotificationCenter.default.publisher(for: .flashCatOpenCommandPalette)) { _ in
@@ -245,6 +261,7 @@ struct ConsoleNavigationPanel: View {
 
             recents
                 .padding(.horizontal, 10)
+                .padding(.bottom, DS.Space.sm)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background {

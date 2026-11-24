@@ -92,8 +92,6 @@ enum ModelInstaller {
             return try snapshotPlan(engine: engine, model: model, cache: cache, source: source)
         case .mlxServe:
             return try mlxServePlan(engine: engine, model: model, cache: cache, source: source)
-        case .strata:
-            return try strataPlan(engine: engine, model: model, cache: cache, source: source)
         default:
             return try snapshotPlan(engine: engine, model: model, cache: cache, source: source)
         }
@@ -175,7 +173,7 @@ enum ModelInstaller {
             // 原生 puller 把 huggingface.co 写死了，不读 HF_ENDPOINT；要走镜像
             // 得换一个 Python 下载器，否则会在国内不可达的官方端点上卡住。
             guard source == .huggingFace else {
-                throw Failure.message("MLX-Serve 的原生下载器不支持镜像端点；要经 HF-Mirror 下载，请先装一个带 Python 的引擎包：Splash、oMLX、MTPLX 或 Strata")
+                throw Failure.message("MLX-Serve 的原生下载器不支持镜像端点；要经 HF-Mirror 下载，请先装一个带 Python 的引擎包：Splash、oMLX 或 MTPLX")
             }
             return try mlxServeSharedPlan(
                 repo: repo,
@@ -184,7 +182,7 @@ enum ModelInstaller {
                 source: source)
         }
         guard let python, let root else {
-            throw Failure.message("公共下载需要已安装的 MLX-Serve，或任意一个带 Python 的引擎包：Splash、oMLX、MTPLX、Strata")
+            throw Failure.message("公共下载需要已安装的 MLX-Serve，或任意一个带 Python 的引擎包：Splash、oMLX、MTPLX")
         }
         let name = repo.split(separator: ":", maxSplits: 1).first.map(String.init) ?? repo
         let destination = sharedDestination(repo: name)
@@ -338,52 +336,6 @@ enum ModelInstaller {
             watchDirectory: destination,
             destination: destination,
             incompleteMarker: incompleteMarker(for: destination))
-    }
-
-    /// Strata's installer knows which members of a sharded GGUF repository are
-    /// required and prepares its own runtime pack. Do not feed it the generic
-    /// full-repository snapshot downloader.
-    private static func strataPlan(
-        engine: EngineID,
-        model: String,
-        cache: String,
-        source: HubSource
-    ) throws -> Plan {
-        guard let installation = EngineInstallations.newest(engine, version: nil) else {
-            throw Failure.message("还没有安装 \(engine.displayName) 引擎，无法下载模型")
-        }
-        guard let profile = StrataModelProfile(modelID: model) else {
-            throw Failure.message("Strata 暂不认识这个模型；请选择 Strata 支持的 Qwen3.8-Flash-Next 模型")
-        }
-        let data = EnginePaths.modelsDirectory(engine)
-        let selectedPath = EnginePaths.modelPath(for: engine, model: model)
-        Paths.ensureDirectory(data)
-        let root = installation.root.path
-        let wrapper = root + "/flashcat_strata.py"
-        guard Paths.fileExists(wrapper), Paths.fileExists(installation.entrypoint.path) else {
-            throw Failure.message("\(engine.displayName) 运行时缺少安装包装器或内置 Python")
-        }
-        var environment = self.environment(pythonRoot: root, cache: cache, source: source)
-        environment["PYTHONPATH"] = root
-        return Plan(
-            engine: engine,
-            model: model,
-            executable: installation.entrypoint.path,
-            arguments: [
-                "-u", wrapper,
-                "--strata-root", root,
-                "--models", data,
-                "--support", EnginePaths.supportDirectory,
-                "--model-path", selectedPath,
-                "--install-only",
-                "--family", profile.family,
-                "--model", profile.model,
-            ],
-            workingDirectory: root,
-            environment: environment,
-            watchDirectory: data,
-            destination: data,
-            incompleteMarker: incompleteMarker(for: selectedPath))
     }
 
     /// A pack must never inherit the user's Python environment; a stray
@@ -722,32 +674,5 @@ enum ModelInstaller {
             total += bytes.intValue
         }
         return total
-    }
-}
-
-/// Strata uses a family/model matrix instead of a repository snapshot. Keep
-/// this translation in one place so adding another supported family does not
-/// leak into the download center.
-struct StrataModelProfile {
-    let family: String
-    let model: String
-
-    init?(modelID: String) {
-        let repo = modelID.split(separator: ":", maxSplits: 1).first.map(String.init) ?? modelID
-        let lower = repo.lowercased()
-        let variant = modelID.firstIndex(of: ":").map {
-            String(modelID[modelID.index(after: $0)...]).uppercased()
-        }
-        if lower.contains("qwen3.8-flash-next") || lower.contains("strata") {
-            family = "qwen"
-            model = variant ?? "Q2_0"
-            return
-        }
-        if lower.contains("gyro") {
-            family = "gyro"
-            model = variant ?? "Gyro-S"
-            return
-        }
-        return nil
     }
 }

@@ -709,7 +709,7 @@ final class EngineController {
             // is gone and a fresh walk would come up empty.
             let tree = snapshotProcessTree(pid)
             tree.signal(SIGINT)
-            let grace: TimeInterval = descriptor.adapter == .strata ? 75 : 20
+            let grace: TimeInterval = 20
             DispatchQueue.main.asyncAfter(deadline: .now() + grace) { [weak self] in
                 guard let self else { return }
                 // 不能用 `self.process` 当门：python 主干收到 SIGINT 就先退了，
@@ -1183,7 +1183,7 @@ final class EngineController {
     }
 
     /// Give the launch a budget. `descriptor.startupTimeout` already encodes
-    /// how slow each engine is (oMLX 180 s, splash 660 s, strata 1800 s), so
+    /// how slow each engine is (oMLX 180 s, splash 660 s, mlx-serve 600 s), so
     /// reusing it keeps the promise the engine page makes about wait times.
     private func startStartupDeadline(for task: Process) {
         startupWatchdog?.cancel()
@@ -1298,12 +1298,8 @@ final class EngineController {
     private func collectTelemetry(healthResponse: HTTPResponse? = nil) async -> [EngineTelemetryDocument] {
         var sources = descriptor.telemetry
         if !sources.contains(where: { $0.role == .health }) {
-            let format: EngineTelemetryFormat
-            switch descriptor.adapter {
-            case .strata: format = .strataHealth
-            default: format = .llamaProps
-            }
-            sources.append(EngineTelemetrySource(role: .health, path: healthPath, format: format))
+            sources.append(
+                EngineTelemetrySource(role: .health, path: healthPath, format: .llamaProps))
         }
         // 各端点互不依赖，并发拉取；返回时按 sources 原顺序还原，解析层
         // 的合并顺序保持稳定。以前串行等待，一个慢端点会拖住整轮轮询。
@@ -1666,12 +1662,7 @@ final class EngineController {
     }
 
     private var orphanCleanupDirectories: [String] {
-        var roots = [packMarkerDirectory]
-        if descriptor.adapter == .strata {
-            roots.append((Paths.supportDirectory + "/strata-runtime" as NSString).resolvingSymlinksInPath)
-            roots.append((Paths.supportDirectory + "/strata-components" as NSString).resolvingSymlinksInPath)
-        }
-        return Array(Set(roots))
+        [packMarkerDirectory]
     }
 
     /// Launch-time sweep for processes a crashed or force-quit session left

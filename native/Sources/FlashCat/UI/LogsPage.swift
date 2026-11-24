@@ -38,12 +38,30 @@ struct LogsPage: View {
     var body: some View {
         let data = display()
         VStack(alignment: .leading, spacing: 10) {
-            topBar(data)
-                .padding(.top, Console.pageTopPadding)
-                .background(WindowDragArea())
+            DSPageHeader(
+                title: "日志",
+                subtitle: L10n.t(effectiveSource.title),
+                status: DSPageStatus(
+                    paused ? "PAUSED" : "LIVE",
+                    color: paused ? DS.warn : DS.ok,
+                    live: !paused)
+            ) {
+                actionButtons(data)
+            }
+            .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
+            .padding(.trailing, Console.contentPadding)
+            .padding(.top, Console.pageTopPadding)
+            .padding(.bottom, 2)
+            .background(WindowDragArea())
+
+            filterRow(data)
+                .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
+                .padding(.trailing, Console.contentPadding)
+
             console(data)
                 .padding(.horizontal, Console.contentPadding)
         }
+        .dsPageColumn()
         .padding(.bottom, Console.contentBottomInset)
         .task(id: query) {
             if query == appliedQuery { return }
@@ -63,40 +81,32 @@ struct LogsPage: View {
         }
     }
 
-    private func topBar(_ data: LogsDigest) -> some View {
-        // 窄窗口下过滤条和右侧动作放不进一行，自动折成上下两行。
+    /// 过滤只有一套：来源、级别、搜索同在一行，右端不再重复一份来源下拉。
+    private func filterRow(_ data: LogsDigest) -> some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: 14) {
-                filterBar(data)
+            HStack(spacing: 8) {
+                levelControl(data)
+                logSourceMenu
+                DSSearchField(query: $query, placeholder: "搜索", width: 200)
                 Spacer(minLength: 0)
-                actionButtons(data)
             }
-            .frame(height: DS.Layout.titlebarHeight)
-            .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
-            .padding(.trailing, Console.contentPadding)
-
-            VStack(alignment: .leading, spacing: 10) {
-                filterBar(data)
-                    .frame(height: DS.Layout.titlebarHeight)
-                    .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
-                    .padding(.trailing, Console.contentPadding)
-                HStack(spacing: 14) {
-                    Spacer(minLength: 0)
-                    actionButtons(data)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    levelControl(data)
+                    logSourceMenu
                 }
-                .padding(.horizontal, Console.contentPadding)
+                DSSearchField(query: $query, placeholder: "搜索", width: 200)
             }
         }
     }
 
-    private func filterBar(_ data: LogsDigest) -> some View {
-        DSFilterBar(
+    private func levelControl(_ data: LogsDigest) -> some View {
+        DSSegmented(
             selection: $level,
             options: LogsFilter.allCases.map { item in
                 (item, "\(L10n.t(item.label)) (\(data.counts[item] ?? 0))")
             },
-            query: $query,
-            placeholder: "搜索")
+            size: .regular)
     }
 
     @ViewBuilder
@@ -155,8 +165,12 @@ struct LogsPage: View {
     }
 
     private var logSourceMenu: some View {
-        DSMenu(size: .small) {
-            DSMenuTriggerLabel(title: effectiveSource.title, size: .small)
+        DSMenu(size: .regular) {
+            DSMenuTriggerLabel(
+                title: effectiveSource.title,
+                systemImage: "text.alignleft",
+                kind: .secondary,
+                size: .regular)
         } content: {
             Button {
                 select(.all)
@@ -206,7 +220,6 @@ struct LogsPage: View {
                         .font(DS.Font.mono(10, weight: .semibold))
                         .tracking(0.8)
                         .foregroundStyle(paused ? DS.warn : DS.ok)
-                    logSourceMenu
                     Spacer(minLength: 0)
                     Text(L10n.format("%lld 行", Int64(data.lines.count)))
                         .font(DS.Font.mono(11))
@@ -253,6 +266,7 @@ struct LogsPage: View {
                             ForEach(data.lines) { line in
                                 LogRowView(
                                     entry: line,
+                                    highlightQuery: appliedQuery,
                                     isExpanded: expanded.contains(line.id),
                                     onToggle: {
                                         if expanded.contains(line.id) {
@@ -293,6 +307,7 @@ struct LogsPage: View {
 /// 单行日志及其局部悬停/展开详情：把 `hovering` 留在行内，避免鼠标移动触发整个 `LogsPage` 重新过滤。
 private struct LogRowView: View {
     let entry: LogFeedEntry
+    let highlightQuery: String
     let isExpanded: Bool
     let onToggle: () -> Void
     let onCopyLine: () -> Void
@@ -347,7 +362,7 @@ private struct LogRowView: View {
                         DS.rect(4).strokeBorder(tone.opacity(0.25), lineWidth: 1)
                     }
 
-                    Text(entry.text)
+                    Text(highlighted(entry.text))
                         .font(DS.Font.mono(11.5))
                         .foregroundStyle(entry.level == .error ? DS.err : DS.text)
                         .lineLimit(1)
@@ -399,9 +414,36 @@ private struct LogRowView: View {
         76 + (entry.tag == nil ? 0 : 64)
     }
 
+    /// 搜索只过滤列表还不够：命中处要在行内亮起来，否则长日志里仍要靠眼睛找。
+    private func highlighted(_ text: String) -> AttributedString {
+        let base = entry.level == .error ? NSColor(DS.err) : NSColor(DS.text)
+        let attributed = NSMutableAttributedString(
+            string: text, attributes: [.foregroundColor: base])
+        let query = highlightQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return AttributedString(attributed) }
+
+        let source = text as NSString
+        var searchRange = NSRange(location: 0, length: source.length)
+        while searchRange.length > 0 {
+            let found = source.range(
+                of: query,
+                options: [.caseInsensitive, .diacriticInsensitive],
+                range: searchRange)
+            if found.location == NSNotFound { break }
+            attributed.addAttribute(
+                .backgroundColor,
+                value: NSColor(DS.warn).withAlphaComponent(0.28),
+                range: found)
+            let next = found.location + found.length
+            if next >= source.length { break }
+            searchRange = NSRange(location: next, length: source.length - next)
+        }
+        return AttributedString(attributed)
+    }
+
     private var detail: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(entry.text)
+            Text(highlighted(entry.text))
                 .font(DS.Font.mono(11.5))
                 .foregroundStyle(DS.text)
                 .textSelection(.enabled)

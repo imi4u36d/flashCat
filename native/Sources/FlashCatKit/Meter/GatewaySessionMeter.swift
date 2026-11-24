@@ -53,6 +53,8 @@ public final class GatewaySessionMeter: @unchecked Sendable {
         let epoch: Int
         let model: String
         let dialect: String
+        /// 请求方自报的名字（`User-Agent`）；内置对话登记为 `flashCat`。
+        let client: String
         var startedAt: Date
         var promptTokens: Int
         /// 小数累计，避免逐片四舍五入把短分片抹掉；末帧 usage 会覆盖它。
@@ -111,9 +113,13 @@ public final class GatewaySessionMeter: @unchecked Sendable {
 
     // MARK: 生命周期
 
+    /// - Parameter client: 请求方自报的名字（通常取 `User-Agent`）。网关侧
+    ///   用它聚合「最近客户端」；内置对话传 `flashCat`。空字符串表示客户端
+    ///   没有自报身份，展示层统一写成「未知客户端」。
     @discardableResult
     public func begin(
         model: String, dialect: String, promptTokens: Int,
+        client: String = "",
         at now: Date = Date()
     ) -> Int {
         lock.lock()
@@ -126,6 +132,7 @@ public final class GatewaySessionMeter: @unchecked Sendable {
                 epoch: epoch,
                 model: model,
                 dialect: dialect,
+                client: client,
                 startedAt: now,
                 promptTokens: promptTokens,
                 completionTokens: 0,
@@ -442,7 +449,7 @@ public final class GatewaySessionMeter: @unchecked Sendable {
     /// 最近一次真的量到首字的耗时（毫秒）。
     ///
     /// 首字和预填充一样是逐请求的一次性观测：引擎的 `ttft_ms.p50` 要等有
-    /// 样本才出现，oMLX / strata 的 status 干脆没有这个字段。网关每收到第一
+    /// 样本才出现，oMLX 的 status 干脆没有这个字段。网关每收到第一
     /// 个非空增量就记下 `firstTokenAt`，这里取**当代**里首字时刻最新的那一路
     /// ——不是数组顺序：并发时先发起的请求可能后拿到首字。非流式响应没有
     /// 首字时刻，自然不参与。
@@ -593,6 +600,8 @@ public final class GatewaySessionMeter: @unchecked Sendable {
                 id: session.id,
                 model: session.model,
                 dialect: session.dialect,
+                client: session.client,
+                lastActivity: session.finishedAt ?? now,
                 state: state,
                 elapsed: elapsed,
                 ttftMilliseconds: ttft.map { $0 * 1000 },

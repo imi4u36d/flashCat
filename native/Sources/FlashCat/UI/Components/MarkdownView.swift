@@ -63,7 +63,11 @@ struct MarkdownView: View {
         // 连续的文字块（标题、段落）仍然合并成一个 `Text`，保持跨段落拖选与
         // 复制；列表单独成块，标记右对齐成一列；代码块、引用、表格、分隔线各自
         // 独立，避免字符级底色在每行后面画出参差不齐的高亮条。
-        VStack(alignment: .leading, spacing: style.chat ? 14 : 10) {
+        //
+        // 分段结果只算一次：以前每个分段的闭包里又读一次 `segments.count`，
+        // 每次都会重新分组所有块，长回答的段落一多就变成平方级开销。
+        let segments = self.segments
+        return VStack(alignment: .leading, spacing: style.chat ? 14 : 10) {
             ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
                 switch segment {
                 case .text(let group):
@@ -487,19 +491,19 @@ private struct HighlightedCode: View {
     let language: String?
     var style: MarkdownStyle
 
-    private var lines: [AttributedString] {
-        CodeHighlighter.lines(code, language: language)
-    }
     private var fontSize: CGFloat { style.chat ? 13 : 12 }
     private var lineHeight: CGFloat { (fontSize * 1.55).rounded() }
     private var verticalPadding: CGFloat { style.chat ? 10 : 8 }
-    private var showsGutter: Bool { lines.count > 1 }
-    private var gutterWidth: CGFloat {
-        CGFloat(max(2, String(lines.count).count)) * 7 + 8
-    }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
+        // 高亮一次，行号栏与代码列共用同一份结果。以前 `lines` 是计算属性，
+        // 代码列的每一行闭包都会重新高亮整段代码：180 行的块一次布局要跑
+        // 180 遍全量正则，长对话切页、流式吐字都会被它拖住。
+        let lines = CodeHighlighter.lines(code, language: language)
+        let showsGutter = lines.count > 1
+        let gutterWidth = CGFloat(max(2, String(lines.count).count)) * 7 + 8
+
+        return HStack(alignment: .top, spacing: 0) {
             if showsGutter {
                 VStack(alignment: .trailing, spacing: 0) {
                     ForEach(lines.indices, id: \.self) { index in

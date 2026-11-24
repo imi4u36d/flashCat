@@ -53,4 +53,23 @@ final class CodeHighlighterTests: XCTestCase {
         XCTAssertEqual(String(lines[0].characters), "你好，世界 👋")
         XCTAssertEqual(String(lines[1].characters), "plain text 123")
     }
+
+    /// 行缓存命中后结果必须与首次计算一致；`HighlightedCode` 的每一行都从这里取文本。
+    func testRepeatedLineExtractionStaysStable() {
+        let code = (1...120)
+            .map { "let value\($0) = \"\($0)\" // 行 \($0)" }
+            .joined(separator: "\n")
+        let first = CodeHighlighter.lines(code, language: "swift")
+        let second = CodeHighlighter.lines(code, language: "swift")
+        XCTAssertEqual(first.count, 120)
+        XCTAssertEqual(first.map { String($0.characters) }, second.map { String($0.characters) })
+    }
+
+    /// 缓存键必须带上代码本身：两段不同的代码不能互相串行。
+    func testLineCacheKeepsDifferentBlocksApart() {
+        let a = CodeHighlighter.lines("let a = 1", language: "swift")
+        let b = CodeHighlighter.lines("let b = 2", language: "swift")
+        XCTAssertEqual(String(a[0].characters), "let a = 1")
+        XCTAssertEqual(String(b[0].characters), "let b = 2")
+    }
 }

@@ -12,7 +12,7 @@ import Foundation
 /// 规则是「后写的覆盖先写的」——先关键字与数字，再字符串，最后注释，
 /// 所以字符串里的 `return` 不会被当成关键字、注释里的引号也不会开启字符串。
 enum CodeHighlighter {
-    enum Language {
+    enum Language: Hashable {
         case swift, python, javascript, json, shell, sql, html, yaml, other
     }
 
@@ -33,8 +33,60 @@ enum CodeHighlighter {
     }
 
     /// 把整段代码高亮后按 `\n` 切行，返回每一行的带属性文本。
+    ///
+    /// 结果按「代码 + 语言」缓存：`HighlightedCode` 的每一行都要取自己那份文本，
+    /// 页面切换、悬停与流式追加都会让 body 反复求值。没有缓存时一个 180 行的
+    /// 代码块一次布局要重跑上百遍全量正则，长对话切页会卡住好几秒。缓存命中
+    /// 后重复求值只做一次字典查找，流式期间不断增长的新内容走 LRU 淘汰。
     static func lines(_ code: String, language rawLanguage: String?) -> [AttributedString] {
-        let source = highlighted(code, language: rawLanguage)
+        let language = language(rawLanguage)
+        let key = LineCacheKey(code: code, language: language)
+        if let cached = cachedLines(for: key) { return cached }
+
+        let value = makeLines(code, language: language)
+        storeLines(value, for: key)
+        return value
+    }
+
+    // MARK: Cache
+
+    private struct LineCacheKey: Hashable {
+        let code: String
+        let language: Language
+    }
+
+    private static let lineCacheLock = NSLock()
+    nonisolated(unsafe) private static var lineCache: [LineCacheKey: [AttributedString]] = [:]
+    nonisolated(unsafe) private static var lineCacheOrder: [LineCacheKey] = []
+    /// 只留最近几段代码。对话里同时可见的代码块不多，太小会让切回上一段
+    /// 会话时又整段重算，太大则让流式期间的半截代码占住内存。
+    private static let lineCacheLimit = 16
+
+    private static func cachedLines(for key: LineCacheKey) -> [AttributedString]? {
+        lineCacheLock.lock()
+        defer { lineCacheLock.unlock() }
+        guard let hit = lineCache[key] else { return nil }
+        if let index = lineCacheOrder.firstIndex(of: key) {
+            lineCacheOrder.remove(at: index)
+            lineCacheOrder.append(key)
+        }
+        return hit
+    }
+
+    private static func storeLines(_ lines: [AttributedString], for key: LineCacheKey) {
+        lineCacheLock.lock()
+        defer { lineCacheLock.unlock() }
+        guard lineCache[key] == nil else { return }
+        lineCache[key] = lines
+        lineCacheOrder.append(key)
+        if lineCacheOrder.count > lineCacheLimit {
+            let oldest = lineCacheOrder.removeFirst()
+            lineCache.removeValue(forKey: oldest)
+        }
+    }
+
+    private static func makeLines(_ code: String, language: Language) -> [AttributedString] {
+        let source = highlighted(code, language: language)
         var result: [AttributedString] = []
         var offset = 0
         let ns = code as NSString
@@ -51,7 +103,10 @@ enum CodeHighlighter {
 
     /// 整段代码的着色结果（测试直接看属性，渲染层再按行切开）。
     static func highlighted(_ code: String, language rawLanguage: String?) -> NSAttributedString {
-        let language = language(rawLanguage)
+        highlighted(code, language: language(rawLanguage))
+    }
+
+    private static func highlighted(_ code: String, language: Language) -> NSAttributedString {
         let source = NSMutableAttributedString(
             string: code,
             attributes: [.foregroundColor: NSColor(DS.text)])
@@ -207,11 +262,36 @@ enum CodeHighlighter {
         color: NSColor,
         options: NSRegularExpression.Options = []
     ) {
-        guard !pattern.isEmpty,
-            let expression = try? NSRegularExpression(pattern: pattern, options: options)
+        guard !pattern.isEmpty, let expression = expression(for: pattern, options: options)
         else { return }
         for match in expression.matches(in: text.string, range: range) {
             text.addAttribute(.foregroundColor, value: color, range: match.range)
         }
+    }
+
+    // MARK: Regex cache
+
+    private struct ExpressionKey: Hashable {
+        let pattern: String
+        let options: UInt
+    }
+
+    private static let expressionLock = NSLock()
+    nonisolated(unsafe) private static var expressions: [ExpressionKey: NSRegularExpression] = [:]
+
+    /// 规则是固定的十几条，编译一次就够。以前每次高亮都重新编译六七个正则，
+    /// 流式吐字和切页时这部分开销会反复出现。
+    private static func expression(
+        for pattern: String,
+        options: NSRegularExpression.Options
+    ) -> NSRegularExpression? {
+        let key = ExpressionKey(pattern: pattern, options: options.rawValue)
+        expressionLock.lock()
+        defer { expressionLock.unlock() }
+        if let cached = expressions[key] { return cached }
+        guard let compiled = try? NSRegularExpression(pattern: pattern, options: options)
+        else { return nil }
+        expressions[key] = compiled
+        return compiled
     }
 }

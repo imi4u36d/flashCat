@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 「取消」只能来自类型，不能来自文案。
 ///

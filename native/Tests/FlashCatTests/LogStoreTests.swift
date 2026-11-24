@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// First tests for the app shell.
 ///

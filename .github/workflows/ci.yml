@@ -91,6 +91,12 @@ jobs:
       - name: Test
         run: swift test
 
+      # Core domain（去掉进程/安装驱动）≥ 60%，FlashCatKit ≥ 80%。
+      # 这两个门槛由 scripts/coverage.sh 计算并打印，低于门槛直接失败。
+      - name: Coverage gates
+        working-directory: .
+        run: bash scripts/coverage.sh
+
   version-consistency:
     # The release that ships must agree with the tag that names it.
     runs-on: ubuntu-latest

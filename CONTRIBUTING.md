@@ -16,7 +16,8 @@ flashCat 把「装引擎、下模型、聊天、对外提供本地接口」收�
 
 ```bash
 cd native && swift build          # 0 warning，CI 以 -warnings-as-errors 跑
-cd native && swift test           # 应用层 + Kit + CLI 用例（704 条，5 条按环境跳过），约 10 秒
+cd native && swift test           # Core + 应用 + Kit + CLI 用例（743 条执行，5 条按环境跳过），约 10 秒
+bash scripts/coverage.sh          # 覆盖率门禁：Core domain ≥ 60%，Kit ≥ 80%
 make app                          # 组装 /Applications 里的 .app（或 INSTALL=0 只出 dist）
 ```
 
@@ -27,7 +28,7 @@ make app                          # 组装 /Applications 里的 .app（或 INSTA
 
 ## 架构规矩（评审会直接打回的那种）
 
-1. **`FlashCatKit` 不许引 UI。** 只允许 `import Foundation / Network / CryptoKit`。这一层必须能在无窗口的测试进程里跑——317 个 Kit 用例全打在这里；壳层 291 个、CLI 另有 96 个纯逻辑用例。
+1. **`FlashCatKit` 不许引 UI。** 只允许 `import Foundation / Network / CryptoKit`。这一层必须能在无窗口的测试进程里跑——317 个 Kit 用例全打在这里；Core 40 个、壳层 290 个、CLI 另有 96 个纯逻辑用例。
 2. **依赖单向。** `FlashCat` → `FlashCatKit`。Kit 里出现任何应用侧符号都是破坏。
 3. **引擎差异只许存在于 descriptor 与 adapter。** 不要在 `EngineManager`、安装中心、页面里写 `if engine == .splash`。真需要按引擎分支，先问"这能不能变成 manifest 字段"。
 4. **清单契约是唯一接口。** 除了 `manifest.json` 声明的字段，应用不解释 pack 里的任何文件。
@@ -35,7 +36,7 @@ make app                          # 组装 /Applications 里的 .app（或 INSTA
 6. **只有用户自己的 pack 可删。** bundle 内的删了会破坏签名，checkout 里的是构建产物——两者只读。
 7. **应用内不注册快捷键。** 菜单、命令面板、输入框与弹窗都不带按键等价物；键盘效率走 `flashcat`。`LocalizationTests.testNoInAppKeyboardShortcutsRemain` 会扫源码拦下 `.keyboardShortcut` / `.onKeyPress` / `.onSubmit` / `NSEvent` 监听。
 8. **路径与控制协议只有一份。** 应用和 CLI 共用 `FlashCatPaths`、`EngineInstallations`、`Control/*`；不要在一个目标里另写一套目录或 JSON 形状。
-9. **`Core/` 不许依赖 UI。** `Sources/FlashCat/Core` 是下一步 `FlashCatCore` target 的暂存区，只能 import `Foundation` / `Combine` / `CoreGraphics` 与 `FlashCatKit`；不要出现 SwiftUI / AppKit / AVFoundation，也不要引用 `AppState`。`scripts/check-architecture.sh` 会在 CI 里拦下新违规。
+9. **`FlashCatCore` 不许依赖 UI。** `Sources/FlashCatCore` 是独立 target，只能 import `Foundation` / `Combine` / `CoreGraphics` 与 `FlashCatKit`；不要出现 SwiftUI / AppKit / AVFoundation，也不要引用 `AppState`。跨到 App 的 API 用 `package` 声明。`scripts/check-architecture.sh` 会在 CI 里拦下新违规。
 
 新增引擎的完整步骤见 `native/Sources/FlashCatKit/SPEC.md` 的「添加一个新引擎」。
 

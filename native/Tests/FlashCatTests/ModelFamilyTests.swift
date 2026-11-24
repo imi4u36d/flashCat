@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 final class ModelFamilyTests: XCTestCase {
     func testMiMoTakesPriorityOverEmbeddedQwen() {

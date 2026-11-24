@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 概览页「API 网关」下拉里的调用片段：地址、模型与方言头都要和设置一致，
 /// 否则用户照抄下来只会得到一条连不上的命令。

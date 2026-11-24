@@ -5,6 +5,7 @@ import FlashCatKit
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 概览第四格：缓存命中率的 owner 表与引擎侧单位换算。
 ///

@@ -5,6 +5,7 @@ import FlashCatKit
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 分辨率预设与固定步数的判定。引擎把这两件事都藏在二进制里：预设表按
 /// `meta.architecture` 选，固定步数要看本地 `model_index.json` 的

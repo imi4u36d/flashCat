@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 图库索引最容易出错的地方：把用户底图当成作品、重复补登、以及文件被删后
 /// 还拿一条死路径去画缩略图。三类都用临时目录里的假 PNG 覆盖。

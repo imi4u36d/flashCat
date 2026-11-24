@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 「全部日志」的合并：每台引擎的尾巴都按时间升序，页面要的是合成后的
 /// 一份「最新在前」的视图，和跨来源唯一的行身份。

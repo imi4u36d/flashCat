@@ -5,6 +5,7 @@ import FlashCatKit
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 「默认引擎」只是下次启动的偏好，绝不能顺手改写正在运行的那一台。
 /// 引擎切换本身用 `EngineManager.activate` 落盘，这里只钉住存储层的边界。

@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 缩略图缓存是实验室页面掉帧那一处的边界：解码必须落在后台队列、同一张图只
 /// 解一次、缓存要能命中第二次。视图本身没法在测试里断言，这层可以。

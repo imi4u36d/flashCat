@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// The quit path now ends its grace period as soon as the engine tree is gone,
 /// which means `ProcessTree.anyAlive` decides how long quitting takes. A false

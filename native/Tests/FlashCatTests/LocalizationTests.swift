@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// The String Catalog is the only source of UI copy. These checks make sure a
 /// packaging regression cannot silently drop either language.
@@ -37,11 +38,11 @@ final class LocalizationTests: XCTestCase {
     /// 对话输入框的 Enter / ⌘Enter / 输入法组字由 `ChatComposerField.swift` 单独处理，
     /// 见 `testReturnKeyIsOnlyHandledByComposer`。
     func testNoInAppKeyboardShortcutsRemain() throws {
-        let root = URL(fileURLWithPath: #filePath)
+        let native = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()  // Tests/FlashCatTests/
             .deletingLastPathComponent()  // Tests/
             .deletingLastPathComponent()  // native/
-            .appendingPathComponent("Sources/FlashCat")
+        let root = native.appendingPathComponent("Sources/FlashCat")
         let enumerator = FileManager.default.enumerator(
             at: root,
             includingPropertiesForKeys: nil,
@@ -177,7 +178,7 @@ final class LocalizationTests: XCTestCase {
         )
         let catalog =
             repoRoot
-            .appendingPathComponent("native/Sources/FlashCat/Resources/Localizable.xcstrings")
+            .appendingPathComponent("native/Sources/FlashCatCore/Resources/Localizable.xcstrings")
         let data = try Data(contentsOf: catalog)
         let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let strings = try XCTUnwrap(root["strings"] as? [String: Any])
@@ -248,11 +249,14 @@ final class LocalizationTests: XCTestCase {
     /// 把中文写进 shell 脚本与构建步骤，那些是脚本正文，不是界面文案
     /// （构建步骤在展示处过 `L10n.t`，由上面第二条契约覆盖）。
     private func localizedCopyLiterals() throws -> Set<String> {
-        let root = URL(fileURLWithPath: #filePath)
+        let native = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()  // Tests/FlashCatTests/
             .deletingLastPathComponent()  // Tests/
             .deletingLastPathComponent()  // native/
-            .appendingPathComponent("Sources/FlashCat")
+        let roots = [
+            native.appendingPathComponent("Sources/FlashCat"),
+            native.appendingPathComponent("Sources/FlashCatCore"),
+        ]
 
         let labelled = try NSRegularExpression(
             pattern: #"(?:title|detail|subtitle):\s*"((?:[^"\\]|\\.)+)""#)
@@ -265,15 +269,18 @@ final class LocalizationTests: XCTestCase {
         let cjk = CharacterSet(charactersIn: "\u{4e00}"..."\u{9fff}")
 
         var out = Set<String>()
-        let enumerator = FileManager.default.enumerator(
-            at: root,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles])
-        let files: [URL] = try XCTUnwrap(enumerator).compactMap { item in
-            guard let url = item as? URL, url.pathExtension == "swift" else { return nil }
-            return url
+        var files: [URL] = []
+        for root in roots {
+            let enumerator = FileManager.default.enumerator(
+                at: root,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles])
+            files += try XCTUnwrap(enumerator).compactMap { item in
+                guard let url = item as? URL, url.pathExtension == "swift" else { return nil }
+                return url
+            }
         }
-        XCTAssertGreaterThan(files.count, 30, "源码目录扫描异常")
+        XCTAssertGreaterThan(files.count, 60, "源码目录扫描异常")
 
         for file in files {
             let source = try String(contentsOf: file, encoding: .utf8)

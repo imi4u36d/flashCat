@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 界面层里可以脱离窗口断言的部分：Markdown 分块与日志筛选。
 /// 视图本身的版式仍然只能手工回归（见 `UI-SPEC.md`）。

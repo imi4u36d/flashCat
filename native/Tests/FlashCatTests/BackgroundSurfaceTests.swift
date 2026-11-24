@@ -5,6 +5,7 @@ import AppKit
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 纯实色 ZCode 窗口画布：始终保持不透明，并按 `contentView` 的皮肤解析出静态 sRGB 底色。
 @MainActor

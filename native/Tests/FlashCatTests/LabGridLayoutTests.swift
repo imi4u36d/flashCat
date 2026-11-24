@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 「一屏一页」的排版只取决于可用区域，所以可以脱离 UI 直接断言：
 /// 页面必须正好落在一屏里、封面保持原始比例、窗口变小也不会把半行卡片切出去。

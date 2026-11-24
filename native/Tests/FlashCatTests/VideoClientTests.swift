@@ -6,6 +6,7 @@ import FlashCatKit
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 视频链路里最容易悄悄坏掉的两段：rgb8 载荷校验和 MP4 封装。
 /// 前者用纯 JSON 就能测，后者必须让 AVAssetWriter 真写一遍。

@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 @testable import FlashCatKit
 
 final class HubSourceTests: XCTestCase {

@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 final class CodeHighlighterTests: XCTestCase {
     private func color(_ text: NSAttributedString, at index: Int) -> NSColor? {

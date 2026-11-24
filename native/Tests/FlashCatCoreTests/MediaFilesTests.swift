@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
+import FlashCatKit
 import XCTest
 
-@testable import FlashCat
+@testable import FlashCatCore
 
 final class MediaFilesTests: XCTestCase {
     private var root: URL!

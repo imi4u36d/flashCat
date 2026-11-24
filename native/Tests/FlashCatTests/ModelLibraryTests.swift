@@ -5,6 +5,7 @@ import FlashCatKit
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 final class ModelLibraryTests: XCTestCase {
     /// 同一个模型可以由多个引擎驱动，在「全部」页会各占一行。列表身份必须

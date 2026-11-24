@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 final class ModelQuantizationTests: XCTestCase {
     func testGGUFQuantNames() {

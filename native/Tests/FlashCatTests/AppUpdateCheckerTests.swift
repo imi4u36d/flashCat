@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 final class AppUpdateCheckerTests: XCTestCase {
     private let sample = """

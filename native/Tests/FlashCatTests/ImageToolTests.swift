@@ -6,6 +6,7 @@ import Foundation
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 画图工具的协议层：请求体里怎么挂 `tools`、流式 `tool_calls` 怎么拼回完整
 /// 参数、下一轮怎么把「调用 + 结果」原样回放。这三步错一步，模型就会收到

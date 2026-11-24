@@ -5,6 +5,7 @@ import FlashCatKit
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 指标 owner 表的解码格（hero、灵动岛、菜单栏共用的取数口径）。
 ///

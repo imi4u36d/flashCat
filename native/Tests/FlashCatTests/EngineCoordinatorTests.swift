@@ -5,6 +5,7 @@ import FlashCatKit
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// `EngineHost` 协议的第一个直接测试：没有引擎时 `syncController` 必须把界面状态
 /// 收敛到「已停止」并清掉旧日志。以前这需要构造整个 `AppState`，现在一个假 host

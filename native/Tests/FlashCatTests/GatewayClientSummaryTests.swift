@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 final class GatewayClientSummaryTests: XCTestCase {
     /// 同一个客户端的多条请求并成一行；首次出现的顺序就是列表顺序。

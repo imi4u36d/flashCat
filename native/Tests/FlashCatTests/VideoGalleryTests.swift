@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 视频索引和图片索引同构，但更容易出错的点有两个：
 /// 首帧图会被写进 user 消息，不能算作品；seed 只存在说明行里，要从 `·` 分隔的参数里读回来。

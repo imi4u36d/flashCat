@@ -6,6 +6,7 @@ import Foundation
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 流式客户端在「停止后立刻重发」时的竞态回归测试。
 ///

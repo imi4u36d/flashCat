@@ -19,7 +19,8 @@ most here are all about not leaking those differences back into the business lay
 
 ```bash
 cd native && swift build          # 0 warnings; CI runs with -warnings-as-errors
-cd native && swift test           # app layer + Kit + CLI cases (661), about ten seconds
+cd native && swift test           # Core + app + Kit + CLI cases (743 executed), about ten seconds
+bash scripts/coverage.sh          # coverage gates: Core domain >= 60%, Kit >= 80%
 make app                          # assemble the .app in /Applications (or INSTALL=0 for dist only)
 ```
 
@@ -55,10 +56,11 @@ walked down to zero without going red on day one, and the ratchet keeps it there
 8. **Paths and the control protocol exist once.** The app and the CLI share
    `FlashCatPaths`, `EngineInstallations`, and `Control/*`; never write a second set of
    directories or JSON shapes inside one target.
-9. **`Core/` must not depend on UI.** `Sources/FlashCat/Core` is the staging area for
-   the future `FlashCatCore` target: only `Foundation` / `Combine` / `CoreGraphics`
-   and `FlashCatKit` are allowed. No SwiftUI / AppKit / AVFoundation, and no
-   `AppState` references. `scripts/check-architecture.sh` blocks new violations in CI.
+9. **`FlashCatCore` must not depend on UI.** `Sources/FlashCatCore` is its own target:
+   only `Foundation` / `Combine` / `CoreGraphics` and `FlashCatKit` are allowed. No
+   SwiftUI / AppKit / AVFoundation, and no `AppState` references. APIs used by the app
+   shell are declared `package`. `scripts/check-architecture.sh` blocks new violations
+   in CI.
 
 The full procedure for adding an engine is in "Adding a new engine" in
 `native/Sources/FlashCatKit/SPEC.md`.

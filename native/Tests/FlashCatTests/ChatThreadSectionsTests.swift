@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 「最近对话」的分组、搜索与排序。版式对齐 Splash：置顶在最前，其余按
 /// 今天 / 昨天 / 最近 7 天 / 最近 30 天 / 更早分组。

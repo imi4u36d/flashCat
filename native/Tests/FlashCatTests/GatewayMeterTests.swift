@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 网关按请求打点的两个易错点：agent 的工具调用算不算生成量、
 /// 前缀缓存命中的提示词算不算预填充。

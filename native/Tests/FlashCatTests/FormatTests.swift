@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 面板上的数字只有一套口径：磁盘用十进制（和 Finder 一致），内存用二进制
 /// （和活动监视器一致），速度跟磁盘同口径。这几条断言就是口径的看门狗。

@@ -7,6 +7,7 @@ import SwiftUI
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 输入卡右下角的模型 / 思考切换。
 ///

@@ -6,6 +6,7 @@ import FlashCatKit
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// `EngineController` 的生命周期测试。
 ///

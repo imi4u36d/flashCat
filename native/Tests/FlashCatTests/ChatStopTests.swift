@@ -4,6 +4,7 @@
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 用户点「停止」后的收尾：这一轮必须留在对话里，哪怕一个字都没来。
 final class ChatStopTests: XCTestCase {

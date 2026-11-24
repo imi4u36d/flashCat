@@ -6,6 +6,7 @@ import FlashCatKit
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 成品图回传给视觉模型时必须是引擎能吃的 data URL。
 /// 本机引擎对 PNG 的兼容性并不一致（mlx-serve 会拒掉一些 PNG），

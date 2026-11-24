@@ -5,6 +5,7 @@ import FlashCatKit
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 搬进 `MetricsStore` 的那一整套指标：曲线窗口、10 分钟裁剪、接受率落点门槛、
 /// 曲线冻结，以及 store 自己的节拍。

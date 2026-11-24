@@ -5,6 +5,7 @@ import FlashCatKit
 import XCTest
 
 @testable import FlashCat
+@testable import FlashCatCore
 
 /// 公共目录是共享池：从模型卡下载的权重默认授权给全部引擎，而不是下载时
 /// 点开的那一个。`lead` 只决定下载任务归谁记账，不缩小可见范围。

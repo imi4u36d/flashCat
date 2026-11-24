@@ -57,7 +57,7 @@ walked down to zero without going red on day one, and the ratchet keeps it there
    `FlashCatPaths`, `EngineInstallations`, and `Control/*`; never write a second set of
    directories or JSON shapes inside one target.
 9. **`FlashCatCore` must not depend on UI.** `Sources/FlashCatCore` is its own target:
-   only `Foundation` / `Combine` / `CoreGraphics` and `FlashCatKit` are allowed. No
+   only `Foundation` / `Combine` / `CoreGraphics` / `OSLog` and `FlashCatKit` are allowed. No
    SwiftUI / AppKit / AVFoundation, and no `AppState` references. APIs used by the app
    shell are declared `package`. `scripts/check-architecture.sh` blocks new violations
    in CI.

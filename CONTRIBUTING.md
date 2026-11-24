@@ -36,7 +36,7 @@ make app                          # 组装 /Applications 里的 .app（或 INSTA
 6. **只有用户自己的 pack 可删。** bundle 内的删了会破坏签名，checkout 里的是构建产物——两者只读。
 7. **应用内不注册快捷键。** 菜单、命令面板、输入框与弹窗都不带按键等价物；键盘效率走 `flashcat`。`LocalizationTests.testNoInAppKeyboardShortcutsRemain` 会扫源码拦下 `.keyboardShortcut` / `.onKeyPress` / `.onSubmit` / `NSEvent` 监听。
 8. **路径与控制协议只有一份。** 应用和 CLI 共用 `FlashCatPaths`、`EngineInstallations`、`Control/*`；不要在一个目标里另写一套目录或 JSON 形状。
-9. **`FlashCatCore` 不许依赖 UI。** `Sources/FlashCatCore` 是独立 target，只能 import `Foundation` / `Combine` / `CoreGraphics` 与 `FlashCatKit`；不要出现 SwiftUI / AppKit / AVFoundation，也不要引用 `AppState`。跨到 App 的 API 用 `package` 声明。`scripts/check-architecture.sh` 会在 CI 里拦下新违规。
+9. **`FlashCatCore` 不许依赖 UI。** `Sources/FlashCatCore` 是独立 target，只能 import `Foundation` / `Combine` / `CoreGraphics` / `OSLog` 与 `FlashCatKit`；不要出现 SwiftUI / AppKit / AVFoundation，也不要引用 `AppState`。跨到 App 的 API 用 `package` 声明。`scripts/check-architecture.sh` 会在 CI 里拦下新违规。
 
 新增引擎的完整步骤见 `native/Sources/FlashCatKit/SPEC.md` 的「添加一个新引擎」。
 

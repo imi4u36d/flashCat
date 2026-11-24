@@ -51,7 +51,7 @@ graph TD
 
 | 目录 | 内容 | 依赖规则 |
 | --- | --- | --- |
-| `Sources/FlashCatCore/` | 无 UI 的应用核心（独立 target） | 只 import Foundation / CoreGraphics / Combine / `FlashCatKit`；不引用 `AppState` |
+| `Sources/FlashCatCore/` | 无 UI 的应用核心（独立 target） | 只 import Foundation / CoreGraphics / Combine / OSLog / `FlashCatKit`；不引用 `AppState` |
 | `App/` | 入口、菜单栏、状态栏、登录项、控制接口与网关适配、UI 状态 | 可以 import AppKit / SwiftUI |
 | `Composition/` | `AppState` 装配根与接线 | 只做对象构造与转发 |
 | `Orchestration/` | 对话 / 引擎 / 模型 / 下载 / Hub 编排与 App 侧端口协议 | 通过 `Ports` 协议与 Core 交互 |

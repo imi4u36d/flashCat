@@ -647,8 +647,6 @@ final class AppState: ObservableObject {
         hub.searchHub(query, sort: sort, filter: filter, page: page, source: source)
     }
 
-    func hubResults(for engine: EngineID) -> [HubSearchResult] { hub.hubResults(for: engine) }
-
     func loadHubDetail(_ repo: String, source: HubSource? = nil) {
         hub.loadHubDetail(repo, source: source)
     }
@@ -779,8 +777,13 @@ final class AppState: ObservableObject {
     func downloadModel(_ id: String) { modelOps.downloadModel(id) }
 
     @discardableResult
-    func downloadModel(_ id: String, engine: EngineID, family: String? = nil) -> Bool {
-        modelOps.downloadModel(id, engine: engine, family: family)
+    func downloadModel(
+        _ id: String, engine: EngineID, family: String? = nil,
+        source: HubSource? = nil, include: [String] = [], activate: Bool = true
+    ) -> Bool {
+        modelOps.downloadModel(
+            id, engine: engine, family: family, source: source, include: include,
+            activate: activate)
     }
 
     @discardableResult
@@ -793,6 +796,8 @@ final class AppState: ObservableObject {
     }
 
     func repoIsLocal(_ repo: String) -> Bool { modelOps.repoIsLocal(repo) }
+
+    func engineHolding(_ id: String) -> EngineID? { modelOps.engineHolding(id) }
 
     func setSharedEngines(_ engines: [EngineID], repo: String) { modelOps.setSharedEngines(engines, repo: repo) }
 

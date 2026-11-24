@@ -7,13 +7,34 @@ import SwiftUI
 
 // MARK: - Appearance
 //
-// The console ships two skins — the original near-black night look and a light
-// daylight look built from the same layout, key art and spacing. `AppAppearance`
-// is what the user picks; everything else in the app reads the dynamic colours in
-// `Native`, which resolve per appearance. That means no view has to know which
-// skin is on screen: set the content view's appearance and the whole canvas
-// re-resolves. The window itself stays Aqua — see `ThemeController.apply(to:)`
-// for why the skin never touches the window appearance.
+// 控制台有四档皮肤：浅色琉璃、深色液态、极简纯白与极简纯黑。前两副是 macOS
+// Liquid Glass 语言——粉彩 / 极光壁纸、半透明玻璃卡片、1px 高光边；后两副关掉
+// 折射，换成实色白 / 深灰分层。`AppAppearance` 是用户的选择，`GlassSkin` 是这次
+// 渲染真正用的那一档（`.system` 在控制器里解析成 light / dark）。窗口本身仍恒定
+// Aqua，理由见 `ThemeController.apply(to:)`。
+
+/// 玻璃渲染模式。与 `AppAppearance` 分开：`system` 只存在于用户选择里，
+/// 颜色解析永远拿到具体的一副。
+enum GlassSkin: Int, CaseIterable, Identifiable {
+    case light
+    case dark
+    case studio
+    /// 极简纯白的夜间版本：与 studio 一样的实色分层，只是色阶翻到深色。
+    case studioDark
+
+    var id: Int { rawValue }
+
+    var isDark: Bool {
+        self == .dark || self == .studioDark
+    }
+}
+
+/// 动态 `NSColor` provider 在绘制时读取的当前皮肤。写入只发生主线程的
+/// `ThemeController.apply`，读取发生在 AppKit 解析颜色时；两边都在主线程，
+/// 但 provider 没有 actor 信息，因此这里用 `nonisolated(unsafe)` 明确承诺。
+enum GlassSkinState {
+    nonisolated(unsafe) static var current: GlassSkin = .light
+}
 
 /// User-facing appearance choice. Persisted by `AppSettings`, applied to AppKit by
 /// `ThemeController` so AppKit-backed controls (rounded text fields, menus,
@@ -50,6 +71,7 @@ final class ThemeController: ObservableObject {
         self.mode = settings.appearance
         self.systemIsDark = AppAppearance.systemIsDark
         AppAppearance.current = mode
+        GlassSkinState.current = Self.skin(for: mode, systemIsDark: systemIsDark)
         observeSystemAppearance()
     }
 
@@ -63,16 +85,32 @@ final class ThemeController: ObservableObject {
         guard value != mode else { return }
         mode = value
         AppAppearance.current = value
+        GlassSkinState.current = Self.skin(for: value, systemIsDark: systemIsDark)
         settings.appearance = value
         apply()
+    }
+
+    /// 当前渲染的玻璃皮肤。`.system` 已经解析成具体的一副，视图不需要再分支。
+    var skin: GlassSkin {
+        Self.skin(for: mode, systemIsDark: systemIsDark)
+    }
+
+    private static func skin(for mode: AppAppearance, systemIsDark: Bool) -> GlassSkin {
+        switch mode {
+        case .light: return .light
+        case .dark: return .dark
+        case .studio: return .studio
+        case .studioDark: return .studioDark
+        case .system: return systemIsDark ? .dark : .light
+        }
     }
 
     /// 当前皮肤是不是深色。跟随系统时读的是发布出来的 `systemIsDark`，
     /// 而不是现场去翻系统默认值——换肤时要的是"这次通知里的系统状态"。
     var isDark: Bool {
         switch mode {
-        case .light: return false
-        case .dark: return true
+        case .light, .studio: return false
+        case .dark, .studioDark: return true
         case .system: return systemIsDark
         }
     }
@@ -81,12 +119,19 @@ final class ThemeController: ObservableObject {
     /// 重新解析整棵树，窗口从后台回到前台时甚至会让 SwiftUI 重排一次，
     /// 表现为界面整体上移。这里固定两个实例，只在真正换皮肤时赋值。
     private static let aquaAppearance = NSAppearance(named: .aqua)
+    /// 极简纯白用的第二个 Aqua 实例。浅色琉璃换到纯白时外观仍是浅色，
+    /// 只有换一个实例身份才能让 AppKit 重新解析所有动态颜色（否则页面不会重绘）。
+    private static let studioAppearance = NSAppearance(named: .aqua)
     private static let darkAppearance = NSAppearance(named: .darkAqua)
 
     /// 皮肤本身的外观。它落在 contentView 上，而不是窗口上：窗口外观决定的是
     /// 系统画的那层 chrome（红绿灯、投影），见 `apply(to:)`。
     var skinAppearance: NSAppearance? {
-        isDark ? Self.darkAppearance : Self.aquaAppearance
+        switch skin {
+        case .light: return Self.aquaAppearance
+        case .dark, .studioDark: return Self.darkAppearance
+        case .studio: return Self.studioAppearance
+        }
     }
 
     /// Applies the choice to the app's windows: AppKit-backed controls, the
@@ -98,6 +143,7 @@ final class ThemeController: ObservableObject {
     /// 白底）。菜单栏图标应当始终跟随系统菜单栏着色，所以皮肤只作用到窗口。
     func apply() {
         AppAppearance.current = mode
+        GlassSkinState.current = skin
         for window in NSApp.windows where window.canBecomeMain || window.sheetParent != nil {
             apply(to: window)
         }
@@ -120,7 +166,8 @@ final class ThemeController: ObservableObject {
             if window.contentView?.appearance !== skin {
                 window.contentView?.appearance = skin
             }
-            // 主窗口始终保持不透明纯实色 ZCode 画布，底色随 contentView 外观同步更新。
+            // 主窗口保持不透明，底色是壁纸的外圈画布；玻璃层由 SwiftUI 画在
+            // 窗口内部，窗口本身不需要透明度。
             BackgroundSurface.shared.applyWindowSurface(to: window)
         } else if window.appearance !== skinAppearance {
             // sheet / 提示框这类独立窗口没有承载皮肤的层级，也不跟主窗口共享
@@ -128,6 +175,9 @@ final class ThemeController: ObservableObject {
             // 颜色会把系统给 sheet 的圆角和材质盖掉。
             window.appearance = skinAppearance
         }
+        // 纯白与浅色共用 Aqua，SwiftUI 树可能整棵复用；显式标脏一次，
+        // 让 `GlassSkinState` 里的新皮肤在下一帧就被解析。
+        window.contentView?.needsDisplay = true
     }
 
     /// Keeps "跟随系统" honest: re-resolve when macOS flips, and (as a backstop
@@ -213,11 +263,49 @@ extension NSColor {
         adaptive(dark: 0xFFFFFF, light: 0x101014, darkAlpha: opacity, lightAlpha: opacity)
     }
 
+    /// 三副皮肤各自取一个值。前两副是 Liquid Glass（浅色琉璃 / 深色液态），
+    /// 第三副是极简纯白的实色版本；provider 在绘制时读 `GlassSkinState`。
+    static func glass(
+        light: UInt32,
+        dark: UInt32,
+        studio: UInt32,
+        lightAlpha: CGFloat = 1,
+        darkAlpha: CGFloat = 1,
+        studioAlpha: CGFloat = 1,
+        /// 极简纯黑是「深色液态的实色版」：同一个深色色相，但不透出壁纸。
+        /// 只有窗口 / 卡片这类表面需要传 1，描边和光晕继续沿用 darkAlpha。
+        studioDarkAlpha: CGFloat? = nil
+    ) -> NSColor {
+        NSColor(name: nil) { _ in
+            let hex: UInt32
+            let alpha: CGFloat
+            switch GlassSkinState.current {
+            case .light:
+                hex = light
+                alpha = lightAlpha
+            case .dark:
+                hex = dark
+                alpha = darkAlpha
+            case .studio:
+                hex = studio
+                alpha = studioAlpha
+            case .studioDark:
+                hex = dark
+                alpha = studioDarkAlpha ?? darkAlpha
+            }
+            return NSColor(
+                srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+                green: CGFloat((hex >> 8) & 0xFF) / 255,
+                blue: CGFloat(hex & 0xFF) / 255,
+                alpha: alpha)
+        }
+    }
+
     /// 控制台正文与强调色。SwiftUI 侧的 `DS.text` / `DS.accent`
     /// 就是这两个颜色的包装，因此 AppKit 文本宿主（对话输入框）和卡片是同一组值。
-    /// 配色对齐 ZCode（Zai Dark / Zai Light）。
-    static let consoleText = adaptive(dark: 0xEDEDED, light: 0x262626)
-    static let consoleAccent = adaptive(dark: 0x3B82F6, light: 0x0B7FFF)
+    /// 浅色琉璃与深色液态取自设计稿的 slate / indigo 色阶。
+    static let consoleText = glass(light: 0x0F172A, dark: 0xF8FAFC, studio: 0x111827)
+    static let consoleAccent = glass(light: 0x4F46E5, dark: 0x818CF8, studio: 0x4F46E5)
 }
 
 extension Color {
@@ -236,5 +324,22 @@ extension Color {
     /// See `NSColor.adaptiveOverlay(_:)`.
     static func adaptiveOverlay(_ opacity: Double) -> Color {
         Color(nsColor: NSColor.adaptiveOverlay(opacity))
+    }
+
+    /// See `NSColor.glass(...)`.
+    static func glass(
+        light: UInt32,
+        dark: UInt32,
+        studio: UInt32,
+        lightAlpha: CGFloat = 1,
+        darkAlpha: CGFloat = 1,
+        studioAlpha: CGFloat = 1,
+        studioDarkAlpha: CGFloat? = nil
+    ) -> Color {
+        Color(
+            nsColor: NSColor.glass(
+                light: light, dark: dark, studio: studio,
+                lightAlpha: lightAlpha, darkAlpha: darkAlpha, studioAlpha: studioAlpha,
+                studioDarkAlpha: studioDarkAlpha))
     }
 }

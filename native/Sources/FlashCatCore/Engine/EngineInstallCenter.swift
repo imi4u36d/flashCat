@@ -75,6 +75,9 @@ package final class EngineInstallCenter: ObservableObject {
             result[id] = EngineInstallations.installed(id).map(\.version)
         }
         installed = result
+        // The recommendation catalogs live inside the packs, so a rescan of
+        // installed versions is also the moment to forget the old lists.
+        ModelRecommendations.invalidate()
         // A pack that just landed must stop showing up as "update available"
         // without waiting for the next GitHub check.
         for (id, release) in upstreamReleases {
@@ -268,6 +271,8 @@ package final class EngineInstallCenter: ObservableObject {
             }
         }
         refreshInstalled()
+        // A removed pack takes its model catalog with it.
+        ModelRecommendations.invalidate()
         onChange?()
         return removed
     }

@@ -57,11 +57,4 @@ final class CoreUtilitiesTests: XCTestCase {
         XCTAssertEqual(catalog.machine.count, 1)
         XCTAssertEqual(catalog.machineModel("owner/repo")?.bytes, 1)
     }
-
-    func testHubSearchRoutesByFormat() {
-        XCTAssertEqual(HubSearchState.engines(for: .gguf), [.splash])
-        XCTAssertEqual(HubSearchState.engines(for: .mtplx), [.mtplx])
-        XCTAssertEqual(HubSearchState.engines(for: .mlx), [.omlx, .mlxServe])
-        XCTAssertEqual(HubSearchState.engines(for: .unmarked), [.omlx, .mlxServe])
-    }
 }

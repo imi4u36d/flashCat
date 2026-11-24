@@ -29,11 +29,15 @@ package struct ModelDownloadTask: Codable, Identifiable, Equatable {
     package var downloadedBytes: Int = 0
     package var addedAt: Date = Date()
     /// 下到公共目录的任务：`engine` 只是「谁发起、之后给谁用」的记号，权重
-    /// 落盘位置与引擎无关。nil 表示下进了某个引擎自己的目录（旧行为）。
+    /// 落盘位置与引擎无关。nil 表示下进 `engine` 自己的模型目录（模型广场的
+    /// 默认路径）。
     package var shared: [EngineID]? = nil
     /// 发起下载时选择的 Hub 来源与文件白名单（用于断点续传时沿用同一来源与量化档位）。
     package var source: HubSource? = nil
     package var include: [String]? = nil
+    /// 下载完成后是否把它切成当前模型。模型页的「下载」默认切；模型广场只是
+    /// 把权重放进目录，默认不动正在跑的模型。Optional 让旧任务行仍能解码。
+    package var activateOnFinish: Bool? = nil
 
     package var id: String { engine.rawValue + "/" + model }
 
@@ -45,7 +49,8 @@ package struct ModelDownloadTask: Codable, Identifiable, Equatable {
     package init(
         engine: EngineID, model: String, status: Status,
         totalBytes: Int = 0, downloadedBytes: Int = 0, addedAt: Date = Date(),
-        shared: [EngineID]? = nil, source: HubSource? = nil, include: [String]? = nil
+        shared: [EngineID]? = nil, source: HubSource? = nil, include: [String]? = nil,
+        activateOnFinish: Bool = true
     ) {
         self.engine = engine
         self.model = model
@@ -56,6 +61,7 @@ package struct ModelDownloadTask: Codable, Identifiable, Equatable {
         self.shared = shared
         self.source = source
         self.include = include
+        self.activateOnFinish = activateOnFinish
     }
 }
 

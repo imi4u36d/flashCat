@@ -63,7 +63,7 @@ private struct DSButtonBody: View {
         case .primary: return DS.inkText
         case .secondary: return DS.text
         case .ghost: return activeHover ? DS.text : DS.text2
-        case .danger: return DS.err
+        case .danger: return DS.dangerText
         }
     }
 
@@ -76,7 +76,7 @@ private struct DSButtonBody: View {
         case .ghost:
             return activeHover ? DS.hover : .clear
         case .danger:
-            return DS.err.opacity(activeHover ? 0.17 : 0.10)
+            return activeHover ? DS.err.opacity(0.16) : DS.dangerFill
         }
     }
 
@@ -85,7 +85,7 @@ private struct DSButtonBody: View {
         case .primary: return .clear
         case .secondary: return activeHover ? DS.line3 : DS.line2
         case .ghost: return .clear
-        case .danger: return DS.err.opacity(activeHover ? 0.42 : 0.26)
+        case .danger: return activeHover ? DS.err.opacity(0.38) : DS.dangerStroke
         }
     }
 
@@ -325,8 +325,8 @@ struct DSChip: View {
         }
         .padding(.horizontal, 8)
         .frame(height: 22)
-        .background(DS.rect(DS.Radius.sm).fill(tint?.opacity(0.12) ?? DS.hover))
-        .overlay(DS.rect(DS.Radius.sm).strokeBorder(tint?.opacity(0.26) ?? DS.line, lineWidth: 1))
+        .background(Capsule().fill(tint?.opacity(0.12) ?? DS.pillFill))
+        .overlay(Capsule().strokeBorder(tint?.opacity(0.26) ?? DS.pillBorder, lineWidth: 1))
         .fixedSize()
     }
 }

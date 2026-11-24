@@ -4,25 +4,30 @@
 import AppKit
 import FlashCatCore
 
-/// 窗口画布背景表面：始终维持不透明纯实色 ZCode 画布（日间 `#F8F8F8` / 夜间 `#161616`）。
+/// 窗口画布背景表面：壁纸外圈的兜底色（浅色琉璃 `#DCE6F5` /
+/// 深色液态 `#070A14` / 极简纯白 `#EEF0F4`）。
 ///
-/// 主窗口本身为了压低阴影始终保持 Aqua 外观，因此必须先按 `contentView` 的
-/// 实际外观把动态画布色解析成静态 sRGB 再写进 `window.backgroundColor`，
-/// 避免圆角外缘与切换皮肤瞬间闪白。
+/// 主窗口本身为了压低阴影始终保持 Aqua 外观，因此先把动态壁纸色解析成静态
+/// sRGB 再写进 `window.backgroundColor`，避免圆角外缘与切换皮肤瞬间闪白。
+/// 真正的粉彩 / 极光 mesh 由窗口内的 `GlassWallpaper` 绘制。
 @MainActor
 final class BackgroundSurface {
     static let shared = BackgroundSurface()
 
-    /// 主画布底色：Zai Dark `#161616` / Zai Light `#F8F8F8`。
-    static let canvasColor = NSColor.adaptive(dark: 0x161616, light: 0xF8F8F8)
+    /// 壁纸兜底色，与 `GlassWallpaper` 的边角颜色一致。
+    static let canvasColor = NSColor.glass(
+        light: 0xDCE6F5, dark: 0x070A14, studio: 0xEEF0F4)
 
-    /// 按给定外观把画布底色解析成静态 sRGB 颜色。
+    /// 按给定外观给出壁纸兜底色。窗口外观与皮肤分开：studio / studioDark
+    /// 也会落到浅色或深色外观上，但外层兜底只负责窗口边缘，取对应的壁纸边角色。
     static func canvasColor(for appearance: NSAppearance) -> NSColor {
-        var resolved = canvasColor
-        appearance.performAsCurrentDrawingAppearance {
-            resolved = canvasColor.usingColorSpace(.sRGB) ?? canvasColor
-        }
-        return resolved
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) != .aqua
+        let hex: UInt32 = isDark ? 0x070A14 : 0xDCE6F5
+        return NSColor(
+            srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+            green: CGFloat((hex >> 8) & 0xFF) / 255,
+            blue: CGFloat(hex & 0xFF) / 255,
+            alpha: 1)
     }
 
     private init() {}

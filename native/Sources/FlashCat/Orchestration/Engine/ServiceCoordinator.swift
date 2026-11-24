@@ -183,9 +183,9 @@ final class ServiceCoordinator {
                     outcome: .failed("\(engine.displayName) 没有可用的控制器"))
                 return
             }
-            self.library.libraryEngine = engine
             self.engineCoordinator.reloadModels()
-            // The picked model wins over the engine's remembered one.
+            // The picked model wins over the engine's remembered one. The model
+            // page's engine selection is not a side effect of loading a model.
             self.selectModel(model)
             engines.setModel(model, for: engine)
             self.engineCoordinator.syncController()

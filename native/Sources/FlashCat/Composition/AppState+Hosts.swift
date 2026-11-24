@@ -14,6 +14,14 @@ extension AppState: EngineHost {
     func notifyObjectChanged() {
         objectWillChange.send()
     }
+
+    /// 协议要的是三参数形状；`AppState` 的实现另有 `source` / `include`
+    /// 两个带默认值的参数。带默认参数的函数不能充当协议见证，所以这里补一个
+    /// 精确重载（下载中心仍可用扩展参数）。
+    @discardableResult
+    func downloadModel(_ id: String, engine: EngineID, family: String?) -> Bool {
+        downloadModel(id, engine: engine, family: family, source: nil, include: [])
+    }
 }
 
 extension AppState: ChatHost {

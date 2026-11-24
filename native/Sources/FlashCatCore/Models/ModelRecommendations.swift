@@ -4,34 +4,35 @@
 import FlashCatKit
 import Foundation
 
-/// A model flashCat knows about, tagged with the engines that may serve it.
+/// A model an engine itself recommends, tagged with the engine that ships the
+/// list.
 ///
-/// The catalog is one list, and each row carries `engines` instead of living in
-/// a per-engine array: ownership is a property of the model, so a row that runs
-/// on two runtimes says so, and the page filter is a `contains` on that set.
+/// The rows are not flashCat's opinion: Splash's pack carries
+/// `install/suggested-models.tsv`, and MTPLX's pack carries the same catalog
+/// its macOS app shows. Both are read from the installed pack, so a new engine
+/// release updates the model page without a flashCat release. oMLX and
+/// MLX-Serve publish no such list, so they have no recommendation rows at all.
 ///
-/// The tags are a product split, not a capability one. oMLX and MLX-Serve are
-/// the general MLX engines; Splash and MTPLX have narrower product-fit
-/// policies. A repository may be tagged for more than one engine, but search
-/// and recommendation only show it where the product chooses to expose it.
+/// Ownership is still a property of the row (`engines`) instead of living in a
+/// per-engine array: the model page filters with a `contains` on that set.
 package struct ModelRecommendation: Identifiable, Hashable {
     /// Hub repository, `owner/repo`, optionally `owner/repo:VARIANT` for a
     /// single GGUF quant inside a repository that also carries the others.
     package let id: String
-    /// Approximate download size in bytes; 0 when the Hub page states none.
+    /// Approximate download size in bytes; 0 when the engine's list states none.
     package let bytes: Int
     /// Unified memory the pack is meant for, in GB; 0 when not stated.
     package let minimumMemory: Int
     package let summary: String
     package let tags: [String]
     package let draftRepository: String?
-    /// How strong this row is within its engine (bigger is stronger); the
+    /// How strongly the engine prefers this row (bigger is stronger); the
     /// hardware recommendation picks "the best this machine can run" from it
     /// instead of guessing strength from the memory floor. Zero keeps a row in
     /// the engine catalog without putting it on the hardware ranked ladder.
     package let rank: Int
-    /// The engines that may serve this row. A row outside an engine's set is
-    /// never offered there — neither as a recommendation nor through search.
+    /// The engines that ship this row. A row outside an engine's set is never
+    /// offered there.
     package let engines: Set<EngineID>
 
     package var repo: String {
@@ -66,106 +67,321 @@ package struct ModelRecommendation: Identifiable, Hashable {
     }
 }
 
-/// The catalog, with the Hub facts (size, memory floor, what the pack is good
-/// at) collected once so the model page can show them without a network round
-/// trip.
+/// The engine-owned recommendation lists, read from the packs on disk.
+///
+/// There is deliberately no fallback catalog in the app: a hand-written list is
+/// exactly what drifts from the engine it claims to describe. An engine that
+/// is not installed has no list, and neither oMLX nor MLX-Serve has one to
+/// read.
 package enum ModelRecommendations {
-    /// One row per repository. Drafts are not rows: they are helpers a row
-    /// pairs with, and the page never offers them on their own.
-    package static let catalog: [ModelRecommendation] = [
-        ModelRecommendation(
-            id: "Jundot/Qwen3.6-35B-A3B-oQ4e-mtp",
-            bytes: 22_157_307_177, minimumMemory: 32,
-            summary: "MoE 的 oQ4e 量化，保留 MTP 草稿头",
-            tags: ["oQ4e", "MoE", "MTP"],
-            draftRepository: nil,
-            rank: 2,
-            engines: [.omlx, .mlxServe]),
-        ModelRecommendation(
-            id: "Jundot/Qwen3.8-27B-oQ4e-mtp",
-            bytes: 17_540_672_204, minimumMemory: 24,
-            summary: "27B 稠密 oQ4e 量化，保留 MTP 草稿头",
-            tags: ["oQ4e", "MTP"],
-            draftRepository: nil,
-            rank: 1,
-            engines: [.omlx, .mlxServe]),
-        ModelRecommendation(
-            id: "Jundot/Qwen3.8-Flash-Next-oQ4e-mtp",
-            bytes: 107_693_774_391, minimumMemory: 128,
-            summary: "125B MoE 的 oQ4e 版，Flash-Next 里最省内存的一档",
-            tags: ["oQ4e", "MoE", "视觉", "MTP"],
-            draftRepository: nil,
-            rank: 3,
-            engines: [.omlx, .mlxServe]),
-        ModelRecommendation(
-            id: "ISTA-DASLab/Qwen3.8-27B-GSQ-RCO-GGUF:IQ3_S",
-            bytes: 11_771_546_784, minimumMemory: 24,
-            summary: "27B 稠密模型的 GSQ-RCO 动态量化，IQ3_S 按 HF 评测接近无损",
-            tags: ["GGUF", "IQ3_S", "3.5 bpw", "视觉"],
-            draftRepository: "incoai/Qwen3.8-27B-DFlash2",
-            rank: 1,
-            engines: [.splash]),
-        ModelRecommendation(
-            id: "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF:Q2_0",
-            bytes: 66_423_878_624, minimumMemory: 64,
-            summary: "125B MoE，Flash-Next 的 GGUF 包，走 Splash 的 DFlash2 通道",
-            tags: ["GGUF", "Q2_0", "2.4 bpw", "MoE", "视觉"],
-            draftRepository: "incoai/Qwen3.8-Flash-Next-DFlash2",
-            rank: 3,
-            engines: [.splash]),
-        ModelRecommendation(
-            id: "Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed",
-            bytes: 21_014_908_552, minimumMemory: 32,
-            summary: "35B MoE，MTP 头单独放在 mtp.safetensors",
-            tags: ["MTP", "MoE"],
-            draftRepository: nil,
-            rank: 2,
-            engines: [.mtplx]),
-        ModelRecommendation(
-            id: "Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed",
-            bytes: 20_703_486_926, minimumMemory: 32,
-            summary: "MTPLX 默认档：4 位动态量化 27B，MTP 加速",
-            tags: ["MTP", "4-bit"],
-            draftRepository: nil,
-            rank: 1,
-            engines: [.mtplx]),
-        ModelRecommendation(
-            id: "Youssofal/Qwen3.8-Flash-Next-MTPLX-Optimized-Speed",
-            bytes: 115_061_256_248, minimumMemory: 128,
-            summary: "125B Flash-Next，动态 4 位 + 8 位注意力",
-            tags: ["MTP", "MoE", "视觉"],
-            draftRepository: nil,
-            rank: 3,
-            engines: [.mtplx]),
-        ModelRecommendation(
-            id: "Youssofal/MiMo-V2.6-Qwen-9B-MTPLX-Optimized-Speed",
-            bytes: 8_695_113_783, minimumMemory: 16,
-            summary: "MiMo-V2.6 Qwen 9B，MTPLX 官方优化包",
-            tags: ["6-bit", "MTP"],
-            draftRepository: nil,
-            // 目录收录不等于硬件排名：rank 0 会在低内存机器上兜底，但不参与正式档评选。
-            rank: 0,
-            engines: [.mtplx]),
-        ModelRecommendation(
-            id: "Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed",
-            bytes: 2_567_456_768, minimumMemory: 8,
-            summary: "Qwen3.5 4B，MTPLX 轻量优化包",
-            tags: ["4-bit", "MTP"],
-            draftRepository: nil,
-            rank: 0,
-            engines: [.mtplx]),
-    ]
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var cache: [EngineID: [ModelRecommendation]] = [:]
 
-    /// The catalog rows tagged for this engine, in catalog order — the page's
-    /// recommendation list, and the filter search results have to respect.
+    /// The rows this engine itself recommends on this Mac, in its own order.
+    ///
+    /// Splash's file lists every variant and its app shows one per family — the
+    /// strongest that fits — so `NativeModelCatalog.splash` applies that rule.
+    /// MTPLX's catalog returns the list its app would show for this chip tier
+    /// and memory, so the ordering and the memory verdicts are its own.
     package static func list(for engine: EngineID) -> [ModelRecommendation] {
-        catalog.filter { $0.engines.contains(engine) }
+        lock.lock()
+        if let hit = cache[engine] {
+            lock.unlock()
+            return hit
+        }
+        lock.unlock()
+
+        guard let installation = EngineInstallations.newest(engine, version: nil) else {
+            store([], for: engine)
+            return []
+        }
+        let rows: [ModelRecommendation]
+        switch engine {
+        case .splash:
+            rows = NativeModelCatalog.splash(
+                root: installation.root.path,
+                memoryGB: DeviceProfile.current().memoryGB)
+        case .mtplx:
+            rows = NativeModelCatalog.mtplx(
+                root: installation.root.path,
+                entrypoint: installation.entrypoint.path,
+                machine: DeviceProfile.current().machine)
+        case .omlx, .mlxServe:
+            rows = []
+        default:
+            // `EngineID` 不是闭合枚举：未来新增的引擎如果没有随包目录，
+            // 就按「没有推荐列表」处理，而不是让测试构建在这里失败。
+            rows = []
+        }
+        store(rows, for: engine)
+        return rows
     }
 
-    /// The catalog row this id normalizes to, or nil for weights nobody tagged.
-    /// A draft head is *not* a row: read the owning row's `draftRepository`.
-    package static func recommendation(for id: String) -> ModelRecommendation? {
-        let repo = ModelLibraryEntry.normalized(id)
-        return catalog.first { ModelLibraryEntry.normalized($0.id) == repo }
+    /// Drop every cached list. Called when an engine pack appears, disappears
+    /// or is updated: the catalogs live inside the pack, so the old rows are
+    /// no longer the engine's answer.
+    package static func invalidate() {
+        lock.lock()
+        cache.removeAll()
+        lock.unlock()
     }
+
+    private static func store(
+        _ rows: [ModelRecommendation], for engine: EngineID
+    ) {
+        lock.lock()
+        cache[engine] = rows
+        lock.unlock()
+    }
+}
+
+/// Readers for the two engines that ship a model list inside the pack.
+package enum NativeModelCatalog {
+    // MARK: Splash
+
+    /// `install/suggested-models.tsv`, in the pack's own words:
+    ///
+    /// > The models Splash suggests, best first: the desktop app offers them and
+    /// > shell completion completes them. MODEL<TAB>NAME<TAB>MEMORY<TAB>SIZE<TAB>ABOUT
+    ///
+    /// The app offers, per name, the variant with the most MEMORY that the Mac
+    /// has. A family whose every variant asks for more memory than this Mac has
+    /// is not offered at all — that is the engine's rule, not ours.
+    package static func splash(root: String, memoryGB: Int) -> [ModelRecommendation] {
+        let path = root + "/install/suggested-models.tsv"
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+            AppLog.debug(.app, "Splash 推荐列表读取失败：\(path)")
+            return []
+        }
+
+        struct Row {
+            let model: String
+            let name: String
+            let memory: Int
+            let gigabytes: Int
+            let about: String
+        }
+
+        var best: [String: Row] = [:]
+        var familyOrder: [String] = []
+        var seenFamilies = Set<String>()
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let raw = String(line).trimmingCharacters(in: .newlines)
+            guard !raw.isEmpty, !raw.hasPrefix("#") else { continue }
+            let columns = raw.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard columns.count >= 5,
+                let memory = Int(columns[2]), let gigabytes = Int(columns[3])
+            else { continue }
+            let row = Row(
+                model: columns[0], name: columns[1], memory: memory,
+                gigabytes: gigabytes, about: columns[4])
+            if seenFamilies.insert(row.name).inserted { familyOrder.append(row.name) }
+            // "the most MEMORY that the Mac has" — a tie keeps the first row.
+            if memory <= memoryGB, memory > (best[row.name]?.memory ?? Int.min) {
+                best[row.name] = row
+            }
+        }
+
+        let selected = familyOrder.compactMap { best[$0] }
+        return selected.enumerated().map { offset, row in
+            ModelRecommendation(
+                id: row.model,
+                bytes: row.gigabytes * 1_000_000_000,
+                minimumMemory: row.memory,
+                summary: row.about,
+                tags: splashTags(for: row.model),
+                draftRepository: nil,
+                // First row is the engine's first pick; ModelFit treats a
+                // larger rank as stronger.
+                rank: selected.count - offset,
+                engines: [.splash])
+        }
+    }
+
+    private static func splashTags(for id: String) -> [String] {
+        var tags: [String] = []
+        let repo = id.split(separator: ":", maxSplits: 1).first.map(String.init) ?? id
+        tags.append(repo.lowercased().contains("gguf") ? "GGUF" : "MLX")
+        if let quant = ModelQuantization.detect(in: id) { tags.append(quant) }
+        return tags
+    }
+
+    // MARK: MTPLX
+
+    /// Ask the pack's own Python for the list its macOS app would show.
+    ///
+    /// `model_catalog.py` is the sync pair of the app's `MTPLXModelOption`
+    /// catalog and `ModelFeasibility` policy, so calling it is how flashCat
+    /// stays aligned with a pack update instead of copying the numbers into
+    /// Swift. The script also works out each model's RAM floor by asking the
+    /// same policy at every standard memory size — the floor a user reads on
+    /// the card is therefore the point at which MTPLX itself starts offering it.
+    package static func mtplx(
+        root: String, entrypoint: String, machine: MachineProfile
+    ) -> [ModelRecommendation] {
+        let tier = chipTier(for: machine.chipName)
+        guard let output = runPython(
+            executable: entrypoint,
+            workingDirectory: root,
+            arguments: ["-c", mtplxScript, String(machine.memoryGB), tier]),
+            let data = output.data(using: .utf8),
+            let payload = try? JSONDecoder().decode(MTPLXPayload.self, from: data)
+        else {
+            AppLog.warning(.app, "MTPLX 推荐列表读取失败：\(machine.chipName)")
+            return []
+        }
+
+        let total = payload.models.count
+        return payload.models.enumerated().map { offset, model in
+            ModelRecommendation(
+                id: model.hf,
+                bytes: model.bytes,
+                minimumMemory: model.floor,
+                summary: model.detail,
+                tags: mtplxTags(for: model),
+                draftRepository: nil,
+                rank: total - offset,
+                engines: [.mtplx])
+        }
+    }
+
+    private static func mtplxTags(for model: MTPLXPayload.Model) -> [String] {
+        var tags: [String] = []
+        if let quant = ModelQuantization.detect(in: model.detail) {
+            tags.append(quant)
+        } else if let quant = ModelQuantization.detect(in: model.name) {
+            tags.append(quant)
+        }
+        tags.append(model.arOnly ? "AR" : "MTP")
+        let text = (model.name + " " + model.detail).lowercased()
+        if text.contains("vision") { tags.append("视觉") }
+        return tags
+    }
+
+    /// `Apple M4 Pro` → `m4`; M1/M2 are the legacy tier, M3 and newer are
+    /// modern. The pack's `chip_tier_for_generation` owns the meaning.
+    package static func chipTier(for chipName: String) -> String {
+        let lower = chipName.lowercased()
+        if lower.contains("intel") { return "intel" }
+        let pattern = #"\bm([1-9])\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+            let match = regex.firstMatch(
+                in: lower, range: NSRange(lower.startIndex..., in: lower)),
+            let range = Range(match.range(at: 1), in: lower)
+        else { return "unknown" }
+        return "m" + lower[range]
+    }
+
+    // MARK: Python bridge
+
+    private struct MTPLXPayload: Decodable {
+        struct Model: Decodable {
+            let hf: String
+            let name: String
+            let detail: String
+            let bytes: Int
+            let floor: Int
+            let arOnly: Bool
+        }
+
+        let models: [Model]
+    }
+
+    /// Run the pack's Python and read its stdout. The script is local and
+    /// deterministic, but a wedged interpreter must not hang the model page, so
+    /// the wait is bounded and the child is terminated on timeout.
+    private static func runPython(
+        executable: String, workingDirectory: String, arguments: [String]
+    ) -> String? {
+        guard Paths.fileExists(executable) else { return nil }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["PYTHONNOUSERSITE"] = "1"
+        environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        environment["PYTHONUNBUFFERED"] = "1"
+        environment.removeValue(forKey: "PYTHONPATH")
+        environment.removeValue(forKey: "PYTHONHOME")
+        process.environment = environment
+
+        let output = Pipe()
+        let errors = Pipe()
+        process.standardOutput = output
+        process.standardError = errors
+        process.standardInput = FileHandle.nullDevice
+
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+
+        let finished = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in finished.signal() }
+        if finished.wait(timeout: .now() + 5) == .timedOut {
+            process.terminate()
+            return nil
+        }
+        // The child has exited, so the pipe is closed and reading cannot block.
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        guard process.terminationStatus == 0 else {
+            let message = String(
+                decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            AppLog.debug(.app, "MTPLX catalog 退出码 \(process.terminationStatus)：\(message)")
+            return nil
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Runs inside the pack. It prints only JSON; failures print nothing and
+    /// exit non-zero so Swift keeps an empty list instead of half a catalog.
+    private static let mtplxScript = """
+        import json
+        import sys
+        from mtplx import model_catalog as catalog
+
+        memory = float(sys.argv[1])
+        tier = sys.argv[2]
+        rams = [8, 16, 24, 32, 36, 48, 64, 96, 128, 192, 256, 384, 512]
+
+        try:
+            models = catalog.recommended_models(memory_gib=memory, chip_tier=tier)
+        except Exception:
+            models = [
+                model for model in catalog.OFFICIAL_CATALOG
+                if memory <= 0 or model.peak_memory_gib <= memory
+            ]
+
+        offered = {}
+        for ram in rams:
+            try:
+                offered[ram] = {
+                    model.id
+                    for model in catalog.recommended_models(
+                        memory_gib=ram, chip_tier=tier)
+                }
+            except Exception:
+                offered[ram] = set()
+
+        def floor_of(model):
+            for ram in rams:
+                if model.id in offered[ram]:
+                    return ram
+            return int(model.peak_memory_gib) + 1
+
+        rows = []
+        for model in models:
+            rows.append({
+                "hf": model.hf_model_id,
+                "name": model.display_name,
+                "detail": model.detail,
+                "bytes": model.size_bytes,
+                "floor": floor_of(model),
+                "arOnly": bool(getattr(model, "ar_only", False)),
+            })
+        print(json.dumps({"models": rows}, ensure_ascii=False))
+        """
 }

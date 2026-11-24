@@ -16,7 +16,9 @@ enum DownloadEvent {
     /// - Parameter installed: 模型库里的 id。splash 用仓库名、其他引擎用文件夹
     ///   名，这个换算在 store 里因为它知道自己的目标目录；但要不要选中它，只有
     ///   AppState 能定。
-    case modelReady(engine: EngineID, model: String, installed: String)
+    /// - Parameter activate: 这次下载是否该顺手把它切成当前模型。模型页的下载
+    ///   要，模型广场只是把权重放进选中的目录，不打断正在跑的模型。
+    case modelReady(engine: EngineID, model: String, installed: String, activate: Bool)
     /// 公共目录里的仓库下完了：写授权表、建链接、刷新模型页都归 AppState。
     case shareRequested(repo: String, engines: [EngineID])
 }
@@ -138,7 +140,8 @@ final class DownloadCenter: ObservableObject {
         id: String,
         shared: [EngineID]?,
         source: HubSource? = nil,
-        include: [String]? = nil
+        include: [String]? = nil,
+        activate: Bool = true
     ) -> Bool {
         pendingSharedRepo = shared == nil ? nil : id
         pendingSharedEngines = shared ?? []
@@ -177,6 +180,7 @@ final class DownloadCenter: ObservableObject {
             task.status = .downloading
             task.shared = shared
             task.source = source ?? task.source
+            task.activateOnFinish = activate
             if let include, !include.isEmpty { task.include = include }
             task.downloadedBytes = resumeBytes
             task.totalBytes = max(task.totalBytes, resumeTotal)
@@ -443,6 +447,9 @@ final class DownloadCenter: ObservableObject {
     func finishDownload(engine: EngineID, model: String, status: Int32) {
         let sharedRepo = pendingSharedRepo
         let sharedEngines = pendingSharedEngines
+        let activateOnFinish =
+            downloadTasks.first { $0.engine == engine && $0.model == model }?
+            .activateOnFinish ?? true
         let incompleteMarker = downloadIncompleteMarker
         downloadIncompleteMarker = nil
         pendingSharedRepo = nil
@@ -545,7 +552,10 @@ final class DownloadCenter: ObservableObject {
         outcome = .finished
         // 要不要选中它、要不要提示，取决于这次下载是不是启动前的补件、
         // 用户在不在看这个引擎——那些判断留在 AppState，这里只交出事实。
-        onEvent?(.modelReady(engine: engine, model: model, installed: installed))
+        onEvent?(
+            .modelReady(
+                engine: engine, model: model, installed: installed,
+                activate: activateOnFinish))
     }
 
     // MARK: rows

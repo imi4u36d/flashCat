@@ -9,9 +9,9 @@ import Foundation
 ///
 /// The recommendation is stored rather than recomputed so the answer cannot
 /// drift between launches (or halfway through a first-run install), and it is
-/// kept per engine because the three catalogs pin different repositories for
-/// the same three tiers — "the strongest 27B this Mac can run" is a different
-/// download on Splash, oMLX and MTPLX.
+/// kept per engine because the two engines that ship a catalog pin different
+/// repositories for the same tier — "the strongest 27B this Mac can run" is a
+/// different download on Splash and MTPLX.
 package struct HardwareRecommendation: Codable, Equatable {
     package struct Pick: Codable, Equatable {
         /// `EngineID.rawValue` rather than the case itself, so a stored
@@ -29,11 +29,11 @@ package struct HardwareRecommendation: Codable, Equatable {
         package var engineID: EngineID? { EngineID(rawValue: engine) }
 
         /// Short tier label for one-line summaries, e.g. "Qwen3.6-35B-A3B-4bit".
-        /// Derived from the catalog instead of stored, so a recheck summary and
-        /// the model page's own card can never name the same tier differently.
+        /// Derived from the id instead of stored, so a recheck summary and the
+        /// model page's own card can never name the same tier differently.
         package var shortName: String {
-            ModelRecommendations.recommendation(for: model)?.shortName
-                ?? model.split(separator: "/").last.map(String.init) ?? model
+            let repo = model.split(separator: ":", maxSplits: 1).first.map(String.init) ?? model
+            return repo.split(separator: "/").last.map(String.init) ?? repo
         }
     }
 

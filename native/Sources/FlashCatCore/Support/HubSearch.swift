@@ -4,9 +4,8 @@
 import FlashCatKit
 import Foundation
 
-/// One Hugging Face repository as the model page can offer it: the engine that
-/// may serve it, the size the download actually costs, and — for a GGUF
-/// repository — the quants inside it.
+/// One Hugging Face repository as the model page can offer it: the size the
+/// download actually costs and — for a GGUF repository — the quants inside it.
 ///
 /// This is a session object. It is not persisted anywhere: a search result is
 /// only good while the query is on screen, so there is no cache to invalidate
@@ -15,13 +14,10 @@ package struct HubSearchResult: Identifiable {
     /// `owner/repo`, or `owner/repo:VARIANT` once a quant is chosen.
     package let id: String
     package let repo: String
-    package let engine: EngineID
-    package let engines: Set<EngineID>
     package let kind: HubModelKind
     /// Bytes the download costs, for the chosen quant or the biggest one.
     package let bytes: Int
-    /// Unified memory floor in GB. Reused from the catalog when the repository
-    /// and the chosen quant both match a pinned row; otherwise estimated.
+    /// Unified memory floor in GB, estimated from the download size.
     package let memoryGB: Int
     /// True when the floor is the `bytes × 1.2` guess rather than a measured
     /// value, so the page can print it with ≈.
@@ -76,20 +72,12 @@ package struct HubSearchResult: Identifiable {
         estimated ? "≈\(memoryGB) GB 内存起" : "\(memoryGB) GB 内存起"
     }
 
-    package func targeting(_ engine: EngineID) -> HubSearchResult {
-        HubSearchResult(
-            id: id, repo: repo, engine: engine, engines: engines,
-            kind: kind, bytes: bytes, memoryGB: memoryGB,
-            estimated: estimated, downloads: downloads, io: io,
-            options: options, summary: summary, tags: tags)
-    }
-
     /// The same row with another quant of the same repository chosen.
     package func choosing(_ quant: String?) -> HubSearchResult {
         guard let option = options.first(where: { $0.name == quant }) ?? options.last else { return self }
         let id = option.name.map { repo + ":" + $0 } ?? repo
         return HubSearchResult(
-            id: id, repo: repo, engine: engine, engines: engines,
+            id: id, repo: repo,
             kind: kind,
             bytes: option.bytes, memoryGB: option.memoryGB,
             estimated: option.estimated, downloads: downloads,
@@ -97,25 +85,16 @@ package struct HubSearchResult: Identifiable {
             options: options, summary: summary, tags: tags)
     }
 
-    /// The catalog's measured floor wins only when the repository *and* the
-    /// quant both match: 64 GB is right for `Q2_0` and nonsense for `Q8_0`.
-    package static func memoryFloor(id: String, bytes: Int) -> (value: Int, estimated: Bool) {
-        if let row = ModelRecommendations.recommendation(for: id), row.minimumMemory > 0,
-            variant(of: row.id) == variant(of: id)
-        {
-            return (row.minimumMemory, false)
-        }
-        return (HubModelLayout.estimatedMemoryGB(bytes: bytes), true)
-    }
-
-    private static func variant(of id: String) -> String? {
-        guard let colon = id.firstIndex(of: ":") else { return nil }
-        return String(id[id.index(after: colon)...])
+    /// No engine catalog backs a search hit any more, so every floor is the
+    /// `bytes × 1.2` estimate. It is printed with ≈ for exactly that reason.
+    package static func memoryFloor(bytes: Int) -> (value: Int, estimated: Bool) {
+        (HubModelLayout.estimatedMemoryGB(bytes: bytes), true)
     }
 }
 
-/// What the page knows about the current search. `results` is already filtered
-/// to the engine column being shown, so the page never decides ownership.
+/// What the page knows about a legacy by-engine search. The Model Hub itself
+/// searches `HubModel` directly; this shape is kept for the model page's
+/// session query.
 package struct HubSearchState {
     package var query: String = ""
     package var phase: Phase = .idle
@@ -137,30 +116,16 @@ package struct HubSearchState {
 
     package var isEmpty: Bool { query.isEmpty && results.isEmpty && phase == .idle }
 
-    /// The engine a repository belongs to, by the format the Hub reports.
-    /// GGUF is Splash's channel and MTPLX packs are MTPLX's, each by product
-    /// rule rather than capability; everything else MLX-ish is the general
-    /// engine's.
-    package static func engines(for kind: HubModelKind) -> Set<EngineID> {
-        switch kind {
-        case .gguf: return [.splash]
-        case .mtplx: return [.mtplx]
-        case .mlx, .unmarked: return [.omlx, .mlxServe]
-        case .unknown: return []
-        }
-    }
-
-    /// A repository as one result row, with the catalog's summary and tags when
-    /// the catalog knows it.
+    /// A repository as one result row. The row names no engine: the Model Hub
+    /// asks for the download folder instead of guessing a runtime from the
+    /// file format.
     package static func result(for model: FlashCatKit.HubModel) -> HubSearchResult? {
-        let engines = engines(for: model.kind)
-        guard let engine = EngineCatalog.allIDs.first(where: { engines.contains($0) }) else { return nil }
         let repo = model.id
         let variants = model.ggufVariants
         let options: [HubSearchResult.Quant]
         if variants.isEmpty {
             let bytes = model.weightBytes(ggufVariant: nil)
-            let floor = HubSearchResult.memoryFloor(id: repo, bytes: bytes)
+            let floor = HubSearchResult.memoryFloor(bytes: bytes)
             options = [
                 HubSearchResult.Quant(
                     name: nil, bytes: bytes,
@@ -168,8 +133,7 @@ package struct HubSearchState {
             ]
         } else {
             options = variants.map { variant in
-                let id = variant.name.map { repo + ":" + $0 } ?? repo
-                let floor = HubSearchResult.memoryFloor(id: id, bytes: variant.bytes)
+                let floor = HubSearchResult.memoryFloor(bytes: variant.bytes)
                 return HubSearchResult.Quant(
                     name: variant.name, bytes: variant.bytes,
                     memoryGB: floor.value, estimated: floor.estimated)
@@ -181,13 +145,12 @@ package struct HubSearchState {
         // limited lands here.
         let sized = options.filter { $0.bytes > 0 }
         guard let start = sized.min(by: { $0.bytes < $1.bytes }) else { return nil }
-        let row = ModelRecommendations.recommendation(for: repo)
         return HubSearchResult(
             id: start.name.map { repo + ":" + $0 } ?? repo,
-            repo: repo, engine: engine, engines: engines, kind: model.kind,
+            repo: repo, kind: model.kind,
             bytes: start.bytes, memoryGB: start.memoryGB,
             estimated: start.estimated, downloads: model.downloads,
             io: model.ioTypes?.label,
-            options: sized, summary: row?.summary, tags: row?.tags ?? [])
+            options: sized, summary: nil, tags: [])
     }
 }

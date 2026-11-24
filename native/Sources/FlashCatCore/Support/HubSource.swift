@@ -50,11 +50,11 @@ package enum HubSource: String, CaseIterable, Identifiable, Codable, Sendable {
     package var subtitle: String {
         switch self {
         case .huggingFace:
-            return L10n.t("搜 Hugging Face 上的权重，下载到公共目录，所有引擎共用一份")
+            return L10n.t("搜 Hugging Face 上的权重；下载时选一个引擎的模型目录")
         case .hfMirror:
-            return L10n.t("经 hf-mirror.com 镜像搜 Hugging Face 权重，下载到公共目录，所有引擎共用一份")
+            return L10n.t("经 hf-mirror.com 镜像搜 Hugging Face 权重；下载时选一个引擎的模型目录")
         case .modelScope:
-            return L10n.t("搜 ModelScope 上的权重，下载到公共目录，所有引擎共用一份")
+            return L10n.t("搜 ModelScope 上的权重；下载时选一个引擎的模型目录")
         }
     }
 

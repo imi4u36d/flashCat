@@ -184,6 +184,8 @@ final class NativeUITests: XCTestCase {
         XCTAssertEqual(decodedLegacy.shared, [.omlx, .mtplx])
         XCTAssertNil(decodedLegacy.source)
         XCTAssertNil(decodedLegacy.include)
+        // 旧行没有这个字段：nil 在消费侧按 true 处理（下载完照旧切模型）。
+        XCTAssertNil(decodedLegacy.activateOnFinish)
 
         let task = ModelDownloadTask(
             engine: .splash,

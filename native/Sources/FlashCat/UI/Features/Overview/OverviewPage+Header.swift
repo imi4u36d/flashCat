@@ -8,41 +8,94 @@ import FlashCatKit
 import SwiftUI
 
 extension OverviewPage {
-    // MARK: Page header & model strip
+    // MARK: Page header
 
-    /// 页名回到「概览」，模型名降为页内的当前模型条：切页时先看到自己在哪，
-    /// 再看到现在跑的是什么。窄窗口省掉端口，把宽度留给引擎名与阶段。
+    /// 页头：页名 + 现场胶囊；右侧三段皮肤切换、模型下拉与启停按钮。
+    /// 窄版把动作折到第二行，避免 224pt 侧栏展开时把模型名挤掉。
+    @ViewBuilder
     func pageHeader(compact: Bool) -> some View {
-        DSPageHeader(
-            title: "概览",
-            subtitle: compact
-                ? state.activeEngine.displayName
-                : "\(state.activeEngine.displayName) · 127.0.0.1:\(state.port)",
-            status: DSPageStatus(stageTitle, color: statusColor, live: state.canChat)
-        ) {
-            Button {
-                state.toggleService()
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: state.isRunning ? "stop.fill" : "play.fill")
-                        .font(.system(size: 9.5, weight: .semibold))
-                    Text(L10n.t(state.isRunning ? "停止引擎" : "启动引擎"))
+        if compact {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(spacing: 8) {
+                    pageTitle
+                    OverviewStatusPill(
+                        engine: state.activeEngine.displayName,
+                        port: nil,
+                        stage: stageTitle,
+                        tint: statusColor,
+                        live: state.canChat)
+                    Spacer(minLength: 0)
+                }
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    modelPickerButton
+                    engineButton
                 }
             }
-            .buttonStyle(.ds(state.isRunning ? .danger : .primary))
-            .disabled(engineToggleDisabled)
-            .help(engineToggleHelp)
-
-            ModelPickerButton(state: state, kind: .secondary) {
-                DSMenuTriggerLabel(
-                    title: "切换模型",
-                    systemImage: "square.stack.3d.up.fill",
-                    kind: .secondary,
-                    size: .regular
-                )
+        } else {
+            HStack(spacing: 10) {
+                pageTitle
+                OverviewStatusPill(
+                    engine: state.activeEngine.displayName,
+                    port: state.port,
+                    stage: stageTitle,
+                    tint: statusColor,
+                    live: state.canChat)
+                Spacer(minLength: 12)
+                modelPickerButton
+                engineButton
             }
-            .disabled(state.isSwitchingModel)
+            .frame(height: 34)
         }
+    }
+
+    var pageTitle: some View {
+        Text(L10n.t("概览"))
+            .font(DS.Font.prose(20, weight: .bold))
+            .tracking(-0.3)
+            .foregroundStyle(DS.text)
+            .fixedSize()
+    }
+
+    // MARK: Header actions
+
+    var modelPickerButton: some View {
+        ModelPickerButton(state: state, kind: .secondary) {
+            HStack(spacing: 6) {
+                Image(systemName: "square.stack.3d.up.fill")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(DS.accent)
+                Text(L10n.t("切换模型"))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DS.text)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8.5, weight: .bold))
+                    .foregroundStyle(DS.text3)
+            }
+        }
+        .disabled(state.isSwitchingModel)
+    }
+
+    var engineButton: some View {
+        Button {
+            state.toggleService()
+        } label: {
+            HStack(spacing: 6) {
+                if state.isRunning {
+                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                        .fill(DS.dangerText)
+                        .frame(width: 7, height: 7)
+                } else {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 8.5, weight: .bold))
+                }
+                Text(L10n.t(state.isRunning ? "停止引擎" : "启动引擎"))
+                    .font(.system(size: 12, weight: .semibold))
+            }
+        }
+        .buttonStyle(OverviewTintActionStyle(tint: state.isRunning ? DS.dangerText : DS.ok))
+        .disabled(engineToggleDisabled)
+        .help(engineToggleHelp)
     }
 
     var stageTitle: String {
@@ -58,82 +111,110 @@ extension OverviewPage {
         return DS.text4
     }
 
-    /// 当前模型条：模型名 + 引擎/量化/体积 + 上下文占用。
-    /// 宽版把上下文放在右侧；窄版放到名称下方并让进度条占满整行，
-    /// 否则 150pt 的固定宽度会把模型名挤成 `Qwen3...ed-Speed`。
-    @ViewBuilder
-    func modelHero(compact: Bool) -> some View {
-        if compact {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 10) {
-                    ModelFamilyIcon(family: modelFamily, size: 30)
-                    modelNameRow
-                    Spacer(minLength: 0)
-                }
-                Text(modelMetaLine)
-                    .font(DS.Font.proseNumber(11))
-                    .foregroundStyle(DS.text3)
-                    .lineLimit(1)
-                contextBlock
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 11)
-            .dsSurface(radius: DS.Radius.lg)
-        } else {
-            HStack(alignment: .center, spacing: 12) {
-                ModelFamilyIcon(family: modelFamily, size: 34)
-                VStack(alignment: .leading, spacing: 4) {
-                    modelNameRow
+    // MARK: Current model card
+
+    var modelHeroCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 11) {
+                modelIcon
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        engineBadge
+                        Text(L10n.t("当前加载模型"))
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(DS.text4)
+                    }
+                    Text(modelTitle)
+                        .font(DS.Font.prose(14.5, weight: .bold))
+                        .tracking(-0.2)
+                        .foregroundStyle(state.selectedModel.isEmpty ? DS.text3 : DS.text)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                     Text(modelMetaLine)
-                        .font(DS.Font.proseNumber(11))
+                        .font(DS.Font.proseNumber(10.5))
                         .foregroundStyle(DS.text3)
                         .lineLimit(1)
                 }
-                Spacer(minLength: 12)
-                contextBlock
-                    .frame(width: 132)
+
+                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .dsSurface(radius: DS.Radius.lg)
+
+            Spacer(minLength: 0)
+            contextBlock
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .overviewCard()
     }
 
-    var modelNameRow: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(L10n.t(modelTitleParts.name))
-                .font(DS.Font.prose(20, weight: .semibold))
-                .tracking(-0.3)
-                .foregroundStyle(state.selectedModel.isEmpty ? DS.text3 : DS.text)
-                .lineLimit(1)
-                .truncationMode(.middle)
-
-            if let variant = modelTitleParts.variant {
-                Text(variant)
-                    .font(DS.Font.mono(10.5, weight: .medium))
-                    .foregroundStyle(DS.text2)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(DS.rect(DS.Radius.sm).fill(DS.hover))
-                    .fixedSize()
-            }
+    var modelIcon: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [DS.accentBlue.opacity(0.22), DS.accent.opacity(0.30)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing))
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(DS.accentBlue.opacity(0.30), lineWidth: 1)
+            Image(systemName: "cube.fill")
+                .font(.system(size: 19, weight: .medium))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [DS.accentBlue, DS.accent],
+                        startPoint: .top, endPoint: .bottom))
         }
+        .frame(width: 40, height: 40)
+        .shadow(color: DS.accentBlue.opacity(0.28), radius: 8, y: 2)
+    }
+
+    var engineBadge: some View {
+        Text(state.activeEngine.displayName.uppercased())
+            .font(.system(size: 9.5, weight: .semibold))
+            .tracking(0.5)
+            .foregroundStyle(DS.accentBlue)
+            .padding(.horizontal, 5)
+            .frame(height: 16)
+            .background(DS.rect(5).fill(DS.accentBlue.opacity(0.10)))
+            .overlay(DS.rect(5).strokeBorder(DS.accentBlue.opacity(0.22), lineWidth: 1))
+            .fixedSize()
     }
 
     var contextBlock: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 5) {
-                Text(L10n.t("当前上下文"))
-                    .font(DS.Font.prose(10.5))
+        VStack(spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(L10n.t("上下文窗口"))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(DS.text3)
                 Spacer(minLength: 4)
-                Text(verbatim: contextFractionText)
-                    .font(DS.Font.proseNumber(12, weight: .medium))
-                    .foregroundStyle(state.overviewContextUsedTokens > 0 ? DS.text : DS.text3)
+                Text(verbatim: contextUsedText)
+                    .font(DS.Font.number(11.5, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                Text(verbatim: "/")
+                    .font(DS.Font.prose(11))
+                    .foregroundStyle(DS.text4)
+                Text(verbatim: contextTotalText)
+                    .font(DS.Font.number(11, weight: .medium))
+                    .foregroundStyle(DS.text2)
+                Text(verbatim: "(\(contextPercentText))")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(DS.accent)
+                    .fixedSize()
             }
-            DSMeter(value: contextProgress, tint: engineTint)
-                .opacity(contextProgress > 0 ? 1 : 0.45)
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(DS.line2)
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [DS.accentBlue, DS.accent, Color(red: 0.55, green: 0.36, blue: 0.96)],
+                                startPoint: .leading, endPoint: .trailing))
+                        .frame(width: max(4, proxy.size.width * contextProgress))
+                        .shadow(color: DS.accent.opacity(0.35), radius: 3)
+                }
+            }
+            .frame(height: 6)
+            .opacity(state.overviewContextUsedTokens > 0 ? 1 : 0.45)
         }
     }
 
@@ -199,7 +280,7 @@ extension OverviewPage {
             }
             .padding(14)
         }
-        .dsSurface(radius: DS.Radius.lg)
+        .dsSurface(radius: DS.Radius.card)
     }
 
     var checklistArrow: some View {
@@ -270,9 +351,22 @@ extension OverviewPage {
         return parts.joined(separator: " · ")
     }
 
-    var contextFractionText: String {
-        let used = Format.tokens(state.overviewContextUsedTokens)
-        guard let ceiling = state.contextWindowCeiling else { return used }
-        return "\(used) / \(Format.tokensShort(ceiling))"
+    var contextUsedText: String {
+        Format.tokens(state.overviewContextUsedTokens)
+    }
+
+    var contextTotalText: String {
+        guard let ceiling = state.contextWindowCeiling else { return "—" }
+        return Format.tokensShort(ceiling)
+    }
+
+    var contextPercentText: String {
+        guard let ceiling = state.contextWindowCeiling, ceiling > 0,
+            state.overviewContextUsedTokens > 0
+        else { return "0%" }
+        let percent = min(100, Double(state.overviewContextUsedTokens) / Double(ceiling) * 100)
+        return percent < 1
+            ? String(format: "%.2f%%", percent)
+            : String(format: "%.1f%%", percent)
     }
 }

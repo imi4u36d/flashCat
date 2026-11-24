@@ -91,6 +91,16 @@
         }
       }
     },
+    "%@ · %@ 的权重会存进所选引擎自己的目录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · the %@ weights go into the chosen engine's own folder"
+          }
+        }
+      }
+    },
     "%@ · %@（下次启动）": {
       "localizations": {
         "en": {
@@ -127,6 +137,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ · Port %@"
+          }
+        }
+      }
+    },
+    "%@ 不提供官方推荐": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ does not ship official recommendations"
           }
         }
       }
@@ -187,6 +207,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "No local pack for %@; building %@ from GitHub instead"
+          }
+        }
+      }
+    },
+    "%@ 的权重会存进所选引擎自己的目录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The weights for %@ go into the chosen engine's own folder"
           }
         }
       }
@@ -391,12 +421,32 @@
         }
       }
     },
+    "%lld 个可下载": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld available"
+          }
+        }
+      }
+    },
     "%lld 个命令": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "%lld commands"
+          }
+        }
+      }
+    },
+    "%lld 个已安装": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld installed"
           }
         }
       }
@@ -1091,6 +1141,16 @@
         }
       }
     },
+    "上下文窗口": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Context window"
+          }
+        }
+      }
+    },
     "上次运行": {
       "localizations": {
         "en": {
@@ -1201,6 +1261,16 @@
         }
       }
     },
+    "下载到 %@ 的模型目录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download to %@'s model folder"
+          }
+        }
+      }
+    },
     "下载到公共目录": {
       "localizations": {
         "en": {
@@ -1217,6 +1287,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Download and install engine"
+          }
+        }
+      }
+    },
+    "下载时选择存放到哪个引擎的模型目录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose which engine's model folder to store it in"
           }
         }
       }
@@ -1361,6 +1441,36 @@
         }
       }
     },
+    "仅 Hugging Face": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hugging Face only"
+          }
+        }
+      }
+    },
+    "仅 chat": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chat only"
+          }
+        }
+      }
+    },
+    "仅 openai": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI only"
+          }
+        }
+      }
+    },
     "仅支持串行": {
       "localizations": {
         "en": {
@@ -1377,6 +1487,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Today"
+          }
+        }
+      }
+    },
+    "从下面的推荐下载，或打开模型广场下载到这个引擎。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download one of the recommendations below, or use the Model Hub and choose this engine."
           }
         }
       }
@@ -2231,6 +2351,16 @@
         }
       }
     },
+    "刚刚": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "just now"
+          }
+        }
+      }
+    },
     "删除": {
       "localizations": {
         "en": {
@@ -2781,6 +2911,16 @@
         }
       }
     },
+    "只下 %@，其余量化不占盘；下载时选择存放的引擎目录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download %@ only, other quants take no disk; choose the engine folder when downloading"
+          }
+        }
+      }
+    },
     "只回复两个字：你好": {
       "localizations": {
         "en": {
@@ -3161,6 +3301,26 @@
         }
       }
     },
+    "在 %@ 中搜索模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search %@ models"
+          }
+        }
+      }
+    },
+    "在 Finder 中打开 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open %@ in Finder"
+          }
+        }
+      }
+    },
     "在 Finder 中显示": {
       "localizations": {
         "en": {
@@ -3511,22 +3671,22 @@
         }
       }
     },
-    "外观、启动、网关、控制接口与默认对话参数": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Appearance, launch, gateway, control API, and default chat settings"
-          }
-        }
-      }
-    },
     "外观、启动、接口端口与默认对话参数": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Appearance, launch, interface ports, and default chat parameters"
+          }
+        }
+      }
+    },
+    "外观、启动、网关、控制接口与默认对话参数": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Appearance, launch, gateway, control API, and default chat settings"
           }
         }
       }
@@ -3641,6 +3801,16 @@
         }
       }
     },
+    "安装后，这里会显示它的模型目录，以及引擎包里自带的推荐档位。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "After installing, this page shows its model folder and the recommendation catalog shipped in its pack."
+          }
+        }
+      }
+    },
     "安装失败": {
       "localizations": {
         "en": {
@@ -3707,6 +3877,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Live speed"
+          }
+        }
+      }
+    },
+    "实色深灰表面，关闭模糊与折射": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Solid charcoal surfaces with blur and refraction off"
+          }
+        }
+      }
+    },
+    "实色纯白表面，关闭模糊与折射": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Solid white surfaces with blur and refraction off"
           }
         }
       }
@@ -4641,12 +4831,42 @@
         }
       }
     },
+    "引擎目录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Engine folders"
+          }
+        }
+      }
+    },
     "引擎端口": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Engine Port"
+          }
+        }
+      }
+    },
+    "引擎自带的推荐档位要么已经装好，要么不在本机内存范围内。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The engine's recommended tiers are either installed already or beyond this Mac's memory."
+          }
+        }
+      }
+    },
+    "引擎自带的推荐档位都已经在本机，或不在本机内存范围内。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The engine's recommended tiers are already installed, or beyond this Mac's memory."
           }
         }
       }
@@ -4711,6 +4931,16 @@
         }
       }
     },
+    "当前加载模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Loaded model"
+          }
+        }
+      }
+    },
     "当前引擎": {
       "localizations": {
         "en": {
@@ -4737,6 +4967,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "**%@** is running **%@**. Everything stays on this Mac and works offline."
+          }
+        }
+      }
+    },
+    "当前筛选下没有已安装模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No installed models match the filter"
+          }
+        }
+      }
+    },
+    "当前筛选下没有推荐": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No recommendations match the filter"
           }
         }
       }
@@ -4941,6 +5191,16 @@
         }
       }
     },
+    "悬停查看精确采样": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hover for exact samples"
+          }
+        }
+      }
+    },
     "成功": {
       "localizations": {
         "en": {
@@ -5081,6 +5341,16 @@
         }
       }
     },
+    "打开模型广场；下载时会让你选存到哪个引擎的目录。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open the Model Hub; download asks which engine folder should hold the weights."
+          }
+        }
+      }
+    },
     "打开模型总目录": {
       "localizations": {
         "en": {
@@ -5151,6 +5421,16 @@
         }
       }
     },
+    "按引擎分开的模型目录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A model folder per engine"
+          }
+        }
+      }
+    },
     "按引擎筛选": {
       "localizations": {
         "en": {
@@ -5167,6 +5447,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Per-request"
+          }
+        }
+      }
+    },
+    "换一个搜索词，或关掉「能跑」再试。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Try another search, or turn off Fits."
           }
         }
       }
@@ -5207,6 +5497,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Try another keyword, or clear the search."
+          }
+        }
+      }
+    },
+    "换个关键词，或清除筛选后再试。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Try another keyword, or clear the filters."
           }
         }
       }
@@ -5341,6 +5641,16 @@
         }
       }
     },
+    "推荐来自引擎包：Splash 与 MTPLX 各带一份目录，oMLX 和 MLX-Serve 不提供推荐。也可以在模型广场搜索权重。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recommendations come from the engine pack: Splash and MTPLX each ship a catalog; oMLX and MLX-Serve do not. You can also search the Hub for weights."
+          }
+        }
+      }
+    },
     "推荐结果按统一内存与可用磁盘计算": {
       "localizations": {
         "en": {
@@ -5441,12 +5751,32 @@
         }
       }
     },
+    "搜 Hugging Face 上的权重；下载时选一个引擎的模型目录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search weights on Hugging Face; choose an engine's model folder when downloading"
+          }
+        }
+      }
+    },
     "搜 ModelScope 上的权重，下载到公共目录，所有引擎共用一份": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Search weights on ModelScope, download them to the shared folder — one copy for all engines"
+          }
+        }
+      }
+    },
+    "搜 ModelScope 上的权重；下载时选一个引擎的模型目录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search weights on ModelScope; choose an engine's model folder when downloading"
           }
         }
       }
@@ -6221,6 +6551,16 @@
         }
       }
     },
+    "本地库只列已经落盘的权重；这台引擎不提供推荐，可以从模型广场下载。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The local library lists weights already on disk; this engine has no recommendations, so download from the Model Hub."
+          }
+        }
+      }
+    },
     "本地推理控制台": {
       "localizations": {
         "en": {
@@ -6271,6 +6611,56 @@
         }
       }
     },
+    "本机已有这份权重，可直接在模型库使用": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "These weights are already on this Mac and ready in the model library"
+          }
+        }
+      }
+    },
+    "权重需要一个引擎的模型目录；先到「引擎」页安装一个，再回来下载。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weights need an engine's model directory. Install an engine on the Engines page first, then come back to download."
+          }
+        }
+      }
+    },
+    "来自 MTPLX 官方目录；按本机芯片与内存筛选。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "From MTPLX's official catalog, filtered by this Mac's chip and memory."
+          }
+        }
+      }
+    },
+    "来自 Splash 引擎包；每个家族只列本机内存装得下的最高一档。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "From the Splash engine pack; one variant per family, the strongest that fits this Mac."
+          }
+        }
+      }
+    },
+    "来自引擎包自带的推荐目录。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "From the recommendation catalog shipped in the engine pack."
+          }
+        }
+      }
+    },
     "松开作为重绘底图": {
       "localizations": {
         "en": {
@@ -6311,6 +6701,36 @@
         }
       }
     },
+    "极简纯白": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clean Studio"
+          }
+        }
+      }
+    },
+    "极简纯黑": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clean Black"
+          }
+        }
+      }
+    },
+    "极速": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fast"
+          }
+        }
+      }
+    },
     "极高": {
       "localizations": {
         "en": {
@@ -6327,6 +6747,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Build failed: %@"
+          }
+        }
+      }
+    },
+    "柔和粉彩壁纸与半透明玻璃层": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Soft pastel wallpaper with translucent glass layers"
           }
         }
       }
@@ -6991,6 +7421,26 @@
         }
       }
     },
+    "浅色琉璃": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Light Glass"
+          }
+        }
+      }
+    },
+    "浅色琉璃 / 深色液态 / 极简纯白 / 极简纯黑": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Light Glass / Dark Liquid / Clean White / Clean Black"
+          }
+        }
+      }
+    },
     "浏览与下载将走 %@": {
       "localizations": {
         "en": {
@@ -7007,6 +7457,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Dark"
+          }
+        }
+      }
+    },
+    "深色极光壁纸与低亮度玻璃层": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dark aurora wallpaper with low-light glass layers"
+          }
+        }
+      }
+    },
+    "深色液态": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dark Liquid"
           }
         }
       }
@@ -7151,12 +7621,32 @@
         }
       }
     },
+    "点击切换筛选条件": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click to change the filter"
+          }
+        }
+      }
+    },
     "点击复制 seed": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Click to copy seed"
+          }
+        }
+      }
+    },
+    "点击复制引擎端口": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click to copy engine port"
           }
         }
       }
@@ -7317,6 +7807,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Use last #%lld"
+          }
+        }
+      }
+    },
+    "用模型广场下载的权重会存进这个引擎的目录。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weights downloaded from the Model Hub go into this engine's folder."
           }
         }
       }
@@ -7631,6 +8131,16 @@
         }
       }
     },
+    "稳定": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stable"
+          }
+        }
+      }
+    },
     "空闲": {
       "localizations": {
         "en": {
@@ -7827,6 +8337,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Search Hugging Face weights through the hf-mirror.com mirror, download them to the shared folder — one copy for all engines"
+          }
+        }
+      }
+    },
+    "经 hf-mirror.com 镜像搜 Hugging Face 权重；下载时选一个引擎的模型目录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search Hugging Face weights through hf-mirror.com; choose an engine's model folder when downloading"
           }
         }
       }
@@ -8541,12 +9061,32 @@
         }
       }
     },
+    "还没有安装引擎": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No engine installed yet"
+          }
+        }
+      }
+    },
     "还没有安装推理引擎，请先在启动页选择一个": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "No inference engine is installed yet. Choose one on the launch page."
+          }
+        }
+      }
+    },
+    "还没有客户端连过。点地址复制片段，连一次后这里会显示来源与请求数。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No clients yet. Copy an endpoint and connect once; usage will show up here."
           }
         }
       }
@@ -8657,6 +9197,36 @@
           "stringUnit": {
             "state": "translated",
             "value": "This model is powered by the %@ engine. Install %@ before switching to it."
+          }
+        }
+      }
+    },
+    "这个目录还没有模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No models in this folder yet"
+          }
+        }
+      }
+    },
+    "这些权重在 %@ 的模型目录里；点「使用」会切换到该引擎并加载它。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "These weights live in %@'s model folder; Use switches to that engine and loads them."
+          }
+        }
+      }
+    },
+    "这些权重由 %@ 加载；点「使用」会切换到该引擎并加载它。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "These weights are served by %@; Use switches to that engine and loads them."
           }
         }
       }
@@ -8857,6 +9427,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Select a model"
+          }
+        }
+      }
+    },
+    "选择模型目录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a model folder"
           }
         }
       }
@@ -9117,6 +9697,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Attach a base image for image-to-image"
+          }
+        }
+      }
+    },
+    "随 macOS 外观在浅色琉璃与深色液态之间切换": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Follow macOS between Light Glass and Dark Liquid"
           }
         }
       }
@@ -9427,6 +10017,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Default Model"
+          }
+        }
+      }
+    },
+    "默认顺序": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Default order"
           }
         }
       }

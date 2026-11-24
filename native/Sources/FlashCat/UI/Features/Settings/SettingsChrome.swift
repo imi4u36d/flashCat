@@ -85,3 +85,47 @@ extension View {
         if condition { fixedSize() } else { self }
     }
 }
+
+// MARK: - Appearance picker
+
+/// 设置页的外观四选一：浅色琉璃 / 深色液态 / 极简纯白 / 极简纯黑。
+/// 跟随系统是下面单独一行；这里只负责固定的那四套。
+struct AppearanceSkinControl: View {
+    @ObservedObject var theme: ThemeController
+
+    private let modes: [AppAppearance] = [.light, .dark, .studio, .studioDark]
+
+    var body: some View {
+        HStack(spacing: 1) {
+            ForEach(modes, id: \.self) { mode in
+                let active = theme.mode == mode
+                Button {
+                    withAnimation(DS.Motion.smooth) {
+                        theme.set(mode)
+                    }
+                } label: {
+                    Text(L10n.t(mode.label))
+                        .font(.system(size: 11.5, weight: active ? .semibold : .medium))
+                        .foregroundStyle(active ? DS.text : DS.text3)
+                        .padding(.horizontal, 8)
+                        .frame(height: 22)
+                        .background {
+                            if active {
+                                Capsule()
+                                    .fill(DS.pillActive)
+                                    .overlay(Capsule().strokeBorder(DS.pillBorder, lineWidth: 1))
+                                    .shadow(color: DS.glassShadow.opacity(0.65), radius: 4, y: 1)
+                            }
+                        }
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(DSPressStyle(scale: 0.97))
+                .help(L10n.t(mode.detail))
+                .accessibilityAddTraits(active ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .dsGlassPill()
+        .fixedSize()
+    }
+}

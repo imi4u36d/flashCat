@@ -130,16 +130,14 @@ package enum ModelLibrary {
             .filter { !ModelLibraryEntry.isDraftModel($0.id) }
             .sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
             .map { model in
-                // 迁移留下的旧权重可能仍是目录行、只是标签不在这一栏：它的
-                // engines/repo/tags 照旧带上，卡片才标得出「oMLX 专用」。用户
-                // 自己从 Hub 下的权重没有目录行，`source` 让卡片说得更准。
-                let row = ModelRecommendations.recommendation(for: model.id)
-                return ModelLibraryEntry(
+                // 用户自己从 Hub 下的权重没有目录行：卡片标「个人下载」，
+                // 不冒充某个引擎的推荐。推荐只来自引擎包里那份目录。
+                ModelLibraryEntry(
                     model: model,
                     engine: engine,
-                    recommendation: row,
+                    recommendation: nil,
                     draftRepository: draftRepository(model.id),
-                    source: row == nil ? .personal : .recommended)
+                    source: .personal)
             }
         rows.append(contentsOf: extras)
         return rows

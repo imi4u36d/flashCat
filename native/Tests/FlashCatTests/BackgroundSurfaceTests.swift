@@ -7,7 +7,7 @@ import XCTest
 @testable import FlashCat
 @testable import FlashCatCore
 
-/// 纯实色 ZCode 窗口画布：始终保持不透明，并按 `contentView` 的皮肤解析出静态 sRGB 底色。
+/// Liquid Glass 壁纸兜底：窗口始终保持不透明，并按 `contentView` 的皮肤解析出静态 sRGB 边角色。
 @MainActor
 final class BackgroundSurfaceTests: XCTestCase {
     private func makeWindow() -> NSWindow {
@@ -42,7 +42,7 @@ final class BackgroundSurfaceTests: XCTestCase {
         let darkColor = BackgroundSurface.canvasColor(for: dark)
 
         XCTAssertNotEqual(lightColor, darkColor)
-        XCTAssertGreaterThan(lightColor.redComponent, 0.9)
+        XCTAssertGreaterThan(lightColor.redComponent, 0.8)
         XCTAssertLessThan(darkColor.redComponent, 0.15)
     }
 }

@@ -7,7 +7,8 @@ import FlashCatCore
 import FlashCatKit
 import SwiftUI
 
-/// 概览：线性/工作台风——顶部模型控制带、5 格连通 KPI 指标条、60 秒吞吐图表 + API 网关、底部最近请求。
+/// 概览：macOS Liquid Glass 的 12 栏 bento——页头、当前模型 + 三格读数、
+/// 60 秒解码曲线 + 接口 / 引擎双卡、底部最近请求。
 struct OverviewPage: View {
     @ObservedObject var state: AppState
     @ObservedObject var chat: ChatStore
@@ -17,6 +18,8 @@ struct OverviewPage: View {
     @State var hoveredSessionID: Int?
     @State var hoveredChartDate: Date?
     @State var checklistDismissed = false
+    /// 最近请求的筛选：0 全部 / 1 仅 chat / 2 仅 openai。
+    @State var requestFilterIndex = 0
 
     var stats: ServerStats? { state.stats }
     var samples: [ThroughputSample] { state.overviewThroughput(window: 60) }
@@ -63,8 +66,8 @@ struct OverviewPage: View {
         }
     }
 
-    let sectionGap: CGFloat = 20
-    let sideColumnWidth: CGFloat = 336
+    let sectionGap: CGFloat = 14
+    let contentPadding: CGFloat = 20
 
     var body: some View {
         GeometryReader { proxy in
@@ -81,23 +84,18 @@ struct OverviewPage: View {
             VStack(alignment: .leading, spacing: sectionGap) {
                 pageHeader(compact: true)
                 if showsChecklist { setupChecklist }
-                modelHero(compact: true)
-                DSDivider()
-                metricsRow(compact: true)
-                DSDivider()
+                modelHeroCard
+                compactMetricsCard
                 decodeChart
-                    .frame(height: 228)
-                DSDivider()
-                gatewaySection
-                DSDivider()
-                runtimeSection
-                DSDivider()
+                    .frame(minHeight: 300)
+                gatewayCard
+                runtimeCard
                 recentRequests
                     .frame(minHeight: 200)
             }
-            .padding(.horizontal, Console.contentPadding)
+            .padding(.horizontal, 16)
             .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
-            .padding(.bottom, Console.contentBottomInset)
+            .padding(.bottom, 20)
             .dsPageColumn()
         }
         .scrollIndicators(.never)
@@ -107,44 +105,39 @@ struct OverviewPage: View {
     }
 
     func wideLayout(_ proxy: GeometryProxy) -> some View {
-        let topInset = Console.scrollTopInset(sidebarShown: state.showsSidebar)
-        // 为页头、模型条与段间分隔预留大致高度，让中间双栏与底部请求表自然吃满视口。
-        let reservedUpperHeight: CGFloat = topInset + Console.contentBottomInset + 58 + 84 + 72 + sectionGap * 4
-        let availableBody = max(440, proxy.size.height - reservedUpperHeight)
-        let middleHeight = max(248, min(288, floor(availableBody * 0.50)))
-        let recentMinHeight = max(190, availableBody - middleHeight)
-
-        return ScrollView {
+        ScrollView {
             VStack(alignment: .leading, spacing: sectionGap) {
                 pageHeader(compact: false)
                 if showsChecklist { setupChecklist }
-                modelHero(compact: false)
-                VStack(spacing: 0) {
-                    DSDivider()
-                    metricsRow(compact: false)
-                        .fixedSize(horizontal: false, vertical: true)
-                    DSDivider()
-                }
-                HStack(alignment: .top, spacing: 24) {
-                    decodeChart
-                        .frame(minHeight: middleHeight)
-                    DSDivider(vertical: true)
-                    VStack(alignment: .leading, spacing: 18) {
-                        gatewaySection
-                        DSDivider()
-                        runtimeSection
-                            .frame(maxHeight: .infinity, alignment: .top)
+
+                SplitRow(fraction: 5.0 / 12.0, spacing: 12) {
+                    modelHeroCard
+                } trailing: {
+                    HStack(spacing: 12) {
+                        averageMetricCard
+                        ttftMetricCard
+                        prefillMetricCard
                     }
-                    .frame(width: sideColumnWidth)
                 }
-                .frame(minHeight: middleHeight)
-                DSDivider()
+                .frame(height: 152)
+
+                SplitRow(fraction: 0.64, spacing: 12) {
+                    decodeChart
+                } trailing: {
+                    VStack(spacing: 12) {
+                        gatewayCard
+                        runtimeCard
+                    }
+                    .frame(maxHeight: .infinity, alignment: .top)
+                }
+                .frame(minHeight: 372)
+
                 recentRequests
-                    .frame(minHeight: recentMinHeight)
+                    .frame(minHeight: 196)
             }
-            .padding(.horizontal, Console.contentPadding)
-            .padding(.top, topInset)
-            .padding(.bottom, Console.contentBottomInset)
+            .padding(.horizontal, contentPadding)
+            .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
+            .padding(.bottom, 20)
             .dsPageColumn()
         }
         .scrollIndicators(.never)

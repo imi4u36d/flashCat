@@ -100,7 +100,8 @@ package enum ModelSharing {
     }
 
     /// 公共目录里的权重默认对全部引擎可见。`lead` 排在第一位：下载任务、
-    /// 日志和模型页进度都按 `engines.first` 记账，推荐引擎最合适。
+    /// 日志和模型页进度都按 `engines.first` 记账，发起下载的引擎最合适。
+    /// 模型广场的新下载不再走这里：它让用户选一个引擎自己的目录。
     package static func downloadTargets(lead: EngineID) -> [EngineID] {
         [lead] + EngineCatalog.allIDs.filter { $0 != lead }
     }

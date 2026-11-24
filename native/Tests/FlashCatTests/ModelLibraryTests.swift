@@ -11,11 +11,25 @@ final class ModelLibraryTests: XCTestCase {
     /// 同一个模型可以由多个引擎驱动，在「全部」页会各占一行。列表身份必须
     /// 带上引擎，否则 ForEach 收到重复 id，懒加载网格会出现空位甚至整页空白。
     func testAllScopeEntriesHaveUniqueIdentity() {
+        let shared = ModelRecommendation(
+            id: "owner/shared", bytes: 1_000, minimumMemory: 8, summary: "",
+            tags: [], draftRepository: nil, rank: 1, engines: [.splash, .mtplx])
+        let splashOnly = ModelRecommendation(
+            id: "owner/splash", bytes: 1_000, minimumMemory: 8, summary: "",
+            tags: [], draftRepository: nil, rank: 1, engines: [.splash])
+        let mtplxOnly = ModelRecommendation(
+            id: "owner/mtplx", bytes: 1_000, minimumMemory: 8, summary: "",
+            tags: [], draftRepository: nil, rank: 1, engines: [.mtplx])
+        let catalogs: [EngineID: [ModelRecommendation]] = [
+            .splash: [shared, splashOnly],
+            .mtplx: [shared, mtplxOnly],
+        ]
+
         let rows = EngineCatalog.allIDs.flatMap { engine in
             ModelLibrary.entries(
                 installed: [],
                 engine: engine,
-                recommendations: ModelRecommendations.list(for: engine),
+                recommendations: catalogs[engine] ?? [],
                 draftRepository: { _ in nil })
         }
 
@@ -23,7 +37,7 @@ final class ModelLibraryTests: XCTestCase {
         XCTAssertEqual(Set(rows.map(\.identity)).count, rows.count)
         XCTAssertLessThan(
             Set(rows.map(\.id)).count, rows.count,
-            "目录里有跨引擎共享的模型，裸 id 本就会重复")
+            "同一份权重在两个引擎各有一行，裸 id 本就会重复")
     }
 
     func testIdentityIncludesEngine() {

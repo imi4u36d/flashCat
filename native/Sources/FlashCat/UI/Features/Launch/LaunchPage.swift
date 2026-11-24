@@ -19,11 +19,14 @@ struct LaunchPage: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var recommendation: HardwareRecommendation? { state.hardwareRecommendation }
-    private var isRecommendation: Bool { state.showsRecommendationPage }
+    /// 没有引擎包就没有原生推荐目录；这时推荐页不成立，直接列引擎。
+    private var isRecommendation: Bool {
+        state.showsRecommendationPage && !(recommendation?.picks.isEmpty ?? true)
+    }
 
     var body: some View {
         ZStack(alignment: .top) {
-            ConsoleBackdrop(accent: DS.accent)
+            GlassWallpaper(skin: state.theme.skin)
             VStack(spacing: 0) {
                 Color.clear
                     .frame(height: DS.Layout.titlebarHeight)

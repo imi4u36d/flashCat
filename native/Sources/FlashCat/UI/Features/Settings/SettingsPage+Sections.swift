@@ -11,19 +11,14 @@ extension SettingsPage {
 
     func appearanceCard(wide: Bool) -> some View {
         SettingsCard {
-            SettingsRow(title: "外观", detail: "跟随系统或固定外观") {
+            SettingsRow(
+                title: "外观",
+                detail: "浅色琉璃 / 深色液态 / 极简纯白 / 极简纯黑"
+            ) {
                 if wide {
-                    NativeSegmented(
-                        selection: Binding(
-                            get: { state.theme.mode },
-                            set: { state.theme.set($0) }),
-                        options: AppAppearance.allCases.map { ($0, $0.label) }
-                    )
-                    // 宽版式里把宽度交给标签：不参与行内剩余空间的分配，
-                    // 切换选中项时才不会把整行挤得一宽一窄。
-                    .fixedSize()
+                    AppearanceSkinControl(theme: state.theme)
                 } else {
-                    // 窄版式里三段控件会被压成一个看不清的胶囊，改成下拉。
+                    // 窄版式里四段控件会被压成一个看不清的胶囊，改成下拉。
                     DSMenu(size: .regular) {
                         DSMenuTriggerLabel(
                             title: state.theme.mode.label,
@@ -44,6 +39,29 @@ extension SettingsPage {
                         }
                     }
                 }
+            }
+            DSDivider()
+            SettingsRow(
+                title: "跟随系统",
+                detail: "随 macOS 外观在浅色琉璃与深色液态之间切换"
+            ) {
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { state.theme.mode == .system },
+                        set: { followsSystem in
+                            if followsSystem {
+                                state.theme.set(.system)
+                            } else {
+                                state.theme.set(state.theme.isDark ? .dark : .light)
+                            }
+                        })
+                )
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
+                .tint(DS.accent)
+                .accessibilityLabel(L10n.t("跟随系统"))
             }
         }
     }

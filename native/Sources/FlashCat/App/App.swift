@@ -7,7 +7,7 @@ import FlashCatKit
 import SwiftUI
 
 private enum MainWindowGeometry {
-    static let defaultSize = NSSize(width: 1280, height: 820)
+    static let defaultSize = NSSize(width: 1360, height: 856)
     /// 页面在窄窗口下会切成单栏纵向排布，因此可以把下限继续放低；
     /// 再小则侧栏和标题栏控件会互相挤压。
     static let minimumSize = NSSize(width: 680, height: 560)
@@ -237,7 +237,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window is NSPanel == false,
             !window.styleMask.contains(.fullScreen)
         else { return }
-        let titlebarCenterFromTop: CGFloat = 25
+        // 内容贴着窗口边缘；红绿灯中线落在 44pt 侧栏头的几何中心。
+        let titlebarCenterFromTop: CGFloat = 22
         let types: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
         for (index, type) in types.enumerated() {
             guard let button = window.standardWindowButton(type) else { continue }
@@ -260,7 +261,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let dy: CGFloat = button.superview?.isFlipped == true ? 9 : -9
                 targetY = origin.y + dy
             }
-            button.setFrameOrigin(NSPoint(x: origin.x + 6, y: targetY))
+            button.setFrameOrigin(NSPoint(x: origin.x + 10, y: targetY))
         }
     }
 

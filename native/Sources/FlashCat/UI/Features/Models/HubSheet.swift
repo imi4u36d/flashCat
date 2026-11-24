@@ -11,7 +11,7 @@ import SwiftUI
 /// 查询、排序、格式筛选和翻页都走 `AppState`；这里不直接发网络请求。
 struct HubSheet: View {
     @ObservedObject var state: AppState
-    /// 打开广场时正在浏览的引擎：没有格式归属时退到它。
+    /// 打开广场时正在浏览的引擎：只作为存放目录的默认选项，不再决定「推荐用谁」。
     let engine: EngineID
 
     @Environment(\.dismiss) private var dismiss
@@ -22,6 +22,8 @@ struct HubSheet: View {
     /// 量化选择按仓库名记：`nil` 表示用默认（最小的那档）。
     @State private var pickedVariant: String?
     @State private var lastSelectedRepo: String?
+    /// 已点「下载」、还没选定落盘引擎的仓库。
+    @State private var pendingDownload: PendingDownload?
     @AppStorage("hubSource") private var storedSource = HubSource.huggingFace.rawValue
     @FocusState private var searchFocused: Bool
     @FocusState private var directRepoFocused: Bool
@@ -30,6 +32,18 @@ struct HubSheet: View {
 
     private var source: HubSource {
         HubSource(rawValue: storedSource) ?? .huggingFace
+    }
+
+    /// 一次下载在弹窗里需要的全部信息：仓库、挑中的量化（名字给下载器，
+    /// 标签给人看）和文件白名单。落盘引擎在弹窗里才确定，Splash 的量化写进
+    /// 模型 id，其他引擎走 include。
+    private struct PendingDownload: Identifiable {
+        let repo: String
+        let variantName: String?
+        let variantLabel: String?
+        let include: [String]
+
+        var id: String { repo + "|" + (variantName ?? "") }
     }
 
     var body: some View {
@@ -60,6 +74,30 @@ struct HubSheet: View {
         .onChange(of: state.hubDetail?.id) { _, _ in pickedVariant = nil }
         .onDisappear { state.closeHubDetail() }
         .onExitCommand { dismiss() }
+        .sheet(item: $pendingDownload) { pending in
+            EngineDownloadSheet(
+                state: state,
+                repo: pending.repo,
+                variant: pending.variantLabel,
+                preferred: engine,
+                source: source
+            ) { target in
+                // Splash reads the quant out of the model id; the snapshot
+                // engines take it as include patterns and keep the repo id.
+                let modelID =
+                    target.adapter == .splash
+                    ? pending.variantName.map { pending.repo + ":" + $0 } ?? pending.repo
+                    : pending.repo
+                let started = state.downloadModel(
+                    modelID, engine: target,
+                    source: source, include: pending.include,
+                    activate: false)
+                if started {
+                    pendingDownload = nil
+                    dismiss()
+                }
+            }
+        }
         .task(id: directRepo + "|" + source.rawValue) {
             let repo = directRepo.trimmingCharacters(in: .whitespacesAndNewlines)
             guard repo.contains("/") else {
@@ -460,8 +498,8 @@ struct HubSheet: View {
         .scrollIndicators(.never)
     }
 
-    /// 详情页的标签行：量化、内存下限、许可与 Hub 标签。推荐引擎不再占一枚
-    /// 标签——它由下面下载条里的「推荐用 … 运行」交代，重复一遍只会抢注意力。
+    /// 详情页的标签行：量化、内存下限、许可与 Hub 标签。落盘引擎由下载时的
+    /// 目录选择决定，标签行不再替用户预设一个运行引擎。
     private func detailTagTexts(_ detail: HubModel) -> [String] {
         var values: [String] = []
         if let quantization = detail.quantization { values.append(quantization) }
@@ -473,22 +511,21 @@ struct HubSheet: View {
 
     private func downloadBar(_ detail: HubModel) -> some View {
         let local = state.repoIsLocal(detail.id)
-        let recommended = recommendedEngine(for: detail)
         let busy = state.downloadingModel != nil
         let variants = detail.layoutKind == .gguf ? detail.ggufVariants : []
         let variant = chosenVariant(detail, variants: variants)
         return HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(L10n.t(local ? "已在本机" : "下载到公共目录"))
+                Text(L10n.t(local ? "已在本机" : "下载模型"))
                     .font(DS.Font.sm.weight(.semibold))
                     .foregroundStyle(DS.text)
                 Text(
                     local
-                        ? "公共目录里已有这份权重，可直接在模型库使用"
-                        : variant.map { L10n.format("只下 %@，其余量化不占盘", variantLabel($0)) }
-                            ?? L10n.format(
-                                "一份权重供所有引擎共用，推荐用 %@ 运行",
-                                recommended.displayName)
+                        ? "本机已有这份权重，可直接在模型库使用"
+                        : variant.map {
+                            L10n.format("只下 %@，其余量化不占盘；下载时选择存放的引擎目录", variantLabel($0))
+                        }
+                            ?? L10n.t("下载时选择存放到哪个引擎的模型目录")
                 )
                 .font(DS.Font.xs)
                 .foregroundStyle(DS.text3)
@@ -496,7 +533,7 @@ struct HubSheet: View {
             Spacer(minLength: 8)
             if local {
                 Button("在模型页查看") {
-                    state.libraryEngine = recommended
+                    state.libraryEngine = state.engineHolding(detail.id) ?? engine
                     state.section = .models
                     dismiss()
                 }
@@ -521,10 +558,11 @@ struct HubSheet: View {
                 }
                 Button {
                     let includes = variant.map { detail.downloadIncludes(for: $0) } ?? []
-                    let started = state.downloadShared(
-                        detail.id, engines: ModelSharing.downloadTargets(lead: recommended),
-                        source: source, include: includes)
-                    if started { dismiss() }
+                    pendingDownload = PendingDownload(
+                        repo: detail.id,
+                        variantName: variant.flatMap(\.name),
+                        variantLabel: variant.map(variantLabel),
+                        include: includes)
                 } label: {
                     Label("下载", systemImage: "arrow.down.circle")
                 }
@@ -555,15 +593,6 @@ struct HubSheet: View {
         L10n.format(
             "%@ · ≈%lld GB 内存", Format.size(variant.bytes),
             Int64(HubModelLayout.estimatedMemoryGB(bytes: variant.bytes)))
-    }
-
-    private func recommendedEngine(for model: HubModel) -> EngineID {
-        if let id = EngineID(rawValue: model.recommendedEngine.id),
-            EngineCatalog.allIDs.contains(id)
-        {
-            return id
-        }
-        return engine
     }
 
     private var footer: some View {
@@ -645,7 +674,6 @@ struct HubSheet: View {
                 if let size = probe.sizeBytes, size > 0 {
                     Tag(text: Format.size(Int(clamping: size)), tone: .neutral)
                 }
-                Tag(text: probe.recommendedEngine.label, tone: .accent)
                 if state.repoIsLocal(probe.id) {
                     Tag(text: "已在本机", tone: .success)
                 }
@@ -660,23 +688,9 @@ struct HubSheet: View {
     private func downloadDirect() {
         let repo = directRepo.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !repo.isEmpty, state.downloadingModel == nil else { return }
-        let probeLead: EngineID? = {
-            guard let probe = state.repoProbe,
-                probe.id.caseInsensitiveCompare(repo) == .orderedSame
-                    || state.repoProbeRepo.caseInsensitiveCompare(repo) == .orderedSame,
-                let id = EngineID(rawValue: probe.recommendedEngine.id),
-                EngineCatalog.allIDs.contains(id)
-            else { return nil }
-            return id
-        }()
-        let started = state.downloadShared(
-            repo, engines: ModelSharing.downloadTargets(lead: probeLead ?? engine),
-            source: source)
-        if started {
-            directRepo = ""
-            state.clearRepoProbe()
-            dismiss()
-        }
+        // 手填仓库同样先问落盘目录；探测结果只用来确认仓库存在。
+        pendingDownload = PendingDownload(
+            repo: repo, variantName: nil, variantLabel: nil, include: [])
     }
 }
 
@@ -765,5 +779,184 @@ private struct HubModelRowCard: View {
                 .monospacedDigit()
                 .lineLimit(1)
         }
+    }
+}
+
+/// 下载前选一个落盘目录：权重进某个引擎自己的模型目录，由那次下载决定，
+/// 不再由广场替用户猜「该用哪台引擎」。
+private struct EngineDownloadSheet: View {
+    @ObservedObject var state: AppState
+    let repo: String
+    let variant: String?
+    let preferred: EngineID
+    let source: HubSource
+    let start: (EngineID) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var picked: EngineID?
+
+    private var installed: [EngineID] {
+        EngineCatalog.allIDs.filter { state.engineIsInstalled($0) }
+    }
+
+    /// Splash's installer only speaks Hugging Face; with ModelScope selected,
+    /// its row stays visible but cannot be picked.
+    private func compatible(_ id: EngineID) -> Bool {
+        source.isHuggingFaceCompatible || id.adapter != .splash
+    }
+
+    init(
+        state: AppState, repo: String, variant: String?, preferred: EngineID,
+        source: HubSource, start: @escaping (EngineID) -> Void
+    ) {
+        self.state = state
+        self.repo = repo
+        self.variant = variant
+        self.preferred = preferred
+        self.source = source
+        self.start = start
+        let installed = EngineCatalog.allIDs.filter {
+            state.engineIsInstalled($0)
+                && (source.isHuggingFaceCompatible || $0.adapter != .splash)
+        }
+        let initial =
+            installed.first(where: { $0 == state.activeEngine })
+            ?? installed.first(where: { $0 == preferred })
+            ?? installed.first
+        _picked = State(initialValue: initial)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            DSDivider()
+            if installed.isEmpty {
+                empty
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(installed, id: \.self) { id in
+                        row(id)
+                    }
+                }
+                .padding(16)
+            }
+            DSDivider()
+            footer
+        }
+        .frame(width: 500)
+        .fixedSize(horizontal: false, vertical: true)
+        .sheetCanvas()
+        .onExitCommand { dismiss() }
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            IconTile(symbol: "internaldrive", color: DS.accent, size: 30)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L10n.t("选择模型目录"))
+                    .font(DS.Font.lg.weight(.semibold))
+                    .foregroundStyle(DS.text)
+                Text(
+                    variant.map {
+                        L10n.format("%@ · %@ 的权重会存进所选引擎自己的目录", repo, $0)
+                    } ?? L10n.format("%@ 的权重会存进所选引擎自己的目录", repo)
+                )
+                .font(DS.Font.xs)
+                .foregroundStyle(DS.text3)
+                .lineLimit(2)
+            }
+            Spacer(minLength: 8)
+            DSIconButton(systemName: "xmark", help: "关闭", style: .outlined) { dismiss() }
+        }
+        .padding(16)
+    }
+
+    private func row(_ id: EngineID) -> some View {
+        let isPicked = picked == id
+        let allowed = compatible(id)
+        return Button {
+            if allowed { picked = id }
+        } label: {
+            HStack(spacing: 10) {
+                IconTile(symbol: engineSymbol(id), color: engineAccent(id), size: 28)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(id.displayName)
+                            .font(DS.Font.sm.weight(.semibold))
+                            .foregroundStyle(DS.text)
+                        if id == state.activeEngine {
+                            Tag(text: "当前引擎", tone: .accent)
+                        }
+                        if !allowed {
+                            Tag(text: "仅 Hugging Face", tone: .neutral)
+                        }
+                    }
+                    Text(displayPath(id))
+                        .font(DS.Font.mono(10))
+                        .foregroundStyle(DS.text3)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: isPicked ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(isPicked ? DS.accent : DS.text3)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background {
+                DS.rect(DS.Radius.md)
+                    .fill(isPicked ? DS.accent.opacity(0.10) : DS.raised)
+            }
+            .overlay {
+                DS.rect(DS.Radius.md)
+                    .strokeBorder(isPicked ? DS.accent.opacity(0.45) : DS.line, lineWidth: 1)
+            }
+            .contentShape(DS.rect(DS.Radius.md))
+            .opacity(allowed ? 1 : 0.5)
+        }
+        .buttonStyle(.plainHit)
+        .disabled(!allowed)
+    }
+
+    private var empty: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "shippingbox")
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(DS.text3)
+            Text(L10n.t("还没有安装引擎"))
+                .font(DS.Font.md.weight(.semibold))
+                .foregroundStyle(DS.text)
+            Text(L10n.t("权重需要一个引擎的模型目录；先到「引擎」页安装一个，再回来下载。"))
+                .font(DS.Font.xs)
+                .foregroundStyle(DS.text3)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 320)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
+        .padding(.horizontal, 16)
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            Spacer(minLength: 0)
+            Button(L10n.t("取消")) { dismiss() }
+                .buttonStyle(.ds(.secondary, size: .regular))
+            Button {
+                if let picked { start(picked) }
+            } label: {
+                Label(L10n.t("下载"), systemImage: "arrow.down.circle")
+            }
+            .buttonStyle(.ds(.primary, size: .regular))
+            .disabled(picked == nil || state.downloadingModel != nil)
+        }
+        .padding(16)
+    }
+
+    private func displayPath(_ id: EngineID) -> String {
+        let path = EnginePaths.modelsDirectory(id)
+        let home = NSHomeDirectory()
+        return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
     }
 }

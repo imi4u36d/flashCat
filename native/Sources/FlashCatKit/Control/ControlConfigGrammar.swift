@@ -53,7 +53,7 @@ public enum ControlConfigGrammar {
     /// `none` 与 `off`、`automatic` 与 `auto` 是同义写法：旧文档和社区脚本两种
     /// 都用过，写入口只认一种就会让「本来能用的命令」突然失败。
     public static let thinkingModeTokens = ["auto", "automatic", "none", "off", "on"]
-    public static let appearanceTokens = ["system", "light", "dark"]
+    public static let appearanceTokens = ["system", "light", "dark", "studio", "studioDark"]
     public static let reasoningEffortTokens = ["low", "medium", "high", "xhigh"]
 
     // MARK: 解析
@@ -82,7 +82,7 @@ public enum ControlConfigGrammar {
 
     /// 返回落盘用的原始值（0 / 1 / 2），不是文档 token；读方向见 `appearanceToken`。
     public static func appearance(_ raw: String) throws -> Int {
-        guard let index = appearanceTokens.firstIndex(of: normalized(raw)) else {
+        guard let index = appearanceTokens.firstIndex(where: { normalized($0) == normalized(raw) }) else {
             throw ControlConfigError("appearance 只能是 \(appearanceTokens.joined(separator: " / "))")
         }
         return index

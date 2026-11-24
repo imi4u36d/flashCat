@@ -26,151 +26,178 @@ extension OverviewPage {
         return L10n.t("停止引擎")
     }
 
-    // MARK: KPI strip
+    // MARK: KPI cards
     //
-    // 只留三格回答「这台机器现在多快」：平均解码、首字延迟、预填充。
-    // 上下文占用搬进模型条（它说的是「装了多少」，不是速度），缓存命中率
-    // 搬进右栏的运行时事实表——五格等宽指标里它和 hero 抢同一层注意力。
+    // 三格回答「这台机器现在多快」：平均解码、首字延迟、预填充。
+    // 上下文占用在模型卡里，缓存命中率在右栏的引擎事实里。
 
-    @ViewBuilder
-    func metricsRow(compact: Bool) -> some View {
-        if compact {
-            // 窄窗口不用自适应网格：2+1 会拖出一大块空白，改成三行紧凑读数。
-            VStack(spacing: 0) {
-                compactMetricRow(
-                    title: "平均解码", value: rateText(averageRate),
-                    unit: averageRate > 0 ? "tok/s" : nil,
-                    badge: averageBadge, emphasized: true)
-                DSDivider()
-                compactMetricRow(
-                    title: "首字延迟", value: ttftText,
-                    unit: ttftText == "—" ? nil : "ms",
-                    badge: nil, emphasized: false)
-                DSDivider()
-                compactMetricRow(
-                    title: "预填充", value: prefillText,
-                    unit: prefillText == "—" ? nil : "tok/s",
-                    badge: nil, emphasized: false)
-            }
-        } else {
-            HStack(alignment: .top, spacing: 0) {
-                averageMetricCell
-                    .frame(maxWidth: .infinity)
-                DSDivider(vertical: true)
-                ttftMetricCell
-                    .frame(width: 220)
-                DSDivider(vertical: true)
-                prefillMetricCell
-                    .frame(width: 220)
-            }
-            .padding(.vertical, 2)
-        }
-    }
-
-    func compactMetricRow(
-        title: String,
-        value: String,
-        unit: String?,
-        badge: String?,
-        emphasized: Bool
-    ) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(L10n.t(title))
-                .font(DS.Font.prose(12.5, weight: emphasized ? .medium : .regular))
-                .foregroundStyle(emphasized ? DS.text2 : DS.text3)
-            Spacer(minLength: 8)
-            if let badge {
-                DSSourceBadge(text: badge, live: badge == "LIVE")
-            }
-            Text(value)
-                .font(DS.Font.number(emphasized ? 26 : 20, weight: .semibold))
-                .foregroundStyle(value == "—" ? DS.text4 : DS.text)
-                .contentTransition(.numericText())
-            if let unit {
-                Text(unit)
-                    .font(DS.Font.proseNumber(11))
-                    .foregroundStyle(DS.text3)
-            }
-        }
-        .padding(.horizontal, 14)
-        .frame(height: emphasized ? 48 : 40)
-    }
-
-    var averageMetricCell: some View {
-        kpiCell(
+    var averageMetricCard: some View {
+        kpiCard(
             title: "平均解码",
             value: rateText(averageRate),
-            unit: averageRate > 0 ? "tok/s" : nil,
-            valueSize: 34,
-            trailing: {
-                HStack(spacing: 6) {
-                    if let averageBadge {
-                        DSSourceBadge(text: averageBadge, live: averageBadge == "LIVE")
-                    }
-                    DSSparkline(
-                        values: Array(samples.suffix(24).map(\.value)),
-                        color: engineTint,
-                        floor: max(peak, 1)
-                    )
-                    .frame(width: 56, height: 18)
-                }
-            })
+            unit: averageRate > 0 ? "tok/s" : nil
+        ) {
+            if let averageBadge {
+                OverviewBadge(text: averageBadge, tint: DS.accent)
+            }
+        } visual: {
+            OverviewSparkline(
+                values: Array(samples.suffix(16).map(\.value)),
+                color: engineTint)
+                .frame(height: 24)
+        }
     }
 
-    var ttftMetricCell: some View {
-        kpiCell(
+    var ttftMetricCard: some View {
+        kpiCard(
             title: "首字延迟",
             value: ttftText,
-            unit: ttftText == "—" ? nil : "ms")
+            unit: ttftText == "—" ? nil : "ms"
+        ) {
+            if ttftText != "—" {
+                OverviewBadge(
+                    text: (ttftReading.milliseconds ?? 0) <= 250 ? "极速" : "正常",
+                    tint: DS.ok,
+                    dot: true)
+            }
+        } visual: {
+            OverviewLatencyBar(milliseconds: ttftReading.milliseconds ?? 0)
+        }
     }
 
-    var prefillMetricCell: some View {
-        kpiCell(
+    var prefillMetricCard: some View {
+        kpiCard(
             title: "预填充",
             value: prefillText,
-            unit: prefillText == "—" ? nil : "tok/s")
+            unit: prefillText == "—" ? nil : "tok/s"
+        ) {
+            OverviewBadge(text: "稳定", tint: DS.accentBlue, icon: "arrow.up.right")
+        } visual: {
+            OverviewMicroBars()
+        }
     }
 
-    func kpiCell<Trailing: View, Bottom: View>(
+    func kpiCard<Badge: View, Visual: View>(
         title: String,
         value: String,
         unit: String?,
-        valueSize: CGFloat = 26,
-        @ViewBuilder trailing: () -> Trailing = { EmptyView() },
-        @ViewBuilder bottom: () -> Bottom = { EmptyView() }
+        @ViewBuilder badge: () -> Badge,
+        @ViewBuilder visual: () -> Visual
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(L10n.t(title))
-                .font(DS.Font.prose(12, weight: .medium))
-                .foregroundStyle(DS.text3)
-                .lineLimit(1)
+            HStack(alignment: .center, spacing: 6) {
+                Text(L10n.t(title))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DS.text3)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                badge()
+            }
 
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(value)
-                    .font(DS.Font.number(valueSize, weight: .semibold))
+                    .font(DS.Font.number(28, weight: .bold))
+                    .tracking(-0.5)
                     .foregroundStyle(value == "—" ? DS.text4 : DS.text)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                     .contentTransition(.numericText())
                 if let unit {
                     Text(unit)
-                        .font(DS.Font.proseNumber(11.5))
+                        .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(DS.text3)
                         .lineLimit(1)
                 }
-                Spacer(minLength: 4)
-                trailing()
+                Spacer(minLength: 0)
             }
 
-            bottom()
-                .frame(height: 5, alignment: .center)
+            Spacer(minLength: 2)
+            visual()
+                .frame(height: 24)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .overviewCard()
     }
 
-    // MARK: Metric Formatting & Metering
+    // MARK: Compact stack
+
+    var compactMetricsCard: some View {
+        VStack(spacing: 0) {
+            compactMetricRow(
+                title: "平均解码",
+                value: rateText(averageRate),
+                unit: averageRate > 0 ? "tok/s" : nil,
+                badge: averageBadge,
+                badgeTint: DS.accent
+            ) {
+                OverviewSparkline(
+                    values: Array(samples.suffix(12).map(\.value)),
+                    color: engineTint)
+                    .frame(width: 88, height: 22)
+            }
+            DSDivider()
+            compactMetricRow(
+                title: "首字延迟",
+                value: ttftText,
+                unit: ttftText == "—" ? nil : "ms",
+                badge: ttftText == "—" ? nil : ((ttftReading.milliseconds ?? 0) <= 250 ? "极速" : "正常"),
+                badgeTint: DS.ok
+            ) {
+                OverviewLatencyBar(milliseconds: ttftReading.milliseconds ?? 0)
+                    .frame(width: 112)
+            }
+            DSDivider()
+            compactMetricRow(
+                title: "预填充",
+                value: prefillText,
+                unit: prefillText == "—" ? nil : "tok/s",
+                badge: prefillText == "—" ? nil : "稳定",
+                badgeTint: DS.accentBlue
+            ) {
+                OverviewMicroBars()
+                    .frame(width: 88)
+            }
+        }
+        .overviewCard(padding: 0)
+    }
+
+    func compactMetricRow<Visual: View>(
+        title: String,
+        value: String,
+        unit: String?,
+        badge: String?,
+        badgeTint: Color,
+        @ViewBuilder visual: () -> Visual
+    ) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(L10n.t(title))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DS.text3)
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(value)
+                        .font(DS.Font.number(24, weight: .bold))
+                        .foregroundStyle(value == "—" ? DS.text4 : DS.text)
+                        .contentTransition(.numericText())
+                    if let unit {
+                        Text(unit)
+                            .font(.system(size: 11))
+                            .foregroundStyle(DS.text3)
+                    }
+                    if let badge {
+                        OverviewBadge(text: badge, tint: badgeTint)
+                            .padding(.leading, 2)
+                    }
+                }
+            }
+            Spacer(minLength: 8)
+            visual()
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 58)
+    }
+
+    // MARK: Metric formatting
 
     var contextProgress: Double {
         guard let ceiling = state.contextWindowCeiling, ceiling > 0 else { return 0 }

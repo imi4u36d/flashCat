@@ -109,14 +109,6 @@ final class HubStore: ObservableObject {
         }
     }
 
-    /// The search hits the given column may show. Ownership comes from the
-    /// repository's own format, so a row never appears in two columns.
-    func hubResults(for engine: EngineID) -> [HubSearchResult] {
-        hubSearch.results
-            .filter { $0.engines.contains(engine) }
-            .map { $0.targeting(engine) }
-    }
-
     /// 搜索/推荐列表。请求会被下一次调用取消，所以连点排序按钮不会乱序上屏。
     /// 翻页/换筛选走同一个入口，只是把 page 与 filter 一起带下去。
     func searchHub(

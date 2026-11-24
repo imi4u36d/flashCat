@@ -8,43 +8,50 @@ import FlashCatKit
 import SwiftUI
 
 extension OverviewPage {
-    // MARK: Gateway & Runtime
+    // MARK: - API card
 
-    var gatewaySection: some View {
-        overviewSection(title: "接口", subtitle: "OpenAI + Claude") {
+    var gatewayCard: some View {
+        VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 6) {
-                DSChip(
-                    text: L10n.t(gateway.isRunning ? "在线" : "离线"),
-                    dot: gateway.isRunning ? DS.ok : DS.text4,
-                    live: gateway.isRunning)
+                Text(L10n.t("接口"))
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                Text(verbatim: "OpenAI + Claude")
+                    .font(DS.Font.prose(11.5))
+                    .foregroundStyle(DS.text3)
+                    .lineLimit(1)
+                Spacer(minLength: 6)
                 GatewayTestButton(state: state)
+                OverviewTintPill(
+                    text: gateway.isRunning ? "在线" : "离线",
+                    tint: gateway.isRunning ? DS.ok : DS.text4,
+                    live: gateway.isRunning)
             }
-        } content: {
-            VStack(alignment: .leading, spacing: 0) {
+
+            VStack(spacing: 6) {
                 endpointRow(
                     name: "OpenAI",
                     url: state.gatewayURL,
                     curl: snippets.openAICurl,
                     python: snippets.openAIPython)
-                DSDivider()
                 endpointRow(
                     name: "Claude",
                     url: state.gatewayClaudeURL,
                     curl: snippets.claudeCurl,
                     python: snippets.claudePython)
-
-                if let failure = gateway.failureMessage, !gateway.isRunning {
-                    Text(failure)
-                        .font(DS.Font.prose(11.5))
-                        .foregroundStyle(DS.warn)
-                        .padding(.top, 6)
-                }
-
-                DSDivider()
-                    .padding(.top, 8)
-                clientsList
             }
+
+            if let failure = gateway.failureMessage, !gateway.isRunning {
+                Text(failure)
+                    .font(DS.Font.prose(11))
+                    .foregroundStyle(DS.warn)
+                    .lineLimit(2)
+            }
+
+            DSDivider()
+            clientsList
         }
+        .overviewCard()
         .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -54,6 +61,45 @@ extension OverviewPage {
             openAIBase: state.gatewayURL,
             claudeBase: state.gatewayClaudeURL,
             model: state.selectedModel)
+    }
+
+    func endpointRow(name: String, url: String, curl: String, python: String) -> some View {
+        Button {
+            state.copy(url, label: L10n.format("%@ 接口地址已复制", name))
+        } label: {
+            HStack(spacing: 6) {
+                Text(name)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                    .frame(width: 48, alignment: .leading)
+
+                Text(verbatim: url)
+                    .font(DS.Font.mono(11))
+                    .foregroundStyle(DS.text2)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Spacer(minLength: 4)
+
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(DS.text4)
+            }
+            .padding(.horizontal, 9)
+            .frame(height: 32)
+            .contentShape(DS.rect(9))
+        }
+        .buttonStyle(.plain)
+        .dsSubcard(radius: 9)
+        .contextMenu {
+            Button(L10n.t("复制 curl 片段")) {
+                state.copy(curl, label: L10n.t("curl 片段已复制"))
+            }
+            Button(L10n.t("复制 Python 片段")) {
+                state.copy(python, label: L10n.t("Python 片段已复制"))
+            }
+        }
+        .help(L10n.t("点击复制接口地址"))
     }
 
     // MARK: Recent clients
@@ -75,27 +121,25 @@ extension OverviewPage {
     }
 
     var clientsList: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(L10n.t("最近客户端"))
-                    .font(DS.Font.prose(11.5, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(DS.text3)
                 Spacer(minLength: 0)
                 Text(verbatim: "\(recentClients.count)")
                     .font(DS.Font.mono(10))
                     .foregroundStyle(DS.text4)
             }
-            .padding(.top, 8)
-            .padding(.bottom, 4)
 
             if recentClients.isEmpty {
-                Text(L10n.t("还没有客户端连过。点端点旁的箭头复制片段，连一次后这里会显示来源与请求数。"))
-                    .font(DS.Font.prose(11))
-                    .foregroundStyle(DS.text3)
+                Text(L10n.t("还没有客户端连过。点地址复制片段，连一次后这里会显示来源与请求数。"))
+                    .font(DS.Font.prose(10.5))
+                    .foregroundStyle(DS.text4)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.vertical, 3)
+                    .padding(.vertical, 2)
             } else {
-                ForEach(recentClients) { client in
+                ForEach(Array(recentClients.prefix(2))) { client in
                     HStack(spacing: 6) {
                         DSStatusDot(color: client.active ? DS.ok : DS.text4, size: 5)
                         Text(client.name)
@@ -107,9 +151,12 @@ extension OverviewPage {
                         Text(verbatim: dialectLabel(client.dialect))
                             .font(DS.Font.mono(9))
                             .foregroundStyle(DS.text3)
+                            .padding(.horizontal, 4)
+                            .frame(height: 14)
+                            .background(DS.rect(4).fill(DS.bg))
                         Spacer(minLength: 4)
                         Text(L10n.format("%lld 次", Int64(client.count)))
-                            .font(DS.Font.mono(10))
+                            .font(DS.Font.mono(9.5))
                             .foregroundStyle(DS.text3)
                             .fixedSize()
                         Text(Format.relative(client.last))
@@ -117,59 +164,171 @@ extension OverviewPage {
                             .foregroundStyle(DS.text4)
                             .fixedSize()
                     }
-                    .frame(height: 24)
+                    .frame(height: 20)
                 }
             }
         }
     }
 
-    var runtimeSection: some View {
-        overviewSection(title: "引擎", subtitle: state.activeEngine.displayName) {
-            DSChip(
-                text: L10n.t(state.isRunning ? "运行中" : "已停止"),
-                dot: state.canChat ? DS.ok : (state.isModelBusy ? DS.warn : DS.text4),
-                live: state.canChat)
-        } content: {
-            VStack(spacing: 0) {
-                telemetryRow(
-                    label: "引擎端口",
-                    value: "127.0.0.1:\(state.port)",
-                    copyLabel: "%@ 接口地址已复制",
-                    copyArg: state.activeEngine.displayName)
-                DSDivider()
-                telemetryRow(
-                    label: "缓存命中率",
-                    value: cacheHitText == "—" ? "—" : "\(cacheHitText)%")
-                DSDivider()
-                telemetryRow(label: "内存压力", value: memorySummaryText)
-                DSDivider()
-                telemetryRow(label: "温度", value: stats.map { L10n.t($0.thermalText) } ?? "—")
+    // MARK: - Engine card
+
+    var runtimeCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text(L10n.t("引擎状态"))
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                Text(state.activeEngine.displayName)
+                    .font(DS.Font.mono(11))
+                    .foregroundStyle(DS.text3)
+                Spacer(minLength: 6)
+                OverviewTintPill(
+                    text: state.isRunning ? "运行中" : "已停止",
+                    tint: state.canChat ? DS.ok : (state.isModelBusy ? DS.warn : DS.text4),
+                    live: state.canChat)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 8),
+                    GridItem(.flexible(), spacing: 8),
+                ],
+                spacing: 8
+            ) {
+                portTile
+                cacheTile
+                memoryTile
+                temperatureTile
+            }
+
+            Spacer(minLength: 0)
+        }
+        .overviewCard()
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    var portTile: some View {
+        Button {
+            state.copy(
+                "127.0.0.1:\(state.port)",
+                label: L10n.format("%@ 接口地址已复制", state.activeEngine.displayName))
+        } label: {
+            runtimeTile {
+                runtimeTileHeader(label: "引擎端口") {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(DS.text4)
+                }
+            } content: {
+                Text(verbatim: "127.0.0.1:\(state.port)")
+                    .font(DS.Font.mono(11.5, weight: .semibold))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .buttonStyle(.plain)
+        .help(L10n.t("点击复制引擎端口"))
+    }
+
+    var cacheTile: some View {
+        runtimeTile {
+            runtimeTileHeader(label: "缓存命中率") {
+                Image(systemName: "circle.dashed")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(DS.text4)
+            }
+        } content: {
+            HStack(spacing: 6) {
+                Text(verbatim: cacheHitText == "—" ? "—" : "\(cacheHitText)%")
+                    .font(DS.Font.number(12.5, weight: .bold))
+                    .foregroundStyle(cacheHitText == "—" ? DS.text4 : DS.text)
+                    .contentTransition(.numericText())
+                OverviewMiniBar(
+                    value: cacheHitReading.value ?? 0,
+                    tint: DS.accent,
+                    gradientTo: DS.accentBlue)
+            }
         }
     }
 
-    func overviewSection<Accessory: View, Content: View>(
-        title: String,
-        subtitle: String? = nil,
-        @ViewBuilder accessory: () -> Accessory,
+    var memoryTile: some View {
+        runtimeTile {
+            runtimeTileHeader(label: "内存压力") {
+                Text(verbatim: stats?.memoryPressureText ?? "—")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(DS.text4)
+                    .lineLimit(1)
+            }
+        } content: {
+            HStack(spacing: 6) {
+                Text(verbatim: memoryValueText)
+                    .font(DS.Font.number(12.5, weight: .bold))
+                    .foregroundStyle(memoryValueText == "—" ? DS.text4 : DS.text)
+                    .lineLimit(1)
+                OverviewMiniBar(
+                    value: memoryBarFraction,
+                    tint: DS.accentBlue,
+                    gradientTo: DS.accent)
+            }
+        }
+    }
+
+    var temperatureTile: some View {
+        runtimeTile {
+            runtimeTileHeader(label: "温度") {
+                Image(systemName: "thermometer.medium")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(DS.text4)
+            }
+        } content: {
+            Text(verbatim: stats.map { L10n.t($0.thermalText) } ?? "—")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(DS.text3)
+                .lineLimit(1)
+        }
+    }
+
+    func runtimeTileHeader<Accessory: View>(
+        label: String,
+        @ViewBuilder accessory: () -> Accessory
+    ) -> some View {
+        HStack(spacing: 4) {
+            Text(L10n.t(label))
+                .font(.system(size: 10.5))
+                .foregroundStyle(DS.text3)
+                .lineLimit(1)
+            Spacer(minLength: 2)
+            accessory()
+        }
+    }
+
+    func runtimeTile<Header: View, Content: View>(
+        @ViewBuilder header: () -> Header,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: DS.Space.sm) {
-                Text(L10n.t(title))
-                    .font(DS.Font.prose(13.5, weight: .medium))
-                    .foregroundStyle(DS.text)
-                if let subtitle {
-                    Text(L10n.t(subtitle))
-                        .font(DS.Font.prose(12))
-                        .foregroundStyle(DS.text3)
-                }
-                Spacer(minLength: DS.Space.sm)
-                accessory()
-            }
+        VStack(alignment: .leading, spacing: 5) {
+            header()
             content()
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, minHeight: 58, alignment: .topLeading)
+        .dsSubcard(radius: 10)
+    }
+
+    var memoryValueText: String {
+        guard let bytes = stats?.memoryBytes, bytes > 0 else { return "—" }
+        return Format.memory(bytes)
+    }
+
+    var memoryBarFraction: Double {
+        switch stats?.memoryPressure {
+        case .some("critical"): return 0.94
+        case .some("warning"): return 0.72
+        case .some: return 0.45
+        case .none: return 0
         }
     }
 
@@ -185,136 +344,110 @@ extension OverviewPage {
         return stats.map { L10n.t($0.memoryPressureText) } ?? "—"
     }
 
-    func endpointRow(name: String, url: String, curl: String, python: String) -> some View {
-        HStack(spacing: 4) {
-            Text(name)
-                .font(DS.Font.prose(12.5, weight: .medium))
-                .foregroundStyle(DS.text)
-                .frame(width: 52, alignment: .leading)
+    // MARK: - Recent requests
 
-            Text(verbatim: url)
-                .font(DS.Font.proseNumber(11.5))
-                .foregroundStyle(DS.text2)
-                .lineLimit(1)
-                .truncationMode(.middle)
-
-            Spacer(minLength: 4)
-
-            DSIconButton(systemName: "doc.on.doc", help: "复制地址", size: 24) {
-                state.copy(url, label: L10n.format("%@ 接口地址已复制", name))
-            }
-
-            DSMenu(kind: .ghost, size: .small) {
-                DSMenuTriggerLabel(
-                    systemImage: "chevron.down",
-                    trailingChevron: false,
-                    kind: .ghost,
-                    size: .small
-                )
-                .foregroundStyle(DS.text3)
-            } content: {
-                Button(L10n.t("复制 curl 片段")) {
-                    state.copy(curl, label: L10n.t("curl 片段已复制"))
-                }
-                Button(L10n.t("复制 Python 片段")) {
-                    state.copy(python, label: L10n.t("Python 片段已复制"))
-                }
-            }
-            .help(L10n.t("复制调用片段"))
-            .accessibilityLabel(L10n.t("复制调用片段"))
+    var requestFilterLabel: String {
+        switch requestFilterIndex {
+        case 1: return "仅 chat"
+        case 2: return "仅 openai"
+        default: return "按请求"
         }
-        .padding(.vertical, 6)
     }
 
-    func telemetryRow(
-        label: String,
-        value: String,
-        copyLabel: String? = nil,
-        copyArg: String? = nil
-    ) -> some View {
-        HStack(spacing: 6) {
-            Text(L10n.t(label))
-                .font(DS.Font.prose(12.5))
-                .foregroundStyle(DS.text3)
-            Spacer(minLength: 8)
-            Text(verbatim: value)
-                .font(DS.Font.proseNumber(12))
-                .foregroundStyle(value == "—" ? DS.text4 : DS.text2)
-                .lineLimit(1)
-                .textSelection(.enabled)
-            if let copyLabel, value != "—" {
-                DSIconButton(systemName: "doc.on.doc", help: "复制地址", size: 22) {
-                    let message = copyArg.map { L10n.format(copyLabel, $0) } ?? L10n.t(copyLabel)
-                    state.copy(value, label: message)
-                }
-            }
+    func filteredRequests(_ sessions: [GatewayMeter.SessionSnapshot]) -> [GatewayMeter.SessionSnapshot] {
+        switch requestFilterIndex {
+        case 1: return sessions.filter { $0.dialect == "chat" }
+        case 2: return sessions.filter { $0.dialect == "openai" }
+        default: return sessions
         }
-        .frame(minHeight: 28, maxHeight: .infinity)
     }
-
-    // MARK: Recent Requests
 
     var recentRequests: some View {
         TimelineView(.periodic(from: .now, by: (gateway.isRunning || state.isRunning) ? 1 : 5)) { _ in
-            let sessions = Array(GatewayMeter.shared.snapshot(limit: 6).reversed())
-            overviewSection(title: "最近请求") {
+            let all = Array(GatewayMeter.shared.snapshot(limit: 6).reversed())
+            let sessions = filteredRequests(all)
+            VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 8) {
-                    DSSourceBadge(text: L10n.t("按请求"))
+                    Text(L10n.t("最近请求"))
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(DS.text)
+                    Spacer(minLength: 6)
+                    Button {
+                        requestFilterIndex = (requestFilterIndex + 1) % 3
+                    } label: {
+                        Text(L10n.t(requestFilterLabel))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(DS.text2)
+                            .padding(.horizontal, 8)
+                            .frame(height: 22)
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .dsGlassPill()
+                    .help(L10n.t("点击切换筛选条件"))
                     Text(L10n.format("%lld 条", Int64(sessions.count)))
                         .font(DS.Font.proseNumber(11.5))
                         .foregroundStyle(DS.text3)
                 }
-            } content: {
+
                 if sessions.isEmpty {
-                    VStack(spacing: 7) {
-                        Spacer(minLength: 16)
-                        Image(systemName: "arrow.left.arrow.right")
-                            .font(.system(size: 15, weight: .regular))
-                            .foregroundStyle(DS.text4)
-                        Text(L10n.t("暂无请求"))
-                            .font(DS.Font.prose(13))
-                            .foregroundStyle(DS.text2)
-                        Text(verbatim: "127.0.0.1:\(state.settings.gatewayPort)")
-                            .font(DS.Font.proseNumber(11.5))
-                            .foregroundStyle(DS.text3)
-                        Spacer(minLength: 16)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    emptyRequests
                 } else {
-                    VStack(spacing: 0) {
-                        HStack(spacing: 10) {
-                            Text(L10n.t("状态"))
-                                .frame(width: 68, alignment: .leading)
-                            Text(L10n.t("协议"))
-                                .frame(width: 72, alignment: .leading)
-                            Text(L10n.t("模型"))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Text(L10n.t("首字"))
-                                .frame(width: 72, alignment: .trailing)
-                            Text(L10n.t("解码"))
-                                .frame(width: 92, alignment: .trailing)
-                            Text(L10n.t("上下文"))
-                                .frame(width: 76, alignment: .trailing)
-                        }
-                        .font(DS.Font.prose(11.5, weight: .medium))
-                        .foregroundStyle(DS.text3)
-                        .padding(.horizontal, 8)
-                        .frame(height: 28)
+                    requestTable(sessions)
+                }
+            }
+            .overviewCard()
+        }
+    }
 
-                        DSDivider()
+    var emptyRequests: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.left.arrow.right")
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(DS.text4)
+            Text(L10n.t("暂无请求"))
+                .font(DS.Font.prose(12.5))
+                .foregroundStyle(DS.text2)
+            Text(verbatim: "127.0.0.1:\(state.settings.gatewayPort)")
+                .font(DS.Font.mono(10.5))
+                .foregroundStyle(DS.text4)
+            Spacer(minLength: 0)
+        }
+        .frame(height: 54)
+    }
 
-                        ForEach(sessions, id: \.id) { session in
-                            requestRow(session)
-                                .transition(.dsRowInsert)
-                            if session.id != sessions.last?.id {
-                                DSDivider()
-                            }
-                        }
-                    }
-                    .animation(reduceMotion ? nil : DS.Motion.smooth, value: sessions.map(\.id))
+    func requestTable(_ sessions: [GatewayMeter.SessionSnapshot]) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Text(L10n.t("状态"))
+                    .frame(width: 68, alignment: .leading)
+                Text(L10n.t("协议"))
+                    .frame(width: 72, alignment: .leading)
+                Text(L10n.t("模型"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(L10n.t("首字"))
+                    .frame(width: 72, alignment: .trailing)
+                Text(L10n.t("解码"))
+                    .frame(width: 92, alignment: .trailing)
+                Text(L10n.t("上下文"))
+                    .frame(width: 76, alignment: .trailing)
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(DS.text3)
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+
+            DSDivider()
+
+            ForEach(sessions, id: \.id) { session in
+                requestRow(session)
+                    .transition(.dsRowInsert)
+                if session.id != sessions.last?.id {
+                    DSDivider()
                 }
             }
         }
+        .animation(reduceMotion ? nil : DS.Motion.smooth, value: sessions.map(\.id))
     }
 
     func requestRow(_ session: GatewayMeter.SessionSnapshot) -> some View {
@@ -336,17 +469,18 @@ extension OverviewPage {
                 HStack(spacing: 6) {
                     DSStatusDot(color: sessionColor(session.state), live: live, size: 6)
                     Text(L10n.t(stateLabel(session.state)))
-                        .font(DS.Font.prose(12, weight: .medium))
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(live ? DS.text : DS.text2)
                 }
                 .frame(width: 68, alignment: .leading)
 
                 Text(verbatim: dialect)
-                    .font(DS.Font.prose(10.5, weight: .medium))
-                    .foregroundStyle(DS.text2)
-                    .padding(.horizontal, 6)
-                    .frame(height: 19)
-                    .background(DS.rect(4).fill(DS.hover))
+                    .font(DS.Font.mono(9.5, weight: .medium))
+                    .foregroundStyle(dialectTint(dialect))
+                    .padding(.horizontal, 5)
+                    .frame(height: 18)
+                    .background(DS.rect(5).fill(dialectTint(dialect).opacity(0.10)))
+                    .overlay(DS.rect(5).strokeBorder(dialectTint(dialect).opacity(0.20), lineWidth: 1))
                     .frame(width: 72, alignment: .leading)
 
                 Text(modelDisplay)
@@ -362,7 +496,7 @@ extension OverviewPage {
                     .frame(width: 72, alignment: .trailing)
 
                 Text(verbatim: decodeText)
-                    .font(DS.Font.proseNumber(11.5))
+                    .font(DS.Font.proseNumber(11.5, weight: .semibold))
                     .foregroundStyle(decode > 0 ? DS.text : DS.text3)
                     .frame(width: 92, alignment: .trailing)
 
@@ -372,8 +506,8 @@ extension OverviewPage {
                     .frame(width: 76, alignment: .trailing)
             }
             .padding(.horizontal, 8)
-            .frame(height: 36)
-            .background(hovered ? DS.hover : .clear, in: DS.rect(DS.Radius.sm))
+            .frame(height: 34)
+            .background(hovered ? DS.hover : .clear, in: DS.rect(8))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -390,6 +524,14 @@ extension OverviewPage {
             Button(L10n.t("复制请求指标")) {
                 state.copy(summary, label: L10n.t("已复制请求摘要"))
             }
+        }
+    }
+
+    func dialectTint(_ dialect: String) -> Color {
+        switch dialect {
+        case "openai": return DS.accent
+        case "claude": return DS.accentBlue
+        default: return DS.text3
         }
     }
 

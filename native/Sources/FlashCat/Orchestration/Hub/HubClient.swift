@@ -145,16 +145,6 @@ struct HubModel: Identifiable, Hashable {
         return memory...memory
     }
 
-    /// The engine this repository's format is meant for. A plain transformers
-    /// snapshot is intentionally not promised to any runtime.
-    var recommendedEngine: (id: String, label: String) {
-        let engines = HubSearchState.engines(for: layoutKind)
-        guard let id = EngineCatalog.allIDs.first(where: { engines.contains($0) }) else {
-            return ("none", "无推荐")
-        }
-        return (id.rawValue, id.displayName)
-    }
-
     var json: [String: Any] {
         var item: [String: Any] = [
             "id": id,
@@ -173,9 +163,6 @@ struct HubModel: Identifiable, Hashable {
             item["memoryMin"] = memoryRange.lowerBound
             item["memoryMax"] = memoryRange.upperBound
         }
-        let engine = recommendedEngine
-        item["engine"] = engine.label
-        item["engineID"] = engine.id
         if let parameters { item["parameters"] = parameters }
         if let sizeBytes { item["size"] = sizeBytes }
         if let license { item["license"] = license }

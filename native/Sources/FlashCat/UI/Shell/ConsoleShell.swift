@@ -15,7 +15,6 @@ struct ConsoleView: View {
     @State private var showCommand = false
     @State private var showDownloads = false
     @State private var showHub = false
-    @State private var sidebarToggleWidth: CGFloat = DS.Layout.controlHeight
     /// 重命名弹窗里的输入。线程本身挂在 `pendingThreadRename` 上，壳层只负责
     /// 把输入框和落点接起来。
     @State private var renameText = ""
@@ -23,15 +22,15 @@ struct ConsoleView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            ConsoleBackdrop(accent: state.section.keyColor)
+            // 壁纸铺满 AppKit 窗口；玻璃窗口以 10pt 留白浮在上面。
+            GlassWallpaper(skin: theme.skin)
 
             HStack(spacing: 0) {
                 if state.showsSidebar {
-                    HStack(spacing: 0) {
-                        ConsoleNavigationPanel(state: state, chat: state.chat)
-                            .frame(width: DS.Layout.sidebarWidth)
-                        DSDivider(vertical: true)
+                    ConsoleNavigationPanel(state: state, chat: state.chat) {
+                        state.toggleSidebar()
                     }
+                    .frame(width: DS.Layout.sidebarWidth)
                     .transition(.move(edge: .leading).combined(with: .opacity))
                 }
 
@@ -44,27 +43,26 @@ struct ConsoleView: View {
                 .animation(reduceMotion ? nil : DS.Motion.smooth, value: state.section)
                 .clipped()
             }
+            .background { GlassWindowBackground(skin: theme.skin) }
             .animation(reduceMotion ? nil : DS.Motion.smooth, value: state.showsSidebar)
         }
         // 换肤不在这里做。`.preferredColorScheme` 会让 SwiftUI 去改窗口外观，
         // 而深色窗口那条系统投影明显更重（见 ThemeController.apply(to:)）；
         // 皮肤改由窗口的 contentView 外观承担，SwiftUI 的 colorScheme 也跟着
         // 那一层解析，切换时和窗口一起重画，不必等激活事件。
+        // 侧栏展开时折叠按钮活在侧栏头里；收起时退回红绿灯右侧的浮层位置。
         .overlay(alignment: .topLeading) {
-            DSIconButton(
-                systemName: "sidebar.left",
-                help: state.showsSidebar ? "隐藏边栏" : "显示边栏",
-                style: state.showsSidebar ? .ghost : .outlined
-            ) {
-                state.toggleSidebar()
+            if !state.showsSidebar && !isShowingOnboarding {
+                DSIconButton(
+                    systemName: "sidebar.left",
+                    help: "显示边栏",
+                    style: .outlined
+                ) {
+                    state.toggleSidebar()
+                }
+                .padding(.leading, 90)
+                .padding(.top, 11)
             }
-            .onGeometryChange(for: CGFloat.self) { proxy in
-                proxy.size.width
-            } action: { width in
-                if width > 0 { sidebarToggleWidth = width }
-            }
-            .padding(.leading, sidebarToggleLeading)
-            .padding(.top, 11)
         }
         .overlay {
             if isShowingOnboarding {
@@ -157,13 +155,6 @@ struct ConsoleView: View {
         state.isPresentingLaunchPage || state.showsRecommendationPage
     }
 
-    /// 展开时右侧紧贴导航列内容右缘（`sidebarWidth - 10`），收起时退回红绿灯右侧安全位（`90pt`）。
-    private var sidebarToggleLeading: CGFloat {
-        state.showsSidebar
-            ? max(90, DS.Layout.sidebarWidth - 10 - sidebarToggleWidth)
-            : 90
-    }
-
     @ViewBuilder private var pageContent: some View {
         switch state.section {
         case .overview: OverviewPage(state: state, chat: state.chat)
@@ -171,7 +162,6 @@ struct ConsoleView: View {
         case .models:
             ModelsPage(
                 state: state,
-                engine: state.libraryEngine,
                 showingHub: $showHub,
                 showingDownloads: $showDownloads)
         case .engines: EnginesPage(state: state, installs: state.installs)
@@ -218,12 +208,14 @@ struct ConsoleView: View {
     }
 }
 
-// MARK: - ZCode Sidebar
+// MARK: - Glass Sidebar
 
-/// ZCode 风格实体侧边栏：纯色基底 + 1px 发丝分隔，承载工作区、控制台与最近对话。
+/// Liquid Glass 侧边栏：半透明玻璃底 + 1px 分隔，承载模式切换、工作区、
+/// 控制台与最近对话。
 struct ConsoleNavigationPanel: View {
     @ObservedObject var state: AppState
     @ObservedObject var chat: ChatStore
+    var onCollapse: () -> Void
 
     @Namespace private var selection
     /// 会话列表的搜索词；Esc 清空。
@@ -238,37 +230,117 @@ struct ConsoleNavigationPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // 顶部 48pt 留给系统红绿灯与侧栏折叠按钮，背景支持拖窗。
-            Color.clear
-                .frame(height: DS.Layout.titlebarHeight)
-                .background(WindowDragArea())
+            sidebarHeader
 
             workspace
                 .padding(.horizontal, 10)
-                .padding(.top, 2)
+                .padding(.top, 4)
+
+            DSDivider()
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
 
             HStack(alignment: .center, spacing: 6) {
-                DSSectionLabel(text: "最近对话")
+                Text(L10n.t("最近对话"))
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(DS.text3)
+                Spacer(minLength: 4)
                 newChatButton
             }
             .padding(.leading, 18)
             .padding(.trailing, 10)
-            .padding(.top, DS.Space.lg)
-            .padding(.bottom, DS.Space.xs)
+            .padding(.top, 12)
+            .padding(.bottom, 6)
 
             searchField
                 .padding(.horizontal, 10)
-                .padding(.bottom, DS.Space.xs)
+                .padding(.bottom, 6)
 
             recents
                 .padding(.horizontal, 10)
                 .padding(.bottom, DS.Space.sm)
+
+            hardwarePill
+                .padding(.horizontal, 10)
+                .padding(.bottom, 10)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background {
-            DS.bg.ignoresSafeArea()
+        .background(DS.sidebarFill)
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(DS.sidebarBorder)
+                .frame(width: 1)
         }
         .animation(reduceMotion ? nil : DS.Motion.smooth, value: state.section)
+    }
+
+    /// 顶部一行：红绿灯留白 + 对话/控制台模式切换 + 折叠按钮。整行可拖窗。
+    private var sidebarHeader: some View {
+        ZStack(alignment: .leading) {
+            WindowDragArea()
+
+            HStack(spacing: 6) {
+                // 系统红绿灯画在窗口坐标里，这里让出它们的位置。
+                Color.clear.frame(width: 64)
+
+                modeSwitcher
+                Spacer(minLength: 0)
+                DSIconButton(systemName: "sidebar.left", help: "隐藏边栏", size: 24) {
+                    onCollapse()
+                }
+            }
+            .padding(.horizontal, 10)
+        }
+        .frame(height: DS.Layout.sidebarHeaderHeight)
+    }
+
+    private var modeSwitcher: some View {
+        let chatActive = state.section == .chat
+        return HStack(spacing: 1) {
+            modeButton(
+                symbol: "bubble.left",
+                active: chatActive,
+                help: "对话模式"
+            ) {
+                state.section = .chat
+            }
+            modeButton(
+                symbol: "square.grid.2x2",
+                active: !chatActive,
+                help: "控制台模式"
+            ) {
+                state.section = .overview
+            }
+        }
+        .padding(2)
+        .dsGlassPill()
+    }
+
+    private func modeButton(
+        symbol: String,
+        active: Bool,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(active ? DS.accent : DS.text3)
+                .frame(width: 24, height: 20)
+                .background {
+                    if active {
+                        Capsule()
+                            .fill(DS.pillActive)
+                            .shadow(color: DS.glassShadow.opacity(0.5), radius: 3, y: 1)
+                    }
+                }
+                .contentShape(Capsule())
+        }
+        .buttonStyle(DSPressStyle(scale: 0.94))
+        .help(L10n.t(help))
+        .accessibilityLabel(L10n.t(help))
+        .accessibilityAddTraits(active ? .isSelected : [])
     }
 
     private var newChatButton: some View {
@@ -291,10 +363,13 @@ struct ConsoleNavigationPanel: View {
                 }
             }
 
-            DSSectionLabel(text: "控制台")
-                .padding(.horizontal, 8)
-                .padding(.top, 10)
-                .padding(.bottom, 3)
+            Text(L10n.t("控制台"))
+                .font(.system(size: 11, weight: .semibold))
+                .tracking(0.6)
+                .foregroundStyle(DS.text3)
+                .padding(.horizontal, 9)
+                .padding(.top, 12)
+                .padding(.bottom, 4)
 
             ForEach(Page.consolePages) { page in
                 SidebarNavRow(
@@ -343,9 +418,29 @@ struct ConsoleNavigationPanel: View {
                 .accessibilityLabel(L10n.t("清除搜索"))
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 9)
         .frame(height: 28)
-        .background(DS.rect(7).fill(DS.hover))
+        .background(DS.rect(10).fill(DS.bg))
+        .overlay(DS.rect(10).strokeBorder(DS.line, lineWidth: 1))
+    }
+
+    /// 窗口底部的硬件事实条。
+    private var hardwarePill: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(DS.accent)
+                .frame(width: 6, height: 6)
+            Text(verbatim: "Apple Silicon")
+                .font(DS.Font.prose(11, weight: .medium))
+                .foregroundStyle(DS.text3)
+            Spacer(minLength: 4)
+            Text(verbatim: "MLX Metal")
+                .font(DS.Font.mono(10.5))
+                .foregroundStyle(DS.text3.opacity(0.85))
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 34)
+        .dsSubcard(radius: 10)
     }
 
     private var recents: some View {
@@ -443,14 +538,14 @@ private struct SidebarNavRow: View {
     @State private var hovering = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var rowShape: RoundedRectangle { DS.rect(DS.Radius.sm) }
+    private var rowShape: RoundedRectangle { DS.rect(10) }
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 9) {
                 Image(systemName: page.symbol)
                     .font(.system(size: 13, weight: active ? .semibold : .regular))
-                    .foregroundStyle(active ? DS.accent : (hovering ? DS.text : DS.text2))
+                    .foregroundStyle(active ? DS.accent : (hovering ? DS.text : DS.text3))
                     .frame(width: 18)
                 Text(L10n.t(page.rawValue))
                     .font(DS.Font.prose(13, weight: active ? .medium : .regular))
@@ -461,7 +556,8 @@ private struct SidebarNavRow: View {
                         .foregroundStyle(active ? DS.text : DS.text3)
                         .padding(.horizontal, 6)
                         .frame(height: 17)
-                        .background(DS.rect(DS.Radius.sm).fill(DS.hover))
+                        .background(Capsule().fill(DS.pillFill))
+                        .overlay(Capsule().strokeBorder(DS.pillBorder, lineWidth: 1))
                 }
             }
             .foregroundStyle(active ? DS.text : (hovering ? DS.text : DS.text2))
@@ -470,8 +566,9 @@ private struct SidebarNavRow: View {
             .background {
                 if active {
                     rowShape
-                        .fill(DS.selected)
-                        .overlay(rowShape.strokeBorder(DS.line, lineWidth: 1))
+                        .fill(DS.pillActive)
+                        .overlay(rowShape.strokeBorder(DS.pillBorder, lineWidth: 1))
+                        .shadow(color: DS.glassShadow.opacity(0.7), radius: 6, y: 2)
                         .matchedGeometryEffect(id: "nav.selection", in: namespace)
                 } else if hovering {
                     rowShape.fill(DS.hover)

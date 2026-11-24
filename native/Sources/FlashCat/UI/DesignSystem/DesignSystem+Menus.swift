@@ -45,7 +45,7 @@ struct DSMenuTriggerLabel: View {
     }
 }
 
-/// 统一 Menu 包装：ZCode 风格实体/描边/幽灵下拉按钮，不使用 Liquid Glass。
+/// 统一 Menu 包装：玻璃 / 描边 / 幽灵下拉按钮；触发器保持图标与文字原色。
 struct DSMenu<Label: View, Content: View>: View {
     var kind: DSMenuTriggerLabel.Kind = .secondary
     var size: DSButtonStyle.Size = .regular

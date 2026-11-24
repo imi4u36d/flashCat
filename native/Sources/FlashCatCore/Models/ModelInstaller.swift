@@ -95,7 +95,8 @@ package enum ModelInstaller {
         model: String,
         draftRepository: String?,
         cache: String,
-        source: HubSource = .huggingFace
+        source: HubSource = .huggingFace,
+        include: [String] = []
     ) throws -> Plan {
         switch engine.adapter {
         case .splash:
@@ -105,11 +106,20 @@ package enum ModelInstaller {
                 cache: cache,
                 source: source)
         case .omlx, .mtplx:
-            return try snapshotPlan(engine: engine, model: model, cache: cache, source: source)
+            return try snapshotPlan(
+                engine: engine, model: model, cache: cache, source: source, include: include)
         case .mlxServe:
-            return try mlxServePlan(engine: engine, model: model, cache: cache, source: source)
+            // The native puller only takes whole Hugging Face repositories.
+            // A quant pick or a mirror needs the shared Python downloader,
+            // which can still write into MLX-Serve's nested model directory.
+            if source == .huggingFace, include.isEmpty {
+                return try mlxServePlan(engine: engine, model: model, cache: cache, source: source)
+            }
+            return try snapshotPlan(
+                engine: engine, model: model, cache: cache, source: source, include: include)
         default:
-            return try snapshotPlan(engine: engine, model: model, cache: cache, source: source)
+            return try snapshotPlan(
+                engine: engine, model: model, cache: cache, source: source, include: include)
         }
     }
 
@@ -119,6 +129,10 @@ package enum ModelInstaller {
         cache: String,
         source: HubSource
     ) throws -> Plan {
+        guard source.isHuggingFaceCompatible else {
+            throw Failure.message(
+                "Splash 的安装器只支持 Hugging Face；要经 ModelScope 下载，请选择 oMLX、MTPLX 或 MLX-Serve")
+        }
         guard let installation = EngineInstallations.newest(.splash, version: nil) else {
             throw Failure.message("还没有安装 Splash 引擎，无法下载模型")
         }
@@ -267,21 +281,38 @@ package enum ModelInstaller {
             incompleteMarker: incompleteMarker(for: destination))
     }
 
+    /// Snapshot one repository into an engine's own model directory.
+    ///
+    /// The engine's bundled Python does the transfer. A native engine (MLX-Serve)
+    /// has no Python of its own, so a quant pick or a mirror borrows any other
+    /// installed pack's Python while still writing into the chosen engine's
+    /// directory.
     private static func snapshotPlan(
         engine: EngineID,
         model: String,
         cache: String,
-        source: HubSource
+        source: HubSource,
+        include: [String]
     ) throws -> Plan {
         guard let installation = EngineInstallations.newest(engine, version: nil) else {
             throw Failure.message("还没有安装 \(engine.displayName) 引擎，无法下载模型")
         }
-        let python = installation.entrypoint.path
+        var python = installation.entrypoint.path
+        var pythonRoot = installation.root.path
+        if !python.contains("/python/") {
+            let fallback = EngineCatalog.allIDs.lazy
+                .filter { $0 != engine }
+                .compactMap { EngineInstallations.newest($0, version: nil) }
+                .first { $0.entrypoint.path.contains("/python/") }
+            guard let fallback else {
+                throw Failure.message(
+                    "\(engine.displayName) 是原生运行时，选量化或镜像下载需要先装一个带 Python 的引擎包：Splash、oMLX 或 MTPLX")
+            }
+            python = fallback.entrypoint.path
+            pythonRoot = fallback.root.path
+        }
         guard Paths.fileExists(python) else {
             throw Failure.message("\(engine.displayName) 引擎缺少内置 Python")
-        }
-        guard python.contains("/python/") else {
-            throw Failure.message("\(engine.displayName) 是原生运行时，不能用通用快照下载器")
         }
         let script = try scriptPath()
         let repo = model.split(separator: ":", maxSplits: 1).first.map(String.init) ?? model
@@ -294,15 +325,18 @@ package enum ModelInstaller {
         var arguments = [script, repo, destination]
         let trimmed = cache.trimmingCharacters(in: .whitespaces)
         if !trimmed.isEmpty { arguments += ["--cache", trimmed] }
+        for pattern in include {
+            arguments += ["--include", pattern]
+        }
 
         return Plan(
             engine: engine,
             model: model,
             executable: python,
             arguments: arguments,
-            workingDirectory: installation.root.path,
+            workingDirectory: pythonRoot,
             environment: environment(
-                pythonRoot: installation.root.path, cache: cache, source: source),
+                pythonRoot: pythonRoot, cache: cache, source: source),
             watchDirectory: destination,
             destination: destination,
             incompleteMarker: incompleteMarker(for: destination))
@@ -320,7 +354,7 @@ package enum ModelInstaller {
         // 悄悄退回官方端点。
         guard source == .huggingFace else {
             throw Failure.message(
-                "MLX-Serve 的原生下载器不支持镜像端点；请在「设置 → 模型来源」切回 Hugging Face，或先装一个带 Python 的引擎包，在模型广场把权重下到公共目录")
+                "MLX-Serve 的原生下载器不支持镜像端点；请在「设置 → 模型来源」切回 Hugging Face，或先装一个带 Python 的引擎包")
         }
         guard let installation = EngineInstallations.newest(engine, version: nil) else {
             throw Failure.message("还没有安装 \(engine.displayName) 引擎，无法下载模型")

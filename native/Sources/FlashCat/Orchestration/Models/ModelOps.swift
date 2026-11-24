@@ -135,18 +135,15 @@ final class ModelOps {
 
     // MARK: hardware
 
-    /// Work out (once) what this Mac should run, and open the first-run page
-    /// while nothing is installed yet.
+    /// Work out what this Mac should run, and open the first-run page while
+    /// nothing is installed yet.
     ///
-    /// The answer is stored after the first run and only recomputed on request:
-    /// a recommendation that moved between launches would drag the model page's
-    /// ★ tag off a pack the user already started downloading.
+    /// The answer is recomputed on every launch instead of recalled: the
+    /// catalogs live inside the engine packs, so an engine update is the new
+    /// answer. Until a pack with a catalog is installed there is nothing to
+    /// pick, and the page stays away — the engine list is the first-run screen.
     func settleRecommendation() {
-        if let stored = settings.hardwareRecommendation {
-            hardwareRecommendation = stored
-        } else {
-            recomputeRecommendation()
-        }
+        recomputeRecommendation()
         // Someone who already had engines before this feature existed keeps
         // their models: they get the tags silently, not a page telling them to
         // start over. Writing `seen` here is also what stops an upgraded user
@@ -156,10 +153,12 @@ final class ModelOps {
             return
         }
         guard !settings.hardwareRecommendationSeen else { return }
+        guard !(hardwareRecommendation?.picks.isEmpty ?? true) else { return }
         showsRecommendationPage = true
     }
 
     private func recomputeRecommendation() {
+        ModelRecommendations.invalidate()
         let recommendation = HardwareAdvisor.recommend(machine: DeviceProfile.current().machine)
         hardwareRecommendation = recommendation
         settings.setHardwareRecommendation(recommendation)
@@ -214,8 +213,8 @@ final class ModelOps {
 
     // MARK: model library
 
-    /// The catalog rows tagged for this engine: Splash gets the Flash-Next
-    /// GGUF, oMLX the MLX and oQ builds, MTPLX only its own packs.
+    /// The rows this engine ships in its own pack: Splash's suggested-models
+    /// list, MTPLX's official catalog. oMLX and MLX-Serve ship none.
     func libraryRecommendations(for engine: EngineID) -> [ModelRecommendation] {
         ModelRecommendations.list(for: engine)
     }
@@ -413,11 +412,12 @@ final class ModelOps {
     /// Fetch weights for the engine the model page is showing.
     func downloadModel(_ id: String) { downloadModel(id, engine: libraryEngine) }
 
-    /// Fetch weights for one engine. Both paths download through the
-    /// huggingface_hub that ships inside the engine packs: Splash's installer
-    /// picks the single GGUF quant out of a repository that carries a dozen and
-    /// prepares its assembly, while oMLX and MTPLX run flashCat's snapshot
-    /// downloader straight into their own model folder.
+    /// Fetch weights into one engine's own model folder. Both paths download
+    /// through the huggingface_hub that ships inside the engine packs: Splash's
+    /// installer picks the single GGUF quant out of a repository that carries a
+    /// dozen and prepares its assembly, while the other engines run flashCat's
+    /// snapshot downloader into their folder (MLX-Serve borrows a Python pack
+    /// when it needs a quant pick or a mirror).
     ///
     /// Pause and cancel terminate the child process; the Hub keeps partial
     /// files in the destination's `.cache`, so resuming later — even after a
@@ -425,9 +425,18 @@ final class ModelOps {
     ///
     /// - Parameter family: the model's Splash family when the caller knows it,
     ///   which picks the released DFlash2 draft more surely than the id does.
+    /// - Parameter source: the Hub the model plaza's user picked.
+    /// - Parameter include: the file patterns of one GGUF quant, when the
+    ///   caller chose a quant instead of the whole repository.
+    /// - Parameter activate: whether finishing the transfer should also make
+    ///   the model current. The Model Hub downloads only; the model page asks
+    ///   for the switch.
     /// - Returns: whether the download started. A `false` comes with a `notice`.
     @discardableResult
-    func downloadModel(_ id: String, engine: EngineID, family: String? = nil) -> Bool {
+    func downloadModel(
+        _ id: String, engine: EngineID, family: String? = nil,
+        source: HubSource? = nil, include: [String] = [], activate: Bool = true
+    ) -> Bool {
         guard downloadingModel == nil else {
             toast("正在下载另一个模型，先等它结束")
             return false
@@ -437,11 +446,14 @@ final class ModelOps {
             notice = "「\(id)」已经在本机了，不用重复下载"
             return false
         }
-        let recommendation = ModelRecommendations.recommendation(for: id)
+        // Splash resolves its own released DFlash2 draft from the family when
+        // the installer is not told about one; the pack's list is the source of
+        // truth. Other engines carry their draft inside the pack.
         let draft =
             engine.adapter == .splash
-            ? (catalog.draftRepository(id, family: family) ?? recommendation?.draftRepository)
+            ? catalog.draftRepository(id, family: family)
             : nil
+        let origin = source ?? HubSource.downloadSource
 
         let plan: ModelInstaller.Plan
         do {
@@ -450,12 +462,16 @@ final class ModelOps {
                 model: id,
                 draftRepository: draft,
                 cache: settings.hfCache,
-                source: HubSource.downloadSource)
+                source: origin,
+                include: include)
         } catch {
             notice = (error as? ModelInstaller.Failure)?.message ?? "\(error)"
             return false
         }
-        return downloads.startDownload(plan, engine: engine, id: id, shared: nil)
+        return downloads.startDownload(
+            plan, engine: engine, id: id, shared: nil,
+            source: origin, include: include.isEmpty ? nil : include,
+            activate: activate)
     }
 
     /// 从 Hub 下任意仓库到公共目录，并记下它给哪些引擎用。
@@ -513,6 +529,30 @@ final class ModelOps {
     /// 判定放在这里而不是视图：置灰只是表现，真正的门在这儿。
     func repoIsLocal(_ repo: String) -> Bool {
         localModelRepos.contains(ModelSharing.canonical(repo))
+    }
+
+    /// 这份权重落在哪个引擎的目录里，用来把「在模型页查看」带到真正看得见
+    /// 它的那一栏。公共目录优先看授权表；引擎目录则按扫描结果找。
+    func engineHolding(_ id: String) -> EngineID? {
+        let repo = ModelSharing.canonical(id)
+        if ModelSharing.isShared(repo) {
+            let engines = ModelSharing.engines(for: repo)
+            if engines.contains(activeEngine) { return activeEngine }
+            return EngineCatalog.allIDs.first { engines.contains($0) }
+        }
+        let key = ModelLibraryEntry.normalized(repo)
+        func holds(_ engine: EngineID) -> Bool {
+            if engine.adapter == .splash {
+                return catalog.machine.contains {
+                    ModelLibraryEntry.normalized($0.id) == key
+                }
+            }
+            return engineModels(for: engine).contains {
+                ModelLibraryEntry.normalized($0.id) == key
+            }
+        }
+        if holds(activeEngine) { return activeEngine }
+        return EngineCatalog.allIDs.first(where: holds)
     }
 
     func setSharedEngines(_ engines: [EngineID], repo: String) {
@@ -635,7 +675,11 @@ final class ModelOps {
                 include: task.include ?? [])
             return
         }
-        downloadModel(task.model, engine: task.engine)
+        downloadModel(
+            task.model, engine: task.engine,
+            source: task.source ?? HubSource.downloadSource,
+            include: task.include ?? [],
+            activate: task.activateOnFinish ?? true)
     }
 
     func cancelDownload(_ task: ModelDownloadTask) { downloads.cancelDownload(task) }
@@ -662,12 +706,16 @@ final class ModelOps {
     /// 的接线，得在类外可达。
     func handle(_ event: DownloadEvent) {
         switch event {
-        case .modelReady(let engine, let model, let installed):
+        case .modelReady(let engine, let model, let installed, let activate):
             // 启动前补件之后紧跟的是启动本身：没有提示要回答，选中模型也不能
             // 在启动底下被换掉。
             guard !supplementInFlight else { return }
             guard engine == activeEngine else {
                 toast(L10n.format("已下载 %@，切到 %@ 就能用", model, engine.displayName))
+                return
+            }
+            guard activate else {
+                toast(L10n.format("已下载 %@，已在模型库", model))
                 return
             }
             applyModel(installed)

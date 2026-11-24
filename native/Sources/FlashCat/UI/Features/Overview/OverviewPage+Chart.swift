@@ -11,45 +11,16 @@ extension OverviewPage {
     // MARK: Decode Chart
 
     var decodeChart: some View {
-        overviewSection(title: "总解码 · 最近 60 秒") {
-            HStack(spacing: 8) {
-                if let hovered = hoveredSample {
-                    let secondsAgo = max(
-                        0,
-                        Int64(state.overviewChartEnd.timeIntervalSince(hovered.at).rounded()))
-                    HStack(alignment: .firstTextBaseline, spacing: 3) {
-                        Text(rateText(hovered.value))
-                            .font(DS.Font.proseNumber(13, weight: .semibold))
-                            .foregroundStyle(DS.text)
-                            .contentTransition(.numericText())
-                        Text("tok/s")
-                            .font(DS.Font.prose(10.5))
-                            .foregroundStyle(DS.text3)
-                    }
-                    DSChip(
-                        text: L10n.format("%lld 秒前", secondsAgo),
-                        dot: engineTint,
-                        live: false)
-                } else {
-                    if chartRate > 0 {
-                        HStack(alignment: .firstTextBaseline, spacing: 3) {
-                            Text(rateText(chartRate))
-                                .font(DS.Font.proseNumber(13, weight: .semibold))
-                                .foregroundStyle(DS.text)
-                                .contentTransition(.numericText())
-                            Text("tok/s")
-                                .font(DS.Font.prose(10.5))
-                                .foregroundStyle(DS.text3)
-                        }
-                    }
-                    DSChip(text: speedChip.text, dot: speedChip.color, live: speedChip.live)
-                }
-            }
-        } content: {
+        VStack(alignment: .leading, spacing: 8) {
+            chartHeader
             Group {
                 if samples.isEmpty && !state.isRunning {
-                    lastRunCard
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    ZStack {
+                        chartGrid
+                            .opacity(0.55)
+                        lastRunCard
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 } else if samples.isEmpty {
                     ZStack {
                         chartGrid
@@ -65,7 +36,7 @@ extension OverviewPage {
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 8)
-                        .background(DS.canvas.opacity(0.85), in: DS.rect(DS.Radius.sm))
+                        .dsSubcard(radius: 8)
                     }
                 } else {
                     Chart {
@@ -74,13 +45,13 @@ extension OverviewPage {
                                 .interpolationMethod(.monotone)
                                 .foregroundStyle(
                                     LinearGradient(
-                                        colors: [engineTint.opacity(0.16), .clear],
+                                        colors: [engineTint.opacity(0.26), engineTint.opacity(0)],
                                         startPoint: .top, endPoint: .bottom)
                                 )
                             LineMark(x: .value("时间", sample.at), y: .value("tok/s", sample.value))
                                 .interpolationMethod(.monotone)
                                 .foregroundStyle(engineTint)
-                                .lineStyle(StrokeStyle(lineWidth: 1.8, lineCap: .round))
+                                .lineStyle(StrokeStyle(lineWidth: 2.1, lineCap: .round, lineJoin: .round))
                         }
                         if samples.count == 1, let only = samples.first {
                             PointMark(x: .value("时间", only.at), y: .value("tok/s", only.value))
@@ -101,7 +72,8 @@ extension OverviewPage {
                     .chartXAxis(.hidden)
                     .chartYAxis {
                         AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { _ in
-                            AxisGridLine().foregroundStyle(DS.line)
+                            AxisGridLine(stroke: StrokeStyle(lineWidth: 1, dash: [3, 4]))
+                                .foregroundStyle(DS.chartGrid)
                             AxisValueLabel()
                                 .font(DS.Font.proseNumber(10.5))
                                 .foregroundStyle(DS.text3)
@@ -109,35 +81,123 @@ extension OverviewPage {
                     }
                     .chartOverlay { proxy in
                         GeometryReader { geo in
-                            Color.clear
-                                .contentShape(Rectangle())
-                                .onContinuousHover { phase in
-                                    switch phase {
-                                    case .active(let location):
-                                        guard let plotAnchor = proxy.plotFrame else {
+                            ZStack(alignment: .topLeading) {
+                                Color.clear
+                                    .contentShape(Rectangle())
+                                    .onContinuousHover { phase in
+                                        switch phase {
+                                        case .active(let location):
+                                            guard let plotAnchor = proxy.plotFrame else {
+                                                hoveredChartDate = nil
+                                                return
+                                            }
+                                            let plotFrame = geo[plotAnchor]
+                                            let relativeX = location.x - plotFrame.origin.x
+                                            guard relativeX >= 0, relativeX <= plotFrame.width,
+                                                let date: Date = proxy.value(atX: relativeX)
+                                            else {
+                                                hoveredChartDate = nil
+                                                return
+                                            }
+                                            hoveredChartDate = date
+                                        case .ended:
                                             hoveredChartDate = nil
-                                            return
                                         }
-                                        let plotFrame = geo[plotAnchor]
-                                        let relativeX = location.x - plotFrame.origin.x
-                                        guard relativeX >= 0, relativeX <= plotFrame.width,
-                                            let date: Date = proxy.value(atX: relativeX)
-                                        else {
-                                            hoveredChartDate = nil
-                                            return
-                                        }
-                                        hoveredChartDate = date
-                                    case .ended:
-                                        hoveredChartDate = nil
                                     }
+
+                                if let hovered = hoveredSample, let plotAnchor = proxy.plotFrame {
+                                    chartTooltipOverlay(
+                                        hovered,
+                                        plotFrame: geo[plotAnchor],
+                                        proxy: proxy,
+                                        size: geo.size)
                                 }
+                            }
                         }
                     }
                 }
             }
-            .padding(.top, 4)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .overviewCard()
+    }
+
+    var chartHeader: some View {
+        HStack(spacing: 8) {
+            Text(L10n.t("总解码 · 最近 60 秒"))
+                .font(.system(size: 13.5, weight: .semibold))
+                .foregroundStyle(DS.text)
+            Text(L10n.t("悬停查看精确采样"))
+                .font(.system(size: 11))
+                .foregroundStyle(DS.text4)
+                .lineLimit(1)
+                .layoutPriority(-1)
+            Spacer(minLength: 6)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(rateText(hoveredSample?.value ?? chartRate))
+                    .font(DS.Font.number(16, weight: .bold))
+                    .tracking(-0.3)
+                    .foregroundStyle(DS.text)
+                    .contentTransition(.numericText())
+                Text("tok/s")
+                    .font(.system(size: 11))
+                    .foregroundStyle(DS.text3)
+            }
+            speedPill
+        }
+    }
+
+    var speedPill: some View {
+        HStack(spacing: 5) {
+            DSStatusDot(color: speedChip.color, live: speedChip.live, size: 5)
+            Text(L10n.t(speedChip.text))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(speedChip.live ? speedChip.color : DS.text2)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 22)
+        .dsGlassPill()
+    }
+
+    func chartTooltipOverlay(
+        _ sample: ThroughputSample,
+        plotFrame: CGRect,
+        proxy: ChartProxy,
+        size: CGSize
+    ) -> some View {
+        let x = proxy.position(forX: sample.at) ?? 0
+        let y = proxy.position(forY: sample.value) ?? 0
+        return chartTooltip(sample)
+            .position(
+                x: min(max(plotFrame.origin.x + x, 74), max(74, size.width - 74)),
+                y: max(32, plotFrame.origin.y + y - 34))
+    }
+
+    func chartTooltip(_ sample: ThroughputSample) -> some View {
+        let secondsAgo = max(0, Int(state.overviewChartEnd.timeIntervalSince(sample.at).rounded()))
+        let clock = sample.at.formatted(date: .omitted, time: .standard)
+        let age = secondsAgo == 0 ? L10n.t("刚刚") : "-\(secondsAgo)s"
+        return VStack(alignment: .leading, spacing: 2) {
+            Text(verbatim: "\(clock) (\(age))")
+                .font(DS.Font.mono(9.5))
+                .foregroundStyle(DS.text3)
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(engineTint)
+                    .frame(width: 4, height: 4)
+                Text(rateText(sample.value))
+                    .font(DS.Font.number(12, weight: .bold))
+                    .foregroundStyle(DS.text)
+                Text("tok/s")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(DS.text3)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .fixedSize()
+        .dsFloating(radius: 10)
+        .allowsHitTesting(false)
     }
 
     var hoveredSample: ThroughputSample? {
@@ -225,9 +285,8 @@ extension OverviewPage {
             lastRunWideCard
             lastRunCompactCard
         }
-        .padding(18)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .dsSurface(radius: DS.Radius.lg)
     }
 
     var lastRunHeader: some View {
@@ -327,7 +386,7 @@ extension OverviewPage {
                 Image(systemName: "play.fill")
             }
         }
-        .buttonStyle(.ds(.primary, size: size))
+        .buttonStyle(OverviewTintActionStyle(tint: DS.ok))
         .disabled(engineToggleDisabled)
         .help(engineToggleHelp)
     }

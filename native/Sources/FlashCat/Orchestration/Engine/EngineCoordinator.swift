@@ -289,13 +289,13 @@ final class EngineCoordinator {
             guard let self, let host = self.host else { return }
             self.engines?.rebuild()
             // 卸载正在使用的引擎会让 rebuild 悄悄回落到另一个包（或一个不剩）。
-            // 活动引擎因此变化时，模型页和选中模型必须跟上，不能指向已删除的包。
+            // 活动引擎因此变化时，选中模型必须跟上，不能指向已删除的包；但模型页
+            // 看的是哪台引擎是读者自己的选择，不跟着活动引擎跳。
             defer { self.installsObservedEngine = self.activeEngine }
             if host.needsEngineSetup {
                 host.selectedModel = ""
                 host.libraryEngine = .splash
             } else if self.installsObservedEngine != self.activeEngine {
-                host.libraryEngine = self.activeEngine
                 host.adoptSavedModel(for: self.activeEngine)
             }
             // 有了引擎，首次运行的推荐页就不再成立：它既不能被这张页盖住
@@ -314,6 +314,9 @@ final class EngineCoordinator {
     /// Make a freshly installed engine the one this app runs.
     func adoptEngine(_ id: EngineID) {
         guard let host else { return }
+        // The recommendation list lives inside the pack that just landed (or
+        // was replaced): drop what we read from the previous version.
+        ModelRecommendations.invalidate()
         EngineStore.shared.update(id) { $0.enabled = true }
         EngineStore.shared.rememberActive(id)
         engines?.rebuild(preferring: id)
@@ -326,6 +329,9 @@ final class EngineCoordinator {
         // the install itself, so the page must not stay up over a working engine
         // (it is a one-time question either way).
         host.dismissRecommendationPage()
+        // The new pack carries its own catalog: refresh the per-engine pick so
+        // the model page's recommendation tag reflects what just landed.
+        host.settleRecommendation()
         // The first-run page may have asked for an engine *and* its model. The
         // downloader needs the pack on disk, so the model download waits for
         // this moment instead of failing with "还没有安装…引擎".
@@ -440,10 +446,11 @@ final class EngineCoordinator {
             requestEngineInstall(id)
             return false
         }
-        host.libraryEngine = id
         reloadModels()
         // Switching to an engine must not keep the previous engine's model id:
-        // the remembered one only survives if this engine can serve it.
+        // the remembered one only survives if this engine can serve it. The
+        // model page's own engine selection is left alone — it is a view state,
+        // not a consequence of becoming active.
         host.adoptSavedModel(for: id)
         syncController()
         if start, !host.selectedModel.isEmpty { host.startService() }
@@ -653,7 +660,9 @@ final class EngineCoordinator {
             guard activated || activeEngine == route.engine else {
                 return .failed("切换到 \(route.engine.displayName) 失败")
             }
-            host.libraryEngine = route.engine
+            // A gateway request can switch the running engine at any moment.
+            // The model page stays where the reader put it; only the running
+            // engine changes.
             reloadModels()
             syncController()
         }

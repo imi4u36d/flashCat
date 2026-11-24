@@ -147,22 +147,21 @@ the generation-parameters sheet adjusts temperature / top-p / max output and thi
 level; every reply is labeled with its model, tok/s and first-token latency. Transcripts
 stay local and can be searched, pinned, renamed or browsed anytime.
 
-**Model Library** — the default "Local Library" mode lists only weights already on disk
-(sort by curated order / size / memory floor / name, and turn on "Fits" to show only what
-this Mac can run);
-pick the engine at the top first (engines you have not installed still show what they
-support), grouped by family: Qwen / MiMo / DeepSeek… each section is a set of compact
-variant rows showing engine, quantization (`Q4_K_M` / `oQ4e` / `8-bit` / `BF16`…), size,
-memory floor, and source. Recommendations that are not downloaded yet live in a separate
-"Recommended" mode instead of sharing the local grid.
+**Model Library** — a fixed engine-folder rail on the left (it folds to a top row in narrow
+windows) lists each engine with its install state and model count; the selected folder does
+not follow the running engine. The right side always has two sections, "Installed" and
+"Recommended": installed rows offer Use / In use, recommended rows offer Download, and both
+show quantization, size and memory floor. Recommended tiers come from the installed engine's
+own pack (Splash and MTPLX ship one each; oMLX and MLX-Serve do not), and the section caption
+names the source. Search, sort (default / size / memory / name) and the "Fits" filter share
+one row; sort and filter survive page changes.
 "Model Hub" in the top right opens search: Hugging Face, HF-Mirror or ModelScope
 repositories (switch from the header menu), keyword search, sort by downloads, filter by
 "All / MLX / GGUF", page through results (30 per page from HF, 24 from ModelScope),
 and click a row to open its model card (README / file list / tags) before deciding.
 When a GGUF repository has several quants, the download bar lets you pick one; only
-that quant's shards and `mmproj` are transferred. Weights land in a shared folder as a
-single copy and are visible to every engine by default; each card's origin is either
-"engine recommendation" or "personal download".
+that quant's shards and `mmproj` are transferred. Download then asks which installed
+engine's model folder should hold the weights; the Hub never preselects an engine.
 
 **Engines** — one card per engine: status, port, launch arguments, comparison against
 the upstream version, plus one-click update, open install folder, view logs, and
@@ -318,8 +317,8 @@ at mode `0600`, so other users on the same machine cannot drive the app.
 
 Models are downloaded inside the app, from Hugging Face, HF-Mirror or ModelScope
 (switch under Settings → Model Source). The Model Library page puts weights
-that can load right away under "Local", and tiers this Mac's memory can hold but that
-have not been downloaded yet under "FlashCat Recommended":
+that can load right away under "Local", and tiers from the installed engine's own pack
+that this Mac's memory can hold but that have not been downloaded yet under "Recommended":
 
 | Tier | Approximate size | Notes |
 | --- | --- | --- |
@@ -327,16 +326,17 @@ have not been downloaded yet under "FlashCat Recommended":
 | Qwen 3.8 27B | About 16 – 21 GB | Newer generation, better balance of quality and speed |
 | Qwen 3.8 Flash-Next | About 99 GB | The heaviest tier; needs 128 GB of memory |
 
-Splash runs GGUF builds of the 27B IQ3_S and Flash-Next Q2_0; oMLX uses Jundot's `oQ4e`
-quantization; MTPLX additionally falls back to two Youssofal-optimized packs, MiMo 9B
-and Qwen3.5 4B, on low-memory machines. To run something else, open the Model Hub from
+Recommendations are no longer hand-written by flashCat: they come from the engine packs.
+Splash ships `install/suggested-models.tsv` (one variant per family — the strongest that
+fits this Mac), and MTPLX ships the `model_catalog.py` its macOS app uses (filtered by
+chip tier and peak memory). oMLX and MLX-Serve ship no list, and an engine that is not
+installed has no pack to read. To run something else, open the Model Hub from
 "＋ Download Model" in the top right of the Model Library page, search or browse Hugging Face
-or ModelScope repositories, open the model card, and download from there: weights land
-in a shared folder as a single copy and are visible to every engine by default (files
-are never copied). Whether a given engine can load a
-model is the engine's own call, and the Model Library page keeps downloaded weights separate
-from not-yet-downloaded "FlashCat Recommended" tiers, tagging each local weight as
-"catalog" or "personal download".
+or ModelScope repositories, open the model card, and download from there: download asks
+which installed engine's model folder should hold the weights, and they live only in that
+folder. Whether a given engine can load a model is the engine's own call, and the Model
+Library page keeps downloaded weights separate from not-yet-downloaded recommendations,
+tagging each local weight as "catalog" or "personal download".
 
 For mirror access, switch Model Source to HF-Mirror: hub browsing, model cards and
 engine-folder downloads all go through hf-mirror.com. For a custom mirror or gated
@@ -414,8 +414,8 @@ reverse proxy in front of it; do not expose the port directly to the internet.
 Right-click → Open, or go to System Settings → Privacy & Security and click "Open Anyway".
 
 **A model does not show up for an engine on the Model Library page?**
-Switch engines at the top; engines you have not installed can still show the curated
-tiers they support.
+Switch engines at the top; recommendation tiers come from the engine pack, so an engine
+you have not installed has no list to read. oMLX and MLX-Serve ship no recommendations.
 
 **Why are there no keyboard shortcuts in the app?**
 This release deliberately registers no app-level shortcuts: every action has a

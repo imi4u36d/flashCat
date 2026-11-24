@@ -8,8 +8,8 @@ import SwiftUI
 // MARK: - Console palette (compatibility aliases)
 //
 // 控制台页面还在引用的旧 token 名。取值全部来自 `DS`
-// （UI/DesignSystem.swift）；粉强调、玻璃卡片与 20 pt 圆角是 1.5.x 的
-// 语言，1.6.0 起由 DS 统一接管。新代码直接用 `DS`。
+// （UI/DesignSystem.swift）；旧版的粉强调与大圆角已经退役，当前是
+// Liquid Glass 的 slate / indigo 色阶。新代码直接用 `DS`。
 
 extension Color {
     init(console hex: UInt32, opacity: Double = 1) {
@@ -104,19 +104,6 @@ enum Console {
         case .system: return info
         case .info: return secondary
         }
-    }
-}
-
-// MARK: - Page background
-
-struct ConsoleBackdrop: View {
-    var accent: Color = Console.accent
-
-    var body: some View {
-        // ZCode 风格纯色静谧画布（无桌面透明、无自定义背景图、无装饰性光晕）。
-        DS.canvas
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
     }
 }
 
@@ -241,7 +228,6 @@ struct NativeSegmented<Value: Hashable>: View {
     var width: CGFloat? = nil
     var size: DSButtonStyle.Size = .regular
 
-    @Environment(\.colorScheme) private var scheme
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var indicator
@@ -293,13 +279,9 @@ struct NativeSegmented<Value: Hashable>: View {
         }
     }
 
-    private var trackFill: Color {
-        Color.adaptive(dark: 0x1E1E1E, light: 0xEBEBEB)
-    }
+    private var trackFill: Color { DS.pillFill }
 
-    private var activeFill: Color {
-        Color.adaptive(dark: 0x2C2C2C, light: 0xFFFFFF)
-    }
+    private var activeFill: Color { DS.pillActive }
 
     var body: some View {
         let trackShape = DS.rect(DS.Radius.md)
@@ -329,11 +311,8 @@ struct NativeSegmented<Value: Hashable>: View {
                             if isSelected {
                                 segmentShape
                                     .fill(activeFill)
-                                    .overlay(segmentShape.strokeBorder(DS.line, lineWidth: 1))
-                                    .shadow(
-                                        color: Color.black.opacity(scheme == .dark ? 0.25 : 0.06),
-                                        radius: 1.5, y: 1
-                                    )
+                                    .overlay(segmentShape.strokeBorder(DS.pillBorder, lineWidth: 1))
+                                    .shadow(color: DS.glassShadow.opacity(0.7), radius: 3, y: 1)
                                     .matchedGeometryEffect(id: "activeSegment", in: indicator)
                             } else if isHovered {
                                 segmentShape

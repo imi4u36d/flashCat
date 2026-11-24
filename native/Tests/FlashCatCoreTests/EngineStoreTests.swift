@@ -67,6 +67,21 @@ final class EngineStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.draftAssignments?["owner/repo"], "owner/draft")
     }
 
+    func testDefaultActiveAndDraftAssignments() {
+        let store = EngineStore(directory: directory.path)
+        store.rememberActive(.mlxServe)
+        XCTAssertEqual(store.defaultEngineID, .mlxServe)
+
+        store.setDraftAssignment("owner/draft", engine: .splash, model: "owner/main")
+        XCTAssertEqual(
+            store.draftAssignment(for: .splash, model: "owner/main"), "owner/draft")
+        store.setDraftAssignment(nil, engine: .splash, model: "owner/main")
+        XCTAssertNil(store.draftAssignment(for: .splash, model: "owner/main"))
+
+        let reloaded = EngineStore(directory: directory.path)
+        XCTAssertEqual(reloaded.defaultEngineID, .mlxServe)
+    }
+
     func testTuningRoundTrip() {
         let path = directory.path
         let store = EngineStore(directory: path)

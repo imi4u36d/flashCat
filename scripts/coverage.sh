@@ -2,12 +2,9 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 wangzhuo
 #
-# 覆盖率门禁。两个口径分开报：
-#   - Core domain：FlashCatCore 里去掉进程/安装驱动（EngineController、
-#     EngineInstallCenter）。这两个类的生命周期由 EngineControllerPhaseTests
-#     用真进程覆盖，剩下的分支需要真实 pack 与 HTTP，先不纳入门槛。
-#   - Kit：纯领域层，门槛 80%。
-# 单项数字都会打印；只对 domain 与 Kit 卡阈值，避免用“总体”掩盖某一块。
+# 覆盖率门禁：FlashCatCore 整体 ≥ 60%，FlashCatKit ≥ 80%。
+# 覆盖数据来自 swift test --enable-code-coverage 的 lcov 导出；脚本会打印
+# 两个目标的实际数字，低于门槛直接失败。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -55,12 +52,10 @@ gate() {
         || { echo "error: $name 覆盖率低于门槛 ${min}%" >&2; return 1; }
 }
 
-core_all="$(measure "/Sources/FlashCatCore/" "")"
-core_domain="$(measure "/Sources/FlashCatCore/" "FlashCatCore/(Engine/EngineController|Engine/EngineInstallCenter)\\.swift$")"
+core="$(measure "/Sources/FlashCatCore/" "")"
 kit="$(measure "/Sources/FlashCatKit/" "")"
 
-echo "FlashCatCore（全部）: $(echo "$core_all" | awk '{printf "%s%% (%s/%s)", $3, $1, $2}')"
 status=0
-gate "FlashCatCore domain" "$core_domain" "$CORE_MIN" || status=1
+gate "FlashCatCore" "$core" "$CORE_MIN" || status=1
 gate "FlashCatKit" "$kit" "$KIT_MIN" || status=1
 exit "$status"

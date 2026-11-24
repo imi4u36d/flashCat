@@ -24,6 +24,17 @@ final class CoreUtilitiesTests: XCTestCase {
         XCTAssertEqual(IslandNotice.Kind(message: "随便一句"), .info)
     }
 
+    func testNoticeKindChromeForEveryCase() {
+        XCTAssertEqual(IslandNotice.Kind.info.symbol, "info")
+        XCTAssertEqual(IslandNotice.Kind.success.symbol, "checkmark")
+        XCTAssertEqual(IslandNotice.Kind.warning.symbol, "exclamationmark")
+        XCTAssertEqual(IslandNotice.Kind.error.symbol, "xmark")
+        XCTAssertFalse(IslandNotice.Kind.info.defaultTitle.isEmpty)
+        XCTAssertFalse(IslandNotice.Kind.success.defaultTitle.isEmpty)
+        XCTAssertFalse(IslandNotice.Kind.warning.defaultTitle.isEmpty)
+        XCTAssertFalse(IslandNotice.Kind.error.defaultTitle.isEmpty)
+    }
+
     func testModelInfoShortNameAndQuantization() {
         let info = ModelInfo(
             id: "mlx-community/Qwen3-8B-4bit", path: "/tmp/model", bytes: 4_000_000_000,

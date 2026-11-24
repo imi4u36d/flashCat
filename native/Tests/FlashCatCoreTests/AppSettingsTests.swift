@@ -92,6 +92,22 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(reloaded.controlPort, 9300)
     }
 
+    func testThinkingModesDriveServeArguments() {
+        let settings = AppSettings(defaults: defaults)
+        settings.setThinkingMode(.automatic)
+        XCTAssertNil(settings.effectiveReasoningEffort)
+
+        settings.setThinkingMode(.off)
+        settings.setReasoningEffort(.xhigh)
+        XCTAssertEqual(settings.effectiveReasoningEffort, "none")
+        XCTAssertTrue(settings.serveArguments().contains("--default-reasoning-effort"))
+        XCTAssertTrue(settings.serveArguments().contains("none"))
+
+        settings.setThinkingMode(.on)
+        XCTAssertEqual(settings.effectiveReasoningEffort, "xhigh")
+        XCTAssertTrue(settings.serveArguments().contains("xhigh"))
+    }
+
     func testLegacyFlutterPreferencesAreImportedOnce() {
         defaults.set("8199", forKey: "flutter.port")
         defaults.set("0.55", forKey: "flutter.chat.temperature")

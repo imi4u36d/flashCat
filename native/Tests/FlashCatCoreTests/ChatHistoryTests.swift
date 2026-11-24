@@ -82,6 +82,27 @@ final class ChatHistoryTests: XCTestCase {
         XCTAssertEqual(pruned.map(\.id), ["long"])
     }
 
+    func testDeleteRenameAndPinThreads() {
+        let history = ChatHistory(filePath: historyPath)
+        history.save(
+            messages: [ChatMessage(role: "user", content: "甲")],
+            threadID: "a", updatedAt: Date(timeIntervalSince1970: 100))
+        history.save(
+            messages: [ChatMessage(role: "user", content: "乙")],
+            threadID: "b", updatedAt: Date(timeIntervalSince1970: 200))
+        history.waitForWrites()
+
+        history.rename(id: "a", title: "改名后的甲")
+        history.pin(id: "a", true, at: Date(timeIntervalSince1970: 300))
+        history.delete(id: "b")
+        history.waitForWrites()
+
+        let threads = history.load()
+        XCTAssertEqual(threads.map(\.id), ["a"])
+        XCTAssertEqual(threads.first?.title, "改名后的甲")
+        XCTAssertEqual(threads.first?.pinnedAt?.timeIntervalSince1970, 300)
+    }
+
     func testAutoTitleFallsBackToPlaceholder() {
         XCTAssertEqual(ChatHistory.autoTitle(messages: []), "未命名对话")
         XCTAssertEqual(

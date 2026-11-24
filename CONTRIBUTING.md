@@ -16,8 +16,8 @@ flashCat 把「装引擎、下模型、聊天、对外提供本地接口」收�
 
 ```bash
 cd native && swift build          # 0 warning，CI 以 -warnings-as-errors 跑
-cd native && swift test           # Core + 应用 + Kit + CLI 用例（743 条执行，5 条按环境跳过），约 10 秒
-bash scripts/coverage.sh          # 覆盖率门禁：Core domain ≥ 60%，Kit ≥ 80%
+cd native && swift test           # Core + 应用 + Kit + CLI 用例（750 条执行，5 条按环境跳过），约 10 秒
+bash scripts/coverage.sh          # 覆盖率门禁：FlashCatCore ≥ 60%，FlashCatKit ≥ 80%
 make app                          # 组装 /Applications 里的 .app（或 INSTALL=0 只出 dist）
 ```
 
@@ -28,7 +28,7 @@ make app                          # 组装 /Applications 里的 .app（或 INSTA
 
 ## 架构规矩（评审会直接打回的那种）
 
-1. **`FlashCatKit` 不许引 UI。** 只允许 `import Foundation / Network / CryptoKit`。这一层必须能在无窗口的测试进程里跑——317 个 Kit 用例全打在这里；Core 40 个、壳层 290 个、CLI 另有 96 个纯逻辑用例。
+1. **`FlashCatKit` 不许引 UI。** 只允许 `import Foundation / Network / CryptoKit`。这一层必须能在无窗口的测试进程里跑——317 个 Kit 用例全打在这里；Core 47 个、壳层 290 个、CLI 另有 96 个纯逻辑用例。
 2. **依赖单向。** `FlashCat` → `FlashCatKit`。Kit 里出现任何应用侧符号都是破坏。
 3. **引擎差异只许存在于 descriptor 与 adapter。** 不要在 `EngineManager`、安装中心、页面里写 `if engine == .splash`。真需要按引擎分支，先问"这能不能变成 manifest 字段"。
 4. **清单契约是唯一接口。** 除了 `manifest.json` 声明的字段，应用不解释 pack 里的任何文件。

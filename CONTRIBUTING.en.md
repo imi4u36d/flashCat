@@ -55,6 +55,10 @@ walked down to zero without going red on day one, and the ratchet keeps it there
 8. **Paths and the control protocol exist once.** The app and the CLI share
    `FlashCatPaths`, `EngineInstallations`, and `Control/*`; never write a second set of
    directories or JSON shapes inside one target.
+9. **`Core/` must not depend on UI.** `Sources/FlashCat/Core` is the staging area for
+   the future `FlashCatCore` target: only `Foundation` / `Combine` / `CoreGraphics`
+   and `FlashCatKit` are allowed. No SwiftUI / AppKit / AVFoundation, and no
+   `AppState` references. `scripts/check-architecture.sh` blocks new violations in CI.
 
 The full procedure for adding an engine is in "Adding a new engine" in
 `native/Sources/FlashCatKit/SPEC.md`.

@@ -115,7 +115,13 @@ final class DownloadCenter: ObservableObject {
 
     init() {
         // 上一次运行留下的行也要显示：暂停/失败的传输重启后还能继续。
-        downloadTasks = ModelDownloadStore.load()
+        // 读不出来（损坏 / 权限）时保留空列表，但把原因留在系统日志里；
+        // 这时 `host` 还没接上，用户可见的提示等第一次写盘失败再给。
+        do {
+            downloadTasks = try ModelDownloadStore.load()
+        } catch {
+            NSLog("flashCat: 下载任务记录读取失败：%@", String(describing: error))
+        }
     }
 
     // MARK: transfer lifecycle
@@ -548,12 +554,12 @@ final class DownloadCenter: ObservableObject {
             mutate(&task)
             downloadTasks.append(task)
         }
-        ModelDownloadStore.save(downloadTasks)
+        persistTasks()
     }
 
     private func removeTask(engine: EngineID, model: String) {
         downloadTasks.removeAll { $0.engine == engine && $0.model == model }
-        ModelDownloadStore.save(downloadTasks)
+        persistTasks()
         // 下载行消失 = 这份权重在磁盘上定形了，下次扫描重新读字节数。
         EngineModelStore.invalidateMetaCache()
     }
@@ -601,6 +607,17 @@ final class DownloadCenter: ObservableObject {
     /// 阻塞式错误横幅的写入路径只有这一处。
     private func setNotice(_ message: String) {
         host?.notice = message
+    }
+
+    /// 任务表落盘失败要说出来：用户看到的那一行如果重启后消失，至少日志里
+    /// 有原因，而不是被 `try?` 静默吞掉。
+    private func persistTasks() {
+        do {
+            try ModelDownloadStore.save(downloadTasks)
+        } catch {
+            append("下载任务记录写入失败：\(error)", engine: nil)
+            setNotice("下载任务记录写入失败，重启后可能丢失进度")
+        }
     }
 
     private static func totalBytes(in line: String) -> Int? {

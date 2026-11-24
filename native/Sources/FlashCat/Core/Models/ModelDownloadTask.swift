@@ -49,11 +49,10 @@ struct ModelDownloadTask: Codable, Identifiable, Equatable {
 enum ModelDownloadStore {
     static var filePath: String { Paths.supportDirectory + "/model-downloads.json" }
 
-    static func load() -> [ModelDownloadTask] {
-        guard let data = FileManager.default.contents(atPath: filePath) else { return [] }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        guard let tasks = try? decoder.decode([ModelDownloadTask].self, from: data) else { return [] }
+    static func load() throws -> [ModelDownloadTask] {
+        let tasks =
+            try JSONDocument.load(
+                [ModelDownloadTask].self, from: filePath, dateDecoding: .iso8601) ?? []
         // A "downloading" row can only be a crash/quit leftover: the child
         // process is gone, but the partial files are still on disk and a
         // resume picks them up.
@@ -64,12 +63,8 @@ enum ModelDownloadStore {
         }
     }
 
-    static func save(_ tasks: [ModelDownloadTask]) {
-        Paths.ensureDirectory(Paths.supportDirectory)
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(tasks) else { return }
-        try? data.write(to: URL(fileURLWithPath: filePath), options: .atomic)
+    static func save(_ tasks: [ModelDownloadTask]) throws {
+        try JSONDocument.save(
+            tasks, to: filePath, dateEncoding: .iso8601, pretty: true)
     }
 }

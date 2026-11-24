@@ -127,9 +127,10 @@ struct EnginesPage: View {
                     if failures.isEmpty {
                         state.toast(L10n.t("已检查引擎更新"))
                     } else {
-                        let first = EngineCatalog.allIDs.compactMap { id in
-                            failures[id].map { "\(id.displayName)：\($0)" }
-                        }.first ?? ""
+                        let first =
+                            EngineCatalog.allIDs.compactMap { id in
+                                failures[id].map { "\(id.displayName)：\($0)" }
+                            }.first ?? ""
                         state.toast(
                             L10n.format(
                                 "已检查引擎更新，%lld 个引擎失败：%@",
@@ -257,8 +258,9 @@ struct EnginesPage: View {
                         DSMenuTriggerLabel(
                             systemImage: "ellipsis",
                             kind: .icon,
-                            size: .regular)
-                            .opacity(hoveringEngine == id ? 1 : 0.5)
+                            size: .regular
+                        )
+                        .opacity(hoveringEngine == id ? 1 : 0.5)
                     } content: {
                         Button(L10n.t("配置…")) {
                             configuring = id
@@ -283,7 +285,8 @@ struct EnginesPage: View {
 
                     Group {
                         if isActive {
-                            let toggleDisabled = state.isSwitchingModel
+                            let toggleDisabled =
+                                state.isSwitchingModel
                                 || busy
                                 || state.serverState == .starting
                                 || state.serverState == .stopping

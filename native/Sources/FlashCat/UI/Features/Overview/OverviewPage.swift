@@ -883,9 +883,13 @@ struct OverviewPage: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 HStack(spacing: 10) {
-                    lastRunMetric("解码", run.rate > 0 ? Format.compact(run.rate) : "—", run.rate > 0 ? "tok/s" : nil, valueSize: 13, labelSize: 9)
+                    lastRunMetric(
+                        "解码", run.rate > 0 ? Format.compact(run.rate) : "—", run.rate > 0 ? "tok/s" : nil,
+                        valueSize: 13, labelSize: 9)
                     DSDivider(vertical: true).frame(height: 22)
-                    lastRunMetric("输出", run.tokens > 0 ? "\(run.tokens)" : "—", run.tokens > 0 ? "tokens" : nil, valueSize: 13, labelSize: 9)
+                    lastRunMetric(
+                        "输出", run.tokens > 0 ? "\(run.tokens)" : "—", run.tokens > 0 ? "tokens" : nil, valueSize: 13,
+                        labelSize: 9)
                     DSDivider(vertical: true).frame(height: 22)
                     lastRunMetric("时间", run.date.map(Format.relative) ?? "—", nil, valueSize: 13, labelSize: 9)
                 }
@@ -950,7 +954,6 @@ struct OverviewPage: View {
         }
         .fixedSize(horizontal: true, vertical: false)
     }
-
 
     private var chartGrid: some View {
         GeometryReader { proxy in
@@ -1175,8 +1178,9 @@ struct OverviewPage: View {
                     systemImage: "chevron.down",
                     trailingChevron: false,
                     kind: .ghost,
-                    size: .small)
-                    .foregroundStyle(DS.text3)
+                    size: .small
+                )
+                .foregroundStyle(DS.text3)
             } content: {
                 Button(L10n.t("复制 curl 片段")) {
                     state.copy(curl, label: L10n.t("curl 片段已复制"))
@@ -1291,7 +1295,8 @@ struct OverviewPage: View {
         let dialect = session.dialect.isEmpty ? "API" : session.dialect
         let rawModel = session.model.isEmpty ? L10n.t("未命名") : session.model
         let modelDisplay = session.model.isEmpty ? L10n.t("未命名") : state.shortModelName(session.model)
-        let summary = "\(dialect) · \(rawModel) · TTFT \(ttftText) · Decode \(decodeText) · Ctx \(Format.tokens(session.ctxTokens))"
+        let summary =
+            "\(dialect) · \(rawModel) · TTFT \(ttftText) · Decode \(decodeText) · Ctx \(Format.tokens(session.ctxTokens))"
 
         return Button {
             state.copy(summary, label: L10n.t("已复制请求摘要"))

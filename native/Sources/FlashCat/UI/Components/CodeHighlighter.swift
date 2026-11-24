@@ -128,7 +128,9 @@ enum CodeHighlighter {
             words = []
         }
         guard !words.isEmpty else { return }
-        let pattern = "\\b(" + words.map(NSRegularExpression.escapedPattern(for:))
+        let pattern =
+            "\\b("
+            + words.map(NSRegularExpression.escapedPattern(for:))
             .joined(separator: "|") + ")\\b"
         let options: NSRegularExpression.Options =
             language == .sql ? [.caseInsensitive] : []
@@ -154,15 +156,18 @@ enum CodeHighlighter {
     ) {
         switch language {
         case .python, .shell, .yaml:
-            apply(#"#.*$"#, to: text, range: range, color: Palette.comment,
+            apply(
+                #"#.*$"#, to: text, range: range, color: Palette.comment,
                 options: [.anchorsMatchLines])
         case .sql:
-            apply(#"--.*$"#, to: text, range: range, color: Palette.comment,
+            apply(
+                #"--.*$"#, to: text, range: range, color: Palette.comment,
                 options: [.anchorsMatchLines])
         case .html:
             apply(#"<!--[\s\S]*?-->"#, to: text, range: range, color: Palette.comment)
         case .swift, .javascript:
-            apply(#"//.*$"#, to: text, range: range, color: Palette.comment,
+            apply(
+                #"//.*$"#, to: text, range: range, color: Palette.comment,
                 options: [.anchorsMatchLines])
             apply(#"/\*[\s\S]*?\*/"#, to: text, range: range, color: Palette.comment)
         case .json, .other:
@@ -176,17 +181,20 @@ enum CodeHighlighter {
         switch language {
         case .json:
             // 键名（引号后紧跟冒号）与字符串值区分开。
-            apply(#""(?:[^"\\]|\\.)*"(?=\s*:)"#, to: text, range: range,
+            apply(
+                #""(?:[^"\\]|\\.)*"(?=\s*:)"#, to: text, range: range,
                 color: Palette.key, options: [.dotMatchesLineSeparators])
         case .yaml:
-            apply(#"^\s*[\w.-]+(?=\s*:)"#, to: text, range: range,
+            apply(
+                #"^\s*[\w.-]+(?=\s*:)"#, to: text, range: range,
                 color: Palette.key, options: [.anchorsMatchLines])
         case .html:
             apply(#"</?[\w:-]+"#, to: text, range: range, color: Palette.key)
             apply(#"/?>"#, to: text, range: range, color: Palette.key)
         case .swift, .javascript, .python, .shell, .sql, .other:
             // 首字母大写当作类型；关键字与字符串的颜色已经先写，不会被覆盖。
-            apply(#"\b[A-Z][A-Za-z0-9_]*\b"#, to: text, range: range,
+            apply(
+                #"\b[A-Z][A-Za-z0-9_]*\b"#, to: text, range: range,
                 color: Palette.type)
         }
     }

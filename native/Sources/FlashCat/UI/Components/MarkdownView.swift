@@ -143,7 +143,8 @@ struct StreamingMarkdownView: View {
             caching: !streaming,
             fillsWidth: fillsWidth,
             tailFadeAlpha: nil,
-            style: style)
+            style: style
+        )
         .onAppear { sync() }
         .onChange(of: text) { _, _ in sync() }
         .onChange(of: streaming) { _, _ in sync() }
@@ -368,7 +369,8 @@ private struct MarkdownListView: View {
                         .font(
                             item.ordered
                                 ? DS.Font.proseNumber(style.bodySize)
-                                : DS.Font.prose(style.bodySize))
+                                : DS.Font.prose(style.bodySize)
+                        )
                         .foregroundStyle(DS.text3)
                         .gridColumnAlignment(.trailing)
                         .padding(.leading, CGFloat(item.indent) * 16)
@@ -455,7 +457,8 @@ private struct CodeBlockView: View {
         .background(DS.rect(style.chat ? 10 : DS.Radius.md).fill(style.chat ? Color.clear : DS.bg))
         .overlay(
             DS.rect(style.chat ? 10 : DS.Radius.md)
-                .strokeBorder(style.chat ? DS.line : DS.line2, lineWidth: 1))
+                .strokeBorder(style.chat ? DS.line : DS.line2, lineWidth: 1)
+        )
         .clipShape(DS.rect(style.chat ? 10 : DS.Radius.md))
         .onDisappear {
             resetTask?.cancel()
@@ -642,7 +645,8 @@ private struct MarkdownTableView: View {
                                 MarkdownComposer.inlineTableCell(
                                     cell,
                                     isHeader: rowIndex == 0,
-                                    size: style.bodySize))
+                                    size: style.bodySize)
+                            )
                             .lineSpacing(3)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)

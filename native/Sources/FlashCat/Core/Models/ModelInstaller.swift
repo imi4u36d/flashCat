@@ -303,7 +303,8 @@ enum ModelInstaller {
         // 原生 puller 不读 HF_ENDPOINT：镜像来源在这里只能明确拒绝，不能
         // 悄悄退回官方端点。
         guard source == .huggingFace else {
-            throw Failure.message("MLX-Serve 的原生下载器不支持镜像端点；请在「设置 → 模型来源」切回 Hugging Face，或先装一个带 Python 的引擎包，在模型广场把权重下到公共目录")
+            throw Failure.message(
+                "MLX-Serve 的原生下载器不支持镜像端点；请在「设置 → 模型来源」切回 Hugging Face，或先装一个带 Python 的引擎包，在模型广场把权重下到公共目录")
         }
         guard let installation = EngineInstallations.newest(engine, version: nil) else {
             throw Failure.message("还没有安装 \(engine.displayName) 引擎，无法下载模型")

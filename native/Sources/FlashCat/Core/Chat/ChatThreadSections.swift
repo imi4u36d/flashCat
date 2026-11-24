@@ -40,9 +40,10 @@ enum ChatThreadSections {
         let today = calendar.startOfDay(for: now)
         let grouped = Dictionary(grouping: threads) { thread -> Group in
             guard thread.pinnedAt == nil else { return .pinned }
-            let days = calendar.dateComponents(
-                [.day], from: calendar.startOfDay(for: thread.updatedAt), to: today
-            ).day ?? 0
+            let days =
+                calendar.dateComponents(
+                    [.day], from: calendar.startOfDay(for: thread.updatedAt), to: today
+                ).day ?? 0
             switch days {
             case ...0: return .today
             case 1: return .yesterday

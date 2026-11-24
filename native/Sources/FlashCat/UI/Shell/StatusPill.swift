@@ -13,7 +13,6 @@ import SwiftUI
 
 // MARK: - Detail popover
 
-
 private struct StatusDetailPopover: View {
     @ObservedObject var state: AppState
     @ObservedObject private var gateway = GatewayController.shared

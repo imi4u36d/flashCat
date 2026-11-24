@@ -315,7 +315,8 @@ struct CommandPalette: View {
                 })
         }
         var seenModels = Set<String>()
-        let engines = [state.activeEngine]
+        let engines =
+            [state.activeEngine]
             + EngineCatalog.allIDs.filter { $0 != state.activeEngine }
         for engine in engines {
             for entry in state.libraryEntries(for: engine).filter({ $0.installed && !$0.isDraft }) {

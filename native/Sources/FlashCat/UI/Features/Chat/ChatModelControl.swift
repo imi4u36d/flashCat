@@ -50,7 +50,8 @@ struct ChatModelControl: View {
         .help(
             state.selectedModel.isEmpty
                 ? L10n.t("切换模型")
-                : "\(state.activeEngine.displayName) · \(state.selectedModel)")
+                : "\(state.activeEngine.displayName) · \(state.selectedModel)"
+        )
         .accessibilityLabel(L10n.t("模型"))
         .accessibilityValue(modelName)
         .popover(isPresented: $open, arrowEdge: .top) {

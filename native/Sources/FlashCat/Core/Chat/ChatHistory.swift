@@ -323,7 +323,8 @@ final class ChatHistory {
         let existing = threads.first(where: { $0.id == threadID })
         // 用户改过名、置过顶的会话在每轮保存后仍然是那个名字、那个位置：
         // 以前这里每轮都按首句重算标题，改名刚生效就被下一轮回答覆盖。
-        let title = existing.flatMap { $0.title.isEmpty ? nil : $0.title }
+        let title =
+            existing.flatMap { $0.title.isEmpty ? nil : $0.title }
             ?? Self.autoTitle(messages: completed)
 
         if let index = threads.firstIndex(where: { $0.id == threadID }) {

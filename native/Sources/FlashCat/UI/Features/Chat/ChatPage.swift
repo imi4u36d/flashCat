@@ -476,9 +476,10 @@ struct ChatPage: View {
                     Text(
                         L10n.format(
                             "上下文已用 %lld%%，再长就会顶到窗口上限。",
-                            Int64((ratio * 100).rounded())))
-                        .font(DS.Font.prose(11.5))
-                        .foregroundStyle(DS.text2)
+                            Int64((ratio * 100).rounded()))
+                    )
+                    .font(DS.Font.prose(11.5))
+                    .foregroundStyle(DS.text2)
                     Spacer(minLength: 6)
                     Button(L10n.t("新建对话")) {
                         state.newConversation()
@@ -878,7 +879,8 @@ struct ChatPage: View {
         }
         .shadow(
             color: Color.black.opacity(colorScheme == .dark ? 0.28 : 0.06),
-            radius: 14, y: 4)
+            radius: 14, y: 4
+        )
         .contentShape(DS.rect(22))
         .onTapGesture { focusComposer() }
         .overlay {
@@ -942,11 +944,13 @@ struct ChatPage: View {
                 .font(
                     .system(
                         size: streaming ? 9.5 : 12.5,
-                        weight: streaming ? .bold : .semibold))
+                        weight: streaming ? .bold : .semibold)
+                )
                 .foregroundStyle(enabled ? Color.white : DS.text3)
                 .frame(width: 28, height: 28)
                 .background(
-                    Circle().fill(enabled ? DS.accent : DS.hover))
+                    Circle().fill(enabled ? DS.accent : DS.hover)
+                )
                 .contentShape(Circle())
         }
         .buttonStyle(.plainHit)
@@ -1211,7 +1215,8 @@ struct ChatPage: View {
         return true
     }
 
-    private func attachImage(at url: URL, slot: VideoFrameSlot? = nil) {        if supportsVideoReferences {
+    private func attachImage(at url: URL, slot: VideoFrameSlot? = nil) {
+        if supportsVideoReferences {
             attachReferenceImage(at: url)
             return
         }
@@ -2137,7 +2142,8 @@ private struct MessageRow: View, Equatable {
                 .padding(.vertical, 3)
                 .background(
                     DS.rect(7).fill(
-                        hoveringToggle && !reasoning.isEmpty ? DS.hover : .clear))
+                        hoveringToggle && !reasoning.isEmpty ? DS.hover : .clear)
+                )
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plainHit)
@@ -2170,24 +2176,25 @@ private struct MessageRow: View, Equatable {
             PacedText(
                 text: reasoning,
                 streaming: message.streaming,
-                tail: latest)
-                .font(.system(size: 13))
-                .lineSpacing(3)
-                .foregroundStyle(DS.text2)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(maxHeight: latest ? 96 : nil, alignment: .bottom)
-                .clipped()
-                .mask {
-                    if latest {
-                        LinearGradient(
-                            colors: [.clear, .black.opacity(0.75), .black],
-                            startPoint: .top, endPoint: .bottom)
-                    } else {
-                        Rectangle()
-                    }
+                tail: latest
+            )
+            .font(.system(size: 13))
+            .lineSpacing(3)
+            .foregroundStyle(DS.text2)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxHeight: latest ? 96 : nil, alignment: .bottom)
+            .clipped()
+            .mask {
+                if latest {
+                    LinearGradient(
+                        colors: [.clear, .black.opacity(0.75), .black],
+                        startPoint: .top, endPoint: .bottom)
+                } else {
+                    Rectangle()
                 }
+            }
         }
         .padding(.leading, 14)
         .padding(.top, 8)
@@ -2594,7 +2601,8 @@ struct ChatParametersSheet: View {
                                 storedThinkingMode = mode.rawValue
                                 state.settings.setThinkingMode(mode)
                             }),
-                        options: ThinkingMode.allCases.map { ($0, $0.label) })
+                        options: ThinkingMode.allCases.map { ($0, $0.label) }
+                    )
                     .accessibilityLabel(L10n.t("思考等级"))
                     .accessibilityValue(
                         ChatThinkingLevel.text(mode: thinkingMode, effort: reasoningEffort))
@@ -3104,9 +3112,9 @@ private struct ImageOptionsPopover: View {
                             Int64(profile.alignment)
                         )
                     )
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(DS.text3)
-                        .fixedSize(horizontal: false, vertical: true)
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(DS.text3)
+                    .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text(L10n.t("Mage 的采样器只认上面的固定画布，不能自定宽高。"))
                         .font(.system(size: 9.5))

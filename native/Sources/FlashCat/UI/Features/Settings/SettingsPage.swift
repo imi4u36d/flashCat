@@ -146,7 +146,8 @@ struct SettingsPage: View {
                     .frame(height: 30)
                     .background(
                         DS.rect(DS.Radius.sm)
-                            .fill(section == item ? DS.selected : .clear))
+                            .fill(section == item ? DS.selected : .clear)
+                    )
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -379,7 +380,8 @@ struct SettingsPage: View {
 
     private func stepPort(_ id: EngineID, by delta: Int) {
         let range = id.portRange
-        let current = Int(ports[id.rawValue] ?? "")
+        let current =
+            Int(ports[id.rawValue] ?? "")
             ?? EngineStore.shared.configuration(for: id).port
             ?? id.defaultPort
         let next = min(max(current + delta, range.lowerBound), range.upperBound)

@@ -40,7 +40,8 @@ struct LabPage: View {
         VStack(alignment: .leading, spacing: 0) {
             DSPageHeader(
                 title: "画廊",
-                subtitle: "\(L10n.format("图片 %lld", Int64(images.count))) · \(L10n.format("视频 %lld", Int64(videos.count)))"
+                subtitle:
+                    "\(L10n.format("图片 %lld", Int64(images.count))) · \(L10n.format("视频 %lld", Int64(videos.count)))"
             ) {
                 DSIconButton(
                     systemName: selecting ? "xmark.circle" : "checkmark.circle",
@@ -150,9 +151,9 @@ struct LabPage: View {
                         ? L10n.format("共 %lld 张", Int64(filteredCount))
                         : L10n.format("共 %lld 个", Int64(filteredCount))
                 )
-                    .font(DS.Font.xs)
-                    .foregroundStyle(DS.text3)
-                    .monospacedDigit()
+                .font(DS.Font.xs)
+                .foregroundStyle(DS.text3)
+                .monospacedDigit()
             }
 
             Spacer(minLength: 8)

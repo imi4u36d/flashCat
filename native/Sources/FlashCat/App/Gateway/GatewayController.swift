@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-@preconcurrency import FlashCatKit
 import Combine
+@preconcurrency import FlashCatKit
 import Foundation
 
 /// The local API gateway: one fixed port that speaks both standard dialects —

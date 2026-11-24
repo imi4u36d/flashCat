@@ -295,7 +295,8 @@ public actor EngineUpstreamChecker {
             guard !version.isEmpty else { return nil }
             let title = matches("<title>(.*?)</title>", in: entry)
                 .first.map { $0[1].decodedHTMLEntities }
-            let page = href.flatMap(URL.init(string:))
+            let page =
+                href.flatMap(URL.init(string:))
                 ?? ConstantURL.make("https://github.com/\(repository)/releases")
             return EngineUpstreamRelease(
                 version: version,
@@ -366,10 +367,10 @@ public actor EngineUpstreamChecker {
     }
 }
 
-private extension String {
+extension String {
     /// Minimal entity decoder for titles and hrefs; feeds escape `&`, `<` and
     /// quotes. `&amp;` is decoded last so `&amp;lt;` does not become `<`.
-    var decodedHTMLEntities: String {
+    fileprivate var decodedHTMLEntities: String {
         var result = self
         for (entity, value) in [
             ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"),

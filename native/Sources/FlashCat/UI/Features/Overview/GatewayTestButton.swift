@@ -160,7 +160,8 @@ enum GatewayTestResponse {
             if let choices = object["choices"] as? [[String: Any]],
                 let message = choices.first?["message"] as? [String: Any]
             {
-                let content = (message["content"] as? String)
+                let content =
+                    (message["content"] as? String)
                     ?? (message["reasoning_content"] as? String)
                     ?? ""
                 if !content.isEmpty {

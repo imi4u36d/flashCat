@@ -123,9 +123,10 @@ struct ChatComposerField: NSViewRepresentable {
         // Binding 比：输入法组字中的 marked text 已经在文本存储里，却还没进
         // Binding，比一下就会把没确认的拼音清掉——旧实现正是这么丢掉输入的。
         // 视图手里的内容比回报过的新、草稿跟回报过的一致、正在组字，都不碰。
-        if switched || (textView.string == coordinator.lastReportedText
-            && text != coordinator.lastReportedText
-            && !textView.hasMarkedText())
+        if switched
+            || (textView.string == coordinator.lastReportedText
+                && text != coordinator.lastReportedText
+                && !textView.hasMarkedText())
         {
             let caret = min(textView.selectedRange().location, text.count)
             textView.string = text

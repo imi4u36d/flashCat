@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
+import FlashCatKit
 import Foundation
 
 /// flashCat 自身的更新检查：读 GitHub 的 releases.atom，不占 REST API 配额。
 /// 引擎更新走 `EngineUpstream` 的同一套思路；这里只保留「最新正式版」一件事。
 enum AppUpdateChecker {
-    static let feedURL = URL(string: "https://github.com/imi4u36d/flashCat/releases.atom")!
+    static let feedURL = ConstantURL.make("https://github.com/imi4u36d/flashCat/releases.atom")
 
     struct Release: Equatable {
         let version: String
@@ -27,7 +28,8 @@ enum AppUpdateChecker {
             throw URLError(.badServerResponse)
         }
         let releases = parse(xml)
-        return releases
+        return
+            releases
             .filter { isNewer($0.version, than: current) }
             .max { lhs, rhs in isNewer(rhs.version, than: lhs.version) }
     }

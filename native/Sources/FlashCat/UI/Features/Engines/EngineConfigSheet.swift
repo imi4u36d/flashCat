@@ -102,8 +102,8 @@ struct EngineConfigSheet: View {
                         installedVersion ?? L10n.t("未安装"),
                         portText.isEmpty ? "—" : portText)
                 )
-                    .font(DS.Font.xs)
-                    .foregroundStyle(DS.text3)
+                .font(DS.Font.xs)
+                .foregroundStyle(DS.text3)
             }
             Spacer(minLength: 8)
             DSIconButton(systemName: "xmark", help: "关闭") { dismiss() }
@@ -130,8 +130,8 @@ struct EngineConfigSheet: View {
                             Int64(engine.portRange.lowerBound),
                             Int64(engine.portRange.upperBound))
                     )
-                        .font(DS.Font.xs)
-                        .foregroundStyle(DS.text3)
+                    .font(DS.Font.xs)
+                    .foregroundStyle(DS.text3)
                     Spacer(minLength: 0)
                 }
                 if let portValidationError {

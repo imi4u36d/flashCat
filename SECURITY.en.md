@@ -31,7 +31,7 @@ Knowing these four points prevents a lot of false reports:
 3. **There is no web layer.** The interface is native SwiftUI — no `WKWebView`, no
    embedded HTML/JS, no script bridge. Remote content (Hugging Face model cards) is
    converted to Markdown with every HTML tag stripped in
-   `native/Sources/FlashCat/UI/ModelCardText.swift` and then rendered as plain styled
+   `native/Sources/FlashCat/UI/Features/Models/ModelCardText.swift` and then rendered as plain styled
    text: no scripts run, and no remote image is loaded.
 4. **The control interface is token-gated.** It binds loopback only, requires a token
    generated fresh on every launch

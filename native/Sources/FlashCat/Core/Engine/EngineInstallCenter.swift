@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import AppKit
+import Combine
 import FlashCatKit
-import SwiftUI
+import Foundation
 
 /// Drives pack installs: loads the release index once, then runs one install at
 /// a time (they write into the same folder tree). Driven by the engines page

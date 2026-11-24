@@ -92,7 +92,7 @@ The full procedure for adding an engine is in "Adding a new engine" in
 - **Read `native/Sources/FlashCat/UI-SPEC.md` before changing the interface.** The seven
   pages only read `AppState` and only call its methods; views never make network
   requests, read or write files, or mutate `EngineStore` behind `AppState`'s back. New
-  pages reuse the `Native` tokens and components in `Design.swift`; do not introduce a
+  pages reuse the `Native` tokens and components in `UI/DesignSystem/Design.swift`; do not introduce a
   second palette or corner radius. Prefer a button or menu item for new actions over a
   keyboard shortcut.
 - **Do not bring the web layer back.** No `WKWebView`, no embedded HTML/JS, no

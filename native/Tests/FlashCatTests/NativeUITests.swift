@@ -211,7 +211,7 @@ final class NativeUITests: XCTestCase {
             .deletingLastPathComponent()  // Tests/FlashCatTests/
             .deletingLastPathComponent()  // Tests/
             .deletingLastPathComponent()  // native/
-            .appendingPathComponent("Sources/FlashCat/App.swift")
+            .appendingPathComponent("Sources/FlashCat/App/App.swift")
         let appSource = try String(contentsOf: appURL, encoding: .utf8)
         let pattern = #"state\.section\s*=\s*\.(\w+)\s*\}\s*\.keyboardShortcut\("([0-9,])",\s*modifiers:\s*\.command\)"#
         let regex = try NSRegularExpression(pattern: pattern)

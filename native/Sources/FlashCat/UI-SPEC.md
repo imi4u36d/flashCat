@@ -20,38 +20,38 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 
 | 文件 | 职责 |
 | --- | --- |
-| `UI/ConsoleShell.swift` | 窗口根视图、标题栏、侧栏、页路由与全局确认弹窗 |
-| `UI/StatusPill.swift` | 侧栏收起时的紧凑状态胶囊、窗口左下角的通知浮层与引擎详情弹层 |
-| `IslandNotice.swift` | 通知的数据模型与信息 / 成功 / 警告 / 错误分类 |
-| `UI/ModelFamily.swift` | 模型家族识别与家族徽标 |
-| `UI/ModelCardText.swift` | Hugging Face 模型卡的 Markdown 清洗 |
-| `UI/CommandPalette.swift` | 命令面板：页面 / 动作 / 本地模型 / 最近对话（鼠标操作） |
-| `UI/OverviewPage.swift` | 页头、当前模型条、三项实时指标、吞吐曲线 / 上次运行卡、上下文、接口与三步清单 |
-| `UI/ChatPage.swift` | 会话转录、用户气泡 / 思考行 / 操作行（复制 / 编辑重发 / 分支）、新会话空态、输入卡与生成参数 |
-| `ChatThreadSections.swift` | 「最近对话」的搜索、置顶与按日期分组 |
-| `UI/ChatRecents.swift` | 与侧栏共用的会话行、新建对话按钮，以及对话页顶栏的历史弹层 |
-| `UI/MarkdownView.swift` | 对话正文的块级 Markdown 渲染（标题/列表/表格/代码/引用） |
-| `UI/CodeHighlighter.swift` | 代码块的语言高亮（关键字 / 字符串 / 注释 / 数字 / 类型）与按行切分 |
-| `GatewaySnippets.swift` | 接口卡的 curl / Python 调用片段 |
-| `GatewayClientSummary.swift` | 最近客户端按 `User-Agent` 聚合 |
-| `UI/GatewayTestButton.swift` | 接口测试请求与结果弹层 |
-| `AppUpdateChecker.swift` | flashCat 自身的 releases.atom 更新检查 |
-| `UI/ModelsPage.swift` | 本地库 / 推荐两种模式、家族聚合、排序与「能跑」过滤、下载/使用/删除 |
-| `UI/ModelsPage.swift` 内的 `ModelRow` | 单个变体行的动作、来源与进度 |
-| `UI/HubSheet.swift` | 模型广场：搜索、排序、格式筛选、翻页、模型卡、下载 |
-| `UI/DownloadCenterSheet.swift` | 下载任务：进度、暂停、继续、清理半成品 |
-| `UI/EnginesPage.swift` | 五台引擎的安装、启停、切换、上游版本与运行时删除 |
-| `UI/EngineConfigSheet.swift` | 单台引擎的端口与调优开关 |
-| `UI/LogsPage.swift` | 日志：合并全部引擎、来源 / 级别 / 搜索同一行、暂停、复制、清空 |
-| `LogFeed.swift` | 多引擎日志尾巴合并、来源标签与按引擎指纹的增量裁剪 |
-| `UI/SettingsPage.swift` | 分区设置：通用 / 引擎 / 模型来源 / 接口 / 对话 / 关于 |
-| `UI/LabPage.swift` | 画廊：图片 / 视频网格、时长角标、多选导出、缩略图预取与详情入口 |
-| `UI/GalleryDetailSheet.swift` | 生成结果详情：大图、视频播放、参数与提示词复用 |
-| `UI/ChatColumn.swift` | 对话列宽换算：拖动上下限、落盘夹取与气泡 / 输入卡派生 |
-| `UI/VideoPlayback.swift` | 用 QuickTime 打开生成视频，失败退回默认应用 |
-| `UI/LaunchPage.swift` | 首次启动的硬件推荐与引擎安装 |
-| `UI/DesignSystem.swift` | 唯一设计源 `DS`：色阶、字号、圆角、动效、页头（`DSPageHeader`）与基础控件 |
-| `Design.swift` / `Theme.swift` | 旧 token 的兼容别名与浅色 / 深色解析（`Native` / `AppAppearance`） |
+| `UI/Shell/ConsoleShell.swift` | 窗口根视图、标题栏、侧栏、页路由与全局确认弹窗 |
+| `UI/Shell/StatusPill.swift` | 侧栏收起时的紧凑状态胶囊、窗口左下角的通知浮层与引擎详情弹层 |
+| `App/State/IslandNotice.swift` | 通知的数据模型与信息 / 成功 / 警告 / 错误分类 |
+| `UI/Components/ModelFamily.swift` | 模型家族识别与家族徽标 |
+| `UI/Features/Models/ModelCardText.swift` | Hugging Face 模型卡的 Markdown 清洗 |
+| `UI/Shell/CommandPalette.swift` | 命令面板：页面 / 动作 / 本地模型 / 最近对话（鼠标操作） |
+| `UI/Features/Overview/OverviewPage.swift` | 页头、当前模型条、三项实时指标、吞吐曲线 / 上次运行卡、上下文、接口与三步清单 |
+| `UI/Features/Chat/ChatPage.swift` | 会话转录、用户气泡 / 思考行 / 操作行（复制 / 编辑重发 / 分支）、新会话空态、输入卡与生成参数 |
+| `Core/Chat/ChatThreadSections.swift` | 「最近对话」的搜索、置顶与按日期分组 |
+| `UI/Features/Chat/ChatRecents.swift` | 与侧栏共用的会话行、新建对话按钮，以及对话页顶栏的历史弹层 |
+| `UI/Components/MarkdownView.swift` | 对话正文的块级 Markdown 渲染（标题/列表/表格/代码/引用） |
+| `UI/Components/CodeHighlighter.swift` | 代码块的语言高亮（关键字 / 字符串 / 注释 / 数字 / 类型）与按行切分 |
+| `Core/Gateway/GatewaySnippets.swift` | 接口卡的 curl / Python 调用片段 |
+| `Core/Gateway/GatewayClientSummary.swift` | 最近客户端按 `User-Agent` 聚合 |
+| `UI/Features/Overview/GatewayTestButton.swift` | 接口测试请求与结果弹层 |
+| `Core/Support/AppUpdateChecker.swift` | flashCat 自身的 releases.atom 更新检查 |
+| `UI/Features/Models/ModelsPage.swift` | 本地库 / 推荐两种模式、家族聚合、排序与「能跑」过滤、下载/使用/删除 |
+| `UI/Features/Models/ModelsPage.swift` 内的 `ModelRow` | 单个变体行的动作、来源与进度 |
+| `UI/Features/Models/HubSheet.swift` | 模型广场：搜索、排序、格式筛选、翻页、模型卡、下载 |
+| `UI/Features/Engines/DownloadCenterSheet.swift` | 下载任务：进度、暂停、继续、清理半成品 |
+| `UI/Features/Engines/EnginesPage.swift` | 五台引擎的安装、启停、切换、上游版本与运行时删除 |
+| `UI/Features/Engines/EngineConfigSheet.swift` | 单台引擎的端口与调优开关 |
+| `UI/Features/Logs/LogsPage.swift` | 日志：合并全部引擎、来源 / 级别 / 搜索同一行、暂停、复制、清空 |
+| `Core/Logs/LogFeed.swift` | 多引擎日志尾巴合并、来源标签与按引擎指纹的增量裁剪 |
+| `UI/Features/Settings/SettingsPage.swift` | 分区设置：通用 / 引擎 / 模型来源 / 接口 / 对话 / 关于 |
+| `UI/Features/Lab/LabPage.swift` | 画廊：图片 / 视频网格、时长角标、多选导出、缩略图预取与详情入口 |
+| `UI/Features/Lab/GalleryDetailSheet.swift` | 生成结果详情：大图、视频播放、参数与提示词复用 |
+| `UI/Features/Chat/ChatColumn.swift` | 对话列宽换算：拖动上下限、落盘夹取与气泡 / 输入卡派生 |
+| `UI/Components/VideoPlayback.swift` | 用 QuickTime 打开生成视频，失败退回默认应用 |
+| `UI/Features/Launch/LaunchPage.swift` | 首次启动的硬件推荐与引擎安装 |
+| `UI/DesignSystem/DesignSystem.swift` | 唯一设计源 `DS`：色阶、字号、圆角、动效、页头（`DSPageHeader`）与基础控件 |
+| `UI/DesignSystem/Design.swift` / `UI/DesignSystem/Theme.swift` | 旧 token 的兼容别名与浅色 / 深色解析（`Native` / `AppAppearance`） |
 
 ## 窗口 chrome
 
@@ -182,7 +182,7 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 
 应用采用**声明式 SwiftUI 快捷键 + 命令行互补**的策略，保留安全、无侵入的系统菜单与焦点内键盘操作：
 - **允许的声明式快捷键**：系统菜单栏命令（`⌘K` 命令面板、`⌘1`–`⌘6` 切换对话/画廊/概览/模型库/引擎/日志、`⌘,` 设置、`⌘N` 新建对话、`⌃⌘S` 折叠边栏）、命令面板的方向键/回车/Esc、以及搜索框和弹窗的 Esc/回车提交。
-- **仍然禁止的做法**：不允许在 `Sources/FlashCat` 注册全局或局部 `NSEvent` 键盘监听（`addGlobalMonitorForEvents` / `addLocalMonitorForEvents`），避免干扰系统输入法或全局快捷键管理器；`override func keyDown(with:)` 依然只允许出现在 `UI/ChatComposerField.swift`（负责回车发送、⇧回车换行、Escape 停止生成，并在 `hasMarkedText()` 组字期间交回 AppKit）。
+- **仍然禁止的做法**：不允许在 `Sources/FlashCat` 注册全局或局部 `NSEvent` 键盘监听（`addGlobalMonitorForEvents` / `addLocalMonitorForEvents`），避免干扰系统输入法或全局快捷键管理器；`override func keyDown(with:)` 依然只允许出现在 `UI/Features/Chat/ChatComposerField.swift`（负责回车发送、⇧回车换行、Escape 停止生成，并在 `hasMarkedText()` 组字期间交回 AppKit）。
 - 这两项边界由 `LocalizationTests.testNoInAppKeyboardShortcutsRemain` 与 `testReturnKeyIsOnlyHandledByComposer` 持续守卫；批量自动化与脚本效率继续由 `flashcat` 命令行承担。
 
 ## 状态与数据流
@@ -274,7 +274,7 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 - 主动作按钮采用高对比单色墨块（日间 `#171717` / 夜间 `#EDEDED`）；聚焦、链接与关键强调色使用
   ZCode 蓝（日间 `#0B7FFF` / 夜间 `#3B82F6`），状态色只用于状态。
 - 危险态采用浅红实色底 + 1px 描边 + 高对比红字，图标与文字保持清晰可读。
-- 两副皮肤共享同一套语义 token（`DS` + `Theme.swift` 的 `NSColor.adaptive`），
+- 两副皮肤共享同一套语义 token（`DS` + `UI/DesignSystem/Theme.swift` 的 `NSColor.adaptive`），
   视图不判断当前是哪套皮肤；换肤由 `ThemeController` 改 **内容视图** 的外观
   （`window.contentView.appearance`），颜色自动重解，不做自定义过渡。
 - 窗口本身的外观恒定是 Aqua，**不跟着皮肤走**：macOS 按窗口外观画窗口阴影，

@@ -46,6 +46,18 @@ graph TD
 | `scripts/engines` | 把上游产物打成自包含运行时 pack，并生成发布索引 | [flashcat-engine-packs](scripts/engines/SPEC.md) |
 | `manifest.json` 契约 | pack 与应用之间唯一的接口 | [flashcat-manifest-contract](scripts/engines/manifest-template.md) |
 
+壳内的源码按层归位，不再平铺在 `Sources/FlashCat` 根目录：
+
+| 目录 | 内容 | 依赖规则 |
+| --- | --- | --- |
+| `App/` | 入口、菜单栏、状态栏、登录项、控制接口与网关适配、UI 状态 | 可以 import AppKit / SwiftUI |
+| `Composition/` | `AppState` 装配根与接线 | 只做对象构造与转发 |
+| `Core/` | 对话、引擎、模型、Hub、日志、指标与无 UI 的支撑代码 | 不许 import SwiftUI / AppKit / AVFoundation；不直接引用 `AppState` |
+| `Media/` | 依赖 AppKit / AVFoundation 的图像视频客户端、画廊与缩略图 | 只由 App 层装配 |
+| `UI/` | `DesignSystem/`、`Shell/`、`Components/`、`Features/<页面>/` | 只读 `AppState`，不取数、不写盘 |
+
+`Core/` 是下一步 `FlashCatCore` target 的暂存位置；`scripts/check-architecture.sh` 守住其中能机器判定的规则。
+
 依赖边只有三条是真的：应用依赖 Kit（多个文件 `import FlashCatKit`）；命令行依赖 Kit 与控制协议；Kit 依赖系统框架，从不反向引用应用符号。界面与状态在同一进程里，不再有跨语言桥；命令行与应用之间只有本机回环 HTTP。
 
 ## 不变量
@@ -65,7 +77,7 @@ graph TD
 
 ## 决策
 
-**表现层回到原生。** 1.3.0 曾把六页界面换成 `WKWebView` + HTML/CSS/JS，用一条 JSON 快照桥把 Swift 状态推给网页。代价是三套语言（Swift / JS / CSS）、一份必须与源码同步的打包产物、以及 snapshot 与流式增量两套文本管线。原生重写把这层删掉：页面直接订阅 `AppState`，动作直接调用方法，视觉统一在 `Design.swift` 的 token 与组件上。视觉方向是「仪器化」的 macOS 原生语言——纯色画布、描边分层、等宽读数——而不是网页玻璃拟态。详见 [flashcat-ui](native/Sources/FlashCat/UI-SPEC.md)。
+**表现层回到原生。** 1.3.0 曾把六页界面换成 `WKWebView` + HTML/CSS/JS，用一条 JSON 快照桥把 Swift 状态推给网页。代价是三套语言（Swift / JS / CSS）、一份必须与源码同步的打包产物、以及 snapshot 与流式增量两套文本管线。原生重写把这层删掉：页面直接订阅 `AppState`，动作直接调用方法，视觉统一在 `UI/DesignSystem/Design.swift` 的 token 与组件上。视觉方向是「仪器化」的 macOS 原生语言——纯色画布、描边分层、等宽读数——而不是网页玻璃拟态。详见 [flashcat-ui](native/Sources/FlashCat/UI-SPEC.md)。
 
 **引擎运行时永不随应用打包。** 三个原因共同决定：pack 是 GB 级（oMLX 一个就 590 MB，全塞进来应用会从 15 MB 变成数 GB，签名与分发一起变复杂）；引擎有自己的上游发布节奏，做成 pack 才能让引擎页比对上游、单独更新而不发新版应用；引擎是上游项目的成果，重分发二进制存在许可与合规顾虑，所以仓库只发构建脚本、让用户机器自己装。
 

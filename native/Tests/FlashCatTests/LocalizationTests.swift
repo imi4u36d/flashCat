@@ -103,7 +103,7 @@ final class LocalizationTests: XCTestCase {
 
         let composer = try String(
             contentsOf: root.appendingPathComponent(
-                "UI/ChatComposerField.swift"), encoding: .utf8)
+                "UI/Features/Chat/ChatComposerField.swift"), encoding: .utf8)
         XCTAssertTrue(composer.contains("onSend?()"), "回车必须映射成发送")
         XCTAssertTrue(composer.contains("insertNewline(nil)"), "⌘回车必须映射成换行")
         XCTAssertTrue(composer.contains("hasMarkedText()"), "输入法组字期间不能发送")
@@ -119,7 +119,7 @@ final class LocalizationTests: XCTestCase {
             .deletingLastPathComponent()
         let source = try String(
             contentsOf: root.appendingPathComponent(
-                "Sources/FlashCat/ControlServer+Documents.swift"), encoding: .utf8)
+                "Sources/FlashCat/App/Control/ControlServer+Documents.swift"), encoding: .utf8)
         let english = try XCTUnwrap(
             Bundle(
                 path: try XCTUnwrap(

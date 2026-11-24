@@ -2,8 +2,8 @@
 // Copyright (c) 2026 wangzhuo
 
 @preconcurrency import FlashCatKit
+import Combine
 import Foundation
-import SwiftUI
 
 /// The local API gateway: one fixed port that speaks both standard dialects —
 /// OpenAI (`/v1/chat/completions`, `/v1/models`) and Anthropic

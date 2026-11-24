@@ -54,7 +54,7 @@ make app                          # 组装 /Applications 里的 .app（或 INSTA
 - CLI 的解析、输出与 SSE 解码进 `FlashCatCLICoreTests`；控制协议路由/文档进 `FlashCatCLICoreTests`（依赖 Kit，不需要启动应用）。
 - 修 bug 请带一条能复现它的用例。解析类问题尤其如此——`StatusParserTests` 里每个用例都对应过一次线上错误。
 - 涉及真实归档的安装流程用 `PackInstallIntegrationTests` 的跳过机制，不要在 CI 里拉 GB 级文件。
-- **界面改动先读 `native/Sources/FlashCat/UI-SPEC.md`。** 七个页面只读 `AppState`、只调它的方法；视图里不直接发网络请求、不读写文件、不绕过 `AppState` 改 `EngineStore`。新增页面沿用 `Design.swift` 的 `Native` token 与组件，不引入第二套色板或圆角。新增动作优先做成按钮/菜单项，不要加键盘快捷键。
+- **界面改动先读 `native/Sources/FlashCat/UI-SPEC.md`。** 七个页面只读 `AppState`、只调它的方法；视图里不直接发网络请求、不读写文件、不绕过 `AppState` 改 `EngineStore`。新增页面沿用 `UI/DesignSystem/Design.swift` 的 `Native` token 与组件，不引入第二套色板或圆角。新增动作优先做成按钮/菜单项，不要加键盘快捷键。
 - **不许把网页层加回来。** 没有 `WKWebView`、没有内嵌 HTML/JS、没有跨语言快照桥。需要富文本就用 `MarkdownView`，需要图表就用 Swift Charts。
 
 ## 提交

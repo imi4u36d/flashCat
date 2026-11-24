@@ -48,6 +48,13 @@ jobs:
           # installed pack". No network, no engine toolchain required.
           bash scripts/engines/lib-pack-selftest.sh
 
+      # 分层规则的机器守卫：Core/ 不得 import UI 框架或引用装配根，
+      # AppState 不得越过行数预算，UI 不得出现 $state. 双向绑定。
+      # 规则在 scripts/check-architecture.sh 里，新增例外必须写在脚本里并注明原因。
+      - name: Architecture guard
+        working-directory: .
+        run: bash scripts/check-architecture.sh
+
       - name: Toolchain
         run: swift --version
 

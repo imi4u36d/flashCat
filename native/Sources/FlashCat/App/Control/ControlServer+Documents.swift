@@ -452,12 +452,9 @@ extension ControlServer {
                     settings.setLaunchAtLogin(value)
                     LoginItem.set(enabled: value)
                 }),
-            bool(
-                "gatewayEnabled", "API 网关", get: { settings.gatewayEnabled },
-                set: { value in
-                    settings.setGatewayEnabled(value)
-                    state.applyGatewaySettings()
-                }),
+            ConfigBinding(
+                key: "gatewayEnabled", title: "API 网关", kind: "bool", mutable: false,
+                read: { ControlConfigGrammar.format(.bool(true)) }, write: nil),
             int(
                 "gatewayPort", "API 网关端口", range: 1024...65535,
                 get: { settings.gatewayPort },
@@ -465,14 +462,9 @@ extension ControlServer {
                     settings.setGatewayPort(value)
                     state.applyGatewaySettings()
                 }),
-            bool(
-                "controlAPIEnabled", "命令行接口", get: { settings.controlAPIEnabled },
-                set: { value in
-                    settings.setControlAPIEnabled(value)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        state.applyControlSettings()
-                    }
-                }),
+            ConfigBinding(
+                key: "controlAPIEnabled", title: "命令行接口", kind: "bool", mutable: false,
+                read: { ControlConfigGrammar.format(.bool(true)) }, write: nil),
             int(
                 "controlPort", "命令行接口端口", range: 1024...65535,
                 get: { settings.controlPort },
@@ -613,7 +605,7 @@ extension ControlServer {
                 title: "API 网关",
                 detail: state.gateway.isRunning
                     ? state.gateway.baseURL + "/v1"
-                    : (state.settings.gatewayEnabled ? "已启用但未运行" : "已关闭")))
+                    : "接口未运行"))
         let models = state.engineModels().filter { !$0.helper && !$0.hidden }
         checks.append(
             ControlDoctorCheck(

@@ -83,102 +83,6 @@ extension SettingsPage {
         }
     }
 
-    var portsCard: some View {
-        SettingsCard {
-            SettingsRow(title: "引擎端口", detail: "各引擎固定起始端口，互不抢占", trailingTop: true) {
-                EmptyView()
-            }
-            DSDivider()
-            ForEach(EngineCatalog.allIDs, id: \.self) { id in
-                HStack(spacing: 10) {
-                    LetterTile(
-                        letter: String(id.displayName.prefix(1)).uppercased(),
-                        color: engineAccent(id), size: 24)
-                    Text(id.displayName)
-                        .font(DS.Font.md)
-                        .foregroundStyle(DS.text)
-                        .frame(width: 84, alignment: .leading)
-                    Spacer(minLength: 0)
-                    portField(id)
-                }
-                .padding(.horizontal, 16)
-                .frame(height: 42)
-                if id != EngineCatalog.allIDs.last {
-                    DSDivider().padding(.leading, 50)
-                }
-            }
-        }
-    }
-
-    func portField(_ id: EngineID) -> some View {
-        let focused = focusedField == .enginePort(id)
-        return HStack(spacing: 4) {
-            Text(":")
-                .font(DS.Font.mono(11))
-                .foregroundStyle(DS.text3)
-            TextField(
-                L10n.t("端口"),
-                text: Binding(
-                    get: { ports[id.rawValue] ?? "" },
-                    set: { ports[id.rawValue] = $0.filter(\.isNumber) })
-            )
-            .textFieldStyle(.plain)
-            .font(DS.Font.mono(11.5))
-            .frame(width: 54)
-            .focused($focusedField, equals: .enginePort(id))
-            .onSubmit { applyPort(id) }
-            VStack(spacing: 0) {
-                Button {
-                    stepPort(id, by: 1)
-                } label: {
-                    Image(systemName: "chevron.up").font(.system(size: 7, weight: .bold))
-                }
-                .buttonStyle(.plainHit)
-                .accessibilityLabel(L10n.t("增加端口"))
-                Button {
-                    stepPort(id, by: -1)
-                } label: {
-                    Image(systemName: "chevron.down").font(.system(size: 7, weight: .bold))
-                }
-                .buttonStyle(.plainHit)
-                .accessibilityLabel(L10n.t("减小端口"))
-            }
-            .foregroundStyle(DS.text3)
-        }
-        .padding(.horizontal, 9)
-        .frame(height: 28)
-        .dsInputSurface(radius: DS.Radius.sm, focused: focused)
-    }
-
-    func stepPort(_ id: EngineID, by delta: Int) {
-        let range = id.portRange
-        let current =
-            Int(ports[id.rawValue] ?? "")
-            ?? EngineStore.shared.configuration(for: id).port
-            ?? id.defaultPort
-        let next = min(max(current + delta, range.lowerBound), range.upperBound)
-        ports[id.rawValue] = String(next)
-        applyPort(id)
-    }
-
-    func applyPort(_ id: EngineID) {
-        let storedPort = EngineStore.shared.configuration(for: id).port ?? id.defaultPort
-        guard let port = Int(ports[id.rawValue] ?? ""), id.portRange.contains(port) else {
-            ports[id.rawValue] = String(storedPort)
-            state.toast(
-                L10n.format(
-                    "端口需在 %lld–%lld 之间",
-                    Int64(id.portRange.lowerBound),
-                    Int64(id.portRange.upperBound)
-                )
-            )
-            return
-        }
-        guard port != storedPort else { return }
-        state.switchEnginePort(id, port: port)
-        state.toast(L10n.format("%@ 端口已设为 %lld", id.displayName, Int64(port)))
-    }
-
     /// 网关 / 控制端口的输入框。应用按钮放在输入框外面，和缓存行一样用「输入框 + 按钮」排布。
     func portInput(
         _ text: Binding<String>,
@@ -378,20 +282,7 @@ extension SettingsPage {
                         .foregroundStyle(DS.text3)
                 }
                 Spacer(minLength: 0)
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { state.settings.gatewayEnabled },
-                        set: { value in
-                            state.settings.setGatewayEnabled(value)
-                            state.applyGatewaySettings()
-                        })
-                )
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .labelsHidden()
-                .tint(DS.accent)
-                .accessibilityLabel(L10n.t("API 网关"))
+                Tag(text: "始终启用", tone: .success)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -422,20 +313,7 @@ extension SettingsPage {
                         .foregroundStyle(DS.text3)
                 }
                 Spacer(minLength: 0)
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { state.settings.controlAPIEnabled },
-                        set: { value in
-                            state.settings.setControlAPIEnabled(value)
-                            state.applyControlSettings()
-                        })
-                )
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .labelsHidden()
-                .tint(DS.accent)
-                .accessibilityLabel(L10n.t("命令行接口"))
+                Tag(text: "始终启用", tone: .success)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -650,7 +528,7 @@ extension SettingsPage {
                     .buttonStyle(.ds(.secondary, size: .small))
             }
             DSDivider()
-            SettingsRow(title: "恢复默认", detail: "外观、启动、网关、控制接口与默认对话参数") {
+            SettingsRow(title: "恢复默认", detail: "外观、启动、接口端口与默认对话参数") {
                 Button(L10n.t("恢复")) {
                     confirmingResetDefaults = true
                 }
@@ -662,9 +540,7 @@ extension SettingsPage {
     func resetAllDefaults() {
         state.theme.set(.system)
         state.settings.setAutoStart(false)
-        state.settings.setGatewayEnabled(true)
         state.settings.setGatewayPort(9000)
-        state.settings.setControlAPIEnabled(true)
         state.settings.setControlPort(9100)
         state.resetChatParameters()
         state.applyGatewaySettings()

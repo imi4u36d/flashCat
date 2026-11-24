@@ -60,7 +60,7 @@ public struct ControlLocation: Sendable {
             throw CLIError(
                 "找不到控制接口（control.json）",
                 exit: .notRunning,
-                hint: "flashCat 可能没有运行，或「设置 → 命令行接口」已关闭；先执行 flashcat app open")
+                hint: "flashCat 可能没有运行；先执行 flashcat app open")
         }
         return ControlLocation(baseURL: url, token: token, runtime: runtime)
     }

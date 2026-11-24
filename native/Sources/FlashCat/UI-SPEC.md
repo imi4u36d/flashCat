@@ -41,10 +41,10 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 | `UI/Features/Models/HubSheet.swift` | 模型广场：搜索、排序、格式筛选、翻页、模型卡、下载 |
 | `UI/Features/Engines/DownloadCenterSheet.swift` | 下载任务：进度、暂停、继续、清理半成品 |
 | `UI/Features/Engines/EnginesPage.swift` | 五台引擎的安装、启停、切换、上游版本与运行时删除 |
-| `UI/Features/Engines/EngineConfigSheet.swift` | 单台引擎的端口与调优开关 |
+| `UI/Features/Engines/EngineConfigSheet.swift` | 单台引擎的调优开关 |
 | `UI/Features/Logs/LogsPage.swift` | 日志：合并全部引擎、来源 / 级别 / 搜索同一行、暂停、复制、清空 |
 | `Core/Logs/LogFeed.swift` | 多引擎日志尾巴合并、来源标签与按引擎指纹的增量裁剪 |
-| `UI/Features/Settings/SettingsPage.swift` | 分区设置：通用 / 引擎 / 模型来源 / 接口 / 对话 / 关于 |
+| `UI/Features/Settings/SettingsPage.swift` | 分区设置：通用 / 模型来源 / 接口 / 对话 / 关于 |
 | `UI/Features/Lab/LabPage.swift` | 画廊：图片 / 视频网格、时长角标、多选导出、缩略图预取与详情入口 |
 | `UI/Features/Lab/GalleryDetailSheet.swift` | 生成结果详情：大图、视频播放、参数与提示词复用 |
 | `UI/Features/Chat/ChatColumn.swift` | 对话列宽换算：拖动上下限、落盘夹取与气泡 / 输入卡派生 |
@@ -62,7 +62,7 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
   窗口左下角出现一枚紧凑状态胶囊（引擎 / 模型 / tok/s / 网关 / 未读通知）。
 - **状态胶囊。** 只在侧栏收起时出现，承载引擎与真实阶段、当前模型、解码读数与网关。
   点开一张 322pt 实色弹层：引擎详情、启停、复制接口、查看日志，以及最近通知与清空。
-  命令面板同时搜索本地模型、最近 20 段对话与六个设置分区，选中模型直接切换、选中对话
+  命令面板同时搜索本地模型、最近 20 段对话与五个设置分区，选中模型直接切换、选中对话
   直接打开、选中分区直接落到对应设置页。`UIStateStore.toast` 的通知统一由窗口左下角的
   浮层承担，侧栏展开与收起都一样——不再有侧栏内的第二个出口。
 - **页头语法。** 七个页面共用 `DSPageHeader`：页名 22pt + 一行现场（引擎 / 端口 /
@@ -111,8 +111,8 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
   配置与删除收进悬停时显形的「…」菜单。
 - **日志。** 页头（来源 + LIVE / PAUSED + 复制 / 打开 / 暂停 / 清空），第二行是
   来源、级别与搜索；搜索命中在行内高亮，详情同样高亮；控制台头只留 LIVE 与行数。
-- **设置。** 宽版左侧分区（通用 / 引擎 / 模型来源 / 接口 / 对话 / 关于），窄版折成分区下拉；
-  右侧只显示当前分区。引擎 / 接口分区顶部写明清空生效规则；关于页可检查 flashCat 自身更新。
+- **设置。** 宽版左侧分区（通用 / 模型来源 / 接口 / 对话 / 关于），窄版折成分区下拉；
+  右侧只显示当前分区。接口分区写明两个本机接口始终启用；关于页可检查 flashCat 自身更新。
 - **画廊。** 页头（图片 / 视频计数 + 选择、刷新、打开文件夹）+ 分段与搜索；视频封面标时长，
   选择模式可全选、批量导出到指定目录，或确认后批量删除（索引与落盘文件一起删）。
 

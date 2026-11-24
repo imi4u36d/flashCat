@@ -91,6 +91,28 @@ final class OfflineConfigTests: XCTestCase {
             ControlConfigGrammar.format(.int(ControlEngineDocuments.port(omlx))))
     }
 
+    // MARK: 内建接口
+
+    func testInterfaceFlagsReportAlwaysOn() throws {
+        let entries = OfflineConfig.entries(context)
+        XCTAssertEqual(try entry(entries, "gatewayEnabled").value, "true")
+        XCTAssertEqual(try entry(entries, "controlAPIEnabled").value, "true")
+        XCTAssertFalse(try entry(entries, "gatewayEnabled").mutable)
+        XCTAssertFalse(try entry(entries, "controlAPIEnabled").mutable)
+    }
+
+    func testInterfaceFlagsRejectWritesOffline() {
+        for key in ["gatewayEnabled", "controlAPIEnabled"] {
+            XCTAssertThrowsError(try OfflineConfig.set(key: key, value: "false", context: context)) {
+                guard let error = $0 as? CLIError else {
+                    return XCTFail("期望 CLIError，实际 \($0)")
+                }
+                XCTAssertEqual(error.exit, .usage)
+                XCTAssertTrue(error.message.contains("始终启用"))
+            }
+        }
+    }
+
     // MARK: 根端口
 
     func testRootPortNormalizesToDefault() throws {

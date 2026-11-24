@@ -20,13 +20,10 @@ extension AppState {
     /// Code append `/v1/messages` themselves, so this one stops at the root.
     var gatewayClaudeURL: String { "http://127.0.0.1:\(settings.gatewayPort)" }
 
-    /// Start the gateway when enabled; restart it onto a new port when the
-    /// setting changed, or stop it when disabled.
+    /// Bring the gateway up on the configured port, restarting it only when
+    /// that port changed. The gateway is not an optional feature: it is the
+    /// stable address clients pin, so there is no enable flag to consult.
     func applyGatewaySettings() {
-        if !settings.gatewayEnabled {
-            gateway.stop()
-            return
-        }
         let port = UInt16(settings.gatewayPort)
         if gateway.isRunning, gateway.port == port { return }
         if gateway.isRunning { gateway.stop() }

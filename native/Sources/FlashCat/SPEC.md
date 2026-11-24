@@ -19,7 +19,7 @@ macOS 壳。它持有全部可变状态，驱动引擎进程，并把自己画�
 - **模型。** `ModelCatalog` / `ModelLibrary` / `ModelInstaller` / `ModelRecommendations` / `ModelDownloadTask` / `LocalEngineModels` / `DeviceProfile` —— 内置目录中的一条模型可以同时标记多个引擎；Splash、oMLX、MTPLX、MLX-Serve 都是平级 engine descriptor。归属靠 `ModelRecommendation.engines`，下载与模型布局按 descriptor 决定。Hub 搜索结果同样可以服务多个兼容引擎。splash 的 DFlash2 draft 随主模型一起下，缺了就在启动前补齐。库是「目录 ∪ 磁盘扫描」：盘上有、这一栏没有的权重照样成行并标「未收录」。
 - **对话。** `Chat` / `ChatHistory` / `LocalAPI` —— `URLSession` 流式、usage 与 `finish_reason`、本地历史（上限 6 条）。
 - **网关控制。** `GatewayController` 持有网关对象与路由，`GatewayMeter` 打点。
-- **命令行控制接口。** `ControlServer` / `ControlServer+Documents` —— 只在回环上监听的控制通道，供随包的 `flashcat` 使用：状态、引擎启停与切换、模型加载/下载/删除、日志、设置、医生检查与退出。令牌每次启动随机生成并写入 `control.json`（`0600`）；它与推理网关是两个服务器，网关可以关闭，控制接口负责驱动应用。
+- **命令行控制接口。** `ControlServer` / `ControlServer+Documents` —— 只在回环上监听的控制通道，供随包的 `flashcat` 使用：状态、引擎启停与切换、模型加载/下载/删除、日志、设置、医生检查与退出。令牌每次启动随机生成并写入 `control.json`（`0600`）；它与推理网关是两个服务器，都随应用启动、没有开关。
 - **外壳与界面。** 窗口与场景、菜单栏面板、状态栏图标、登录项、日志缓冲、外观主题、设计 token，以及七个原生页面（`UI/`，见 [flashcat-ui](UI-SPEC.md)）。
 
 ## 边界

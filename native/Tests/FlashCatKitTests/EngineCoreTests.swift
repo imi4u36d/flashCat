@@ -181,14 +181,26 @@ final class EngineCoreTests: XCTestCase {
         XCTAssertEqual(chosen, 8103)
     }
 
-    func testPortAllocatorGivesUpAfterTheRange() {
+    func testPortAllocatorFallsBackOutsideAFullRange() {
+        // 引擎端口是内部细节：整段被占时继续找，不把「换个端口」推给读者。
         let busy = Set(EngineID.omlx.portRange)
         let chosen = EnginePortAllocator.allocate(
             for: .omlx,
             preferred: 8100,
             taken: busy,
             isOpen: { busy.contains($0) })
-        XCTAssertNil(chosen)
+        XCTAssertEqual(chosen, 1024)
+    }
+
+    func testPortAllocatorHonoursReservedPortsOutsideTheRange() {
+        // 网关口与控制端口即使在段外、即使监听还没起来，也不能被引擎抢走。
+        let busy = Set(EngineID.omlx.portRange).union([1024, 1025])
+        let chosen = EnginePortAllocator.allocate(
+            for: .omlx,
+            preferred: 8100,
+            taken: busy,
+            isOpen: { busy.contains($0) })
+        XCTAssertEqual(chosen, 1026)
     }
 
     func testPortAllocatorPrefersTheRequestedPortWhenFree() {

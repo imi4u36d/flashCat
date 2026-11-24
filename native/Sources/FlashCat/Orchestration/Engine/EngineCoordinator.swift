@@ -221,9 +221,10 @@ final class EngineCoordinator {
         // engine", and the recommendation is what answers it.
         host.settleRecommendation()
 
-        // The CLI needs a status endpoint even on a fresh install, so the
-        // command channel comes up before the launch-page early return.
+        // Both loopback interfaces come up before the launch-page early return:
+        // the CLI and API clients need endpoints even on a fresh install.
         startControlServerIfNeeded()
+        host.applyGatewaySettings()
 
         // Nothing installed yet: the launch page takes over and picks an engine.
         guard !host.needsEngineSetup else {
@@ -239,7 +240,6 @@ final class EngineCoordinator {
         // models win.
         host.adoptSavedModel(for: activeEngine)
 
-        host.applyGatewaySettings()
         // 模型广场的「已下载」要在第一次打开前就有结论：跟着启动算一次。
         refreshLocalRepos()
 
@@ -248,23 +248,19 @@ final class EngineCoordinator {
         }
     }
 
-    /// Start the CLI control channel when it is enabled and not already up.
-    /// Called from `bootstrap` and from the settings page after the toggle or
-    /// port changes.
+    /// Start the CLI control channel when it is not already up. Called from
+    /// `bootstrap` and from the settings page after the port changes.
     func startControlServerIfNeeded() {
-        guard settings.controlAPIEnabled, !control.isRunning else { return }
+        guard !control.isRunning else { return }
         let port = UInt16(settings.controlPort)
         Task { [control] in
             await control.start(preferredPort: port)
         }
     }
 
-    /// Apply the control-interface settings without requiring a relaunch.
+    /// Apply the control-interface port without requiring a relaunch. The
+    /// channel itself is always on.
     func applyControlSettings() {
-        guard settings.controlAPIEnabled else {
-            control.stop()
-            return
-        }
         let port = UInt16(settings.controlPort)
         if control.isRunning, control.port == port { return }
         Task { [control] in

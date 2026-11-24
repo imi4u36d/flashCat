@@ -31,16 +31,17 @@ after three seconds. With the sidebar open, recent chats run all the way to the 
 no permanent status strip.
 
 **2. Multi-engine aggregation, transparent model switching.** Splash, oMLX, MTPLX,
-and MLX-Serve coexist as peers, each with its own port range, runtime, logs,
-and model directory. Hot-swap engines keep their process alive; restart-style engines
-still show their phase and an "elapsed m:ss" counter. Clients notice none of it — the
-gateway address is fixed, so switching engines or ports never means editing a Base URL.
+and MLX-Serve coexist as peers, each with its own runtime, logs, and model directory;
+ports default to separate blocks and fall back to any free port when taken. Hot-swap
+engines keep their process alive; restart-style engines still show their phase and an
+"elapsed m:ss" counter. Clients notice none of it — the gateway address is fixed, so
+switching engines or ports never means editing a Base URL.
 
-**3. Customizable engine settings.** Ports are validated against each engine's range;
-thirteen knobs are translated into that engine's own startup flags — MTP / DFlash2,
-`--max-memory`, `--max-context`, PLE cache and SSD offload, thinking budget, extra
-arguments. Leave one blank and the engine decides; defaults come from the engine's
-own recommendation, and a new pack can add knobs without migrating your config.
+**3. Customizable engine settings.** Thirteen knobs are translated into that engine's
+own startup flags — MTP / DFlash2, `--max-memory`, `--max-context`, PLE cache and SSD
+offload, thinking budget, extra arguments. Leave one blank and the engine decides;
+defaults come from the engine's own recommendation, and a new pack can add knobs
+without migrating your config. Engine ports need no setup.
 
 **4. Model downloads.** Curated tiers are sized for this Mac's memory, with size and
 memory floor printed on the card; the Model Hub searches Hugging Face or ModelScope
@@ -123,7 +124,8 @@ Every engine is a peer:
 
 Every engine supports chat and streaming; vision, thinking, tool calling, and
 multi-model support are declared item by item in each engine descriptor, and the UI
-never assumes an engine has them. Each engine owns a port block, so they never collide.
+never assumes an engine has them. Default ports occupy separate blocks; a taken port
+falls back to any free one.
 
 ## A tour of the interface
 
@@ -170,9 +172,9 @@ removal of a specific version.
 ("All / Info / Warning / Error"), and search share one row, with hits highlighted; pause
 scrolling, copy the filtered lines, or clear.
 
-**Settings** — a section rail on the left (General / Engines / Model Source / Endpoint /
+**Settings** — a section rail on the left (General / Model Source / Endpoint /
 Chat / About) with only the current section on the right: appearance, launch at login,
-ports, download cache folder, mirror and token, gateway, thinking mode and default chat
+download cache folder, mirror and token, interface ports, thinking mode and default chat
 parameters; every row applies as you change it, and About can check for flashCat updates.
 
 **Gallery** — the library of generated results. Switch between "Images / Videos" below the
@@ -190,11 +192,11 @@ use the `flashcat` command line described below.
 
 ## Connecting your own client
 
-The app ships an **API gateway**, and it is what every client should talk to: the
-address is fixed, and both OpenAI and Claude formats work. The `model` in a request
-decides which weights actually load: if the model belongs to another engine, the
-gateway switches engines; if that engine is not running, it starts it and forwards
-once loading finishes.
+The app ships an **API gateway** that starts with the app and needs no switch, and it
+is what every client should talk to: the address is fixed, and both OpenAI and Claude
+formats work. The `model` in a request decides which weights actually load: if the
+model belongs to another engine, the gateway switches engines; if that engine is not
+running, it starts it and forwards once loading finishes.
 
 | | |
 | --- | --- |
@@ -306,7 +308,7 @@ stderr); progress and hints go to stderr and the payload goes to stdout, so
 command waits, `--quiet` silences hints, and `--no-color` or `NO_COLOR` disables ANSI
 color.
 
-The control interface's switch and port live under Settings → Command-line Interface.
+The control interface starts with the app and is always on; its port defaults to 9100.
 After you change the port, the effective one is written to `control.json` and the CLI
 follows it automatically — no reinstall needed. The interface listens only on
 `127.0.0.1`, rotates to a fresh random token on every launch, and keeps `control.json`
@@ -373,8 +375,6 @@ Where things live on disk (handy when cleaning up):
 | Setting | What it does |
 | --- | --- |
 | Appearance | Follow system / light / dark; applies immediately |
-| Port | The engine's listening port; warns when it is taken |
-| API Gateway | Switch and port for the unified dual-format endpoint (9000 by default); applies immediately |
 | Start with flashCat | Start the engine automatically when the app opens |
 | Launch at login | Add flashCat to your macOS login items |
 | Thinking mode | Auto / off / on; whether thinking models emit reasoning first |
@@ -384,14 +384,19 @@ Where things live on disk (handy when cleaning up):
 | Mirror URL | Hugging Face endpoint; leave empty for the official host. HF-Mirror always uses hf-mirror.com |
 | Access Token | Hugging Face token for private / gated repositories |
 | Download cache folder | Where model downloads are cached |
-| Command-line Interface | Switch and port for the local `flashcat` connection (9100 by default) |
+| API Gateway | The unified dual-format endpoint is always on; port defaults to 9000 and changing it restarts the gateway |
+| Command-line Interface | The local `flashcat` interface is always on; port defaults to 9100 |
 | Restore Defaults | Reset everything above to factory values |
+
+Engine ports are not a setting: each engine gets its default block, and a taken port
+falls back to any free one.
 
 ## FAQ
 
 **The engine will not start, or spins forever?**
-Check the last lines on the Logs page — usually a taken port or a model too large for
-memory. Pick another port, or a smaller model tier.
+Check the last lines on the Logs page — usually a model too large for memory, or an
+incomplete model file. Pick a smaller model tier, or recheck the install on the
+Engines page.
 
 **Downloads are slow?**
 The oMLX runtime is about 590 MB; Splash and MTPLX are 80 – 130 MB. Models range from
@@ -419,9 +424,8 @@ line (completion, JSON, scripting). macOS's own text editing, clipboard, close-w
 and quit keys are unaffected.
 
 **`flashcat` says the app is not running?**
-Run `flashcat app open` first. If the app is clearly running, check whether Settings →
-Command-line Interface was turned off, or whether `control.json` was deleted;
-`flashcat doctor` will say which step fails.
+Run `flashcat app open` first. If the app is clearly running, check whether
+`control.json` was deleted; `flashcat doctor` will say which step fails.
 
 **The command-line port is taken?**
 The control interface starts at 9100 and walks forward up to 20 ports; the effective

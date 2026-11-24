@@ -29,8 +29,6 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(settings.hubSource, .huggingFace)
         XCTAssertEqual(settings.gatewayPort, 9000)
         XCTAssertEqual(settings.controlPort, 9100)
-        XCTAssertTrue(settings.gatewayEnabled)
-        XCTAssertTrue(settings.controlAPIEnabled)
         XCTAssertEqual(settings.temperature, 0.7, accuracy: 0.0001)
     }
 
@@ -58,9 +56,7 @@ final class AppSettingsTests: XCTestCase {
         settings.setTopP(0.8)
         settings.setSystemPrompt("你是助手")
         settings.setMaxTokens(2048)
-        settings.setGatewayEnabled(true)
         settings.setGatewayPort(9200)
-        settings.setControlAPIEnabled(false)
         settings.setControlPort(9300)
 
         let reloaded = AppSettings(defaults: defaults)
@@ -86,9 +82,7 @@ final class AppSettingsTests: XCTestCase {
         XCTAssertEqual(reloaded.topP, 0.8, accuracy: 0.0001)
         XCTAssertEqual(reloaded.systemPrompt, "你是助手")
         XCTAssertEqual(reloaded.maxTokens, 2048)
-        XCTAssertTrue(reloaded.gatewayEnabled)
         XCTAssertEqual(reloaded.gatewayPort, 9200)
-        XCTAssertFalse(reloaded.controlAPIEnabled)
         XCTAssertEqual(reloaded.controlPort, 9300)
     }
 

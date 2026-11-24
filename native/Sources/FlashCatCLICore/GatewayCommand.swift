@@ -30,8 +30,8 @@ public enum GatewayCommand {
             // 折叠成本地状态会返回 0 并把令牌过期之类的问题藏起来。
             let local = context.local
             gateway = ControlGatewayState(
-                enabled: local.gatewayEnabled,
-                running: local.gatewayEnabled && portOpen(local.gatewayPort),
+                enabled: true,
+                running: portOpen(local.gatewayPort),
                 port: local.gatewayPort,
                 baseURL: "http://127.0.0.1:\(local.gatewayPort)")
         }
@@ -41,7 +41,7 @@ public enum GatewayCommand {
             let state =
                 gateway.running
                 ? context.output.green("运行中")
-                : (gateway.enabled ? context.output.yellow("未运行") : context.output.dim("已关闭"))
+                : context.output.yellow("未运行")
             context.output.line("\(gateway.baseURL)/v1 · \(state) · :\(gateway.port)")
             if let failure = gateway.failure { context.output.note(failure) }
         }

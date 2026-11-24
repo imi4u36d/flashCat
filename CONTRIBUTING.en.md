@@ -19,7 +19,7 @@ most here are all about not leaking those differences back into the business lay
 
 ```bash
 cd native && swift build          # 0 warnings; CI runs with -warnings-as-errors
-cd native && swift test           # Core + app + Kit + CLI cases (753 executed), about ten seconds
+cd native && swift test           # Core + app + Kit + CLI cases (756 executed), about ten seconds
 bash scripts/coverage.sh          # coverage gates: FlashCatCore >= 60%, FlashCatKit >= 80%
 make app                          # assemble the .app in /Applications (or INSTALL=0 for dist only)
 ```
@@ -35,8 +35,8 @@ walked down to zero without going red on day one, and the ratchet keeps it there
 ## Architecture rules (the ones reviewers bounce)
 
 1. **`FlashCatKit` may not import UI.** Only `Foundation` / `Network` / `CryptoKit` are
-   allowed. This layer must run in a windowless test process — all 314 Kit cases live
-   here; the shell contributes 251 and the CLI another 96 pure-logic cases.
+   allowed. This layer must run in a windowless test process — all 318 Kit cases live
+   here; the shell contributes 290 and the CLI another 98 pure-logic cases.
 2. **Dependencies point one way.** `FlashCat` → `FlashCatKit`. Any app-side symbol
    appearing inside the Kit is a break.
 3. **Engine differences may only live in a descriptor or an adapter.** Do not write

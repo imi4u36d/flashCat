@@ -103,8 +103,8 @@ public enum StatusCommand {
         let readout = local.engineConfigurationReadout()
         let engines = ControlEngineDocuments.engines(local.engineDocumentInputs())
         let gateway = ControlGatewayState(
-            enabled: local.gatewayEnabled,
-            running: local.gatewayEnabled && portOpen(local.gatewayPort),
+            enabled: true,
+            running: portOpen(local.gatewayPort),
             port: local.gatewayPort,
             baseURL: "http://127.0.0.1:\(local.gatewayPort)",
             failure: nil)
@@ -182,7 +182,7 @@ public enum StatusCommand {
             out.line("引擎   没有安装")
         }
         let gateway = report.gateway
-        let gatewayState = gateway.running ? out.green("运行中") : (gateway.enabled ? out.yellow("未运行") : out.dim("已关闭"))
+        let gatewayState = gateway.running ? out.green("运行中") : out.yellow("未运行")
         out.line(
             "网关   " + gateway.baseURL + "/v1 · " + gatewayState
                 + (gateway.failure.map { " · " + $0 } ?? ""))

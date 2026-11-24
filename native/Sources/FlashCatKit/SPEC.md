@@ -44,7 +44,7 @@ depends-on: [flashcat-manifest-contract]
 
 ## 不变量与代价
 
-- **端口几何刻意避开上游默认值。** 当前为 splash 8000 / omlx 8100 / mtplx 8200 / mlx-serve 8300，每段默认 20 个端口。默认端口、段大小和切换模式都来自 descriptor；段外不放宽是刻意的。
+- **端口几何刻意避开上游默认值。** 当前为 splash 8000 / omlx 8100 / mtplx 8200 / mlx-serve 8300，每段默认 20 个端口。默认端口、段大小和切换模式都来自 descriptor；段内优先，整段被占时 `EnginePortAllocator` 继续在回环范围里找空闲端口，因为引擎端口是内部细节，客户端只需要固定的网关地址。
 - **家族声明 `None` 就是没有 draft。** `families.py` 里 `ModelFamily("x", None, …)` 与「表里没这个家族」是两件事：前者以家族的回答为准，不许被应用里写死的已知表覆盖成「其实没发布过的 draft」；后者才回落到已知表，再没有就按无加速处理。
 - **未知开放值不失败。** `EngineID` 与 `EngineCapability` 是开放值；新 pack 带来的未知 capability 会保留原文，未知 `modelArgument` 才回落到 `.name`。引擎仍然装得上、起得来。
 - **解析器是唯一知道状态形状的地方。** 各家状态报文的字段知识只许存在于 `StatusParsers`；控制器只按 descriptor 拉取 source，再交给解析器按 `format` 合并。

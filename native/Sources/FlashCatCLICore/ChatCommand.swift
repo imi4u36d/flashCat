@@ -103,10 +103,10 @@ public enum ChatCommand {
         }
         if let url = try await controlGatewayURL(context) { return url }
         let port = context.local.gatewayPort
-        guard context.local.gatewayEnabled, portOpen(port) else {
+        guard portOpen(port) else {
             throw CLIError(
                 "连不上本地网关（127.0.0.1:\(port)）", exit: .notRunning,
-                hint: "先运行 flashcat app open；网关关闭时用 flashcat gateway start")
+                hint: "先运行 flashcat app open；网关没起来时用 flashcat gateway start")
         }
         guard let url = URL(string: "http://127.0.0.1:\(port)") else {
             throw CLIError("网关地址无效", exit: .failure)
@@ -128,11 +128,6 @@ public enum ChatCommand {
                     throw CLIError("网关地址无效", exit: .failure)
                 }
                 return url
-            }
-            guard status.gateway.enabled else {
-                throw CLIError(
-                    "API 网关已关闭", exit: .conflict,
-                    hint: "运行 flashcat gateway start 打开它")
             }
             _ = try await location.client.postData(
                 "/v1/gateway/start",

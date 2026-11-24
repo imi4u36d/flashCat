@@ -370,9 +370,11 @@ public enum EngineVersionOrder {
 public enum EnginePortAllocator {
     /// Pick the first free port at or above the requested one. `taken` is what
     /// the app itself is already using for other engines; `isOpen` reports
-    /// whether a foreign process is listening. A custom preferred port moves the
-    /// whole band instead of being ignored, which is what the settings page
-    /// implies when it lets the reader type a port.
+    /// whether a foreign process is listening.
+    ///
+    /// The descriptor's band is a preference, not a boundary: the engine port
+    /// is an internal detail (clients use the gateway), so a full band keeps
+    /// walking the loopback range instead of asking the reader to pick one.
     public static func allocate(
         for engine: EngineID,
         preferred: Int?,
@@ -382,6 +384,9 @@ public enum EnginePortAllocator {
         let start = max(1024, min(preferred ?? engine.defaultPort, 65535))
         let band = Array(start...min(start + engine.portRange.count - 1, 65535))
         for candidate in band where !taken.contains(candidate) && !isOpen(candidate) {
+            return candidate
+        }
+        for candidate in 1024...65535 where !taken.contains(candidate) && !isOpen(candidate) {
             return candidate
         }
         return nil

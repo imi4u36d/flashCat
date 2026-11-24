@@ -12,9 +12,15 @@ extension EngineController {
         EngineStore.shared.configuration(for: id).port ?? descriptor.defaultPort
     }
 
-    /// Port the engine may bind, or nil when every candidate in its range is
-    /// taken. A leftover engine from an earlier session is reaped first — and
-    /// the port being free proves nothing: a server killed mid-startup is still
+    /// Ports the app reserves for its own loopback interfaces. An engine may
+    /// never claim them, even when the listener is not up yet.
+    var reservedPorts: Set<Int> {
+        [settings.gatewayPort, settings.controlPort]
+    }
+
+    /// Port the engine may bind, or nil when no loopback port is available.
+    /// A leftover engine from an earlier session is reaped first — and the
+    /// port being free proves nothing: a server killed mid-startup is still
     /// loading weights, holds its memory for minutes and binds its port only
     /// once the load finishes, exactly when a second engine would pile on top.
     func claimPort(_ selectedModel: String) async -> Int? {
@@ -33,20 +39,28 @@ extension EngineController {
                 removePidFile()
             }
         }
-        if !portOpen(wanted) { return wanted }
+        let reserved = reservedPorts
+        if (1024...65535).contains(wanted), !reserved.contains(wanted), !portOpen(wanted) {
+            return wanted
+        }
 
         // Occupied with nothing on the pid file. This app has no evidence the
         // listener is its own leftover, so it never kills blind — it moves on.
-        for candidate in descriptor.portRange.dropFirst() where candidate <= 65535 {
-            if !portOpen(candidate) {
-                note("==> 端口 \(wanted) 被占用，自动改用 \(candidate)")
-                EngineStore.shared.update(id) { $0.port = candidate }
-                return candidate
-            }
+        // The allocator walks the engine's band first and then the rest of the
+        // loopback range; the port is an internal detail (clients use the
+        // gateway), so a full band must not send the reader to a settings page.
+        guard
+            let claimed = EnginePortAllocator.allocate(
+                for: id,
+                preferred: wanted,
+                taken: reserved,
+                isOpen: portOpen)
+        else {
+            failureMessage = "没有可用的本机端口，无法启动 \(id.displayName)"
+            return nil
         }
-
-        failureMessage = "端口 \(wanted) 及其后 19 个端口都被占用，请在引擎设置中换一个端口"
-        return nil
+        note("==> 端口 \(wanted) 不可用，自动改用 \(claimed)")
+        return claimed
     }
 
     /// The engine pack this controller runs, one level up so a leftover from a

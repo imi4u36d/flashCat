@@ -35,7 +35,7 @@
   `FLASHCAT_SUPPORT_DIR` 覆盖），校验 pid 是否存活，再拼
   `http://127.0.0.1:<port>`。令牌只从文件或显式参数来，不做猜测。
 - **两个服务器。** 网关（默认 9000）只负责推理；控制接口（默认 9100，可顺延）
-  负责应用动作。`chat` 走网关，其余驱动类命令走控制接口。
+  负责应用动作。两者都随应用启动、没有开关。`chat` 走网关，其余驱动类命令走控制接口。
 - **不复制业务规则。** 引擎安装用 Kit 的 `EngineInstaller`；路径用
   `FlashCatPaths`；引擎发现用 `EngineInstallations`；控制文档用
   `ControlProtocol.swift`。
@@ -61,4 +61,4 @@
 `0600`（不是写完再 chmod），令牌不会经过另一个本地用户可读的窗口。`--control-url`
 只接受本机回环地址；指向其他主机时必须用 `https`，否则 CLI 直接拒绝，避免把
 令牌明文发给网络。CLI 不读取用户密码。`app quit` 走控制接口，让 AppKit 执行
-引擎的优雅退出；只有控制接口关闭时才回落到 AppleScript。
+引擎的优雅退出；只有控制接口不可用时才回落到 AppleScript。

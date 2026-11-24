@@ -212,13 +212,13 @@ enum OfflineConfig {
                 mutable: false),
             entry(
                 "gatewayEnabled", "API 网关", "bool",
-                ControlConfigGrammar.format(.bool(local.gatewayEnabled)), mutable: false),
+                ControlConfigGrammar.format(.bool(true)), mutable: false),
             entry(
                 "gatewayPort", "API 网关端口", "int",
                 ControlConfigGrammar.format(.int(local.gatewayPort)), mutable: false),
             entry(
                 "controlAPIEnabled", "命令行接口", "bool",
-                ControlConfigGrammar.format(.bool(local.controlEnabled)), mutable: false),
+                ControlConfigGrammar.format(.bool(true)), mutable: false),
             entry(
                 "controlPort", "命令行接口端口", "int",
                 ControlConfigGrammar.format(.int(local.controlPort)), mutable: false),
@@ -331,7 +331,10 @@ enum OfflineConfig {
             throw ControlConfigError(
                 "launchAtLogin 需要应用在运行（要同步 LaunchAgent）", kind: .conflict,
                 hint: "先 flashcat app open，再设置")
-        case "gatewayEnabled", "gatewayPort", "controlAPIEnabled", "controlPort":
+        case "gatewayEnabled", "controlAPIEnabled":
+            throw ControlConfigError(
+                "\(key) 始终启用，无需设置", kind: .readOnly)
+        case "gatewayPort", "controlPort":
             throw ControlConfigError(
                 "\(key) 需要应用在运行才能立即生效", kind: .conflict,
                 hint: "先 flashcat app open，再设置")

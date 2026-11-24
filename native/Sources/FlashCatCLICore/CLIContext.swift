@@ -131,12 +131,10 @@ public struct LocalState {
         return (1024...65535).contains(value) ? value : 9000
     }
 
-    public var gatewayEnabled: Bool { bool("gatewayEnabled", fallback: true) }
     public var controlPort: Int {
         let value = integer("controlPort", fallback: 9100)
         return (1024...65535).contains(value) ? value : 9100
     }
-    public var controlEnabled: Bool { bool("controlAPIEnabled", fallback: true) }
     public var selectedModel: String { string("model") ?? "" }
 
     /// `nil` 表示连应用偏好域都打不开（沙箱/权限问题），此时 `config set` 必须报错而不是假装写入。

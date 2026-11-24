@@ -74,16 +74,9 @@ public enum DoctorCommand {
                 id: "control",
                 title: "命令行接口",
                 detail: runtime.map { "127.0.0.1:\($0.port)" } ?? "没有 control.json"))
-        if !local.controlEnabled {
-            checks.append(
-                ControlDoctorCheck(
-                    status: "warn", id: "control-enabled",
-                    title: "命令行接口开关", detail: "已在设置中关闭"))
-        }
-
         checks.append(
             ControlDoctorCheck(
-                status: local.gatewayEnabled && portOpen(local.gatewayPort) ? "ok" : "warn",
+                status: portOpen(local.gatewayPort) ? "ok" : "warn",
                 id: "gateway",
                 title: "API 网关",
                 detail: "http://127.0.0.1:\(local.gatewayPort)/v1"))

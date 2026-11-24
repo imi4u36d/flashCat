@@ -66,12 +66,12 @@ graph TD
 
 代码已经在执行的规则，不是愿望。
 
-1. **`FlashCatKit` 不许引 UI。** 它只 `import` `Foundation` / `Network` / `CryptoKit`。这决定它能在无窗口的测试进程里跑——`FlashCatKitTests` 有 317 个测试、`FlashCatCoreTests` 50 个（持久化、模型目录、迁移、设置与共享目录）、`FlashCatTests` 290 个（壳层纯函数、编排协议与「不得再出现快捷键」的源码守卫）、`FlashCatCLICoreTests` 96 个（命令行解析、SSE 解码与控制协议）。
+1. **`FlashCatKit` 不许引 UI。** 它只 `import` `Foundation` / `Network` / `CryptoKit`。这决定它能在无窗口的测试进程里跑——`FlashCatKitTests` 有 318 个测试、`FlashCatCoreTests` 50 个（持久化、模型目录、迁移、设置与共享目录）、`FlashCatTests` 290 个（壳层纯函数、编排协议与「不得再出现快捷键」的源码守卫）、`FlashCatCLICoreTests` 98 个（命令行解析、SSE 解码与控制协议）。
 2. **依赖单向。** `FlashCat` 与 `FlashCatCLICore` → `FlashCatKit`；CLI 不 import 应用目标，Kit 里出现任何应用侧符号都是破坏。
-3. **端口段不重叠。** 默认端口由引擎 descriptor/manifest 声明：`splash 8000` / `omlx 8100` / `mtplx 8200` / `mlx-serve 8300`，可用范围默认是 `defaultPort...defaultPort+19`；分配器在段内跳过被占端口，段外放弃。
+3. **默认端口各占一段，冲突时自动让路。** 默认端口由引擎 descriptor/manifest 声明：`splash 8000` / `omlx 8100` / `mtplx 8200` / `mlx-serve 8300`，优先范围是 `defaultPort...defaultPort+19`；分配器先跳过段内被占端口，整段都满时继续在回环端口里找空闲的一个，不把「换端口」推给用户。
 4. **切换方式是能力，不是选项。** `omlx` 与 `mlx-serve` 是 `hot`，其余当前为 `restart`。应用只按 descriptor 声明的能力执行，不按引擎 id 猜测。
 5. **未知枚举值降级而非失败。** 新版本 pack 带来的未知 `capability` 解成 `.chat`，未知 `modelArgument` 解成 `.name`——一个旧版应用不会因为清单多了个词就装不上。
-6. **路径与控制协议只有一份。** 应用与 `flashcat` 都从 `FlashCatKit` 取 `FlashCatPaths`、`EngineInstallations` 和 `Control/*` 文档；CLI 不复制支持目录、模型目录或端口规则。控制接口与网关是两个服务器：网关可关闭，控制接口负责驱动应用。
+6. **路径与控制协议只有一份。** 应用与 `flashcat` 都从 `FlashCatKit` 取 `FlashCatPaths`、`EngineInstallations` 和 `Control/*` 文档；CLI 不复制支持目录、模型目录或端口规则。控制接口与网关是两个服务器，都随应用启动、没有开关：网关负责推理，控制接口负责驱动应用。
 7. **pack 不可移动。** 安装路径必须含版本号且装完不许挪（原生扩展带绝对 rpath）。`fix-pack-rpaths.sh` 在上游 wheel 把构建机路径烧进 `LC_RPATH` 时把它改写成 `@loader_path/...` 并重签名。
 8. **只有用户自己的 pack 可删。** pack 有四个发现位置（环境变量覆盖、用户安装目录、应用 bundle、仓库 `vendor/engines`），但只有前两个属于用户；bundle 内的删了会破坏签名，checkout 里的是构建产物——两者都列出、只读。
 9. **网关与控制接口只监听回环。** 见 [flashcat-gateway](native/Sources/FlashCatKit/Gateway/SPEC.md)。

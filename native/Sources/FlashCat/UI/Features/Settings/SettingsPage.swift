@@ -9,7 +9,6 @@ import SwiftUI
 /// 设置页：按 WebUI 版式——左右两列卡片，行内即改即生效。
 struct SettingsPage: View {
     enum FocusField: Hashable {
-        case enginePort(EngineID)
         case gatewayPort
         case controlPort
         case endpoint
@@ -18,7 +17,6 @@ struct SettingsPage: View {
     }
 
     @ObservedObject var state: AppState
-    @State var ports: [String: String] = [:]
     @State var gatewayPort = ""
     @State var controlPort = ""
     @State var cachePath = ""
@@ -107,12 +105,6 @@ struct SettingsPage: View {
         .dsPageColumn()
         .padding(.bottom, Console.contentBottomInset)
         .onAppear(perform: load)
-        .onChange(of: state.activeEngine) { _, _ in load() }
-        .onChange(of: focusedField) { previous, _ in
-            if case .enginePort(let id) = previous {
-                applyPort(id)
-            }
-        }
         .sheet(isPresented: $showsChatParameters) {
             ChatParametersSheet(state: state)
         }
@@ -122,12 +114,12 @@ struct SettingsPage: View {
             }
             Button(L10n.t("取消"), role: .cancel) {}
         } message: {
-            Text(L10n.t("将恢复外观、随应用启动、API 网关、控制接口及默认对话参数，自定义系统提示也会清空。"))
+            Text(L10n.t("将恢复外观、随应用启动、端口及默认对话参数，自定义系统提示也会清空。"))
         }
     }
 
     /// 设置不再是一页两列的长表：左侧分区，右侧只显示当前分区。
-    /// 端口回到引擎的配置里、token 留在模型来源，设置页只保留真正全局的东西。
+    /// 引擎端口自动分配、token 留在模型来源，设置页只保留真正全局的东西。
     var settingsNav: some View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(SettingsSection.allCases) { item in
@@ -190,14 +182,11 @@ struct SettingsPage: View {
                 appearanceCard(wide: wide)
                 launchCard
                 maintenanceCard
-            case .engine:
-                settingsHint("端口点「应用」后生效；正在运行的引擎需要重启。")
-                portsCard
             case .models:
                 sourceCard(wide: wide)
                 cacheCard
             case .api:
-                settingsHint("开关即时生效；改网关端口会重启网关。")
+                settingsHint("接口始终启用；改端口会重启对应的本机服务。")
                 gatewayCard
                 cliCard
             case .chat:
@@ -225,11 +214,6 @@ struct SettingsPage: View {
     }
 
     func load() {
-        var values: [String: String] = [:]
-        for id in EngineCatalog.allIDs {
-            values[id.rawValue] = String(EngineStore.shared.configuration(for: id).port ?? id.defaultPort)
-        }
-        ports = values
         gatewayPort = String(state.settings.gatewayPort)
         controlPort = String(state.settings.controlPort)
         cachePath = state.settings.hfCache

@@ -272,14 +272,9 @@ package final class AppSettings {
 
     // MARK: API gateway
 
-    /// The unified local gateway on its own fixed port. On by default: it is
-    /// what gives clients a stable OpenAI + Claude endpoint across engines.
-    package var gatewayEnabled: Bool {
-        defaults.object(forKey: "gatewayEnabled") == nil ? true : defaults.bool(forKey: "gatewayEnabled")
-    }
-    package func setGatewayEnabled(_ value: Bool) { defaults.set(value, forKey: "gatewayEnabled") }
-
-    /// 9000 keeps clear of the engine port blocks (8000/8100/8200 + 20 each).
+    /// The unified local gateway's port. The gateway itself is always on — it
+    /// gives clients a stable OpenAI + Claude endpoint across engines. 9000
+    /// keeps clear of the engine port blocks (8000/8100/8200 + 20 each).
     package var gatewayPort: Int {
         let value = defaults.integer(forKey: "gatewayPort")
         return (1024...65535).contains(value) ? value : 9000
@@ -288,18 +283,11 @@ package final class AppSettings {
 
     // MARK: CLI control API
 
-    /// The local control server `flashcat` talks to. On by default; the
-    /// gateway answers inference requests, this one answers app commands
-    /// (start/stop engines, switch models, read downloads, edit settings).
-    package var controlAPIEnabled: Bool {
-        defaults.object(forKey: "controlAPIEnabled") == nil
-            ? true
-            : defaults.bool(forKey: "controlAPIEnabled")
-    }
-    package func setControlAPIEnabled(_ value: Bool) { defaults.set(value, forKey: "controlAPIEnabled") }
-
-    /// 9100 sits outside 9000 (gateway) and every engine block. If it is taken,
-    /// the server walks upward and records the real port in `control.json`.
+    /// The local control server `flashcat` talks to, always on: the gateway
+    /// answers inference requests, this one answers app commands (start/stop
+    /// engines, switch models, read downloads, edit settings). 9100 sits
+    /// outside 9000 and every engine block. If it is taken, the server walks
+    /// upward and records the real port in `control.json`.
     package var controlPort: Int {
         // The override exists for tests and for a second instance launched from
         // a checkout; the shipped app uses the setting.

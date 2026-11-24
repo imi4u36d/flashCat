@@ -12,7 +12,6 @@ import SwiftUI
 /// 排成同一张两列长表。
 enum SettingsSection: String, CaseIterable, Identifiable {
     case general
-    case engine
     case models
     case api
     case chat
@@ -23,7 +22,6 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .general: return "通用"
-        case .engine: return "引擎"
         case .models: return "模型来源"
         case .api: return "接口"
         case .chat: return "对话"
@@ -34,7 +32,6 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .general: return "gearshape"
-        case .engine: return "cpu"
         case .models: return "square.stack.3d.up"
         case .api: return "network"
         case .chat: return "bubble.left.and.bubble.right"

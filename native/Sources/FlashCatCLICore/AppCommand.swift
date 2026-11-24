@@ -90,20 +90,12 @@ public enum AppCommand {
                 }
                 try? await Task.sleep(nanoseconds: 250_000_000)
             }
-            if !context.local.controlEnabled {
-                if context.output.json {
-                    context.output.json(ControlSimpleResult(message: "已经在运行（控制接口关闭）"))
-                } else if !context.output.quiet {
-                    context.output.success("flashCat 已经在运行（控制接口未开启）")
-                }
-                return CLIExit.success.rawValue
-            }
             if let lastError, !ControlFallback.shouldFallBack(lastError) {
                 throw lastError
             }
             throw CLIError(
                 "flashCat 进程在运行，但控制接口没有就绪", exit: .timeout,
-                hint: "检查「设置 → 命令行接口」，或退出后重开")
+                hint: "看 ~/Library/Logs/flashCat/control.log，或退出后重开")
         }
         if let status = launch(app, environment: context.environment) {
             guard status == 0 else {
@@ -112,7 +104,6 @@ public enum AppCommand {
         }
         let timeout = Double(context.invocation.option("timeout") ?? "") ?? 30
         let deadline = Date().addingTimeInterval(timeout)
-        let started = Date()
         var lastError: CLIError?
         while Date() < deadline {
             if let runtime = ControlRuntime.load(), runtime.processIsAlive,
@@ -130,19 +121,7 @@ public enum AppCommand {
                 }
             }
             // The process can be up before the control server has bound its
-            // port. Only report "control disabled" after a short grace period,
-            // and only when the setting actually says it is off.
-            if isRunning(app),
-                Date().timeIntervalSince(started) > 5,
-                !context.local.controlEnabled
-            {
-                if context.output.json {
-                    context.output.json(ControlSimpleResult(message: "已启动（控制接口关闭）"))
-                } else if !context.output.quiet {
-                    context.output.success("flashCat 已启动（控制接口未开启）")
-                }
-                return CLIExit.success.rawValue
-            }
+            // port; keep polling until the caller's timeout.
             try? await Task.sleep(nanoseconds: 300_000_000)
         }
         // 应用已经在跑、只是控制接口答错时，说「没有在 N 秒内启动」是错的：
@@ -207,7 +186,7 @@ public enum AppCommand {
                 }
                 throw CLIError(
                     "无法请求 flashCat 退出", exit: .failure,
-                    hint: "从菜单栏或应用菜单退出；控制接口关闭时命令行没有别的通道")
+                    hint: "从菜单栏或应用菜单退出；控制接口不可用时命令行没有别的通道")
             }
         }
 

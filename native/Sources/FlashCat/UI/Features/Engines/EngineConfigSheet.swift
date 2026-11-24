@@ -6,13 +6,12 @@ import FlashCatCore
 import FlashCatKit
 import SwiftUI
 
-/// 单台引擎的配置面板：端口 + 该引擎真正认识的调优开关。
+/// 单台引擎的配置面板：该引擎真正认识的调优开关。
 struct EngineConfigSheet: View {
     @ObservedObject var state: AppState
     let engine: EngineID
 
     private enum ConfigField: Hashable {
-        case port
         case maxMemory
         case maxContext
         case pleMemory
@@ -25,29 +24,12 @@ struct EngineConfigSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var tuning = EngineTuning()
-    @State private var portText = ""
     @State private var loaded = false
     @FocusState private var focusedField: ConfigField?
 
     private var controller: EngineController? { state.engines?.controller(engine) }
     private var installedVersion: String? { controller?.installation.version }
     private var isActive: Bool { state.activeEngine == engine }
-
-    private var parsedPort: Int? {
-        guard let port = Int(portText.trimmingCharacters(in: .whitespaces)),
-            engine.portRange.contains(port)
-        else { return nil }
-        return port
-    }
-
-    private var portValidationError: String? {
-        parsedPort == nil
-            ? L10n.format(
-                "端口需在 %lld–%lld 之间",
-                Int64(engine.portRange.lowerBound),
-                Int64(engine.portRange.upperBound))
-            : nil
-    }
 
     private var hasSwitchesCard: Bool {
         switch engine.adapter {
@@ -69,7 +51,6 @@ struct EngineConfigSheet: View {
             DSDivider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    portCard
                     if hasSwitchesCard {
                         switchesCard
                     }
@@ -101,7 +82,8 @@ struct EngineConfigSheet: View {
                     L10n.format(
                         "%@ · 端口 %@",
                         installedVersion ?? L10n.t("未安装"),
-                        portText.isEmpty ? "—" : portText)
+                        controller.map { String($0.port) }
+                            ?? L10n.t("自动"))
                 )
                 .font(DS.Font.xs)
                 .foregroundStyle(DS.text3)
@@ -111,37 +93,6 @@ struct EngineConfigSheet: View {
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
-    }
-
-    private var portCard: some View {
-        Card("端口", subtitle: "只监听 127.0.0.1；同一段内会跳过被占领的端口") {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 10) {
-                    TextField("端口", text: $portText)
-                        .textFieldStyle(.plain)
-                        .font(DS.Font.mono(11.5))
-                        .padding(.horizontal, 8)
-                        .frame(width: 110, height: 28)
-                        .dsInputSurface(radius: DS.Radius.sm, focused: focusedField == .port)
-                        .focused($focusedField, equals: .port)
-                    Text(
-                        L10n.format(
-                            "默认 %lld · 允许 %lld–%lld",
-                            Int64(engine.defaultPort),
-                            Int64(engine.portRange.lowerBound),
-                            Int64(engine.portRange.upperBound))
-                    )
-                    .font(DS.Font.xs)
-                    .foregroundStyle(DS.text3)
-                    Spacer(minLength: 0)
-                }
-                if let portValidationError {
-                    Text(portValidationError)
-                        .font(DS.Font.xs)
-                        .foregroundStyle(DS.err)
-                }
-            }
-        }
     }
 
     private var switchesCard: some View {
@@ -298,7 +249,6 @@ struct EngineConfigSheet: View {
         HStack(spacing: 10) {
             Button("恢复默认") {
                 tuning = EngineTuning.defaults(for: engine)
-                portText = String(engine.defaultPort)
             }
             .buttonStyle(.ds(.secondary, size: .regular))
             Spacer(minLength: 0)
@@ -307,7 +257,6 @@ struct EngineConfigSheet: View {
                     .buttonStyle(.ds(.secondary, size: .regular))
                 Button("保存") { save() }
                     .buttonStyle(.ds(.primary, size: .regular))
-                    .disabled(parsedPort == nil)
             }
         }
         .padding(.horizontal, 18)
@@ -419,19 +368,12 @@ struct EngineConfigSheet: View {
         loaded = true
         let configuration = EngineStore.shared.configuration(for: engine)
         tuning = configuration.tuning ?? EngineTuning()
-        portText = String(configuration.port ?? engine.defaultPort)
     }
 
     private func save() {
-        guard let port = parsedPort else { return }
-        let previousPort = EngineStore.shared.configuration(for: engine).port ?? engine.defaultPort
-        let portChanged = port != previousPort
         EngineStore.shared.setTuning(tuning.sanitized(), for: engine)
-        if portChanged {
-            state.switchEnginePort(engine, port: port)
-        }
         Task { await state.engines?.controller(engine)?.reapplyTuning() }
-        if isActive && state.isRunning && (portChanged || engine.adapter != .omlx) {
+        if isActive && state.isRunning && engine.adapter != .omlx {
             state.toast(L10n.format("%@ 的配置已保存，重启引擎后生效", engine.displayName))
         } else {
             state.toast(L10n.format("%@ 的配置已保存", engine.displayName))

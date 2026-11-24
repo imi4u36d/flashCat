@@ -248,12 +248,10 @@ final class ControlServer {
         case .logs:
             return logsDocument(request)
         case .gatewayStart:
-            AppState.shared.settings.setGatewayEnabled(true)
             AppState.shared.applyGatewaySettings()
             return Self.json(gatewayState)
         case .gatewayStop:
-            AppState.shared.settings.setGatewayEnabled(false)
-            AppState.shared.applyGatewaySettings()
+            AppState.shared.gateway.stop()
             return Self.json(gatewayState)
         case .config:
             return Self.json(ControlConfigDocument(entries: configEntries()))
@@ -291,7 +289,9 @@ final class ControlServer {
     private var gatewayState: ControlGatewayState {
         let state = AppState.shared
         return ControlGatewayState(
-            enabled: state.settings.gatewayEnabled,
+            // There is no enable switch any more: the gateway is part of the
+            // app, and `running` says whether it bound its port this session.
+            enabled: true,
             running: state.gateway.isRunning,
             port: Int(state.gateway.port),
             baseURL: state.gateway.baseURL,

@@ -3521,6 +3521,16 @@
         }
       }
     },
+    "外观、启动、接口端口与默认对话参数": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Appearance, launch, interface ports, and default chat parameters"
+          }
+        }
+      }
+    },
     "外观、服务与默认参数": {
       "localizations": {
         "en": {
@@ -3587,6 +3597,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Always use the light skin"
+          }
+        }
+      }
+    },
+    "始终启用": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Always on"
           }
         }
       }
@@ -3807,6 +3827,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Resets appearance, launch behavior, API gateway, control API, default chat parameters, and clears your custom system prompt."
+          }
+        }
+      }
+    },
+    "将恢复外观、随应用启动、端口及默认对话参数，自定义系统提示也会清空。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resets appearance, launch behavior, ports, and default chat parameters, and clears your custom system prompt."
           }
         }
       }
@@ -5217,6 +5247,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Endpoint copied"
+          }
+        }
+      }
+    },
+    "接口始终启用；改端口会重启对应的本机服务。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Interfaces are always on; changing a port restarts that local service."
           }
         }
       }

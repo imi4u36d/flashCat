@@ -56,65 +56,65 @@ package final class EngineController {
 
     /// 唯一的生命周期状态。所有写点都经过 `transition(to:)`：状态机只有一处
     /// 真相，越界的迁移也只有一处能拦（见 `isTransitionAllowed`）。
-    private(set) var phase: Phase = .idle
+    var phase: Phase = .idle
     /// 对外可见的五态，由 `phase` 派生。名字与语义和原来的存储属性一致，调用方
     /// （`AppState`、`ControlServer`、菜单栏）一行都不用改。
     package var state: ServerState { phase.serverState }
     /// Engine-neutral view of the engine's own status document.
-    package private(set) var status: EngineStatus?
+    package var status: EngineStatus?
     /// Splash-shaped view for the existing dashboards.
-    package private(set) var stats: ServerStats?
+    package var stats: ServerStats?
     package private(set) var port: Int
-    package private(set) var model: String = ""
-    package private(set) var failureMessage: String?
+    package var model: String = ""
+    package var failureMessage: String?
     /// 「已等待」的起点。原来是独立存储的 `Date?`，只由生命周期写点维护，谁清过
     /// 它全靠约定；现在它跟着 `phase` 走，读的人（`busySeconds`）不必再关心。
-    private var busySince: Date? { phase.busySince }
+    var busySince: Date? { phase.busySince }
     /// 正在搬权重的起点。`busySince` 是进程的起点：引擎已经跑了几个小时、模型又被
     /// 重新加载时，用它算「加载权重」的秒数会给出几个小时。只在加载期间非 nil。
-    private var hotLoadSince: Date?
+    var hotLoadSince: Date?
 
-    private var process: Process?
+    var process: Process?
     /// Model the reader started the current run with; splash needs it again for
     /// a restart so the local serve path keeps its assembly/target arguments.
-    private var runModel: ModelInfo?
+    var runModel: ModelInfo?
     /// oMLX applies MTP/DFlash through its own settings API, once per run.
-    private var tuningApplied = false
-    private var pollTimer: Timer?
+    var tuningApplied = false
+    var pollTimer: Timer?
     /// mlx-serve 只报累计计数器，实时速率要靠相邻两次轮询差分。每个引擎进程
     /// 一份基线；换进程时清掉，否则会把上一轮的计数当起点。
-    private var liveRates = EngineLiveRates()
-    private var pollInFlight = false
-    private var lastError: String?
+    var liveRates = EngineLiveRates()
+    var pollInFlight = false
+    var lastError: String?
     /// Moves `.starting` out of limbo when the engine neither binds its port nor
     /// exits. Nothing else does: the poller only ever promotes to `.ready`.
-    private var startupWatchdog: Task<Void, Never>?
+    var startupWatchdog: Task<Void, Never>?
     /// Process tree captured at quit time, kept so the SIGKILL escalation can
     /// reach children that outlived their parent. See `ProcessTree`.
-    private var terminationTree: ProcessTree?
+    var terminationTree: ProcessTree?
     /// Log id the current start began at: history from earlier sessions must
     /// not name this run's stage.
-    private var stageBaseline = 0
+    var stageBaseline = 0
     /// 阶段与下载进度都从日志尾部推导；UI 一帧内可能问多次，按日志 id 缓存，
     /// 避免每帧都复制 40/60 行再跑一遍正则。
-    private var stageLogCache: (latest: Int, baseline: Int, stage: String)?
-    private var downloadProgressCache: (latest: Int, value: Double?)?
+    var stageLogCache: (latest: Int, baseline: Int, stage: String)?
+    var downloadProgressCache: (latest: Int, value: Double?)?
     /// oMLX 的思考等级是模型静态属性，没必要每秒都去 `/v1/models/status` 问一次。
-    private var reasoningEffortsCache: (model: String, at: Date, efforts: [String]?)?
-    private var lineBuffers = [Data(), Data()]
+    var reasoningEffortsCache: (model: String, at: Date, efforts: [String]?)?
+    var lineBuffers = [Data(), Data()]
     /// Model the reader asked for. Hot engines load it without a restart, so it
     /// is tracked separately from whatever the engine happens to have loaded.
-    private var desiredModel: String?
+    var desiredModel: String?
     /// Guards against firing a load on every poll while one is in flight.
-    private var loadInFlight: String?
+    var loadInFlight: String?
     /// A model switch owns the engine until it finishes: the 1 s poller must not
     /// race it with its own "make sure the desired model is loaded" nudge, or a
     /// load is issued while the previous weights are still being unloaded.
-    private var switchInFlight = false
+    var switchInFlight = false
     /// Most recent successful hot load. `/api/status` lags a beat behind the
     /// load response, so without this the poller re-issues the same load the
     /// switch already completed (a second, pointless HTTP 200 in the log).
-    private var lastHotLoad: (target: String, at: Date)?
+    var lastHotLoad: (target: String, at: Date)?
 
     package init(
         id: EngineID,
@@ -200,7 +200,7 @@ package final class EngineController {
     /// （`process`、`failureMessage`、日志），否则界面会先看到「已就绪」，
     /// 再看到失败正文。
     @discardableResult
-    private func transition(
+    func transition(
         to next: Phase,
         file: StaticString = #fileID,
         line: UInt = #line
@@ -220,7 +220,7 @@ package final class EngineController {
 
     /// 迁移表。写成「允许什么」而不是「禁止什么」：阶段只有九个，允许的组合少
     /// 得多，读一遍就能看出某次写入合不合法。
-    private func isTransitionAllowed(from current: Phase, to next: Phase) -> Bool {
+    func isTransitionAllowed(from current: Phase, to next: Phase) -> Bool {
         switch next {
         case .ready:
             // 就绪必须有一个活着的进程撑着。这条是上一轮那个竞态的根：进程已经
@@ -266,18 +266,18 @@ package final class EngineController {
 
     /// 正在启动。第二只引擎会覆盖第一个的 `process`，前一个的退出被
     /// `finished === process` 静默丢掉，所以启动期间控制器是独占的。
-    private var isLaunching: Bool {
+    var isLaunching: Bool {
         if case .starting = phase { return true }
         return false
     }
 
-    private var isStopping: Bool {
+    var isStopping: Bool {
         if case .stopping = phase { return true }
         return false
     }
 
     /// 退出流程已经接管。`markReady` 的守卫靠它挡住「退出中又亮起可聊天」。
-    private var isTerminating: Bool {
+    var isTerminating: Bool {
         if case .terminating = phase { return true }
         return false
     }
@@ -373,7 +373,7 @@ package final class EngineController {
 
     /// Bumped by every `stop()`, so a launch that was waiting on a preparation
     /// can tell that the user changed their mind and must not start after all.
-    private var stopRequests = 0
+    var stopRequests = 0
 
     /// `localModel` only matters for splash, whose serve script takes an
     /// assembly/target pair. Other engines take a model identifier.
@@ -487,7 +487,7 @@ package final class EngineController {
         let model: String
     }
 
-    private func launchPlan(localModel: ModelInfo?, requestedModel: String?) -> LaunchPlan? {
+    func launchPlan(localModel: ModelInfo?, requestedModel: String?) -> LaunchPlan? {
         let selected =
             requestedModel
             ?? EngineStore.shared.configuration(for: id).lastModel
@@ -653,7 +653,7 @@ package final class EngineController {
         onChange()
     }
 
-    private func fail(_ message: String) {
+    func fail(_ message: String) {
         // 正文先进 `failureMessage` 再迁阶段：界面上「异常 + 原因」是一个东西，
         // 分两次写会让读者看到一帧只有「异常」的界面。
         failureMessage = message
@@ -664,7 +664,7 @@ package final class EngineController {
     /// A pack must never inherit the user's Python environment: a stray
     /// `PYTHONPATH` would load a different mlx and break the precompiled metal
     /// kernels, so those variables are cleared rather than overridden.
-    private func baseEnvironment(root: String) -> [String: String] {
+    func baseEnvironment(root: String) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
         environment["PYTHONUNBUFFERED"] = "1"
@@ -879,926 +879,6 @@ package final class EngineController {
         logs.close()
     }
 
-    // MARK: orphan watchdog
-
-    /// Detached last resort for a crashed or force-quit app — the paths where
-    /// `dispose` never runs. A python from the pack itself watches the app's
-    /// pid; once the app is gone it ends the engine's whole tree within
-    /// seconds, instead of leaving a half-loaded 20 GB model resident until
-    /// the next launch's sweep gets around to it. On a normal quit the
-    /// watchdog finds its engine already dead, kills nothing and exits, so it
-    /// needs no management from this side (splash additionally runs its own
-    /// python-side watchdog from flashcat_serve.py; the two overlap harmlessly).
-    private func spawnWatchdog(enginePid: Int32) {
-        if !installation.entrypoint.path.contains("/python/") {
-            spawnNativeWatchdog(enginePid: enginePid)
-            return
-        }
-        let task = Process()
-        task.launchPath = installation.entrypoint.path
-        task.arguments = [
-            "-u", "-c", Self.watchdogScript,
-            String(enginePid),
-            String(ProcessInfo.processInfo.processIdentifier),
-            packMarkerDirectory,
-        ]
-        task.standardOutput = FileHandle.nullDevice
-        task.standardError = FileHandle.nullDevice
-        task.standardInput = FileHandle.nullDevice
-        do {
-            try task.run()
-        } catch {
-            // Best effort only: dispose and the launch sweep remain the
-            // primary cleanup, the watchdog just narrows the crash window.
-            note("==> 未能启动引擎守护进程（不影响正常启停）：\(error)")
-        }
-    }
-
-    /// Native single-binary engines do not understand the Python watchdog's
-    /// `-c` argument. This watcher uses only macOS system tools and is reused by
-    /// every non-Python pack.
-    private func spawnNativeWatchdog(enginePid: Int32) {
-        let task = Process()
-        task.launchPath = "/bin/sh"
-        // `sh -c script name a b c` assigns `name` to `$0`, not `$1`. Without
-        // this placeholder the script's `$1/$2/$3` shift by one: it would treat
-        // the app's pid as the engine and the empty marker as the app, then
-        // SIGINT flashCat itself the moment the engine starts.
-        task.arguments = [
-            "-c", Self.nativeWatchdogScript,
-            "flashcat-watchdog",
-            String(enginePid),
-            String(ProcessInfo.processInfo.processIdentifier),
-            packMarkerDirectory,
-        ]
-        task.standardOutput = FileHandle.nullDevice
-        task.standardError = FileHandle.nullDevice
-        task.standardInput = FileHandle.nullDevice
-        do {
-            try task.run()
-        } catch {
-            note("==> 未能启动引擎守护进程（不影响正常启停）：\(error)")
-        }
-    }
-
-    private static let nativeWatchdogScript = #"""
-        engine="$1"
-        app="$2"
-        marker="$3"
-
-        # Snapshot the tree while the root is alive. Once it exits, its children are
-        # re-parented to launchd and `pgrep -P` can no longer tie them back to the
-        # engine — walking the tree at kill time (the old behaviour) therefore found
-        # nothing to signal exactly when it was needed.
-        collect() {
-          for child in $(/usr/bin/pgrep -P "$1" 2>/dev/null); do
-            printf '%s\n' "$child"
-            collect "$child"
-          done
-        }
-        victims="$(collect "$engine")"
-
-        while kill -0 "$app" 2>/dev/null && kill -0 "$engine" 2>/dev/null; do
-          sleep 1
-        done
-
-        signal_victims() {
-          signal="$1"
-          for pid in $victims "$engine"; do
-            path=$(/bin/ps -p "$pid" -o command= 2>/dev/null) || continue
-            case "$path" in
-              "$marker"/*) /bin/kill "-$signal" "$pid" 2>/dev/null || true ;;
-            esac
-          done
-        }
-
-        signal_victims INT
-        sleep 15
-        signal_victims KILL
-        """#
-
-    /// Runs as `python -u -c <script> <engine-pid> <app-pid> <pack-marker>`.
-    /// Every candidate is re-verified against the pack root through
-    /// proc_pidpath before a signal is sent, so a pid that died and was reused
-    /// in the polling gap is never hit. The descendant snapshot is taken while
-    /// the engine root is still alive — after its death the children are
-    /// re-parented to launchd and the chain would be lost.
-    private static let watchdogScript = #"""
-        import ctypes, os, signal, subprocess, sys, time
-
-        engine = int(sys.argv[1])
-        app = int(sys.argv[2])
-        marker = os.path.realpath(sys.argv[3])
-
-        libproc = None
-        try:
-            libproc = ctypes.CDLL("/usr/lib/libproc.dylib")
-        except OSError:
-            pass
-
-        def alive(pid):
-            try:
-                os.kill(pid, 0)
-                return True
-            except OSError:
-                return False
-
-        def ours(pid):
-            if libproc is None:
-                return False
-            try:
-                buf = ctypes.create_string_buffer(4096)
-                n = libproc.proc_pidpath(pid, buf, 4096)
-                path = buf.value.decode("utf-8", "replace") if n > 0 else ""
-            except Exception:
-                return False
-            return path.startswith(marker + "/")
-
-        def tree(pid):
-            pids, index = [pid], 0
-            while index < len(pids):
-                try:
-                    out = subprocess.run(["/usr/bin/pgrep", "-P", str(pids[index])],
-                                         capture_output=True, text=True, timeout=5).stdout
-                    pids.extend(int(line) for line in out.split())
-                except Exception:
-                    pass
-                index += 1
-            return pids
-
-        snapshot = tree(engine)
-        while alive(app) and alive(engine):
-            snapshot = tree(engine)
-            time.sleep(2)
-
-        victims = [pid for pid in snapshot if alive(pid) and ours(pid)]
-        for pid in victims:
-            try:
-                os.kill(pid, signal.SIGINT)
-            except OSError:
-                pass
-        deadline = time.time() + 15
-        while victims and time.time() < deadline:
-            time.sleep(1)
-            victims = [pid for pid in victims if alive(pid)]
-        for pid in victims:
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except OSError:
-                pass
-        """#
-
-    package func updateCatalog(_ value: ModelCatalog) { catalog = value }
-
-    package func rescanModels() async {
-        guard isRunning else { return }
-        guard let action = descriptor.modelControl?.rescan else {
-            catalog = ModelCatalogService().load()
-            return
-        }
-        let response = await modelControl(
-            action,
-            target: "",
-            fallbackPath: action.path,
-            timeout: 20)
-        logs.append(
-            "==> 重新扫描模型 → HTTP \(response?.status ?? 0)",
-            level: (response?.status ?? 0) < 300 ? .system : .warning)
-    }
-
-    // MARK: process plumbing
-
-    private func processExited(_ finished: Process) {
-        // A restart installs a new `process` while the old one's
-        // terminationHandler is still queued. Trusting any callback would let
-        // the old engine's exit tear down the new one: pollTimer invalidated,
-        // `process` cleared, state forced to `.failed` — and no handle left to
-        // stop the engine that is actually holding the weights.
-        guard finished === process else { return }
-        startupWatchdog?.cancel()
-        startupWatchdog = nil
-        removePidFile()
-        pollTimer?.invalidate()
-        pollTimer = nil
-        process = nil
-        flushBuffers()
-        logs.close()
-        stats = nil
-        status = nil
-        liveRates.reset()
-        // 停止要先读一次：三行之后 `transition` 就把阶段改掉了，那时候再问
-        // 「是不是读者点的停止」已经没人记得。
-        let wasStopping = isStopping
-        if wasStopping {
-            logs.append("==> 服务已停止", level: .system)
-            transition(to: .stopped)
-        } else if finished.terminationStatus == 0 {
-            transition(to: .stopped)
-        } else {
-            let message = lastError ?? "服务异常退出（退出码 \(finished.terminationStatus)）"
-            failureMessage = message
-            logs.append("==> \(message)", level: .system)
-            transition(to: .failed(reason: message))
-        }
-        onChange()
-    }
-
-    private func startReader(_ pipe: Pipe, index: Int) {
-        let descriptor = pipe.fileHandleForReading.fileDescriptor
-        Thread {
-            var scratch = [UInt8](repeating: 0, count: 1 << 16)
-            while true {
-                let count = read(descriptor, &scratch, scratch.count)
-                if count <= 0 { break }
-                let chunk = Data(scratch[0..<count])
-                DispatchQueue.main.async { self.ingest(chunk, index: index) }
-            }
-        }.start()
-    }
-
-    private func ingest(_ chunk: Data, index: Int) {
-        lineBuffers[index].append(chunk)
-        while let newline = lineBuffers[index].firstIndex(of: 0x0A) {
-            let segment = lineBuffers[index].prefix(upTo: newline)
-            lineBuffers[index].removeSubrange(lineBuffers[index].startIndex...newline)
-            let line = String(data: segment, encoding: .utf8) ?? ""
-            appendLog(line)
-        }
-    }
-
-    private func flushBuffers() {
-        for index in 0..<2 {
-            if !lineBuffers[index].isEmpty {
-                appendLog(String(data: lineBuffers[index], encoding: .utf8) ?? "")
-                lineBuffers[index] = Data()
-            }
-        }
-    }
-
-    private func appendLog(_ line: String) {
-        switch EngineLogSignal.detect(line) {
-        case .ready:
-            lastError = nil
-            // 不再自己判断「是不是在启动中」：判定收进 `markReady` 的守卫与迁移
-            // 表，停止中、已停止的迟到就绪也会走同一条路留一条告警，而重复就绪
-            // 因为阶段没变被静默吞掉。
-            markReady()
-        case .error(let message):
-            // flashcat_serve.py 的准备失败走 stderr 的 "error: ..."，留作失败提示，
-            // 比只给一个退出码有用。存正文而不是整行：提示框里不该带 "error:" 前缀。
-            lastError = message
-        case .none:
-            break
-        }
-        logs.append(line)
-    }
-
-    private func note(_ line: String) {
-        // Never open/close the sink here: `openFile()` reloads history from
-        // disk and `close()` drops the handle, so a note written while the
-        // engine was running used to stop every later line from reaching the
-        // log file — which is the one place a reader looks when something
-        // breaks. `append` already writes through the sink when one is open.
-        logs.append(line, level: .system)
-    }
-
-    // MARK: polling
-
-    private func startPolling() {
-        schedulePolling(every: 1.0)
-    }
-
-    /// 统一的 1 Hz 轮询。预填充也从 0.4 秒改回 1 秒：概览的预填充格与
-    /// 解码曲线共用同一个节拍，读数只每秒变一次，而不是按 chunk 立即跳。
-    private func schedulePolling(every interval: TimeInterval) {
-        pollTimer?.invalidate()
-        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { _ in
-            Task { await self.poll() }
-        }
-        pollTimer = timer
-        // Default run-loop mode stops while a modal alert is up. The app opens
-        // alerts from the engine page, so the poller used to freeze exactly when
-        // the reader was staring at the stalled engine.
-        RunLoop.main.add(timer, forMode: .common)
-    }
-
-    /// Give the launch a budget. `descriptor.startupTimeout` already encodes
-    /// how slow each engine is (oMLX 180 s, splash 660 s, mlx-serve 600 s), so
-    /// reusing it keeps the promise the engine page makes about wait times.
-    private func startStartupDeadline(for task: Process) {
-        startupWatchdog?.cancel()
-        let budget = descriptor.startupTimeout
-        startupWatchdog = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(budget * 1_000_000_000))
-            guard !Task.isCancelled, let self else { return }
-            // Only the launch this deadline was armed for, and only if the
-            // poller has not already promoted it to `.ready`.
-            guard self.process === task, self.state == .starting else { return }
-            self.logs.append("==> 启动超时：\(Int(budget)) 秒内未就绪", level: .error)
-            self.fail("启动超时：\(Int(budget)) 秒内没有就绪。看日志页最后几行——多半是端口被占或模型放不进内存。")
-            // 超时的进程留着只会占端口和显存，而且会把下一次启动挡在
-            // `process != nil` 上——「启动」按钮看起来像坏了。
-            self.stop()
-        }
-    }
-
-    /// 用累计计数器的差分补上引擎不直接上报的实时速率（目前是 mlx-serve）。
-    /// 别的引擎没有这些键，`observe` 返回空读数，不会覆盖它们自己的口径。
-    private func applyLiveRates(to parsed: inout EngineStatus) {
-        let reading = liveRates.observe(parsed, at: Date())
-        if let decode = reading.decode.value, decode > 0 {
-            parsed.decodeTokensPerSecond = decode
-            parsed.decodeRateKind = reading.decode.kind
-        }
-        if let prefill = reading.prefill.value, prefill > 0 {
-            parsed.prefillTokensPerSecond = prefill
-            parsed.prefillRateKind = reading.prefill.kind
-        }
-    }
-
-    private func poll() async {
-        if pollInFlight || process == nil { return }
-        pollInFlight = true
-        defer { pollInFlight = false }
-
-        // 每秒都读引擎的自报值，不再空闲隔秒。省下的那次请求要重新解析
-        // `prefill_tokens_total` / `prefill_time_seconds` 这类累计计数，隔秒轮询
-        // 会把差分窗口从 1 秒拉成 2 秒——曲线变糙是小事，更要紧的是实时速率与
-        // 均值本来只差在「多久动一次」，采样间隔一飘，两种口径就更难分辨了。
-        // 空闲时这一轮只是几个本地回环 GET，成本远低于它换来的读数一致性。
-
-        let health = await probeHealth()
-        guard health.ready else {
-            // 503 while the weights load and the kernels warm: there is no
-            // status document to read yet, but the console still has to tick —
-            // the stage comes from the engine's log and the elapsed count from
-            // the clock, and on a big MoE target both stay put for minutes.
-            refreshStartupTick()
-            return
-        }
-
-        if state == .starting,
-            descriptor.switchMode != .hot
-                || desiredModel == nil
-                || status?.loadedModels.contains(desiredModel ?? "") == true
-        {
-            markReady()
-        }
-        await applyTuningIfNeeded()
-        await ensureDesiredModelLoaded()
-        let documents = await collectTelemetry(healthResponse: health.response)
-        guard !documents.isEmpty else { return }
-        var parsed = EngineStatusParser.parse(documents: documents, fallbackState: .ready)
-        await adoptEngineReportedEfforts(into: &parsed)
-        applyLiveRates(to: &parsed)
-        status = parsed
-        stats = ServerStats(engineStatus: parsed, previous: stats)
-        if process == nil { logs.pollFollow() }
-        onChange()
-    }
-
-    private var healthPath: String {
-        manifest.health.path
-    }
-
-    /// Keep the console alive while the engine is not answering yet. Nothing is
-    /// polled from the engine here — a loading splash prints nothing for
-    /// minutes — but republishing the snapshot each second is what makes the
-    /// stage and the elapsed count move instead of freezing at one frame.
-    private func refreshStartupTick() {
-        // 热切换时 state 已经是 .ready、权重却还在搬：健康探测可能先失败，
-        // 这里仍要每秒重发一次快照，否则「已等待」会停住，看起来又像卡死。
-        let stillLoading = state == .ready && startupStage != EngineStartupStage.ready.rawValue
-        guard state == .starting || stillLoading else { return }
-        if process == nil { logs.pollFollow() }
-        onChange()
-    }
-
-    /// 同时把健康响应带回去：telemetry 里的 health 源通常跟这里是同一个
-    /// 端点，复用它就不用每秒再 GET 一次。
-    private func probeHealth() async -> (ready: Bool, response: HTTPResponse?) {
-        guard let response = await HTTP.get(port: port, path: healthPath, timeout: 1.5) else {
-            return (false, nil)
-        }
-        let ready = manifest.health.readyStatus
-        if response.status == ready { return (true, response) }
-        if let loading = manifest.health.loadingStatus, response.status == loading { return (true, response) }
-        return (false, response)
-    }
-
-    private func fetchJSON(path: String) async -> [String: Any]? {
-        guard let response = await HTTP.get(port: port, path: path, timeout: 1.8) else { return nil }
-        guard (200..<300).contains(response.status) else { return nil }
-        guard let object = try? JSONSerialization.jsonObject(with: response.body) else { return nil }
-        return object as? [String: Any]
-    }
-
-    /// Fetch every declared telemetry source. Descriptors decide what matters;
-    /// the controller only knows how to GET JSON and merge the result.
-    private func collectTelemetry(healthResponse: HTTPResponse? = nil) async -> [EngineTelemetryDocument] {
-        var sources = descriptor.telemetry
-        if !sources.contains(where: { $0.role == .health }) {
-            sources.append(
-                EngineTelemetrySource(role: .health, path: healthPath, format: .llamaProps))
-        }
-        // 各端点互不依赖，并发拉取；返回时按 sources 原顺序还原，解析层
-        // 的合并顺序保持稳定。以前串行等待，一个慢端点会拖住整轮轮询。
-        // 健康探测已经拿到的 2xx 文档直接复用，不再为同一个端点发第二次请求。
-        var prefetched: [String: [String: Any]] = [:]
-        if let healthResponse, (200..<300).contains(healthResponse.status),
-            let object = try? JSONSerialization.jsonObject(with: healthResponse.body),
-            let json = object as? [String: Any]
-        {
-            prefetched[healthPath] = json
-        }
-        let port = self.port
-        return await withTaskGroup(of: (Int, EngineTelemetryDocument?).self) { group in
-            for (index, source) in sources.enumerated() {
-                if let json = prefetched[source.path] {
-                    let document = EngineTelemetryDocument(source: source, json: json)
-                    group.addTask { (index, document) }
-                    continue
-                }
-                group.addTask {
-                    guard let response = await HTTP.get(port: port, path: source.path, timeout: 1.8),
-                        (200..<300).contains(response.status),
-                        let object = try? JSONSerialization.jsonObject(with: response.body),
-                        let json = object as? [String: Any]
-                    else {
-                        return (index, nil)
-                    }
-                    return (index, EngineTelemetryDocument(source: source, json: json))
-                }
-            }
-            var byIndex: [Int: EngineTelemetryDocument] = [:]
-            for await (index, document) in group {
-                if let document { byIndex[index] = document }
-            }
-            return sources.indices.compactMap { byIndex[$0] }
-        }
-    }
-
-    /// oMLX 把每个模型支持的思考等级放在 `/v1/models/status` 的
-    /// `reasoning_efforts` 里（`/api/status` 没有），所以这里补一次读取，
-    /// 交给思考等级下拉框当数据源。其他引擎的等级已随状态文档解析
-    /// （MTPLX），splash 不提供 → 保持 nil，上层用内置列表兜底。
-    private func adoptEngineReportedEfforts(into parsed: inout EngineStatus) async {
-        guard descriptor.adapter == .omlx else { return }
-        guard let wanted = parsed.model ?? desiredModel, !wanted.isEmpty else { return }
-        if let cached = reasoningEffortsCache, cached.model == wanted,
-            Date().timeIntervalSince(cached.at) < 30
-        {
-            if let efforts = cached.efforts { parsed.reasoningEfforts = efforts }
-            return
-        }
-        guard let document = await fetchJSON(path: "/v1/models/status") else { return }
-        let entries = (document["models"] as? [[String: Any]]) ?? []
-        let efforts = entries.first(where: { ($0["id"] as? String) == wanted })?["reasoning_efforts"] as? [String]
-        reasoningEffortsCache = (wanted, Date(), efforts)
-        if let efforts, !efforts.isEmpty { parsed.reasoningEfforts = efforts }
-    }
-
-    // MARK: model switching
-
-    /// Swap the loaded weights. Both engine kinds follow the same rule: the old
-    /// model must be *confirmed* gone — process exited and port released, or the
-    /// engine's own status no longer listing it — before the new weights
-    /// allocate. Two 27B models do not fit in unified memory, and issuing the
-    /// load while the previous weights were still resident is what left the app
-    /// spinning on an engine that could not answer.
-    package func switchModel(_ target: String, stage: @escaping (String) -> Void) async -> ModelSwitchOutcome {
-        let wanted = target.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !wanted.isEmpty else { return .failed("模型标识为空") }
-        guard await claimSwitchSlot() else { return .failed("已有切换在进行") }
-        defer { switchInFlight = false }
-
-        if descriptor.switchMode == .hot, isRunning {
-            // Park the poller: nothing may nudge a load while we unload.
-            desiredModel = nil
-            stage("卸载旧模型")
-            let cleared = await unloadLoadedModels(keeping: wanted)
-            if Task.isCancelled {
-                desiredModel = wanted
-                onChange()
-                return .failed("切换已取消")
-            }
-            if cleared {
-                stage("加载新模型")
-                desiredModel = wanted
-                model = wanted
-                let loaded = await loadModelHot(wanted)
-                return loaded ? .ready : .failed(failureMessage ?? "加载 \(wanted) 失败")
-            }
-            // The engine would not let go of the weights. Restarting the process
-            // is the only way to guarantee the memory is released before the new
-            // model allocates, so fall back to the cold path instead of piling a
-            // second 27B model on top of the first.
-            logs.append("==> 就地卸载未能确认，改为重启服务释放显存", level: .system)
-        }
-
-        if isRunning {
-            stage("停止旧模型")
-            desiredModel = wanted
-            model = wanted
-            guard await stopAndWait() else {
-                failureMessage = "旧模型（端口 \(port)）未能退出，已取消切换"
-                logs.append("==> 切换已取消：端口 \(port) 仍被旧进程占用", level: .error)
-                onChange()
-                return .failed("旧模型未能退出")
-            }
-            if Task.isCancelled { return .failed("切换已取消") }
-            stage("加载新模型")
-            let local = catalog.machineModel(wanted)
-            await start(localModel: local, requestedModel: wanted)
-            let ready = await waitForReady(timeout: id.startupTimeout)
-            return ready ? .ready : .failed(failureMessage ?? "\(id.displayName) 未能在预期时间内就绪")
-        }
-
-        // Nothing running: just remember the choice, the next start uses it.
-        desiredModel = wanted
-        model = wanted
-        return .ready
-    }
-
-    /// 只把 `target` 加载进来，不动已经常驻的模型。对话里画图时用：图像模型
-    /// 进来的时候对话模型还要接着写这一轮，卸掉它就得多等一次几十秒的加载。
-    ///
-    /// 只有热加载引擎能同时挂两份权重；别的引擎没有这个能力，退回原来的独占
-    /// 切换，保证行为是「换过去」而不是「加载失败」。
-    package func loadModelKeepingResident(
-        _ target: String,
-        stage: @escaping (String) -> Void
-    ) async -> ModelSwitchOutcome {
-        let wanted = target.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !wanted.isEmpty else { return .failed("模型标识为空") }
-        guard descriptor.switchMode == .hot, isRunning else {
-            return await switchModel(wanted, stage: stage)
-        }
-        guard await claimSwitchSlot() else { return .failed("已有切换在进行") }
-        defer { switchInFlight = false }
-        if Task.isCancelled { return .failed("切换已取消") }
-        stage("加载新模型")
-        let loaded = await loadModelHot(wanted)
-        return loaded ? .ready : .failed(failureMessage ?? "加载 \(wanted) 失败")
-    }
-
-    /// 等上一趟切换让出单飞位，再占住它。上一次切换可能刚被读者取消/被新选择
-    /// 接管：主线程已经放弃了它，但它还没走完 defer（正在等 unload 或 load
-    /// 收尾）。等它，而不是把这次新选择判成失败——那正是「再点一次没反应」
-    /// 的另一半原因。
-    private func claimSwitchSlot() async -> Bool {
-        if switchInFlight {
-            let deadline = Date().addingTimeInterval(8)
-            while switchInFlight, Date() < deadline, !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 150_000_000)
-            }
-        }
-        guard !switchInFlight else { return false }
-        switchInFlight = true
-        return true
-    }
-
-    /// Models the engine itself reports as resident. `nil` means the status
-    /// document could not be read at all.
-    private func residentModels() async -> [String]? {
-        let documents = await collectTelemetry()
-        guard !documents.isEmpty else { return nil }
-        let parsed = EngineStatusParser.parse(documents: documents, fallbackState: .ready)
-        return parsed.loadedModels
-    }
-
-    /// Ask the engine to drop every resident model except `target` and wait for
-    /// its own status to agree. oMLX answers 202 while it drains in-flight
-    /// streams, so the POST result alone is not a confirmation.
-    private func unloadLoadedModels(keeping target: String, timeout: Double = 180) async -> Bool {
-        guard let resident = await residentModels() else {
-            logs.append("==> 读取 \(id.displayName) 状态失败，无法确认已加载的模型", level: .error)
-            return false
-        }
-        let victims = resident.filter { $0 != target }
-        if victims.isEmpty { return true }
-
-        var pending: [String] = []
-        for victim in victims {
-            let response = await modelControl(
-                descriptor.modelControl?.unload,
-                target: victim,
-                fallbackPath: EngineRoutes.unload(victim),
-                timeout: 60)
-            let status = response?.status ?? 0
-            logs.append("==> 卸载 \(victim) → HTTP \(status)", level: status < 300 ? .system : .error)
-            // 400 (not loaded) / 404 (unknown id) mean this id holds no weights,
-            // so there is nothing left to wait for. Everything else — 202 queued,
-            // 409 still loading, or no answer at all — has to be polled.
-            if status == 400 || status == 404 { continue }
-            pending.append(victim)
-        }
-        if pending.isEmpty { return true }
-
-        let startedAt = Date()
-        var lastNote = Date()
-        var clearSince: Date?
-        while Date().timeIntervalSince(startedAt) < timeout {
-            let remaining = (await residentModels() ?? pending).filter { pending.contains($0) && $0 != target }
-            if remaining.isEmpty {
-                // The engine drops the model from `loaded_models` a moment before
-                // its own gc/clear_cache settle barrier releases the Metal
-                // buffers (engine_pool._stop_and_unload_engine), so hold a short
-                // grace instead of racing the new allocation against the old one.
-                let clear = clearSince ?? Date()
-                clearSince = clear
-                if Date().timeIntervalSince(clear) >= 1.5 {
-                    logs.append(
-                        "==> 旧模型已卸载（\(Int(Date().timeIntervalSince(startedAt))) 秒），开始加载 \(target)",
-                        level: .system)
-                    return true
-                }
-            } else {
-                clearSince = nil
-            }
-            if Date().timeIntervalSince(lastNote) > 10 {
-                lastNote = Date()
-                logs.append("==> 仍在卸载 \(remaining.joined(separator: "、")) …", level: .system)
-            }
-            if Task.isCancelled { return false }
-            try? await Task.sleep(nanoseconds: 400_000_000)
-        }
-        return false
-    }
-
-    /// Model ids are directory names, so no slash survives, but a custom id may
-    /// still carry characters the URL path cannot.
-    private func loadModelHot(_ target: String) async -> Bool {
-        guard loadInFlight != target else { return false }
-        loadInFlight = target
-        hotLoadSince = Date()
-        defer {
-            hotLoadSince = nil
-            loadInFlight = nil
-        }
-        // ServerState has no loading case on purpose: the switch stage text
-        // owns the "加载中" presentation for both engine kinds.
-        // Weight loads are slow (tens of seconds for 27B); the poller keeps the
-        // dashboard alive while this awaits.
-        // Settings only reach a model at load time, so push them first.
-        if descriptor.adapter == .omlx { await pushTuning(for: [target]) }
-        let response = await modelControl(
-            descriptor.modelControl?.load,
-            target: target,
-            fallbackPath: EngineRoutes.load(target),
-            timeout: 600)
-        let status = response?.status ?? 0
-        logs.append(
-            "==> \(id.displayName) 切换到 \(target) → HTTP \(status)",
-            level: status < 300 ? .system : .error)
-        if status >= 300 {
-            failureMessage =
-                status == 507
-                ? "内存不足，无法加载 \(target)"
-                : "加载 \(target) 失败（HTTP \(status)）"
-        } else {
-            failureMessage = nil
-            lastHotLoad = (target, Date())
-        }
-        markReady()
-        return status < 300
-    }
-
-    private func modelControl(
-        _ action: EngineModelAction?,
-        target: String,
-        fallbackPath: String,
-        timeout: TimeInterval
-    ) async -> HTTPResponse? {
-        guard let action else {
-            return await HTTP.post(port: port, path: fallbackPath, timeout: timeout)
-        }
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(charactersIn: "-._~")
-        let encoded = target.addingPercentEncoding(withAllowedCharacters: allowed) ?? target
-        let path = EngineTemplate.expand(action.path, context: ["model": encoded])
-        let bodyContext = ["model": target]
-        let json: Data?
-        if let body = action.body {
-            let object = body.mapValues { $0.jsonObject(context: bodyContext) }
-            json = try? JSONSerialization.data(withJSONObject: object)
-        } else {
-            json = nil
-        }
-        return await HTTP.request(
-            method: action.method,
-            port: port,
-            path: path,
-            json: json,
-            timeout: timeout)
-    }
-
-    /// oMLX starts with its own default model, so the requested one may still
-    /// be cold once health turns green. Nudge it once per change — never while a
-    /// switch owns the engine.
-    private func ensureDesiredModelLoaded() async {
-        guard !switchInFlight else { return }
-        guard descriptor.switchMode == .hot, let target = desiredModel, !target.isEmpty else { return }
-        if let last = lastHotLoad, last.target == target,
-            Date().timeIntervalSince(last.at) < 20
-        {
-            return
-        }
-        if let loaded = status?.loadedModels, loaded.contains(target) { return }
-        if status?.model == target { return }
-        _ = await loadModelHot(target)
-    }
-
-    // MARK: port claim
-
-    private var preferredPort: Int {
-        EngineStore.shared.configuration(for: id).port ?? descriptor.defaultPort
-    }
-
-    /// Port the engine may bind, or nil when every candidate in its range is
-    /// taken. A leftover engine from an earlier session is reaped first — and
-    /// the port being free proves nothing: a server killed mid-startup is still
-    /// loading weights, holds its memory for minutes and binds its port only
-    /// once the load finishes, exactly when a second engine would pile on top.
-    private func claimPort(_ selectedModel: String) async -> Int? {
-        let wanted = preferredPort
-        if let stale = readPidFile() {
-            if processAlive(stale), processBelongsToPack(stale) {
-                guard await reclaimStaleEngine(stale) else {
-                    failureMessage = "遗留的服务进程（pid \(stale)）未能退出，无法启动 \(id.displayName)"
-                    onChange()
-                    return nil
-                }
-            } else {
-                // Stale bookkeeping: the pid is gone, or was reused by a
-                // process that is not this pack's engine. Either way it must
-                // not be signalled.
-                removePidFile()
-            }
-        }
-        if !portOpen(wanted) { return wanted }
-
-        // Occupied with nothing on the pid file. This app has no evidence the
-        // listener is its own leftover, so it never kills blind — it moves on.
-        for candidate in descriptor.portRange.dropFirst() where candidate <= 65535 {
-            if !portOpen(candidate) {
-                note("==> 端口 \(wanted) 被占用，自动改用 \(candidate)")
-                EngineStore.shared.update(id) { $0.port = candidate }
-                return candidate
-            }
-        }
-
-        failureMessage = "端口 \(wanted) 及其后 19 个端口都被占用，请在引擎设置中换一个端口"
-        return nil
-    }
-
-    /// The engine pack this controller runs, one level up so a leftover from a
-    /// previous pack version (same engine, older directory) still matches.
-    /// Symlinks are resolved because proc_pidpath reports the canonical path:
-    /// a pack under /tmp would otherwise never match its own /private/tmp
-    /// executable paths.
-    private var packMarkerDirectory: String {
-        (installation.root.deletingLastPathComponent().path as NSString).resolvingSymlinksInPath
-    }
-
-    private var orphanCleanupDirectories: [String] {
-        [packMarkerDirectory]
-    }
-
-    /// Launch-time sweep for processes a crashed or force-quit session left
-    /// behind. Nothing of this session runs yet, so any live executable inside
-    /// this engine's pack directories is residue: the pack python and the
-    /// binaries below it are started by nobody else. SIGKILL straight away —
-    /// a leftover stuck inside a weight load cannot act on SIGINT, and its pid
-    /// bookkeeping was already removed by the clean-quit path.
-    package func sweepOrphans() {
-        let markers = orphanCleanupDirectories.map { $0 + "/" }
-        for entry in allProcesses() where entry.pid != ProcessInfo.processInfo.processIdentifier {
-            guard let path = processExecutablePath(entry.pid),
-                markers.contains(where: { path.hasPrefix($0) })
-            else { continue }
-            note("==> 清扫上次会话遗留的引擎进程（pid \(entry.pid)）")
-            killTree(entry.pid, SIGKILL)
-        }
-    }
-
-    /// The pid's executable lives inside this engine's pack directories — the
-    /// only processes this app ever starts there. Guards the reclaim against
-    /// firing on a reused pid.
-    private func processBelongsToPack(_ pid: Int32) -> Bool {
-        guard let path = processExecutablePath(pid) else { return false }
-        return path.hasPrefix(packMarkerDirectory + "/")
-    }
-
-    /// Ends a server left behind by an earlier session: SIGINT to the whole
-    /// tree, SIGKILL after the grace, and "gone" means the *process* exited —
-    /// not merely that the port came free, which a server still inside a Metal
-    /// weight load never signals.
-    private func reclaimStaleEngine(_ stale: Int32, grace: Double = 10) async -> Bool {
-        note("==> 清理上次遗留的 \(id.displayName) 服务进程（pid \(stale)）…")
-        killTree(stale, SIGINT)
-        let startedAt = Date()
-        var escalated = false
-        while Date().timeIntervalSince(startedAt) < 90 {
-            if !processAlive(stale) {
-                removePidFile()
-                note("==> 遗留进程已结束")
-                return true
-            }
-            if !escalated, Date().timeIntervalSince(startedAt) > grace {
-                escalated = true
-                note("==> 遗留进程未在 \(Int(grace)) 秒内退出，强制结束整棵进程树")
-                killTree(stale, SIGKILL)
-            }
-            try? await Task.sleep(nanoseconds: 200_000_000)
-        }
-        return !processAlive(stale)
-    }
-
-    private func processAlive(_ pid: Int32) -> Bool {
-        kill(pid, 0) == 0
-    }
-
-    // MARK: tuning
-
-    /// oMLX has no CLI switch for MTP/DFlash — they are per-model server
-    /// settings, so they are pushed through its admin API once the engine is up.
-    /// MTPLX and splash bake the same switches into their launch arguments.
-    private func applyTuningIfNeeded() async {
-        guard !tuningApplied else { return }
-        tuningApplied = true
-        let resident = await residentModels() ?? status?.loadedModels ?? []
-        await pushTuning(for: resident)
-    }
-
-    /// Push the stored tuning again after the user edits it on the engine page.
-    /// CLI engines only take new flags at launch, so this notes a restart instead
-    /// of pretending an in-place change happened.
-    package func reapplyTuning() async {
-        guard isRunning else { return }
-        guard descriptor.adapter == .omlx else {
-            note("==> \(id.displayName) 的配置已保存，重启后生效")
-            return
-        }
-        let resident = await residentModels() ?? status?.loadedModels ?? []
-        guard !resident.isEmpty else { return }
-        await pushTuning(for: resident)
-        // A model keeps the settings it was loaded with, so the loaded one is
-        // reloaded for the new depth/draft flags to take effect.
-        if let current = resident.first(where: { $0 == model || $0 == desiredModel }) {
-            _ = await unloadLoadedModels(keeping: "")
-            _ = await loadModelHot(current)
-        }
-    }
-
-    private func pushTuning(for targets: [String]) async {
-        guard descriptor.adapter == .omlx, !targets.isEmpty else { return }
-        let tuning = EngineStore.shared.tuning(for: .omlx)
-        var failures = 0
-        for target in targets {
-            // A model with an assigned draft gets `dflash_draft_model` merged
-            // into its payload; everyone else takes the engine-level tuning.
-            // The payload is push-ready: the resolved thinking budget rides in.
-            let override = EngineStore.shared.draftAssignment(for: id, model: target)
-            guard let settings = tuning.omlxSettings(id: id, draftOverride: override),
-                !settings.isEmpty
-            else { continue }
-            let payload = settings.mapValues { $0.jsonObject }
-            guard let data = try? JSONSerialization.data(withJSONObject: payload) else { continue }
-            let response = await HTTP.put(
-                port: port,
-                path: EngineRoutes.modelSettings(target),
-                json: data,
-                timeout: 20)
-            let status = response?.status ?? 0
-            logs.append(
-                "==> \(target) 应用 MTP/DFlash 设置 -> HTTP \(status)",
-                level: status < 300 ? .system : .warning)
-            if status >= 300 { failures += 1 }
-        }
-        if failures > 0 {
-            failureMessage = "MTP/DFlash 设置未被 \(id.displayName) 接受（\(failures) 个模型失败）"
-        }
-        onChange()
-    }
-
-    private func writePidFile(_ pid: Int32) {
-        Paths.ensureDirectory(Paths.supportDirectory)
-        try? String(pid).write(toFile: EnginePaths.pidFile(id), atomically: true, encoding: .utf8)
-    }
-
-    private func removePidFile() {
-        try? FileManager.default.removeItem(atPath: EnginePaths.pidFile(id))
-    }
-
-    private func readPidFile() -> Int32? {
-        guard
-            let text = try? String(contentsOfFile: EnginePaths.pidFile(id), encoding: .utf8)
-                .trimmingCharacters(in: .whitespaces),
-            let pid = Int32(text), pid > 0
-        else { return nil }
-        return pid
-    }
 }
 
 // MARK: - small HTTP client
@@ -1812,7 +892,7 @@ package enum HTTP {
     /// 复用同一个会话。以前每个请求都新建 `URLSession` 再 `invalidate`，
     /// 每秒的健康探测加上多个 telemetry 端点会不断创建/销毁连接池和线程。
     /// 会话本身是线程安全的，超时改用 request 级的 `timeoutInterval`。
-    private static let session: URLSession = {
+    static let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.waitsForConnectivity = false
         configuration.httpMaximumConnectionsPerHost = 8
@@ -1849,7 +929,7 @@ package enum HTTP {
         await send(method: "PUT", port: port, path: path, body: json, timeout: timeout)
     }
 
-    private static func send(
+    static func send(
         method: String,
         port: Int,
         path: String,

@@ -26,8 +26,9 @@ final class EngineCoordinator {
     private let metrics: MetricsStore
     private let downloads: DownloadCenter
 
-    /// `AppState` 是单例，弱引用就够：既不会形成环，也不至于在它还在时消失。
-    weak var host: AppState?
+    /// 只认识 `EngineHost` 协议，不认识装配根的具体类型。弱引用：外层持有本对象，
+    /// 强引用回去就是一个环。
+    weak var host: (any EngineHost)?
 
     /// 引擎管理器的 owner 在这里：装卸、切换都会重建控制器列表。
     private(set) var engines: EngineManager?
@@ -305,7 +306,7 @@ final class EngineCoordinator {
             if !host.needsEngineSetup { host.dismissRecommendationPage() }
             host.reloadModels()
             self.syncController()
-            host.objectWillChange.send()
+            host.notifyObjectChanged()
         })
         // 引擎安装/构建的成功与失败通过全局气泡弹出。
         installs.onToast = { [weak self] message in
@@ -345,7 +346,7 @@ final class EngineCoordinator {
             // latch would fire a multi-GB download on some later install the
             // user never re-confirmed) rather than leave it armed.
         }
-        host.objectWillChange.send()
+        host.notifyObjectChanged()
     }
 
     /// 本机已经有这些仓库：公共目录里的 + 各引擎模型目录里的权重。

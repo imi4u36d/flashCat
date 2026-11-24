@@ -309,11 +309,8 @@ final class AppState: ObservableObject {
             engineSession: engineSession, settings: settings,
             history: history, conversation: conversation, chatClient: chatClient,
             imageClient: imageClient, videoClient: videoClient, metrics: metrics)
-        // 三段闭包接线（对话 / 下载 / 模型编排）放在 `AppState+Wiring.swift`：
-        // 它们只是把「回到装配根办的事」接上，读起来比埋在这里清楚。
-        runner.hooks = makeRunnerHooks()
-        downloads.hooks = makeDownloadHooks()
-        modelOps.hooks = makeModelOpsHooks()
+        // 三条编排都走协议（`ChatHost` / `ModelHost` / `DownloadHost`），
+        // 见文件末尾的 host 赋值；下载完成事件仍走独立回调。
         downloads.onEvent = { [weak self] event in self?.modelOps.handle(event) }
         // 视图只订阅 AppState：每个 store / 编排对象的发布都要桥回来，否则数值
         // 在变而页面不重绘。八个 owner 分别是指标、下载中心、Hub 浏览、对话会话、
@@ -330,6 +327,9 @@ final class AppState: ObservableObject {
         // 编排层是装配链的最后一环：等 hook 和桥都接好再把 `self` 交过去，
         // 否则构造期间的回调会摸到一个还没装配完的 AppState。
         engineCoordinator.host = self
+        runner.host = self
+        modelOps.host = self
+        downloads.host = self
     }
 
     // MARK: derived

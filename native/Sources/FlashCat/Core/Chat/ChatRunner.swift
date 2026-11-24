@@ -23,48 +23,9 @@ import Foundation
 /// 构造出来跑。
 @MainActor
 final class ChatRunner {
-    /// 外层能帮的事。用闭包注入而不是持有 `AppState`：外层已经持有本对象，
-    /// 反向再持有就是循环引用；而且引擎控制器在切引擎时会整个换掉，闭包每次
-    /// 现取才拿得到当前的那个。
-    struct Hooks {
-        /// 当前引擎控制器。
-        var controller: @MainActor () -> EngineController? = { nil }
-        /// 当前引擎 id。
-        var activeEngine: @MainActor () -> EngineID = { .splash }
-        /// 某个引擎上报的模型列表：能不能出图/出视频/读图全靠它。
-        var engineModels: @MainActor (_ engine: EngineID) -> [EngineModel] = { _ in [] }
-        /// 选中模型的目录信息，`start(localModel:)` 要它才能按本地路径起模型。
-        var selectedModelInfo: @MainActor () -> ModelInfo? = { nil }
-        /// 本次请求的最大生成 tokens（0 已按模型窗口换算过）。
-        var effectiveMaxTokens: @MainActor () -> Int = { 0 }
-        /// 现在能不能发：引擎就绪、模型就位、没在切模型。
-        var canChat: @MainActor () -> Bool = { false }
-        /// 等待引擎启动时对话页顶部那句阶段文案。
-        var engineStageText: @MainActor () -> String = { "" }
-        /// 网关端口。
-        var port: @MainActor () -> Int = { 0 }
-        /// 还没装引擎：先让用户去启动页选一个，而不是发出去等超时。
-        var needsEngineSetup: @MainActor () -> Bool = { true }
-        /// 网关侧模型准备（加载权重、必要时把别的模型换出去）。nil 表示成功，
-        /// 否则是给用户看的原因。
-        var prepareModel:
-            @MainActor (_ model: String, _ allowingGeneration: Bool) async -> GatewayModelPreparationError? = {
-                _, _ in nil
-            }
-        /// 这个模型现在是否已经驻留（已加载 / 就是当前模型）。
-        var modelIsResident: @MainActor (_ model: String, _ controller: EngineController) -> Bool = { _, _ in false }
-        /// 阻塞式错误横幅。
-        var setNotice: @MainActor (_ message: String) -> Void = { _ in }
-        /// 灵动岛提示：第二个参数是分类，第三个是一过性（只闪几秒、不进历史）。
-        var toast: @MainActor (_ message: String, _ kind: IslandNotice.Kind?, _ transient: Bool) -> Void = { _, _, _ in
-        }
-        /// 引擎日志里的 warning 行（截断这类值得回看的告警）。
-        var logWarning: @MainActor (_ line: String) -> Void = { _ in }
-        /// 切到对话页：让用户看见回答在哪儿长。
-        var showChat: @MainActor () -> Void = {}
-    }
-
-    var hooks = Hooks()
+    /// 只认识 `ChatHost` 协议。弱引用：外层持有本对象，强引用回去就是一个环；
+    /// 引擎控制器每次现取，切过引擎之后旧的那个已经没用了。
+    weak var host: (any ChatHost)?
 
     /// 依赖全部构造时注入：这里不读单例，也就能在测试里塞替身。
     private let chat: ChatStore
@@ -90,8 +51,7 @@ final class ChatRunner {
         chatClient: ChatClient,
         imageClient: ImageClient,
         videoClient: VideoClient,
-        metrics: MetricsStore,
-        hooks: Hooks = Hooks()
+        metrics: MetricsStore
     ) {
         self.chat = chat
         self.session = session
@@ -104,7 +64,6 @@ final class ChatRunner {
         self.imageClient = imageClient
         self.videoClient = videoClient
         self.metrics = metrics
-        self.hooks = hooks
     }
 
     // MARK: - store 转发
@@ -146,18 +105,20 @@ final class ChatRunner {
     private var serverState: ServerState { engineSession.serverState }
 
     /// 引擎控制器每次现取：切过引擎之后旧的那个已经没用了。
-    private var controller: EngineController? { hooks.controller() }
-    private var activeEngine: EngineID { hooks.activeEngine() }
+    private var controller: EngineController? { host?.controller }
+    private var activeEngine: EngineID { host?.activeEngine ?? .splash }
     private var isSwitchingModel: Bool { engineSession.switchingModel != nil }
     private var isRunning: Bool { controller?.isRunning ?? false }
-    private var canChat: Bool { hooks.canChat() }
-    private var needsEngineSetup: Bool { hooks.needsEngineSetup() }
-    private var effectiveMaxTokens: Int { hooks.effectiveMaxTokens() }
-    private var engineStageText: String { hooks.engineStageText() }
-    private var port: Int { hooks.port() }
-    private var selectedModelInfo: ModelInfo? { hooks.selectedModelInfo() }
+    private var canChat: Bool { host?.canChat ?? false }
+    private var needsEngineSetup: Bool { host?.needsEngineSetup ?? true }
+    private var effectiveMaxTokens: Int { host?.effectiveMaxTokens ?? 0 }
+    private var engineStageText: String { host?.engineStageText ?? "" }
+    private var port: Int { host?.port ?? 0 }
+    private var selectedModelInfo: ModelInfo? { host?.selectedModelInfo }
 
-    private func engineModels(for engine: EngineID) -> [EngineModel] { hooks.engineModels(engine) }
+    private func engineModels(for engine: EngineID) -> [EngineModel] {
+        host?.engineModels(for: engine) ?? []
+    }
 
     // MARK: - 线程标识
 
@@ -224,7 +185,13 @@ final class ChatRunner {
     // MARK: - 回到 AppState 的动作
 
     private func toast(_ message: String, kind: IslandNotice.Kind? = nil, transient: Bool = false) {
-        hooks.toast(message, kind, transient)
+        host?.toast(message, kind: kind, transient: transient)
+    }
+
+    /// 阻塞式错误横幅。`host.notice` 的写入路径只有这一处，方便以后换成更明确的
+    /// 通知类型而不必再改十几个调用点。
+    private func setNotice(_ message: String) {
+        host?.notice = message
     }
 
     /// 流式回复的本地测速委托给指标 store：低通估计器跟着指标一起搬走了，
@@ -234,13 +201,13 @@ final class ChatRunner {
     }
 
     private func gatewayModelIsResident(_ target: String, in controller: EngineController) -> Bool {
-        hooks.modelIsResident(target, controller)
+        host?.gatewayModelIsResident(target, in: controller) ?? false
     }
 
     private func prepareModelForGateway(
         _ model: String, allowingGeneration: Bool
     ) async -> GatewayModelPreparationError? {
-        await hooks.prepareModel(model, allowingGeneration)
+        await host?.prepareModelForGateway(model, allowingGeneration: allowingGeneration)
     }
 
     // MARK: chat
@@ -313,11 +280,11 @@ final class ChatRunner {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty || generating { return }
         guard !needsEngineSetup else {
-            hooks.setNotice("还没有安装推理引擎，请先在启动页选择一个")
+            setNotice("还没有安装推理引擎，请先在启动页选择一个")
             return
         }
         guard !selectedModel.isEmpty else {
-            hooks.setNotice("还没有选择模型")
+            setNotice("还没有选择模型")
             return
         }
         if activeModelSupportsVideo {
@@ -419,7 +386,7 @@ final class ChatRunner {
                 guard ready else {
                     GatewayMeter.shared.finish(meterID, failed: true)
                     let reason = self.controller?.failureMessage ?? "模型未能启动，请查看日志"
-                    self.hooks.setNotice(reason)
+                    self.setNotice(reason)
                     self.updateStreamingMessage { message in
                         message.content = "出错：\(reason)"
                         message.streaming = false
@@ -488,14 +455,14 @@ final class ChatRunner {
                             let reasoning = usage.reasoningTokens,
                             reasoning >= budget
                         {
-                            self.hooks.logWarning(
+                            self.host?.logWarning(
                                 "==> 思考截断：本次思考 \(reasoning) tokens 触及预算 \(budget)，已被强制收束；如需更长思考请在引擎配置调大「思考截断」")
                         }
                         // max_tokens 是思考与正文共享的总输出上限，打满即硬截断
                         //（finish_reason=length），思考模型默认值下最容易撞上。
                         if usage.finishReason == "length" {
                             let reasoning = usage.reasoningTokens.map { "，其中思考 \($0) tokens" } ?? ""
-                            self.hooks.logWarning(
+                            self.host?.logWarning(
                                 "==> 输出截断：本次生成触及最大生成长度 \(options.maxTokens) tokens 的上限\(reasoning)，思考与正文共享该上限；如需更长思考/回答请在聊天参数调大「最大生成 tokens」"
                             )
                         }
@@ -547,7 +514,7 @@ final class ChatRunner {
                         message.content = "出错：\(error.message)"
                     }
                 }
-                if !error.isCancellation { hooks.setNotice(error.message) }
+                if !error.isCancellation { setNotice(error.message) }
             }
             updateStreamingMessage { $0.streaming = false }
             // 这一轮已经被取消时不要再落盘：`messages` 现在可能已经是另一段
@@ -650,7 +617,7 @@ final class ChatRunner {
             guard let imported = ImageStore.importImage(atPath: attachment.path),
                 let encoded = ImageStore.base64(atPath: imported)
             else {
-                hooks.setNotice("读取图片失败：\(attachment.name)")
+                setNotice("读取图片失败：\(attachment.name)")
                 return
             }
             sourcePath = imported
@@ -748,7 +715,7 @@ final class ChatRunner {
                             note: note,
                             seed: seed))
                 }
-                if path == nil { self.hooks.setNotice("图像已生成，但写入磁盘失败") }
+                if path == nil { self.setNotice("图像已生成，但写入磁盘失败") }
             case .failure(let error):
                 GatewayMeter.shared.finish(meterID, failed: true)
                 self.failImage(error.message)
@@ -1356,7 +1323,7 @@ final class ChatRunner {
             message.toolStage = nil
             if message.content.isEmpty { message.content = "出错：\(failure)" }
         }
-        hooks.setNotice(failure)
+        setNotice(failure)
         chatStartupStage = nil
         generationStatus = "失败"
         generating = false
@@ -1382,7 +1349,7 @@ final class ChatRunner {
             guard let imported = ImageStore.importImage(atPath: attachment.path),
                 let encoded = ImageStore.base64(atPath: imported)
             else {
-                hooks.setNotice("读取首帧图片失败：\(attachment.name)")
+                setNotice("读取首帧图片失败：\(attachment.name)")
                 return
             }
             sourcePath = imported
@@ -1394,7 +1361,7 @@ final class ChatRunner {
             guard let imported = ImageStore.importImage(atPath: lastFrame.path),
                 let encoded = ImageStore.base64(atPath: imported)
             else {
-                hooks.setNotice("读取尾帧图片失败：\(lastFrame.name)")
+                setNotice("读取尾帧图片失败：\(lastFrame.name)")
                 return
             }
             lastFramePath = imported
@@ -1405,7 +1372,7 @@ final class ChatRunner {
         var referenceImagePaths: [String] = []
         for item in referenceImages {
             guard let imported = ImageStore.importImage(atPath: item.path) else {
-                hooks.setNotice("读取参考图失败：\(item.name)")
+                setNotice("读取参考图失败：\(item.name)")
                 return
             }
             referenceImagePaths.append(imported)
@@ -1564,7 +1531,7 @@ final class ChatRunner {
                     }
                 }
                 if path == nil {
-                    self.hooks.setNotice("视频已生成，但写入磁盘失败")
+                    self.setNotice("视频已生成，但写入磁盘失败")
                 } else if let path {
                     // 和图片一样单独记一份：历史只留最近六段，删对话也不该丢作品。
                     VideoGalleryStore.shared.record(
@@ -1594,7 +1561,7 @@ final class ChatRunner {
             item.videoProgress = nil
             if item.content.isEmpty { item.content = "出错：\(message)" }
         }
-        hooks.setNotice(message)
+        setNotice(message)
         chatStartupStage = nil
         videoTask = nil
         generating = false
@@ -1692,7 +1659,7 @@ final class ChatRunner {
             item.imageProgress = nil
             if item.content.isEmpty { item.content = "出错：\(message)" }
         }
-        hooks.setNotice(message)
+        setNotice(message)
         chatStartupStage = nil
         imageTask = nil
         generating = false
@@ -1854,13 +1821,13 @@ final class ChatRunner {
             background = nil
             messages = running.messages
             threadID = thread.id
-            hooks.showChat()
+            host?.showChat()
             return
         }
         guard thread.id != threadID else {
             // 点的就是当前这段：别用历史里的旧快照把正在流的回答盖掉，
             // 也绝对不能先 detach 到 background（否则前台 messages 不再收到流式分片）。
-            hooks.showChat()
+            host?.showChat()
             return
         }
         detachGenerationForThreadSwitch()
@@ -1893,7 +1860,7 @@ final class ChatRunner {
         // 下次启动会拿 list 里旧的正文配上这里新的 `threadID`，下一轮保存
         // 还会把旧正文写到新 id 名下。
         conversation.save(messages)
-        hooks.showChat()
+        host?.showChat()
     }
 
     /// 删除按钮只负责挂起：确认弹窗在壳层，两个列表用的是同一段文案与同一个落点。

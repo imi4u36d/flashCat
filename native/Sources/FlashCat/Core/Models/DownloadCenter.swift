@@ -38,23 +38,8 @@ enum DownloadOutcome {
 /// `DownloadEvent`，谁也不持有对方。
 @MainActor
 final class DownloadCenter: ObservableObject {
-    /// 外层能帮的事。用闭包注入而不是持有 AppState：外层已经持有本对象，反向
-    /// 再持有一个就是循环引用，改动一处会安静地泄漏整个 AppState。
-    struct Hooks {
-        /// 引擎日志。`engine` 为 nil 表示「当前引擎」：退出清理发生在下载之外，
-        /// 该写哪一份日志只有 AppState 知道。
-        var log: @MainActor (_ line: String, _ engine: EngineID?) -> Void = { _, _ in }
-        /// 灵动岛提示。第二个参数是一过性（只闪几秒，不进通知历史）。
-        var toast: @MainActor (_ message: String, _ transient: Bool) -> Void = { _, _ in }
-        /// 阻塞式错误横幅：用户必须看见、不会自己滚走的失败。
-        var setNotice: @MainActor (_ message: String) -> Void = { _ in }
-        /// 模型目录变了（下完 / 清掉半成品）：模型列表的短缓存要作废并重扫。
-        var reloadModels: @MainActor () -> Void = {}
-        /// 任务行集合变了（引擎 / 模型 / 状态）：侧栏与模型页的扫盘缓存要作废。
-        var modelInventoryChanged: @MainActor () -> Void = {}
-    }
-
-    var hooks = Hooks()
+    /// 只认识 `DownloadHost` 协议。弱引用：外层持有本对象，强引用回去就是一个环。
+    weak var host: (any DownloadHost)?
     var onEvent: (@MainActor (DownloadEvent) -> Void)?
 
     /// 正在下载的模型 id 与它所属的引擎。两个引擎可能有同名模型，只有正在写
@@ -73,7 +58,7 @@ final class DownloadCenter: ObservableObject {
             // 模型页反复扫盘。
             let before = oldValue.map { "\($0.engine.rawValue)|\($0.model)|\($0.status.rawValue)" }
             let after = downloadTasks.map { "\($0.engine.rawValue)|\($0.model)|\($0.status.rawValue)" }
-            if before != after { hooks.modelInventoryChanged() }
+            if before != after { host?.modelInventoryChanged() }
         }
     }
 
@@ -293,7 +278,7 @@ final class DownloadCenter: ObservableObject {
                 discard(marker, why: "下载未能启动，清掉半成品标记")
             }
             removeTask(engine: engine, model: id)
-            hooks.setNotice("无法启动下载：\(error.localizedDescription)")
+            setNotice("无法启动下载：\(error.localizedDescription)")
             return false
         }
     }
@@ -349,7 +334,7 @@ final class DownloadCenter: ObservableObject {
         } else {
             removeTask(engine: task.engine, model: task.model)
             discardPartialDownload(task)
-            hooks.toast("已从下载中心移除", false)
+            host?.toast("已从下载中心移除", false)
         }
     }
 
@@ -466,7 +451,7 @@ final class DownloadCenter: ObservableObject {
         lastWatchDate = nil
         downloadWatchDirectories = []
         downloadWatchBaselines = [:]
-        hooks.reloadModels()
+        host?.reloadModels()
 
         // A launch may be waiting on this download; it resumes exactly once,
         // whichever branch below ends up running.
@@ -481,7 +466,7 @@ final class DownloadCenter: ObservableObject {
             pauseRequested = false
             upsertTask(engine: engine, model: model) { $0.status = .paused }
             append("==> 已暂停 \(model)，可从下载中心继续", engine: engine)
-            hooks.toast("已暂停下载，进度已保留", true)
+            host?.toast("已暂停下载，进度已保留", true)
             outcome = .cancelled
             return
         }
@@ -496,7 +481,7 @@ final class DownloadCenter: ObservableObject {
                 removeTask(engine: engine, model: model)
                 discardPartialDownload(stale)
                 append("==> 已删除下载任务 \(model)，半成品已清理", engine: engine)
-                hooks.toast("已从下载中心移除", false)
+                host?.toast("已从下载中心移除", false)
                 outcome = .cancelled
                 return
             }
@@ -506,7 +491,7 @@ final class DownloadCenter: ObservableObject {
             // is a second, explicit step in the download center.
             upsertTask(engine: engine, model: model) { $0.status = .paused }
             append("==> 已停止下载 \(model)，进度已保留", engine: engine)
-            hooks.toast("已停止下载，可在下载中心继续或移除", true)
+            host?.toast("已停止下载，可在下载中心继续或移除", true)
             outcome = .cancelled
             return
         }
@@ -515,7 +500,7 @@ final class DownloadCenter: ObservableObject {
             upsertTask(engine: engine, model: model) { $0.status = .failed }
             append("==> 下载失败，退出码 \(status)", engine: engine)
             let message = "模型下载失败，退出码 \(status)（下载中心里可重试）"
-            hooks.setNotice(message)
+            setNotice(message)
             outcome = .failed(message)
             return
         }
@@ -528,7 +513,7 @@ final class DownloadCenter: ObservableObject {
         // cached byte count and rescan now that the destination is complete,
         // so the card can flip from progress to "使用".
         EngineModelStore.invalidateMetaCache()
-        hooks.reloadModels()
+        host?.reloadModels()
 
         if let sharedRepo {
             append("==> 已下载 \(sharedRepo) 到公共目录", engine: engine)
@@ -592,7 +577,7 @@ final class DownloadCenter: ObservableObject {
         discard(path, why: "清理半成品")
         discard(marker, why: "清理半成品标记")
         EngineModelStore.invalidateMetaCache()
-        hooks.reloadModels()
+        host?.reloadModels()
     }
 
     // MARK: helpers
@@ -610,7 +595,12 @@ final class DownloadCenter: ObservableObject {
 
     /// 日志只有一份出口：外层把它写进对应引擎的日志流，界面上才看得见。
     private func append(_ line: String, engine: EngineID?) {
-        hooks.log(line, engine)
+        host?.log(line, engine: engine)
+    }
+
+    /// 阻塞式错误横幅的写入路径只有这一处。
+    private func setNotice(_ message: String) {
+        host?.notice = message
     }
 
     private static func totalBytes(in line: String) -> Int? {

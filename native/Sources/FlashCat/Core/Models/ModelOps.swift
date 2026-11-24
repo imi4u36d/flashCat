@@ -23,40 +23,8 @@ import Foundation
 /// 用 `Hooks` 闭包接回来：这里不认识 `AppState.shared`，才不会反过来把它拽进环。
 @MainActor
 final class ModelOps {
-    /// 外层能帮的事。用闭包注入而不是持有 `AppState`：外层已经持有本对象，
-    /// 反向再持有就是循环引用；而且引擎控制器在切引擎时会整个换掉，闭包每次
-    /// 现取才拿得到当前的那个。
-    struct Hooks {
-        /// 当前引擎：删模型、下载收尾都要判断「这是不是正在服务的那一份」。
-        var activeEngine: @MainActor () -> EngineID = { .splash }
-        /// 正在服务的模型 id：删掉它之后不能留着旧选择。
-        var selectedModel: @MainActor () -> String = { "" }
-        var setSelectedModel: @MainActor (_ model: String) -> Void = { _ in }
-        /// 还没装引擎：推荐页据此决定要不要自己弹出来。
-        var needsEngineSetup: @MainActor () -> Bool = { true }
-        /// 删除正在服务的权重之前先停引擎：进程里驻留的旧模型不能留着。
-        var stopService: @MainActor () -> Void = {}
-        /// 选中项被清掉之后重新解析一份可用权重。
-        var adoptSavedModel: @MainActor (_ engine: EngineID) -> Void = { _ in }
-        /// 下载落地后把模型切过去。
-        var applyModel: @MainActor (_ model: String) -> Void = { _ in }
-        /// 模型属于别的引擎：连同引擎一起切过去（换模型与换引擎是同一件事）。
-        var applyModelFromAnyEngine: @MainActor (_ model: String, _ engine: EngineID) -> Void = { _, _ in }
-        /// 阻塞式错误横幅（读取）：启动前补件要把下载入口写下的原因带回去。
-        var notice: @MainActor () -> String? = { nil }
-        /// 阻塞式错误横幅（写入）。
-        var setNotice: @MainActor (_ message: String) -> Void = { _ in }
-        /// 灵动岛提示：第二个参数是分类，第三个是一过性（只闪几秒、不进历史）。
-        var toast: @MainActor (_ message: String, _ kind: IslandNotice.Kind?, _ transient: Bool) -> Void = {
-            _, _, _ in
-        }
-        /// 引擎日志里的 system 行：补件过程要留下能回看的痕迹。
-        var appendLog: @MainActor (_ line: String, _ engine: EngineID) -> Void = { _, _ in }
-        /// 退出前先收掉网关与控制通道：孤儿下载进程会继续往磁盘里写。
-        var stopBackends: @MainActor () -> Void = {}
-    }
-
-    var hooks = Hooks()
+    /// 只认识 `ModelHost` 协议。弱引用：外层持有本对象，强引用回去就是一个环。
+    weak var host: (any ModelHost)?
 
     /// 依赖全部构造时注入：这里不读单例，也就能在没有界面的地方单独构造出来跑。
     private let settings: AppSettings
@@ -118,12 +86,12 @@ final class ModelOps {
 
     // MARK: - 回到 AppState 的动作
 
-    private var activeEngine: EngineID { hooks.activeEngine() }
+    private var activeEngine: EngineID { host?.activeEngine ?? .splash }
     private var selectedModel: String {
-        get { hooks.selectedModel() }
-        set { hooks.setSelectedModel(newValue) }
+        get { host?.selectedModel ?? "" }
+        set { host?.selectedModel = newValue }
     }
-    private var needsEngineSetup: Bool { hooks.needsEngineSetup() }
+    private var needsEngineSetup: Bool { host?.needsEngineSetup ?? true }
     /// 当前引擎控制器：切过引擎之后旧的那个已经没用了，每次现取。
     private var controller: EngineController? { engineCoordinator.engines?.active }
 
@@ -142,26 +110,26 @@ final class ModelOps {
         await engineCoordinator.switchEngine(id, start: start)
     }
 
-    private func stopService() { hooks.stopService() }
+    private func stopService() { host?.stopService() }
 
-    private func adoptSavedModel(for engine: EngineID) { hooks.adoptSavedModel(engine) }
+    private func adoptSavedModel(for engine: EngineID) { host?.adoptSavedModel(for: engine) }
 
-    private func applyModel(_ id: String) { hooks.applyModel(id) }
+    private func applyModel(_ id: String) { host?.applyModel(id) }
 
     private func applyModelFromAnyEngine(_ id: String, engine: EngineID) {
-        hooks.applyModelFromAnyEngine(id, engine)
+        host?.applyModelFromAnyEngine(id, engine: engine)
     }
 
     private var notice: String? {
-        get { hooks.notice() }
-        set { hooks.setNotice(newValue ?? "") }
+        get { host?.notice }
+        set { host?.notice = newValue ?? "" }
     }
 
     private func toast(_ message: String, kind: IslandNotice.Kind? = nil, transient: Bool = false) {
-        hooks.toast(message, kind, transient)
+        host?.toast(message, kind: kind, transient: transient)
     }
 
-    private func append(log line: String, engine: EngineID) { hooks.appendLog(line, engine) }
+    private func append(log line: String, engine: EngineID) { host?.appendLog(line, engine: engine) }
 
     // MARK: hardware
 
@@ -677,7 +645,7 @@ final class ModelOps {
     /// server first, then the downloader child: an orphaned one keeps pulling
     /// gigabytes to disk with no window left to stop it from.
     func prepareForTermination() {
-        hooks.stopBackends()
+        host?.stopBackends()
         downloads.prepareForTermination()
     }
 

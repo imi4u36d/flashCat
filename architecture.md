@@ -52,11 +52,13 @@ graph TD
 | --- | --- | --- |
 | `App/` | 入口、菜单栏、状态栏、登录项、控制接口与网关适配、UI 状态 | 可以 import AppKit / SwiftUI |
 | `Composition/` | `AppState` 装配根与接线 | 只做对象构造与转发 |
-| `Core/` | 对话、引擎、模型、Hub、日志、指标与无 UI 的支撑代码 | 不许 import SwiftUI / AppKit / AVFoundation；不直接引用 `AppState` |
+| `Core/` | 对话、引擎、模型、Hub、日志、指标、`Ports/` 协议与无 UI 的支撑代码 | 不许 import SwiftUI / AppKit / AVFoundation；不直接引用 `AppState` |
 | `Media/` | 依赖 AppKit / AVFoundation 的图像视频客户端、画廊与缩略图 | 只由 App 层装配 |
 | `UI/` | `DesignSystem/`、`Shell/`、`Components/`、`Features/<页面>/` | 只读 `AppState`，不取数、不写盘 |
 
-`Core/` 是下一步 `FlashCatCore` target 的暂存位置；`scripts/check-architecture.sh` 守住其中能机器判定的规则。
+`Core/Ports/` 里的 `EngineHost` / `ChatHost` / `ModelHost` / `DownloadHost` 是编排层与外层的唯一接口：四个编排对象只持有弱引用协议，不认识 `AppState`。`scripts/check-architecture.sh` 守住能机器判定的规则（Core 不 import UI 框架、不引用 AppState、AppState 行数预算、UI 不直接 I/O）。
+
+**`FlashCatCore` 独立 target 暂缓。** 把 50 个文件提升成跨模块 API 需要给数百个类型与成员补 `package`；目录、协议与 CI 守卫已经把日常改动挡在正确的层里，独立 target 目前带来的是边界的形式化，而不是新的约束。真要拆时，`Core/` 已按 target 的相对路径摆好，迁移是机械的。
 
 依赖边只有三条是真的：应用依赖 Kit（多个文件 `import FlashCatKit`）；命令行依赖 Kit 与控制协议；Kit 依赖系统框架，从不反向引用应用符号。界面与状态在同一进程里，不再有跨语言桥；命令行与应用之间只有本机回环 HTTP。
 

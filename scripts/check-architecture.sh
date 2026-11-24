@@ -60,12 +60,14 @@ if matches=$(find "$UI" -name '*.swift' -exec grep -HEn '\$state\.' {} +); then
     fi
 fi
 
-# 5. 报告项：UI 层仍存在的直接 I/O，属于 P3 的迁移清单，不阻断。
+# 5. UI 不直接做网络 / 文件系统操作。取数与落盘属于 store / service，
+#    视图只消费结果；这条已经是零，新增命中直接阻断。
 if matches=$(find "$UI" -name '*.swift' \
     -exec grep -HEn 'URLSession|FileManager\.default|Process\(' {} +); then
     if [ -n "$matches" ]; then
-        echo "warning: UI 层仍有直接 I/O（下一轮迁回 store）："
         echo "$matches"
+        echo "error: UI 层不得直接发网络请求或读写文件" >&2
+        fail=1
     fi
 fi
 

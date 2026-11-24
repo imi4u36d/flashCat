@@ -124,7 +124,7 @@ final class DownloadCenter: ObservableObject {
         do {
             downloadTasks = try ModelDownloadStore.load(from: tasksFile)
         } catch {
-            NSLog("flashCat: 下载任务记录读取失败：%@", String(describing: error))
+            AppLog.error(.download, "下载任务记录读取失败：\(error)")
         }
     }
 

@@ -19,7 +19,7 @@ most here are all about not leaking those differences back into the business lay
 
 ```bash
 cd native && swift build          # 0 warnings; CI runs with -warnings-as-errors
-cd native && swift test           # Core + app + Kit + CLI cases (750 executed), about ten seconds
+cd native && swift test           # Core + app + Kit + CLI cases (753 executed), about ten seconds
 bash scripts/coverage.sh          # coverage gates: FlashCatCore >= 60%, FlashCatKit >= 80%
 make app                          # assemble the .app in /Applications (or INSTALL=0 for dist only)
 ```

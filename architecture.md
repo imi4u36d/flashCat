@@ -39,7 +39,7 @@ graph TD
 | --- | --- | --- |
 | `FlashCat` | macOS 壳：入口、装配根、编排层、媒体适配、菜单栏与七个原生页面 | [flashcat-app](native/Sources/FlashCat/SPEC.md) |
 | `UI` | 七个 SwiftUI 页面与控制台壳 | [flashcat-ui](native/Sources/FlashCat/UI-SPEC.md) |
-| `FlashCatCore` | 应用核心：对话 DTO/持久化、引擎运行时、模型目录与安装、日志、指标、`Ports/` 协议 | — |
+| `FlashCatCore` | 应用核心：对话 DTO/持久化、引擎运行时、模型目录与安装、`AppLog`、指标、`Ports/` 协议 | — |
 | `FlashCatKit` | 引擎身份/端口/能力、清单解码、状态解析、路由、包安装、启动阶段判定 | [flashcat-kit](native/Sources/FlashCatKit/SPEC.md) |
 | `FlashCatKit/Gateway` | 只监听本机的双方言 HTTP 网关 | [flashcat-gateway](native/Sources/FlashCatKit/Gateway/SPEC.md) |
 | `FlashCatCLICore` / `FlashCatCLI` | `flashcat` 命令：解析、输出、控制客户端、离线读取与引擎安装 | [flashcat-cli](native/Sources/FlashCatCLICore/SPEC.md) |
@@ -58,7 +58,7 @@ graph TD
 | `Media/` | 依赖 AppKit / AVFoundation 的图像视频客户端、画廊与缩略图 | 只由 App 层装配 |
 | `UI/` | `DesignSystem/`、`Shell/`、`Components/`、`Features/<页面>/` | 只读 `AppState`，不取数、不写盘 |
 
-`FlashCatCore/Ports/` 里的 `EngineHost` / `ChatHost` / `ModelHost` / `DownloadHost` 是编排层与外层的唯一接口：四个编排对象只持有弱引用协议，不认识 `AppState`。Core 用 `package` 访问级别向同一 package 内的 App 暴露 API，编译器会拦住越过 target 的引用；`scripts/check-architecture.sh` 再守住 import 框架、`AppState` 引用、`AppState` 行数预算与 UI 直接 I/O。
+`FlashCatCore/Ports/` 里的 `EngineHost` / `ChatHost` / `ModelHost` / `DownloadHost` 是编排层与外层的唯一接口：四个编排对象只持有弱引用协议，不认识 `AppState`。Core 用 `package` 访问级别向同一 package 内的 App 暴露 API，编译器会拦住越过 target 的引用；`scripts/check-architecture.sh` 再守住 import 框架、`AppState` 引用、`AppState` 行数预算、UI 直接 I/O 与 Core 直接 `NSLog`（日志统一走 `AppLog`）。
 
 依赖边只有四条是真的：应用依赖 Core 与 Kit；Core 依赖 Kit；命令行依赖 Kit 与控制协议；Kit 依赖系统框架，从不反向引用应用符号。界面与状态在同一进程里，不再有跨语言桥；命令行与应用之间只有本机回环 HTTP。
 
@@ -66,7 +66,7 @@ graph TD
 
 代码已经在执行的规则，不是愿望。
 
-1. **`FlashCatKit` 不许引 UI。** 它只 `import` `Foundation` / `Network` / `CryptoKit`。这决定它能在无窗口的测试进程里跑——`FlashCatKitTests` 有 317 个测试、`FlashCatCoreTests` 47 个（持久化、模型目录、迁移、设置与共享目录）、`FlashCatTests` 290 个（壳层纯函数、编排协议与「不得再出现快捷键」的源码守卫）、`FlashCatCLICoreTests` 96 个（命令行解析、SSE 解码与控制协议）。
+1. **`FlashCatKit` 不许引 UI。** 它只 `import` `Foundation` / `Network` / `CryptoKit`。这决定它能在无窗口的测试进程里跑——`FlashCatKitTests` 有 317 个测试、`FlashCatCoreTests` 50 个（持久化、模型目录、迁移、设置与共享目录）、`FlashCatTests` 290 个（壳层纯函数、编排协议与「不得再出现快捷键」的源码守卫）、`FlashCatCLICoreTests` 96 个（命令行解析、SSE 解码与控制协议）。
 2. **依赖单向。** `FlashCat` 与 `FlashCatCLICore` → `FlashCatKit`；CLI 不 import 应用目标，Kit 里出现任何应用侧符号都是破坏。
 3. **端口段不重叠。** 默认端口由引擎 descriptor/manifest 声明：`splash 8000` / `omlx 8100` / `mtplx 8200` / `mlx-serve 8300`，可用范围默认是 `defaultPort...defaultPort+19`；分配器在段内跳过被占端口，段外放弃。
 4. **切换方式是能力，不是选项。** `omlx` 与 `mlx-serve` 是 `hot`，其余当前为 `restart`。应用只按 descriptor 声明的能力执行，不按引擎 id 猜测。
@@ -101,5 +101,5 @@ graph TD
 
 ## 已知限制
 
-- **引擎生命周期仍有未覆盖分支。** 覆盖率门禁（`scripts/coverage.sh`）当前：FlashCatCore 60.3%、FlashCatKit 82.8%。`EngineController` 的进程/轮询/端口路径由 `EngineControllerPhaseTests` 用真进程覆盖，剩余分支需要真实 pack 与 HTTP；`ChatRunner` / `ModelOps` / `DownloadCenter` 已有假依赖用例，但还没有覆盖完整发送流。`AppState` 本身（状态机、页面的动作分发）没有单元测试，拆分它的原因之一就是让它可测，见 `CONTRIBUTING.md`。
+- **引擎生命周期仍有未覆盖分支。** 覆盖率门禁（`scripts/coverage.sh`）当前：FlashCatCore 60.6%、FlashCatKit 82.8%。`EngineController` 的进程/轮询/端口路径由 `EngineControllerPhaseTests` 用真进程覆盖，剩余分支需要真实 pack 与 HTTP；`ChatRunner` / `ModelOps` / `DownloadCenter` 已有假依赖用例，但还没有覆盖完整发送流。`AppState` 本身（状态机、页面的动作分发）没有单元测试，拆分它的原因之一就是让它可测，见 `CONTRIBUTING.md`。
 - **界面没有自动化测试。** 七个页面与弹窗仍只能手工回归；`FlashCatTests` 覆盖的是壳层沉淀出来的纯函数，以及一条扫描源码、防止快捷键被加回来的守卫。真要自动化，需要补一个能在无头环境里驱动 SwiftUI 的宿主，这不在当前范围内。

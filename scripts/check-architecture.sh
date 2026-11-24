@@ -66,7 +66,16 @@ if matches=$(find "$UI" -name '*.swift' \
     fi
 fi
 
-# 6. 报告项：超过 800 行的文件，便于下一轮按职责拆。
+# 6. Core 的日志统一走 AppLog；不要直接 NSLog，否则系统日志与界面日志两条线。
+if matches=$(find "$CORE" -name '*.swift' -exec grep -HEn 'NSLog(' {} +); then
+    if [ -n "$matches" ]; then
+        echo "$matches"
+        echo "error: Sources/FlashCatCore 的日志应走 AppLog" >&2
+        fail=1
+    fi
+fi
+
+# 7. 报告项：超过 800 行的文件，便于下一轮按职责拆。
 echo "== 超过 800 行的 Swift 文件 =="
 find "$SOURCES" "$CORE" -name '*.swift' -exec wc -l {} + \
     | awk '$2 != "total" && $1 > 800 { print }' \

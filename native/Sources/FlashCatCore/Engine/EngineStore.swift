@@ -201,7 +201,7 @@ package final class EngineStore {
             return
         }
         do { try data.write(to: fileURL, options: .atomic) } catch {
-            NSLog("flashCat: engines.json 写入失败：%@", error.localizedDescription)
+            AppLog.error(.persistence, "engines.json 写入失败：\(error.localizedDescription)")
         }
     }
 

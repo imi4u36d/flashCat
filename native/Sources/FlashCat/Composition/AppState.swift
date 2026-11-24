@@ -330,6 +330,10 @@ final class AppState: ObservableObject {
         runner.host = self
         modelOps.host = self
         downloads.host = self
+        // 安装成功 / 失败的回执统一由装配根接：视图不再把自己的闭包写回
+        // `EngineInstallCenter`（那会让 view 与 AppState 互相强引用）。
+        installs.onInstalled = { [weak self] id in self?.adoptEngine(id) }
+        installs.onInstallFailed = { [weak self] id in self?.engineInstallFailed(id) }
     }
 
     // MARK: derived

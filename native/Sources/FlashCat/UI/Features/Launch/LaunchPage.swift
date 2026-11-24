@@ -13,7 +13,6 @@ struct LaunchPage: View {
     @ObservedObject var state: AppState
     @ObservedObject var installs: EngineInstallCenter
 
-    @State private var busy: EngineID?
     @State private var appeared = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -56,9 +55,6 @@ struct LaunchPage: View {
         }
         .onAppear { appeared = true }
         .task {
-            installs.onInstalled = { id in
-                state.adoptEngine(id)
-            }
             installs.refreshInstalled()
             await installs.loadIndexIfNeeded()
         }
@@ -247,7 +243,7 @@ struct LaunchPage: View {
                 // 已安装不再给按钮：状态本身就是答案，用户从底部「开始使用」进入控制台。
                 InstalledBadge()
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
-            } else if phase.isBusy || busy == id {
+            } else if phase.isBusy {
                 LaunchProgressBadge(
                     fraction: fraction,
                     label: label,
@@ -261,13 +257,15 @@ struct LaunchPage: View {
                     Text(L10n.t(recommended == nil ? "安装" : "安装并开始"))
                 }
                 .buttonStyle(.ds(isPrimary ? .primary : .secondary, size: .regular))
-                .disabled(installs.building != nil || busy != nil)
+                .disabled(
+                    installs.building != nil
+                        || installs.phases.values.contains { $0.isBusy }
+                )
                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
         .animation(reduceMotion ? nil : DS.Motion.smooth, value: installed)
         .animation(reduceMotion ? nil : DS.Motion.smooth, value: phase.isBusy)
-        .animation(reduceMotion ? nil : DS.Motion.smooth, value: busy)
     }
 
     private var footer: some View {
@@ -328,23 +326,14 @@ struct LaunchPage: View {
             state.toast(L10n.format("正在构建 %@，完成后再试", installs.building?.displayName ?? L10n.t("引擎")))
             return
         }
-        busy = id
         if recommended != nil {
             state.armRecommendedDownload(for: id)
         }
-        let center = installs
-        center.onInstalled = { installed in
-            state.adoptEngine(installed)
-        }
-        center.onInstallFailed = { failed in
-            state.engineInstallFailed(failed)
-            busy = nil
-        }
         // Build from the engine's newest GitHub release; this page never had an
-        // upstream check, so `installFromUpstream` fetches it on demand.
+        // upstream check, so `installFromUpstream` fetches it on demand. 安装
+        // 进度与失败回执都由 `installs.phases` 驱动，视图不再回写安装中心的闭包。
         Task { @MainActor in
-            let started = await center.installFromUpstream(id)
-            if !started { busy = nil }
+            await installs.installFromUpstream(id)
         }
     }
 

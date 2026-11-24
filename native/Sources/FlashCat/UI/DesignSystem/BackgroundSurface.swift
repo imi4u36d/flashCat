@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import AppKit
+import FlashCatCore
 
 /// 窗口画布背景表面：始终维持不透明纯实色 ZCode 画布（日间 `#F8F8F8` / 夜间 `#161616`）。
 ///

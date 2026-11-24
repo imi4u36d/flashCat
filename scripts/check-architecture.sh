@@ -10,7 +10,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SOURCES="$ROOT/native/Sources/FlashCat"
-CORE="$SOURCES/Core"
+CORE="$ROOT/native/Sources/FlashCatCore"
 UI="$SOURCES/UI"
 fail=0
 
@@ -25,13 +25,8 @@ if matches=$(find "$CORE" -name '*.swift' \
     fi
 fi
 
-# 2. Core 不直接耦合装配根。两处历史例外：
-#    - Models/DownloadCenter.swift：下载进程终止回调里回到主 actor 收尾；
-#    - Logs/LogFeedService.swift：历史写盘失败的静态入口。
-#    两者都计划在 FlashCatCore target 拆分时改成注入；新代码不得再加例外。
+# 2. FlashCatCore 不直接耦合装配根；编排层在 App/Orchestration，允许回调 AppState。
 if matches=$(find "$CORE" -name '*.swift' \
-    ! -path '*/Models/DownloadCenter.swift' \
-    ! -path '*/Logs/LogFeedService.swift' \
     -exec grep -HEn 'AppState\.shared|AppState\(|: AppState\b|-> AppState\b' {} + \
     | grep -vE ':[0-9]+:[[:space:]]*///'); then
     if [ -n "$matches" ]; then
@@ -73,7 +68,7 @@ fi
 
 # 6. 报告项：超过 800 行的文件，便于下一轮按职责拆。
 echo "== 超过 800 行的 Swift 文件 =="
-find "$SOURCES" -name '*.swift' -exec wc -l {} + \
+find "$SOURCES" "$CORE" -name '*.swift' -exec wc -l {} + \
     | awk '$2 != "total" && $1 > 800 { print }' \
     | sort -rn \
     | head -15

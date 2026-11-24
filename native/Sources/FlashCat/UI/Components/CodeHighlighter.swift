@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import AppKit
+import FlashCatCore
 import Foundation
 
 /// 对话里代码块的轻量高亮。

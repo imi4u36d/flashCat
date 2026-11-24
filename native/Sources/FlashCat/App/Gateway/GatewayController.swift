@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import Combine
+import FlashCatCore
 @preconcurrency import FlashCatKit
 import Foundation
 

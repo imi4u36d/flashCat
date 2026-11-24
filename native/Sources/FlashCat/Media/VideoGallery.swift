@@ -3,6 +3,7 @@
 
 import AVFoundation
 import AppKit
+import FlashCatCore
 import Foundation
 
 /// 视频图库里的一条作品：模型在对话里生成、已经落成 MP4 的文件。

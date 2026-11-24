@@ -34,9 +34,17 @@ let package = Package(
             dependencies: ["FlashCatCLICore"],
             path: "Sources/flashcat-cli"
         ),
+        .target(
+            name: "FlashCatCore",
+            dependencies: ["FlashCatKit"],
+            path: "Sources/FlashCatCore",
+            // The String Catalog and its compiled lproj live here now: every
+            // L10n lookup from the app shell goes through `FlashCatCore`.
+            resources: [.process("Resources")]
+        ),
         .executableTarget(
             name: "FlashCat",
-            dependencies: ["FlashCatKit"],
+            dependencies: ["FlashCatKit", "FlashCatCore"],
             path: "Sources/FlashCat",
             exclude: ["SPEC.md", "UI-SPEC.md"],
             // `Resources/app-icon.png` is the single master artwork: the build
@@ -64,8 +72,13 @@ let package = Package(
         // the shell testable, see CONTRIBUTING.md.
         .testTarget(
             name: "FlashCatTests",
-            dependencies: ["FlashCat", "FlashCatKit"],
+            dependencies: ["FlashCat", "FlashCatCore", "FlashCatKit"],
             path: "Tests/FlashCatTests"
+        ),
+        .testTarget(
+            name: "FlashCatCoreTests",
+            dependencies: ["FlashCatCore", "FlashCatKit"],
+            path: "Tests/FlashCatCoreTests"
         ),
         // The CLI's parser, SSE decoder and output formatting are pure; they
         // get the same no-window test harness as the kit.

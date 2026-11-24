@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import AppKit
+import FlashCatCore
 import FlashCatKit
 import Foundation
 

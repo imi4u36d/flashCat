@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import Combine
+import FlashCatCore
 import SwiftUI
 
 /// 侧栏与对话页共用的会话入口：新建对话按钮、会话行，以及边栏收起时

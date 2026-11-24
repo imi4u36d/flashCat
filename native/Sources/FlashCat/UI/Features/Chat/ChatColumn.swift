@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
+import FlashCatCore
 import Foundation
 
 /// 对话列宽度的换算。

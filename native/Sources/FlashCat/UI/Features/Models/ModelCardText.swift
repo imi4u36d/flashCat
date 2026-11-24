@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
+import FlashCatCore
 import Foundation
 
 /// 把 Hugging Face 的 README 模型卡洗成能直接渲染的 Markdown。

@@ -3,6 +3,7 @@
 
 import AppKit
 import Charts
+import FlashCatCore
 import FlashCatKit
 import SwiftUI
 

@@ -3,6 +3,7 @@
 
 import AVKit
 import AppKit
+import FlashCatCore
 import SwiftUI
 
 /// 图库和视频页共用的详情弹层。

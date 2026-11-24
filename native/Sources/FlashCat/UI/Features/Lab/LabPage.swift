@@ -3,6 +3,7 @@
 
 import AVFoundation
 import AppKit
+import FlashCatCore
 import SwiftUI
 
 /// 「实验」页：侧边栏设置之后的独立入口，顶部用分段控件在图片/视频之间切换。

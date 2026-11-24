@@ -2,6 +2,7 @@
 // Copyright (c) 2026 wangzhuo
 
 import AppKit
+import FlashCatCore
 
 /// 显式用 QuickTime 打开本地视频。
 /// 直接 `NSWorkspace.open` 会走用户给 .mp4 设的默认应用，有些机器上会落到音频软件；

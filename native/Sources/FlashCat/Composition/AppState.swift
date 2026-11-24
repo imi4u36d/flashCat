@@ -4,6 +4,7 @@
 import AppKit
 import Combine
 import Darwin
+import FlashCatCore
 import FlashCatKit
 import Foundation
 import SwiftUI

@@ -1,0 +1,319 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 wangzhuo
+
+import CryptoKit
+import Darwin
+import FlashCatKit
+import Foundation
+
+/// Thin NSRegularExpression wrappers. Swift regex literals are not available in
+/// the Swift 5 language mode this target is built with.
+package enum TextPattern {
+    package static func firstMatch(_ pattern: String, _ text: String) -> [String]? {
+        allMatches(pattern, text).first
+    }
+
+    package static func allMatches(_ pattern: String, _ text: String) -> [[String]] {
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(location: 0, length: text.utf16.count)
+        var result: [[String]] = []
+        for match in expression.matches(in: text, options: [], range: range) {
+            var groups: [String] = []
+            // NSTextCheckingResult raises (not NSNotFound) when the index is past
+            // the pattern's capture-group count, so stay inside numberOfRanges.
+            for index in 0..<min(8, match.numberOfRanges) {
+                let groupRange = match.range(at: index)
+                if groupRange.location == NSNotFound {
+                    groups.append("")
+                } else if let swiftRange = Range(groupRange, in: text) {
+                    groups.append(String(text[swiftRange]))
+                } else {
+                    groups.append("")
+                }
+            }
+            result.append(groups)
+        }
+        return result
+    }
+
+    package static func test(_ pattern: String, _ text: String) -> Bool {
+        firstMatch(pattern, text) != nil
+    }
+
+    package static func replace(_ pattern: String, _ text: String, with replacement: String) -> String {
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return text }
+        return expression.stringByReplacingMatches(
+            in: text,
+            options: [],
+            range: NSRange(location: 0, length: text.utf16.count),
+            withTemplate: replacement
+        )
+    }
+}
+
+/// Shared formatting helpers and low-level probes used across the app.
+///
+/// File locations live in `FlashCatPaths` (`FlashCatKit`) so the CLI resolves
+/// the same support directory, logs and model folders.
+package enum Paths {
+    package static var home: String { FlashCatPaths.home }
+    package static var supportDirectory: String { FlashCatPaths.supportDirectory }
+    package static var logsDirectory: String { FlashCatPaths.logsDirectory }
+    package static var logFile: String { FlashCatPaths.serverLogFile }
+    package static var pidFile: String { FlashCatPaths.pidFile }
+    package static var conversationFile: String { FlashCatPaths.conversationFile }
+    package static var historyFile: String { FlashCatPaths.historyFile }
+
+    /// Every engine, Splash included, keeps weights under the app's own data
+    /// root. Splash keeps its historical nested `owner/repo` layout.
+    package static var modelsDirectory: String { FlashCatPaths.modelsDirectory(.splash) }
+
+    /// Read-only sources from builds that kept Splash under `~/.flashcat` or
+    /// let the upstream Splash app own its assemblies.
+    package static var legacySplashModelsDirectory: String { home + "/.flashcat/models" }
+    package static var legacyUpstreamSplashModelsDirectory: String {
+        home + "/Library/Application Support/Splash/models"
+    }
+
+    package static func ensureDirectory(_ path: String) {
+        FlashCatPaths.ensureDirectory(path)
+    }
+
+    package static func fileExists(_ path: String) -> Bool {
+        FlashCatPaths.fileExists(path)
+    }
+
+    package static func contains(_ path: String, in root: String) -> Bool {
+        FlashCatPaths.contains(path, in: root)
+    }
+}
+
+package enum Format {
+    /// 磁盘容量只有一个口径：十进制 1 GB = 10^9 B，和 Finder、系统设置、
+    /// 模型页上的「≈4.3 GB」一致。下载进度必须用同一个函数，否则同一份模型
+    /// 在卡片上是「4.3 GB」、在下载中心是「4.0 GB」，读者会以为算错了。
+    package static func size(_ bytes: Int) -> String {
+        let gigabytes = Double(bytes) / 1_000_000_000
+        if gigabytes >= 1 { return String(format: "%.1f GB", gigabytes) }
+        if bytes >= 1_000_000 { return "\(Int(round(Double(bytes) / 1_000_000))) MB" }
+        // 低于 1 MB 时四舍五入成「0 MB」是个假读数，退回 KB。
+        return "\(max(1, Int(round(Double(bytes) / 1000)))) KB"
+    }
+
+    /// 内存是另一回事：它按二进制 GiB 报（8 GB 统一内存真实就是 8 GiB），
+    /// 和活动监视器的口径一致。别拿它去格式化磁盘容量。
+    package static func memory(_ bytes: Int) -> String {
+        let gigabytes = Double(bytes) / 1_073_741_824
+        if gigabytes >= 1 { return String(format: "%.1f GB", gigabytes) }
+        let megabytes = Double(bytes) / 1_048_576
+        if megabytes >= 1 { return String(format: "%.1f MB", megabytes) }
+        return String(format: "%.1f KB", Double(bytes) / 1024)
+    }
+
+    /// Transfer speed for the download center, from the folder-watch deltas.
+    /// 十进制，和上面的容量同口径：100 MB 的文件 10 MB/s 就是 10 秒。
+    package static func rate(_ bytesPerSecond: Double) -> String {
+        if bytesPerSecond >= 1_000_000 { return String(format: "%.1f MB/s", bytesPerSecond / 1_000_000) }
+        if bytesPerSecond >= 1000 { return String(format: "%.0f KB/s", bytesPerSecond / 1000) }
+        return "—"
+    }
+
+    package static func tokens(_ value: Int) -> String {
+        if value >= 1000 { return String(format: "%.1fK", Double(value) / 1000) }
+        return "\(value)"
+    }
+
+    /// 上下文窗口那种「整千」的读法：131072 → 131K。和 `tokens` 的 12.3K
+    /// 是两种用途，别混用。
+    package static func tokensShort(_ value: Int) -> String {
+        if value >= 1000 { return "\(Int((Double(value) / 1000).rounded()))K" }
+        return "\(value)"
+    }
+
+    package static func compact(_ value: Double) -> String {
+        if value >= 100 { return String(format: "%.0f", value) }
+        if value >= 10 { return String(format: "%.1f", value) }
+        return String(format: "%.2f", value)
+    }
+
+    /// `DateFormatter` 的创建成本远高于格式化本身；日志每写一行都会走到这里，
+    /// 复用同一个实例（并用锁保护，日志也来自子进程读取线程）。
+    private static let clockFormatterLock = NSLock()
+    private static let clockFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
+
+    package static func clock(_ date: Date) -> String {
+        clockFormatterLock.lock()
+        defer { clockFormatterLock.unlock() }
+        return clockFormatter.string(from: date)
+    }
+
+    /// Elapsed time as `m:ss`, used by the lifecycle line while an engine loads.
+    package static func elapsed(_ seconds: Int) -> String {
+        let value = max(0, seconds)
+        return String(format: "%d:%02d", value / 60, value % 60)
+    }
+
+    private static let relativeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MM-dd HH:mm"
+        return formatter
+    }()
+
+    package static func relative(_ date: Date) -> String {
+        let seconds = Int(Date().timeIntervalSince(date))
+        if seconds < 60 { return "刚刚" }
+        if seconds < 3600 { return "\(seconds / 60) 分钟前" }
+        if seconds < 86400 { return "\(seconds / 3600) 小时前" }
+        return relativeFormatter.string(from: date)
+    }
+}
+
+/// TCP connect probe against 127.0.0.1. A local connect resolves instantly:
+/// refused means free, accepted means somebody is already listening.
+package func portOpen(_ port: Int) -> Bool {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    if fd < 0 { return false }
+    defer { close(fd) }
+
+    var address = sockaddr_in()
+    address.sin_family = sa_family_t(AF_INET)
+    address.sin_port = UInt16(port).bigEndian
+    inet_aton("127.0.0.1", &address.sin_addr)
+
+    let connected = withUnsafePointer(to: address) { pointer in
+        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
+            connect(fd, socketAddress, UInt32(MemoryLayout<sockaddr_in>.size))
+        }
+    }
+    return connected == 0
+}
+
+// 绑定 libproc 的 C 符号 proc_pidpath；Swift 侧名字取小驼峰，因为
+// swift-format 的 AlwaysUseLowerCamelCase 不认 C 符号的命名习惯。
+@_silgen_name("proc_pidpath")
+private func processPath(_ pid: Int32, _ buffer: UnsafeMutableRawPointer, _ size: UInt32) -> Int32
+
+/// One snapshot entry of the kernel process table: the two pids the engine's
+/// process-tree bookkeeping walks.
+package struct ProcessTableEntry {
+    package let pid: Int32
+    package let ppid: Int32
+}
+
+/// The whole process table in one sysctl call. An engine is never a single
+/// process — the pack python spawns the inference binary and pool workers — so
+/// killing only the direct child is what left weights resident in memory after
+/// a quit mid-startup.
+package func allProcesses() -> [ProcessTableEntry] {
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL]
+    var size = 0
+    guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else { return [] }
+    // Processes come and go between the two calls, so over-allocate instead of
+    // retrying on ERANGE: an undersized sweep misses exactly the leftovers it
+    // was written to find.
+    var processes = [kinfo_proc](repeating: kinfo_proc(), count: size / MemoryLayout<kinfo_proc>.stride + 64)
+    size = processes.count * MemoryLayout<kinfo_proc>.stride
+    guard sysctl(&mib, 3, &processes, &size, nil, 0) == 0 else { return [] }
+    let count = size / MemoryLayout<kinfo_proc>.stride
+    return processes.prefix(count).map { entry in
+        ProcessTableEntry(pid: entry.kp_proc.p_pid, ppid: entry.kp_eproc.e_ppid)
+    }
+}
+
+/// Executable path of a live pid, or nil. Only processes flashCat itself
+/// spawned carry a path inside an engine pack root, so this is the residue
+/// marker for engines whose pid file was already removed.
+package func processExecutablePath(_ pid: Int32) -> String? {
+    var buffer = [CChar](repeating: 0, count: 4096)
+    let length = processPath(pid, &buffer, UInt32(buffer.count))
+    guard length > 0 else { return nil }
+    return String(cString: buffer)
+}
+
+/// Every pid below `root` in the ppid tree, from a single table snapshot.
+package func descendantPids(of root: Int32, table: [ProcessTableEntry]) -> [Int32] {
+    var children: [Int32: [Int32]] = [:]
+    for entry in table where entry.ppid > 1 {
+        children[entry.ppid, default: []].append(entry.pid)
+    }
+    var descendants: [Int32] = []
+    var queue = [root]
+    while let current = queue.popLast() {
+        for child in children[current] ?? [] {
+            descendants.append(child)
+            queue.append(child)
+        }
+    }
+    return descendants
+}
+
+/// Signal the engine's whole process tree. The table is snapshotted *before*
+/// anything is signalled: once the root dies the children are re-parented to
+/// launchd and the chain is gone, so killing top-down as we walk would strand
+/// the very processes this exists to reap.
+package func killTree(_ pid: Int32, _ signal: Int32) {
+    let victims = [pid] + descendantPids(of: pid, table: allProcesses())
+    for victim in victims where victim > 1 {
+        kill(victim, signal)
+    }
+}
+
+/// A process tree captured at one moment.
+///
+/// Escalating SIGINT → SIGKILL has to signal from a snapshot taken while the
+/// root is still alive. Re-snapshotting at escalation time (the previous
+/// behaviour) found nothing exactly when it mattered: 20 seconds after SIGINT
+/// the root has usually exited, its children have been re-parented to launchd,
+/// and `pgrep`/`descendantPids` can no longer tie them to the engine.
+package struct ProcessTree {
+    package let root: Int32
+    package let descendants: [Int32]
+
+    package var pids: [Int32] { [root] + descendants }
+
+    package init(root: Int32, descendants: [Int32]) {
+        self.root = root
+        self.descendants = descendants
+    }
+
+    package func signal(_ signal: Int32) {
+        for pid in pids where pid > 1 {
+            kill(pid, signal)
+        }
+    }
+
+    /// Whether any snapshotted member is still running. `kill(pid, 0)` only
+    /// probes for existence, so this asks the kernel without disturbing the
+    /// process. Used to end the quit grace period as soon as the tree is gone
+    /// instead of always burning the full budget.
+    package var anyAlive: Bool {
+        pids.contains { $0 > 1 && kill($0, 0) == 0 }
+    }
+}
+
+package func snapshotProcessTree(_ pid: Int32) -> ProcessTree {
+    ProcessTree(root: pid, descendants: descendantPids(of: pid, table: allProcesses()))
+}
+
+/// Foundation does not expose NSTask's pid; the child's pid is what the port
+/// reclaim logic needs, so it comes from the process's own bookkeeping.
+package func processPid(_ process: Process) -> Int32? {
+    if let value = process.value(forKey: "pid") as? Int, value > 0 { return Int32(value) }
+    return nil
+}
+
+package func sha256(of path: String) -> String? {
+    guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
+    defer { handle.closeFile() }
+    var hasher = SHA256()
+    while true {
+        let chunk = (try? handle.read(upToCount: 1 << 20)) ?? Data()
+        if chunk.isEmpty { break }
+        hasher.update(data: chunk)
+    }
+    return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+}

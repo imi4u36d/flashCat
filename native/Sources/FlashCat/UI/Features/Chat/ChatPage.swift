@@ -3,6 +3,7 @@
 
 import AVKit
 import AppKit
+import FlashCatCore
 import FlashCatKit
 import SwiftUI
 import UniformTypeIdentifiers

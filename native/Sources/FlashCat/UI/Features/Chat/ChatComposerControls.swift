@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
+import FlashCatCore
 import FlashCatKit
 
 /// 输入卡右下角的两个切换器（都在发送按钮左边）：模型切换、思考等级。

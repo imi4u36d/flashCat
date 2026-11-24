@@ -3,6 +3,7 @@
 
 import AVFoundation
 import AppKit
+import FlashCatCore
 import Foundation
 
 /// 一段参考视频的读头结果：时长、显示尺寸与第一帧缩略图。

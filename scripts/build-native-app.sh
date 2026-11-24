@@ -170,22 +170,26 @@ fi
 
 # SwiftPM parks the brand artwork in FlashCat_FlashCat.bundle next to the
 # executable; BrandMark looks it up in Contents/Resources first.
-RESOURCE_BUNDLE="$NATIVE_DIR/.build/release/FlashCat_FlashCat.bundle"
-if [ -d "$RESOURCE_BUNDLE" ]; then
-    rm -rf "$APP/Contents/Resources/$(basename "$RESOURCE_BUNDLE")"
-    cp -R "$RESOURCE_BUNDLE" "$APP/Contents/Resources/"
-    # SwiftUI's Text() resolves localized strings from the app's main bundle,
-    # not from the nested SwiftPM resource bundle. Mirror the compiled .lproj
-    # folders so the packaged app follows the system language correctly.
-    for lproj in "$RESOURCE_BUNDLE"/Contents/Resources/*.lproj; do
-        [ -d "$lproj" ] || continue
-        rm -rf "$APP/Contents/Resources/$(basename "$lproj")"
-        cp -R "$lproj" "$APP/Contents/Resources/"
-    done
-    echo "     $(basename "$RESOURCE_BUNDLE") ($(ls "$RESOURCE_BUNDLE"/Contents/Resources | tr '\n' ' '))"
-else
-    echo "warning: $RESOURCE_BUNDLE missing; the brand mark falls back to the app icon" >&2
-fi
+# Two bundles: the app target carries the brand artwork, FlashCatCore carries
+# the String Catalog. Both are copied next to the executable, and their .lproj
+# folders are mirrored into Contents/Resources so SwiftUI Text() (which reads
+# Bundle.main) follows the system language.
+for RESOURCE_BUNDLE in \
+    "$NATIVE_DIR/.build/release/FlashCat_FlashCat.bundle" \
+    "$NATIVE_DIR/.build/release/FlashCat_FlashCatCore.bundle"; do
+    if [ -d "$RESOURCE_BUNDLE" ]; then
+        rm -rf "$APP/Contents/Resources/$(basename "$RESOURCE_BUNDLE")"
+        cp -R "$RESOURCE_BUNDLE" "$APP/Contents/Resources/"
+        for lproj in "$RESOURCE_BUNDLE"/Contents/Resources/*.lproj; do
+            [ -d "$lproj" ] || continue
+            rm -rf "$APP/Contents/Resources/$(basename "$lproj")"
+            cp -R "$lproj" "$APP/Contents/Resources/"
+        done
+        echo "     $(basename "$RESOURCE_BUNDLE") ($(ls "$RESOURCE_BUNDLE"/Contents/Resources | tr '\n' ' '))"
+    else
+        echo "warning: $RESOURCE_BUNDLE missing" >&2
+    fi
+done
 
 echo "==> Write Info.plist"
 cat > "$APP/Contents/Info.plist" <<PLIST

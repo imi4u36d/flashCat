@@ -3,6 +3,7 @@
 
 import AppKit
 import Combine
+import FlashCatCore
 import FlashCatKit
 import SwiftUI
 

@@ -214,7 +214,11 @@ final class ServiceCoordinator {
     /// Select a model and, if the engine is live, reload it on the new weights.
     /// The switcher UI stays in a loading state until the new engine reports
     /// ready, so a slow weight load never looks like an ignored click.
-    func applyModel(_ id: String) {
+    ///
+    /// - Parameter confirmed: 调用方已经问过读者（菜单栏面板有自己的内联确认行，
+    ///   主窗口的确认弹窗不在那个 `NSPanel` 里）。为 true 时不再把目标挂到
+    ///   `confirmingModelSwitch` 上，免得主窗口同时弹一次。
+    func applyModel(_ id: String, confirmed: Bool = false) {
         let target = id.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !target.isEmpty else { return }
         if target == session.selectedModel {
@@ -255,7 +259,7 @@ final class ServiceCoordinator {
         // With weights loaded the switch unloads them first, which leaves the
         // engine without a model for a while — ask before doing that. With
         // nothing resident the pick is only a selection, applied on next start.
-        guard
+        guard !confirmed,
             EngineModelSelection.needsConfirmation(
                 isRunning: isRunning,
                 current: session.selectedModel,
@@ -415,6 +419,7 @@ final class ServiceCoordinator {
             ?? engineCoordinator.activeEngine.defaultPort
     }
     var failureMessage: String? { engineCoordinator.controller?.failureMessage }
+    var exitDiagnostic: EngineExitDiagnostic? { engineCoordinator.exitDiagnostic }
     var downloadProgress: Double? { engineCoordinator.controller?.downloadProgress }
 
     var startupStage: String { engineCoordinator.controller?.startupStage ?? "已停止" }

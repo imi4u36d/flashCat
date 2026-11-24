@@ -56,8 +56,8 @@ depends-on: [flashcat-manifest-contract]
 - **链接可以留，但不能出包。** 归档里的软链 / 硬链不再一律拒绝：Python 发行包自带一批同目录软链（splash 的 `python/bin/python3 -> python3.13` 正是入口），一律拒绝等于 Splash 装不上。判定看目标——必须是相对路径，按 `--strip-components` 之后的坐标解析后仍在 pack 根内；绝对路径、`~`、爬出根的 `..` 整包拒绝。条目名与目标按归档名字表从 `tar -tvzf` 里认（GNU tar 与 bsdtar 列数不同也不受影响），解包后再审计一遍落盘的软链兜底；入口自身解析后仍要在包内。回归由 `EngineInstallerTests` 的链接用例与 `PackInstallIntegrationTests` 对真实 pack 的安装守着。
 - **索引条目相对索引自身解析。** 索引可能来自 https，也可能是随包的或本地的一份 `file://`；同一份索引要在别的机器上也能用，条目就只能写相对索引位置的路径。相对条目在 `loadIndex` 解码时按拿到这份索引的那个地址解析（重定向之后算数——`/latest/pack-index.json` 转到 `/v1.4.1/…` 时，归档就放在后者旁边）；已经是绝对地址的条目原样通过；`install` 在碰网络之前就拒掉仍不是绝对的地址，因为那种地址只会在 `URLSession` 里无声失败。应用内「打包引擎」跑完 `make-pack-release.sh` / `make-pack-index.sh` 直接读 `.release.json` 就装，那份文件同样写相对名，`loadRelease` 按该文件所在目录解析——否则刚构建完的包装不上，而同一份 `.release.json` 还会被写回索引。
 
-- **实时速率由累计计数差分得出，不猜。** mlx-serve 的 `/metrics.json` 只给 `generation_tokens_live`、`prefill_tokens_live`、`prefill_tokens_total` 与 `prefill_time_seconds` 这些原始量；`EngineLiveRates` 用采样差分得到真实的解码 / 预填充速度。解码取相邻两拍；预填充取最近约 1.2 秒（1~2 个 chunk）的滑动窗口——chunk 之间 gauge 不动时保持住上一格，下一块完成才刷新，既不随时间衰减，也不会把整轮请求开头那几秒一直算进分母。引擎轮询统一为 1 秒，预填充不再单独提到 0.4 秒——概览需要所有读数同一节拍；超过 3 秒没有新 chunk 才退回本轮累计均值。预填充的分子只含真正前向的 token，前缀缓存恢复的部分不进——否则同一会话第二轮的读数会被放大两个数量级。解析器保持无状态，只把计数放进 `extras`；时间由轮询侧注入。
-- **概览的当前速度读 `DecodeWindowMeter`，不读低通。** 旧口径每分片喂一个脉冲进
+- **预填充的实时速率由累计计数差分得出，不猜；解码不在这里。** mlx-serve 的 `/metrics.json` 只给 `prefill_tokens_live`、`prefill_tokens_total` 与 `prefill_time_seconds` 这些原始量；`EngineLiveRates` 用采样差分得到真实的预填充速度，取最近约 1.2 秒（1~2 个 chunk）的滑动窗口——chunk 之间 gauge 不动时保持住上一格，下一块完成才刷新，既不随时间衰减，也不会把整轮请求开头那几秒一直算进分母。引擎轮询统一为 1 秒，预填充不再单独提到 0.4 秒——概览需要所有读数同一节拍；超过 3 秒没有新 chunk 才退回本轮累计均值。预填充的分子只含真正前向的 token，前缀缓存恢复的部分不进——否则同一会话第二轮的读数会被放大两个数量级。解析器保持无状态，只把计数放进 `extras`；时间由轮询侧注入。解码速度统一由网关按请求打点（`GatewaySessionMeter`），应用侧不再对 `generation_tokens_live` 做差分：两套探测覆盖的请求范围不同，混用就是同一个请求被双重采样。
+- **当前速度只读 `DecodeWindowMeter`。** 旧口径每分片喂一个脉冲进
   一阶低通、逐次读取：输出随取样时刻连续衰减（0.5s 静默掉 18%），秒拍与 0.4s
   快拍各读各的，谷—峰交替就是「解码速度闪烁」的本体。`DecodeWindowMeter` 的
   口径是**墙钟窗口**：`rate(at:)` = 窗 `[t−W, t]` 的量 ÷ 已观测跨度——稳态恒等于
@@ -69,10 +69,12 @@ depends-on: [flashcat-manifest-contract]
   算作 `isLive`：收尾即停，不再有 LAST 宽限，也不再把上一请求终值挂成当前速度。
   概览的 60 秒曲线在 `isLive` 从 true 变 false 的那一拍冻结右缘（`throughputFrozenAt`），
   不再随挂钟把终点挤出窗口；新请求开始后解冻。
-- **应用内对话的直播条继续走低通。** `DecodeRateMeter`（τ=2.5s、hold=0.8s）
-  服务逐分片回调的对话页：那边要的是「最后一个脉冲的强度」，节奏天然密集。
-  两套估计器各管各的界面，不再混用（旧实现共用低通，概览的闪烁与对话页的
-  平滑互相牵制，参数两头不讨好）。
+- **应用内对话也读同一份网关打点，不再有第二套累计。** 消息下方的 tok/s、usage
+  缺席时的 token 数与生成期间的上下文估算走 `GatewaySessionMeter.progress(id)`：
+  生成量、解码时长（首分片 → 末分片）与概览曲线是同一份按请求数据。旧的
+  `DecodeRateMeter`（连续时间低通）已验证退役——它只在对话页服务一条已无读者的
+  实时值，却让每个分片多估算一次 token；解码速度现在只有一路估计器
+  （`DecodeWindowMeter`），引擎的累计计数差分也不再参与。
 
 - **「是不是实时」不是布尔，是粒度。** 四家引擎全都自报速率，但它们回答的不是同一个问题，一个 `isLive` 分不出来。`EngineRateKind` 编码三档：`.live`（采样窗口内的计数差分，或引擎自报的瞬时场：splash 的 `current_*_batch.tokens_per_second`、mtplx 的 `in_flight[].prefill_state`）、`.lastRequest`（上一个已完成请求的实测值：mtplx 的 `latest.*`、llama.cpp 风格的 `timings`）、`.lifetimeMean`（进程累计比值：splash 的 `metrics.*_tokens_per_second` 是 `prefillTokens_ * 1000 / prefillWallMilliseconds_` 两个只增不减的量相除，oMLX 的 `avg_*_tps` 同）。预填充天然不是连续量：请求一做完计数器就不动，"此刻多快"没有定义。概览层因此**取消 LAST 采集入口**：当前速度与预填充都只认 `LIVE`；预填充另保留引擎真的累计过的 `AVG`（文案写明「开机以来均值」），空闲时画「—」，绝不把上一请求的终值挂成当前速度。
 - **速率与粒度必须成对合并。** `merge` 按 health → status → metrics → props → inventory 折叠，后到的文档会覆盖数值。如果只让数值覆盖、粒度在旁边独立地取最强，就会出现「数值是后来的累计均值、角标却写着 `LIVE`」。所以只有来源粒度 `rank` 不弱于当前时才整对替换（`.live` > `.lastRequest` > `.lifetimeMean` > `.none`）：更好的来源不会被后面端点的均值洗掉，均值也不会冒充实时。

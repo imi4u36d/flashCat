@@ -74,6 +74,8 @@ struct FlashCatApp: App {
                     NotificationCenter.default.post(name: .flashCatOpenCommandPalette, object: nil)
                 }
                 .keyboardShortcut("k", modifiers: .command)
+                Button("搜索对话") { state.focusChatSearch() }
+                    .keyboardShortcut("f", modifiers: .command)
                 Divider()
                 Button("对话") { state.section = .chat }
                     .keyboardShortcut("1", modifiers: .command)
@@ -237,8 +239,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             window is NSPanel == false,
             !window.styleMask.contains(.fullScreen)
         else { return }
-        // 内容贴着窗口边缘；红绿灯中线落在 44pt 侧栏头的几何中心。
-        let titlebarCenterFromTop: CGFloat = 22
+        // 内容贴着窗口边缘；红绿灯中线与侧栏头（卡内 4pt + 40pt 行）的中心对齐。
+        let titlebarCenterFromTop: CGFloat = 26
         let types: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
         for (index, type) in types.enumerated() {
             guard let button = window.standardWindowButton(type) else { continue }

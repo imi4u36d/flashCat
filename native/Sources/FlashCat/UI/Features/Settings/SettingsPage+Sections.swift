@@ -63,6 +63,42 @@ extension SettingsPage {
                 .tint(DS.accent)
                 .accessibilityLabel(L10n.t("跟随系统"))
             }
+            DSDivider()
+            SettingsRow(
+                title: "侧边栏",
+                detail: "悬浮琉璃 / 贴边毛玻璃 / 折叠窄栏"
+            ) {
+                if wide {
+                    NativeSegmented(
+                        selection: Binding(
+                            get: { state.sidebarStyle },
+                            set: { state.setSidebarStyle($0) }),
+                        options: SidebarStyle.allCases,
+                        labels: SidebarStyle.allCases.map(\.label),
+                        width: 240,
+                        size: .small)
+                } else {
+                    DSMenu(size: .regular) {
+                        DSMenuTriggerLabel(
+                            title: state.sidebarStyle.label,
+                            systemImage: state.sidebarStyle.symbol,
+                            kind: .secondary,
+                            size: .regular)
+                    } content: {
+                        ForEach(SidebarStyle.allCases) { style in
+                            Button {
+                                state.setSidebarStyle(style)
+                            } label: {
+                                if state.sidebarStyle == style {
+                                    Label(L10n.t(style.label), systemImage: "checkmark")
+                                } else {
+                                    Text(L10n.t(style.label))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

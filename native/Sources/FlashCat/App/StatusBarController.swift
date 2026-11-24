@@ -78,7 +78,7 @@ private final class MenuBarFloatingPanel: NSPanel {
 @MainActor
 final class StatusBarController: NSObject, NSWindowDelegate {
     private enum Metrics {
-        static let cardWidth: CGFloat = 356
+        static let cardWidth: CGFloat = 344
         static let shadowHorizontal: CGFloat = 22
         static let shadowTop: CGFloat = 8
         static let shadowBottom: CGFloat = 28

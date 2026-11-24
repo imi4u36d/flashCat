@@ -58,10 +58,10 @@ struct OverviewPage: View {
         value > 0 ? Format.compact(value) : "—"
     }
 
+    /// hero 大数字只回答「模型启动以来平均」，所以角标只有 AVG。
     var averageBadge: String? {
         switch averageReading.origin {
-        case .gatewayLive, .engineLive: return "LIVE"
-        case .gatewayMean, .engineMean: return "AVG"
+        case .gatewayMean: return "AVG"
         default: return nil
         }
     }

@@ -24,8 +24,8 @@ struct ChatNewConversationButton: View {
         let shape = DS.rect(DS.Radius.sm)
         Button(action: action) {
             HStack(spacing: 4) {
-                Image(systemName: "square.and.pencil")
-                    .font(.system(size: 11, weight: .medium))
+                Image(systemName: "plus")
+                    .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(DS.accent)
                 Text(L10n.t("新对话"))
                     .font(DS.Font.prose(11.5, weight: .medium))
@@ -52,8 +52,8 @@ struct ChatNewConversationButton: View {
 
 // MARK: - Thread row
 
-/// 一段历史会话：标题、置顶标记、生成中小圆点，悬停浮出「…」菜单，
-/// 右键同一组动作。侧栏和对话页弹层共用。
+/// 一段历史会话：标题、生成中小圆点，悬停（或选中时）浮出置顶 / 删除
+/// 两枚微操作，右键提供同一组动作。侧栏和对话页弹层共用。
 struct ChatThreadRow: View {
     let thread: ChatThread
     let active: Bool
@@ -67,6 +67,8 @@ struct ChatThreadRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var shape: RoundedRectangle { DS.rect(DS.Radius.sm) }
+    /// 行尾操作：悬停时浮出，选中的那一行常驻（和设计稿的 active 态一致）。
+    private var showsActions: Bool { hovering || active }
 
     var body: some View {
         ZStack(alignment: .trailing) {
@@ -81,23 +83,14 @@ struct ChatThreadRow: View {
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .frame(maxWidth: .infinity, alignment: .leading)
-
-                    if thread.pinned {
-                        Image(systemName: "pin.fill")
-                            .font(.system(size: 8.5, weight: .semibold))
-                            .foregroundStyle(DS.text3)
-                            .accessibilityHidden(true)
-                    }
                 }
                 .padding(.leading, 9)
-                // 悬停时给行尾菜单让位，标题仍占满剩余宽度，行宽不跳。
-                .padding(.trailing, hovering ? 30 : 9)
+                // 悬停 / 选中时给行尾两枚微操作让位，标题仍占满剩余宽度，行宽不跳。
+                .padding(.trailing, showsActions ? 48 : 9)
                 .frame(height: 28)
                 .background {
                     if active {
-                        shape
-                            .fill(DS.selected)
-                            .overlay(shape.strokeBorder(DS.line, lineWidth: 1))
+                        SidebarLens(radius: DS.Radius.sm)
                     } else if hovering {
                         shape.fill(DS.hover)
                     }
@@ -113,22 +106,34 @@ struct ChatThreadRow: View {
             .accessibilityAction(named: Text(L10n.t("删除对话"))) { onDelete() }
             .contextMenu { menuItems }
 
-            if hovering {
-                Menu {
-                    menuItems
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(DS.text3)
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
+            if showsActions {
+                HStack(spacing: 1) {
+                    Button(action: onPin) {
+                        Image(systemName: thread.pinned ? "pin.fill" : "pin")
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundStyle(thread.pinned ? DS.accent : DS.text3)
+                            .frame(width: 20, height: 20)
+                            .background {
+                                if thread.pinned {
+                                    DS.rect(6).fill(DS.accentSoft)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plainHit)
+                    .help(thread.pinned ? L10n.t("取消置顶") : L10n.t("置顶对话"))
+
+                    Button(action: onDelete) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundStyle(DS.text3)
+                            .frame(width: 20, height: 20)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plainHit)
+                    .help(L10n.t("删除对话"))
                 }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .menuIndicator(.hidden)
                 .padding(.trailing, 3)
-                .help(L10n.t("更多操作"))
-                .accessibilityLabel(L10n.t("更多操作"))
             }
         }
         .onHover { value in

@@ -128,8 +128,7 @@ final class OrchestrationTests: XCTestCase {
             conversation: stores.conversation,
             chatClient: FakeChatStream(),
             imageClient: FakeImageGenerator(),
-            videoClient: FakeVideoGenerator(),
-            metrics: MetricsStore())
+            videoClient: FakeVideoGenerator())
         runner.host = host
         return runner
     }

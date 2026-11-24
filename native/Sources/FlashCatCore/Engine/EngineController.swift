@@ -22,6 +22,45 @@ package enum ServerState: String {
     }
 }
 
+/// 进程退出留下的结构化诊断：退出码，或未捕获的信号。
+///
+/// `failureMessage` 已经把它写进一句给人看的话里，但菜单栏的异常卡还要把
+/// 「9」翻成 `SIGKILL` 并解释原因。从本地化文案里正则抠数字既脆弱，又会被
+/// 英文翻译改坏，所以退出那一刻顺手留一份机器可读的。
+package struct EngineExitDiagnostic: Equatable {
+    package let code: Int32
+    package let isSignal: Bool
+
+    package init(code: Int32, isSignal: Bool) {
+        self.code = code
+        self.isSignal = isSignal
+    }
+
+    /// POSIX 信号名。普通退出码没有名字；未知信号退回 `SIG<n>`，
+    /// 比只显示一个裸数字更能让人搜到答案。
+    package var signalName: String? {
+        guard isSignal else { return nil }
+        switch code {
+        case 1: return "SIGHUP"
+        case 2: return "SIGINT"
+        case 3: return "SIGQUIT"
+        case 4: return "SIGILL"
+        case 5: return "SIGTRAP"
+        case 6: return "SIGABRT"
+        case 7: return "SIGEMT"
+        case 8: return "SIGFPE"
+        case 9: return "SIGKILL"
+        case 10: return "SIGBUS"
+        case 11: return "SIGSEGV"
+        case 12: return "SIGSYS"
+        case 13: return "SIGPIPE"
+        case 14: return "SIGALRM"
+        case 15: return "SIGTERM"
+        default: return "SIG\(code)"
+        }
+    }
+}
+
 /// What the app hands a launch after looking at the model first.
 ///
 /// Splash needs the model's DFlash2 draft next to it; when the assembly was
@@ -67,6 +106,9 @@ package final class EngineController {
     package private(set) var port: Int
     package var model: String = ""
     package var failureMessage: String?
+    /// 最近一次进程退出的结构化诊断；正常停止或尚未跑过为 nil。
+    /// setter 留在本模块：生命周期写点分散在 `EngineController+Process` 等扩展里。
+    package internal(set) var exitDiagnostic: EngineExitDiagnostic?
     /// 「已等待」的起点。原来是独立存储的 `Date?`，只由生命周期写点维护，谁清过
     /// 它全靠约定；现在它跟着 `phase` 走，读的人（`busySeconds`）不必再关心。
     var busySince: Date? { phase.busySince }
@@ -81,9 +123,6 @@ package final class EngineController {
     /// oMLX applies MTP/DFlash through its own settings API, once per run.
     var tuningApplied = false
     var pollTimer: Timer?
-    /// mlx-serve 只报累计计数器，实时速率要靠相邻两次轮询差分。每个引擎进程
-    /// 一份基线；换进程时清掉，否则会把上一轮的计数当起点。
-    var liveRates = EngineLiveRates()
     var pollInFlight = false
     var lastError: String?
     /// Moves `.starting` out of limbo when the engine neither binds its port nor
@@ -391,6 +430,9 @@ package final class EngineController {
         // 草稿、等端口）也算同一次等待——之前要等进程真的拉起来才记起点，几 GB
         // 的预下载全程显示「已等待 0:00」，之后又开始从零数，计数器像坏了。
         guard transition(to: .starting(since: Date())) else { return }
+        // 上一轮异常退出的诊断只属于上一轮；这次启动可能是端口失败，
+        // 不能让旧信号继续挂在异常卡上解释一个不相干的失败。
+        exitDiagnostic = nil
         onChange()
         var localModel = localModel
         if let prepareForStart {
@@ -462,7 +504,6 @@ package final class EngineController {
             failureMessage = nil
             stats = nil
             status = nil
-            liveRates.reset()
             // 阶段还是 start() 开头那个 `.starting`：从这里到 `task.run()` 之间
             // 没有 await，中途插不进 `stop()`，所以不必再迁一次（再迁一次会把
             // 起点刷成现在，「已等待」就把预下载和等端口的那几分钟丢了）。

@@ -48,6 +48,10 @@ public struct GatewayRequestTimings: Equatable, Sendable {
     /// 让人怀疑整块指标。低于这个量就当这一路没有可读的预填充。
     public static let prefillSampleTokens = 128
 
+    /// 单机 Apple Silicon 预填充吞吐的合理物理上限（tok/s）。
+    /// 超出该值说明缓存扣减缺失或耗时极短被计时误差放大，直接丢弃而不污染读数。
+    public static let maxPlausiblePrefillRate: Double = 50_000
+
     /// 真正前向过的提示词 token。命中缓存的那部分只是被搬回来，没有算。
     public var forwardedTokens: Int { max(0, promptTokens - cachedTokens) }
 
@@ -61,7 +65,7 @@ public struct GatewayRequestTimings: Equatable, Sendable {
             promptMilliseconds >= 25
         else { return nil }
         let rate = Double(forwardedTokens) / (promptMilliseconds / 1000)
-        guard rate.isFinite, rate > 0 else { return nil }
+        guard rate.isFinite, rate > 0, rate <= Self.maxPlausiblePrefillRate else { return nil }
         return rate
     }
 

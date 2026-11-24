@@ -182,10 +182,16 @@ enum MenuBarIcon {
     }
 }
 
+
 // MARK: - 菜单栏浮层容器
 
-/// 承载菜单栏卡片的浮层容器：负责圆角、1px 描边、投影与进出场弹簧动画，
-/// 并将卡片实际高度同步回 `StatusBarController` 以便锁定顶部锚点。
+/// 承载菜单栏卡片的浮层容器：负责玻璃底、1px 高光描边、状态光晕、投影与
+/// 进出场弹簧动画，并将卡片实际高度同步回 `StatusBarController` 以便锁定顶部锚点。
+///
+/// 面板背后没有主窗口的极光壁纸，只有桌面，所以底色由「高不透明度面板色 +
+/// 顶部高光 + 状态光晕」叠出来，而不是系统材质：应用内统一禁用材质模糊
+/// （`NativeUITests` 有源码扫描守卫），玻璃感交给分层色、发丝边和投影，
+/// 纯白 / 纯黑两副皮肤则换成实色。
 struct MenuBarPanelContainer: View {
     @ObservedObject var state: AppState
     @ObservedObject var presenter: MenuBarPanelPresenter
@@ -197,19 +203,48 @@ struct MenuBarPanelContainer: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var cardShape: RoundedRectangle { DS.rect(DS.Radius.xl) }
+    private var cardShape: RoundedRectangle { DS.rect(DS.Radius.window) }
 
     var body: some View {
         MenuBarPanel(
             state: state,
+            isActive: presenter.isPresented,
             onOpenMainWindow: { page in onOpenMainWindow(page) },
             onDismiss: onDismiss
         )
         .frame(width: cardWidth)
-        .background(cardShape.fill(DS.floating))
+        .background {
+            ZStack(alignment: .top) {
+                cardShape.fill(DS.panelFill)
+                LinearGradient(
+                    colors: [DS.glassSpecular.opacity(0.26), .clear],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 86)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .allowsHitTesting(false)
+                RadialGradient(
+                    colors: [state.serverState.panelTint.opacity(0.16), .clear],
+                    center: .top,
+                    startRadius: 0,
+                    endRadius: 132
+                )
+                .frame(height: 132)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .allowsHitTesting(false)
+            }
+        }
         .clipShape(cardShape)
-        .overlay(cardShape.strokeBorder(DS.line2, lineWidth: 1))
-        .shadow(color: DS.shadow, radius: 18, x: 0, y: 8)
+        .overlay(
+            cardShape.strokeBorder(
+                LinearGradient(
+                    colors: [DS.glassSpecular, DS.glassBorder],
+                    startPoint: .top,
+                    endPoint: .bottom),
+                lineWidth: 1)
+        )
+        .shadow(color: DS.glassShadow, radius: 24, x: 0, y: 12)
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.height
         } action: { _, newHeight in
@@ -229,14 +264,33 @@ struct MenuBarPanelContainer: View {
     }
 }
 
+// MARK: - 状态色
+
+private extension ServerState {
+    /// 状态色只出现在状态胶囊、告警卡和顶部一层很淡的环境光里。
+    var panelTint: Color {
+        switch self {
+        case .ready: return DS.ok
+        case .starting, .stopping: return DS.accent
+        case .failed: return DS.err
+        case .stopped: return DS.text3
+        }
+    }
+}
+
 // MARK: - 菜单栏面板
 
 /// 点击菜单栏图标弹出的面板：状态、当前模型、接口地址、实时指标与高频操作。
 ///
-/// 设计取向与主界面「精密仪器」一致：面板里不放渐变卡片，改用排版层级 +
-/// 发丝线分区，指标放在唯一一块凹槽面上，状态色只出现在状态胶囊和读数上。
+/// 布局按 Liquid Glass 高保真稿重排：顶部是应用图标 + 状态胶囊，中间一块凹槽
+/// 模型卡（含内联模型选择器与接口地址），异常时插入诊断卡，下面是三格遥测与
+/// 统一内存条，最后是主动作与底栏。所有表面都从 `DS` 取色，四副皮肤共用一套
+/// 结构；数字保持等宽，状态色只表达状态，不做装饰。
 struct MenuBarPanel: View {
     @ObservedObject var state: AppState
+    /// 面板是否展开。收起时把内联选择器、日志和待确认切换清掉，
+    /// 下次点开菜单栏图标回到干净的首屏。
+    var isActive: Bool = true
     /// 打开主窗口的出口（可选指定跳转页面）。面板由独立 `NSPanel` 承载，
     /// 不依赖 `\.openWindow` 环境值。
     var onOpenMainWindow: (Page?) -> Void = { page in
@@ -246,40 +300,44 @@ struct MenuBarPanel: View {
     var onDismiss: () -> Void = {}
 
     @State private var copiedEndpoint = false
+    @State private var copiedLog = false
     @State private var copyResetTask: Task<Void, Never>?
-    @State private var hoveringModel = false
+    @State private var logCopyResetTask: Task<Void, Never>?
     @State private var hoveringEndpoint = false
+    @State private var modelPickerOpen = false
+    @State private var logsOpen = false
+    @State private var pendingSwitch: String?
 
     private var running: Bool { state.isRunning }
     private var busy: Bool { state.serverState == .starting || state.serverState == .stopping }
 
-    /// 状态色使用控制台调色板，和主界面的状态标签保持一致。
-    private var statusTint: Color {
-        switch state.serverState {
-        case .ready: return DS.ok
-        case .starting, .stopping: return DS.warn
-        case .failed: return DS.err
-        case .stopped: return DS.text3
-        }
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 10) {
             header
-            divider.padding(.top, 11)
-
             modelCard
-                .padding(.top, 12)
 
-            runtimeBlock
-                .padding(.top, 10)
+            if state.serverState == .failed {
+                failureCard
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            } else if state.serverState == .stopped, state.selectedModel.isEmpty, !state.isModelBusy {
+                emptyModelNotice
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
 
-            actions
-                .padding(.top, 12)
-            divider.padding(.top, 12)
+            telemetryCard
 
-            footer
-                .padding(.top, 9)
+            if let pendingSwitch {
+                switchConfirmCard(pendingSwitch)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            actionRow
+
+            VStack(spacing: 9) {
+                DSDivider()
+                footer
+            }
+            .padding(.top, 1)
         }
         .padding(.horizontal, 14)
         .padding(.top, 14)
@@ -287,54 +345,48 @@ struct MenuBarPanel: View {
         .animation(DS.Motion.smooth, value: state.serverState)
         .animation(DS.Motion.smooth, value: state.isModelBusy)
         .animation(DS.Motion.smooth, value: state.isSwitchingModel)
-        .animation(DS.Motion.smooth, value: sparklinePeak != nil)
+        .animation(DS.Motion.smooth, value: state.switchingModel)
+        .animation(DS.Motion.smooth, value: state.selectedModel)
+        .animation(DS.Motion.smooth, value: modelPickerOpen)
+        .animation(DS.Motion.smooth, value: logsOpen)
+        .animation(DS.Motion.smooth, value: pendingSwitch)
+        .onChange(of: state.serverState) { _, newValue in
+            // 异常卡消失后把展开的日志收回去；下次异常默认是收起状态。
+            if newValue != .failed { logsOpen = false }
+        }
+        .onChange(of: isActive) { _, active in
+            guard !active else { return }
+            modelPickerOpen = false
+            logsOpen = false
+            pendingSwitch = nil
+        }
         .onDisappear {
             copyResetTask?.cancel()
             copyResetTask = nil
+            logCopyResetTask?.cancel()
+            logCopyResetTask = nil
         }
-    }
-
-    private var divider: some View {
-        DSDivider()
     }
 
     // MARK: 顶部状态行
 
     private var header: some View {
         HStack(spacing: 10) {
-            ZStack {
-                DS.rect(DS.Radius.md)
-                    .fill(DS.raised)
-                    .overlay(
-                        DS.rect(DS.Radius.md)
-                            .strokeBorder(DS.line, lineWidth: 1)
-                    )
-                BrandMark(size: 24, glow: false)
-            }
-            .frame(width: 34, height: 34)
+            BrandMark(size: 38, glow: false)
+                .shadow(color: DS.glassShadow.opacity(0.55), radius: 3, x: 0, y: 1)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("flashCat")
-                    .font(DS.Font.md.weight(.semibold))
+                Text(verbatim: "flashCat")
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(DS.text)
-                HStack(spacing: 4) {
-                    Text(state.activeEngine.displayName)
-                    Text("·")
-                    Text(state.engineVersion)
-                }
-                .font(DS.Font.mono(10, weight: .medium))
-                .foregroundStyle(DS.text3)
-                .lineLimit(1)
+                Text(verbatim: "\(state.activeEngine.displayName) · \(state.engineVersion)")
+                    .font(DS.Font.mono(10.5, weight: .medium))
+                    .foregroundStyle(DS.text3)
+                    .lineLimit(1)
             }
 
             Spacer(minLength: 6)
-            DSChip(
-                text: state.serverState.rawValue,
-                dot: statusTint,
-                live: running || busy,
-                tint: statusTint
-            )
-            .contentTransition(.opacity)
+            PanelStatusPill(status: state.serverState, tint: state.serverState.panelTint)
         }
     }
 
@@ -343,80 +395,254 @@ struct MenuBarPanel: View {
     private var modelCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Text("当前模型")
+                Text(L10n.t("当前模型"))
                     .font(DS.Font.xs.weight(.medium))
                     .foregroundStyle(DS.text3)
                 Spacer(minLength: 4)
-                if let info = state.selectedModelInfo {
-                    Text(verbatim: info.sizeText)
-                        .font(DS.Font.mono(10, weight: .medium))
-                        .foregroundStyle(DS.text3)
-                        .monospacedDigit()
-                        .lineLimit(1)
+                PanelMiniPill(
+                    title: "切换模型",
+                    symbol: "chevron.down",
+                    rotating: modelPickerOpen
+                ) {
+                    withAnimation(DS.Motion.smooth) { modelPickerOpen.toggle() }
                 }
-                Button {
+                PanelMiniPill(title: "模型", symbol: "arrow.up.right") {
                     onOpenMainWindow(.models)
-                } label: {
-                    HStack(spacing: 3) {
-                        Text(L10n.t("模型"))
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 8.5, weight: .semibold))
-                    }
-                    .font(DS.Font.xs.weight(.medium))
-                    .foregroundStyle(hoveringModel ? DS.text : DS.text3)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(
-                        DS.rect(DS.Radius.sm)
-                            .fill(hoveringModel ? DS.hover : DS.bg)
-                    )
-                    .overlay(
-                        DS.rect(DS.Radius.sm)
-                            .strokeBorder(hoveringModel ? DS.line2 : DS.line, lineWidth: 1)
-                    )
                 }
-                .buttonStyle(DSPressStyle())
-                .onHover { value in
-                    withAnimation(DS.Motion.snappy) { hoveringModel = value }
-                }
-                .help(L10n.t("模型"))
             }
 
-            Text(L10n.t(modelTitle))
-                .font(DS.Font.lg.weight(.semibold))
-                .foregroundStyle(state.selectedModel.isEmpty ? DS.text3 : DS.text)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .contentTransition(.opacity)
-                .help(L10n.t(modelTitle))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(verbatim: modelTitle)
+                    .font(.system(size: 14.5, weight: .semibold))
+                    .foregroundStyle(state.selectedModel.isEmpty ? DS.text3 : DS.text)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .contentTransition(.opacity)
+                    .help(modelTitle)
 
-            endpointRow
+                if !modelBadges.isEmpty {
+                    HStack(spacing: 5) {
+                        ForEach(modelBadges) { badge in
+                            badgeView(badge)
+                        }
+                    }
+                }
+            }
+
+            if modelPickerOpen {
+                modelPicker
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            endpointBar
         }
-        .padding(12)
-        .background(DS.rect(DS.Radius.lg).fill(Color.adaptiveOverlay(0.05)))
+        .padding(11)
+        .background(DS.rect(DS.Radius.card).fill(Color.adaptiveOverlay(0.05)))
         .overlay(
-            DS.rect(DS.Radius.lg)
+            DS.rect(DS.Radius.card)
                 .strokeBorder(DS.line, lineWidth: 1)
         )
     }
 
+    private func badgeView(_ badge: PanelBadge) -> some View {
+        Text(verbatim: badge.text)
+            .font(DS.Font.mono(9.5, weight: badge.tinted ? .semibold : .medium))
+            .foregroundStyle(badge.tinted ? DS.accent : DS.text2)
+            .lineLimit(1)
+            .padding(.horizontal, 5)
+            .frame(height: 16)
+            .background(
+                DS.rect(5)
+                    .fill(badge.tinted ? DS.accentSoft : DS.bg)
+            )
+            .overlay(
+                DS.rect(5)
+                    .strokeBorder(
+                        badge.tinted ? DS.accent.opacity(0.22) : DS.line,
+                        lineWidth: 1)
+            )
+    }
+
     private var modelTitle: String {
-        if let served = state.stats?.model, !served.isEmpty { return Self.displayName(served) }
-        if let info = state.selectedModelInfo { return info.shortName }
-        return state.selectedModel.isEmpty ? "未选择模型" : Self.displayName(state.selectedModel)
+        if state.isRunning, !state.isSwitchingModel,
+            let served = state.stats?.model, !served.isEmpty
+        {
+            return state.shortModelName(served)
+        }
+        if !state.selectedModel.isEmpty {
+            return state.shortModelName(state.selectedModel)
+        }
+        return L10n.t("未选择模型")
     }
 
-    /// 引擎有时把 Hugging Face 缓存目录名当模型名报上来，形如
-    /// `models--Org--Repo`。面板上只留仓库名，读起来才是一个模型。
-    private static func displayName(_ raw: String) -> String {
-        var name = raw.trimmingCharacters(in: .whitespaces)
-        if name.hasPrefix("models--") { name.removeFirst("models--".count) }
-        let parts = name.components(separatedBy: "--").filter { !$0.isEmpty }
-        if let last = parts.last { name = last }
-        return name.isEmpty ? raw : name
+    /// 模型卡上的两个小角标：量化（或来源）+ 上下文窗口。
+    /// 没装引擎、也没选模型时返回空数组，卡面只留一行「未选择模型」。
+    private var modelBadges: [PanelBadge] {
+        var badges: [PanelBadge] = []
+        if !state.selectedModel.isEmpty {
+            if let quantization =
+                state.selectedModelInfo?.quantization
+                ?? ModelQuantization.detect(in: state.selectedModel)
+            {
+                badges.append(PanelBadge(text: quantization, tinted: true))
+            } else if let origin = state.selectedModelInfo?.origin {
+                badges.append(PanelBadge(text: L10n.t(origin.rawValue), tinted: true))
+            }
+        }
+        if let tokens = contextTokens {
+            badges.append(PanelBadge(text: Format.tokensShort(tokens), tinted: false))
+        }
+        return badges
     }
 
-    private var endpointRow: some View {
+    private var contextTokens: Int? {
+        if let value = state.stats?.maximumContextTokens, value > 0 { return value }
+        if let value = state.engineModels()
+            .first(where: { $0.id == state.selectedModel })?
+            .maximumContextTokens,
+            value > 0
+        {
+            return value
+        }
+        if let value = state.contextWindowTokens, value > 0 { return value }
+        return nil
+    }
+
+    // MARK: 内联模型选择器
+
+    private struct PanelModelOption: Identifiable {
+        let id: String
+        let model: EngineModel
+        let engine: EngineID
+        let engineTag: String?
+    }
+
+    private var modelOptions: [PanelModelOption] {
+        let engines = ([state.activeEngine] + EngineCatalog.allIDs.filter { $0 != state.activeEngine })
+            .filter { state.engineIsInstalled($0) }
+        let showsEngineTags = engines.count > 1
+        return engines.flatMap { engine in
+            state.engineModels(for: engine)
+                .filter { !$0.hidden && !$0.helper && !ModelLibraryEntry.isDraftModel($0.id) }
+                .map { model in
+                    PanelModelOption(
+                        id: "\(engine.rawValue)|\(model.id)",
+                        model: model,
+                        engine: engine,
+                        engineTag: showsEngineTags && engine != state.activeEngine
+                            ? engine.displayName
+                            : nil)
+                }
+        }
+    }
+
+    private var modelPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            DSDivider()
+
+            if modelOptions.isEmpty {
+                Text(L10n.t("暂无可用模型"))
+                    .font(DS.Font.sm)
+                    .foregroundStyle(DS.text3)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 10)
+            } else if modelOptions.count <= 6 {
+                // 六行以内直接铺开，不套滚动视图：面板高度随内容长，少一层
+                // 量高度的布局。超过六行才收进 204pt 的滚动区。
+                modelOptionList
+            } else {
+                ScrollView { modelOptionList }
+                    .frame(height: 204)
+            }
+        }
+    }
+
+    private var modelOptionList: some View {
+        VStack(spacing: 2) {
+            ForEach(modelOptions) { option in
+                PanelModelRow(
+                    name: state.shortModelName(option.model.id),
+                    engineTag: option.engineTag,
+                    sizeText: option.model.bytes.map { Format.size($0) },
+                    selected: option.model.id == state.selectedModel
+                        && option.engine == state.activeEngine,
+                    switching: option.model.id == state.switchingModel
+                        && option.engine == state.activeEngine,
+                    stage: option.model.id == state.switchingModel
+                        ? state.switchStage
+                        : "",
+                    disabled: state.generating
+                ) {
+                    choose(option)
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func choose(_ option: PanelModelOption) {
+        let target = option.model.id
+        if option.engine != state.activeEngine {
+            state.applyModelFromAnyEngine(target, engine: option.engine)
+            withAnimation(DS.Motion.smooth) { modelPickerOpen = false }
+            return
+        }
+        guard target != state.selectedModel else {
+            withAnimation(DS.Motion.smooth) { modelPickerOpen = false }
+            return
+        }
+        if EngineModelSelection.needsConfirmation(
+            isRunning: state.isRunning,
+            current: state.selectedModel,
+            target: target)
+        {
+            withAnimation(DS.Motion.smooth) {
+                modelPickerOpen = false
+                pendingSwitch = target
+            }
+        } else {
+            state.applyModel(target)
+            withAnimation(DS.Motion.smooth) { modelPickerOpen = false }
+        }
+    }
+
+    private func switchConfirmCard(_ target: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 7) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(DS.warn)
+                    .padding(.top, 0.5)
+                Text(
+                    L10n.format(
+                        "将停止 %@ 并加载 %@，切换期间引擎暂时无法应答。",
+                        state.shortModelName(state.selectedModel),
+                        state.shortModelName(target))
+                )
+                .font(DS.Font.xs)
+                .foregroundStyle(DS.text2)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 7) {
+                Spacer(minLength: 0)
+                PanelButton(title: "取消", kind: .glass, height: 30) {
+                    withAnimation(DS.Motion.smooth) { pendingSwitch = nil }
+                }
+                PanelButton(title: "停止并切换", kind: .danger, height: 30) {
+                    state.applyModelConfirmed(target)
+                    withAnimation(DS.Motion.smooth) { pendingSwitch = nil }
+                }
+            }
+        }
+        .padding(10)
+        .background(DS.rect(DS.Radius.lg).fill(DS.warn.opacity(0.08)))
+        .overlay(DS.rect(DS.Radius.lg).strokeBorder(DS.warn.opacity(0.22), lineWidth: 1))
+    }
+
+    // MARK: 接口地址
+
+    private var endpointBar: some View {
         Button {
             triggerCopyEndpoint()
         } label: {
@@ -426,7 +652,7 @@ struct MenuBarPanel: View {
                     .foregroundStyle(
                         copiedEndpoint
                             ? DS.ok
-                            : DS.accent.opacity(state.isRunning ? 0.95 : 0.45)
+                            : DS.accent.opacity(running ? 0.95 : 0.45)
                     )
                 Text(state.endpointURL)
                     .font(DS.Font.mono(10.5))
@@ -460,9 +686,8 @@ struct MenuBarPanel: View {
                     .strokeBorder(
                         copiedEndpoint
                             ? DS.ok.opacity(0.45)
-                            : (hoveringEndpoint ? DS.line3 : DS.line),
-                        lineWidth: 1
-                    )
+                            : (hoveringEndpoint ? DS.line2 : DS.line),
+                        lineWidth: 1)
             )
             .contentShape(DS.rect(DS.Radius.md))
         }
@@ -476,162 +701,472 @@ struct MenuBarPanel: View {
     private func triggerCopyEndpoint() {
         state.copy(state.endpointURL, label: "接口地址已复制")
         copyResetTask?.cancel()
-        withAnimation(DS.Motion.snappy) {
-            copiedEndpoint = true
-        }
+        withAnimation(DS.Motion.snappy) { copiedEndpoint = true }
         copyResetTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.6))
             guard !Task.isCancelled else { return }
-            withAnimation(DS.Motion.snappy) {
-                copiedEndpoint = false
-            }
+            withAnimation(DS.Motion.snappy) { copiedEndpoint = false }
         }
     }
 
-    // MARK: 运行区
+    // MARK: 异常诊断
 
-    @ViewBuilder
-    private var runtimeBlock: some View {
+    private var failureTitle: String {
+        L10n.t(state.failureMessage ?? "引擎异常，打开日志查看原因")
+    }
+
+    /// `SIGKILL · 被系统强制终止…`。退出码 / 信号是 Core 在进程退出那一刻
+    /// 留下的结构化诊断，不是从失败文案里抠出来的。
+    private var failureDetail: String? {
+        guard let diagnostic = state.engineExitDiagnostic,
+            let name = diagnostic.signalName
+        else { return nil }
+        guard let summary = signalSummary(diagnostic.code) else { return name }
+        return "\(name) · \(summary)"
+    }
+
+    private func signalSummary(_ code: Int32) -> String? {
+        switch code {
+        case 2, 15: return L10n.t("收到终止信号")
+        case 9: return L10n.t("被系统强制终止，通常是统一内存不足")
+        case 11: return L10n.t("访问了非法内存地址")
+        case 6: return L10n.t("进程自行中止，可能触发了断言")
+        case 10: return L10n.t("内存访问异常")
+        case 4: return L10n.t("执行了非法指令")
+        default: return nil
+        }
+    }
+
+    private var failureCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if state.isModelBusy {
-                // 进程在跑但权重还没就位（启动、切换、加载权重、预热）：给一条
-                // 带转圈的生命周期行；下面的读数条保留，只是暂时没有数据。
-                if !stageText.isEmpty {
-                    NoticeRow(
-                        symbol: nil,
-                        text: stageText,
-                        tint: DS.warn,
-                        showsSpinner: true
-                    )
-                    .transition(.dsRowInsert)
-                }
-            } else {
-                switch state.serverState {
-                case .ready:
-                    EmptyView()
-                case .starting, .stopping:
-                    NoticeRow(
-                        symbol: nil,
-                        text: stageText,
-                        tint: DS.warn,
-                        showsSpinner: true
-                    )
-                    .transition(.dsRowInsert)
-                case .failed:
-                    NoticeRow(
-                        symbol: "exclamationmark.triangle.fill",
-                        text: state.failureMessage ?? "引擎异常，打开日志查看原因",
-                        tint: DS.err,
-                        showsSpinner: false,
-                        actionLabel: "日志",
-                        action: { onOpenMainWindow(.logs) }
-                    )
-                    .transition(.dsRowInsert)
-                case .stopped:
-                    // 已停止且没选模型时才提示；正常停止态不再占一行横幅。
-                    if state.selectedModel.isEmpty {
-                        NoticeRow(
-                            symbol: "pause.circle",
-                            text: "还没有选择模型，在模型库选一个即可启动",
-                            tint: DS.text2,
-                            showsSpinner: false
-                        )
-                        .transition(.dsRowInsert)
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(DS.err)
+                    .padding(.top, 1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: failureTitle)
+                        .font(DS.Font.sm.weight(.semibold))
+                        .foregroundStyle(DS.dangerText)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let detail = failureDetail {
+                        Text(verbatim: detail)
+                            .font(DS.Font.mono(9.5, weight: .medium))
+                            .foregroundStyle(DS.dangerText.opacity(0.72))
+                            .lineLimit(1)
                     }
                 }
+                Spacer(minLength: 4)
+                PanelMiniPill(title: logsOpen ? "收起" : "日志") {
+                    withAnimation(DS.Motion.smooth) { logsOpen.toggle() }
+                }
             }
 
-            // 读数条常驻：没有实时数据时显示「—」，面板不会因为停止或加载而少一截。
-            MetricStrip(
-                decode: state.serverState == .ready ? state.menuBarDecodeReading : .none,
-                ttft: state.serverState == .ready ? state.ttftReading : .none,
-                prefill: state.serverState == .ready ? state.prefillReading : .none)
-
-            if state.serverState == .ready, let peak = sparklinePeak {
-                Sparkline(
-                    values: state.recentThroughput(window: 300).map(\.value),
-                    peak: peak,
-                    tint: DS.accent
-                )
-                .transition(.opacity.combined(with: .move(edge: .top)))
+            if logsOpen {
+                logViewer
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
+        }
+        .padding(10)
+        .background(DS.rect(DS.Radius.lg).fill(DS.err.opacity(0.075)))
+        .overlay(DS.rect(DS.Radius.lg).strokeBorder(DS.err.opacity(0.22), lineWidth: 1))
+    }
+
+    private var logTail: [LogLine] {
+        Array(state.logs.suffix(4))
+    }
+
+    /// 复制的范围比可见的 4 行宽一些：异常卡里只放得下最关键的尾巴，
+    /// 粘到问题单里时读者通常还想带上前面几行上下文。
+    private var logCopyText: String {
+        state.logs.suffix(20)
+            .map { "\($0.clockText) \($0.text)" }
+            .joined(separator: "\n")
+    }
+
+    private var logViewer: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 2) {
+                    if logTail.isEmpty {
+                        Text(verbatim: "—")
+                            .font(DS.Font.mono(9))
+                            .foregroundStyle(DS.text3)
+                    } else {
+                        ForEach(logTail) { line in
+                            Text(verbatim: "\(line.clockText) \(line.text)")
+                                .font(DS.Font.mono(9))
+                                .foregroundStyle(
+                                    line.level == .error
+                                        ? DS.err.opacity(0.90)
+                                        : DS.text2
+                                )
+                                .fixedSize()
+                        }
+                    }
+                }
+                .padding(.vertical, 5)
+                .padding(.horizontal, 7)
+            }
+            .frame(height: 60, alignment: .leading)
+            .background(DS.rect(DS.Radius.sm).fill(Color.adaptiveOverlay(0.06)))
+            .overlay(
+                DS.rect(DS.Radius.sm)
+                    .strokeBorder(DS.err.opacity(0.12), lineWidth: 1)
+            )
+
+            HStack(spacing: 8) {
+                Button {
+                    triggerCopyLog()
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: copiedLog ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(L10n.t(copiedLog ? "已复制" : "复制日志"))
+                            .font(DS.Font.xs.weight(.medium))
+                    }
+                    .foregroundStyle(copiedLog ? DS.ok : DS.text2)
+                }
+                .buttonStyle(.plain)
+
+                Spacer(minLength: 4)
+
+                Button {
+                    onOpenMainWindow(.logs)
+                } label: {
+                    HStack(spacing: 2) {
+                        Text(L10n.t("查看日志"))
+                            .font(DS.Font.xs.weight(.medium))
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .foregroundStyle(DS.text2)
+                }
+                .buttonStyle(.plain)
+                .help(L10n.t("打开主窗口"))
+            }
+            .padding(.horizontal, 2)
         }
     }
 
-    /// "启动中 · 预热 · 已等待 3:20". 和灵动岛、概览、命令面板共用 `engineStageText`。
-    private var stageText: String { state.engineStageText }
+    private func triggerCopyLog() {
+        let text = logCopyText
+        state.copy(
+            text.isEmpty ? (state.failureMessage ?? "—") : text,
+            label: "已复制")
+        logCopyResetTask?.cancel()
+        withAnimation(DS.Motion.snappy) { copiedLog = true }
+        logCopyResetTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.6))
+            guard !Task.isCancelled else { return }
+            withAnimation(DS.Motion.snappy) { copiedLog = false }
+        }
+    }
 
-    private var sparklinePeak: Double? {
-        let samples = state.recentThroughput(window: 300).map(\.value)
-        guard samples.count > 2, let peak = samples.max(), peak > 0 else { return nil }
-        return peak
+    private var emptyModelNotice: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "pause.circle")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(DS.text3)
+            Text(L10n.t("还没有选择模型，在模型库选一个即可启动"))
+                .font(DS.Font.xs)
+                .foregroundStyle(DS.text2)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(DS.rect(DS.Radius.lg).fill(Color.adaptiveOverlay(0.04)))
+        .overlay(DS.rect(DS.Radius.lg).strokeBorder(DS.line, lineWidth: 1))
+    }
+
+    // MARK: 三格遥测
+
+    private var telemetryCard: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 0) {
+                metricCell(
+                    "解码",
+                    value: number(state.menuBarDecodeReading.value),
+                    unit: "tok/s",
+                    tag: decodeTag,
+                    tagTint: decodeTagTint,
+                    sparkline: sparkValues)
+                DSDivider(vertical: true)
+                    .frame(maxHeight: .infinity)
+                metricCell(
+                    "首字",
+                    value: milliseconds(state.ttftReading.milliseconds),
+                    unit: "ms")
+                DSDivider(vertical: true)
+                    .frame(maxHeight: .infinity)
+                metricCell(
+                    "预填充",
+                    value: number(state.prefillReading.value),
+                    unit: "tok/s",
+                    tag: prefillTag,
+                    tagTint: prefillTagTint)
+            }
+
+            if showsMemoryStrip {
+                DSDivider()
+                memoryStrip
+            }
+        }
+        .background(DS.rect(DS.Radius.card).fill(Color.adaptiveOverlay(0.05)))
+        .overlay(
+            DS.rect(DS.Radius.card)
+                .strokeBorder(DS.line, lineWidth: 1)
+        )
+        .clipShape(DS.rect(DS.Radius.card))
+    }
+
+    private func metricCell(
+        _ label: String,
+        value: String,
+        unit: String,
+        tag: String? = nil,
+        tagTint: Color = DS.text3,
+        sparkline: [Double] = []
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                Text(L10n.t(label))
+                    .font(DS.Font.xs.weight(.medium))
+                    .foregroundStyle(DS.text3)
+                if let tag, value != "—" {
+                    Text(verbatim: tag)
+                        .font(DS.Font.mono(8.5, weight: .semibold))
+                        .tracking(0.4)
+                        .foregroundStyle(tagTint)
+                        .lineLimit(1)
+                        .transition(.opacity)
+                }
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(verbatim: value)
+                    .font(DS.Font.number(16, weight: .semibold))
+                    .foregroundStyle(value == "—" ? DS.text4 : DS.text)
+                    .contentTransition(.numericText())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                Text(verbatim: unit)
+                    .font(DS.Font.mono(9.5, weight: .medium))
+                    .foregroundStyle(DS.text3)
+            }
+
+            if sparkline.count > 1 {
+                PanelSparkline(values: sparkline, tint: DS.ok)
+                    .frame(height: 11)
+                    .padding(.top, 1)
+                    .help(sparklineHelp)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 8)
+    }
+
+    private var sparkValues: [Double] {
+        guard state.serverState == .ready else { return [] }
+        return state.recentThroughput(window: 300).map(\.value)
+    }
+
+    private var sparklineHelp: String {
+        let peak = sparkValues.max() ?? 0
+        return L10n.t("近 5 分钟吞吐") + " · " + L10n.format("峰值 %@ tok/s", Format.compact(peak))
+    }
+
+    private var showsMemoryStrip: Bool {
+        running && state.stats != nil
+    }
+
+    private var memoryStrip: some View {
+        HStack(spacing: 6) {
+            Text(L10n.t("统一内存"))
+                .font(DS.Font.prose(10.5))
+                .foregroundStyle(DS.text3)
+                .fixedSize()
+            Text(verbatim: memoryText)
+                .font(DS.Font.mono(10, weight: .semibold))
+                .foregroundStyle(DS.text)
+                .monospacedDigit()
+                .fixedSize()
+
+            if let fraction = memoryFraction {
+                DSMeter(value: fraction, tint: memoryTint)
+                    .frame(minWidth: 30, maxWidth: .infinity)
+            } else {
+                Spacer(minLength: 4)
+            }
+
+            Text(L10n.t("上下文"))
+                .font(DS.Font.prose(10.5))
+                .foregroundStyle(DS.text3)
+                .fixedSize()
+            Text(verbatim: contextText)
+                .font(DS.Font.mono(10, weight: .semibold))
+                .foregroundStyle(DS.text)
+                .monospacedDigit()
+                .fixedSize()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+    }
+
+    private var memoryText: String {
+        guard let bytes = state.stats?.memoryBytes, bytes > 0 else { return "—" }
+        return Format.memory(bytes)
+    }
+
+    private var memoryFraction: Double? {
+        guard let used = state.stats?.memoryBytes, used > 0,
+            let total = state.stats?.physicalMemoryBytes, total > 0
+        else { return nil }
+        return min(max(Double(used) / Double(total), 0), 1)
+    }
+
+    private var memoryTint: Color {
+        guard let fraction = memoryFraction else { return DS.ok }
+        if fraction > 0.90 { return DS.err }
+        if fraction > 0.75 { return DS.warn }
+        return DS.ok
+    }
+
+    private var contextText: String {
+        let used = state.overviewContextUsedTokens
+        guard used > 0 else { return "—" }
+        let usedText = Format.tokens(used)
+        if let ceiling = state.stats?.maximumContextTokens ?? state.contextWindowTokens,
+            ceiling > 0
+        {
+            return "\(usedText)/\(Format.tokensShort(ceiling))"
+        }
+        return usedText
+    }
+
+    /// 解码格的角标：实时读数标 `LIVE`，退回模型平均时标 `AVG`。
+    /// 解码的实时值只来自网关（`.gatewayLive`），没有引擎实时这一档。
+    private var decodeTag: String? {
+        switch state.menuBarDecodeReading.origin {
+        case .gatewayLive: return "LIVE"
+        case .gatewayMean: return "AVG"
+        default: return nil
+        }
+    }
+
+    private var decodeTagTint: Color {
+        state.menuBarDecodeReading.origin == .gatewayLive ? DS.ok : DS.text3
+    }
+
+    /// 预填充格的角标：做完的实测值标 `LAST`，累计均值标 `AVG`。
+    private var prefillTag: String? {
+        switch state.prefillReading.origin {
+        case .gatewayLast: return "LAST"
+        case .gatewayMean: return "AVG"
+        default: return nil
+        }
+    }
+
+    private var prefillTagTint: Color {
+        DS.text3
+    }
+
+    private func number(_ value: Double?) -> String {
+        guard let value, value > 0 else { return "—" }
+        return Format.compact(value)
+    }
+
+    private func milliseconds(_ value: Double?) -> String {
+        guard let value, value > 0 else { return "—" }
+        return "\(Int(value.rounded()))"
     }
 
     // MARK: 操作
 
-    private var actions: some View {
-        HStack(spacing: 8) {
-            if state.isSwitchingModel {
-                // 切换中留一条退路：引擎继续在后台加载，界面不用只能死等。
-                Button {
-                    state.abortModelSwitch()
-                } label: {
-                    Label(L10n.t("取消等待"), systemImage: "xmark.circle")
-                        .frame(maxWidth: .infinity)
+    @ViewBuilder
+    private var actionRow: some View {
+        if state.isSwitchingModel || state.isModelBusy {
+            HStack(spacing: 8) {
+                PanelStageBar(text: stageText)
+                PanelButton(title: "取消", kind: .glass, minWidth: 66) {
+                    cancelBusy()
                 }
-                .buttonStyle(.ds(.secondary, size: .regular))
-            } else if running {
-                Button {
+            }
+        } else if running {
+            HStack(spacing: 8) {
+                PanelButton(
+                    title: "停止服务",
+                    symbol: "stop.fill",
+                    kind: .danger,
+                    fillsWidth: true
+                ) {
                     state.stopService()
-                } label: {
-                    Label(L10n.t("停止服务"), systemImage: "stop.fill")
-                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.ds(.danger, size: .regular))
                 .disabled(busy)
 
-                Button {
+                PanelButton(title: "重启服务", symbol: "arrow.clockwise", kind: .glass) {
                     state.restartService()
-                } label: {
-                    Label(L10n.t("重启服务"), systemImage: "arrow.clockwise")
                 }
-                .buttonStyle(.ds(.secondary, size: .regular))
-                .fixedSize()
                 .disabled(busy)
-            } else {
-                Button {
-                    state.startService()
-                } label: {
-                    Label(L10n.t("启动服务"), systemImage: "play.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.ds(.primary, size: .regular))
-                .disabled(state.selectedModel.isEmpty || state.runtimeMissing != nil || busy)
             }
+        } else {
+            PanelButton(
+                title: "启动服务",
+                symbol: "play.fill",
+                kind: .primary,
+                fillsWidth: true
+            ) {
+                state.startService()
+            }
+            .disabled(state.selectedModel.isEmpty || state.runtimeMissing != nil || busy)
+        }
+    }
+
+    private var stageText: String {
+        let text = state.engineStageText
+        if !text.isEmpty { return text }
+        if state.isSwitchingModel { return L10n.t("切换中") }
+        return L10n.t(state.serverState.rawValue)
+    }
+
+    private func cancelBusy() {
+        if state.isSwitchingModel {
+            state.abortModelSwitch()
+        } else {
+            state.stopService()
         }
     }
 
     private var footer: some View {
         HStack(spacing: 8) {
-            if let stats = state.stats {
-                Text(Self.countersText(stats))
-                    .font(DS.Font.mono(10))
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(DS.accent.opacity(0.80))
+                    .frame(width: 5, height: 5)
+                Text(verbatim: hardwareLabel)
+                    .font(DS.Font.prose(10.5, weight: .medium))
                     .foregroundStyle(DS.text3)
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
-            HStack(spacing: 8) {
-                footerButton("主窗口", symbol: "macwindow") { onOpenMainWindow(nil) }
-                    .help(L10n.t("打开主窗口"))
-                footerButton("退出", symbol: "power") {
-                    onDismiss()
-                    NSApp.terminate(nil)
-                }
-                .help(L10n.t("退出 flashCat"))
+            footerButton("主窗口", symbol: "macwindow") { onOpenMainWindow(nil) }
+                .help(L10n.t("打开主窗口"))
+            footerButton("退出", symbol: "power") {
+                onDismiss()
+                NSApp.terminate(nil)
             }
+            .help(L10n.t("退出 flashCat"))
         }
+    }
+
+    private var hardwareLabel: String {
+        if let device = state.stats?.deviceName, !device.isEmpty {
+            return "\(device) · Metal"
+        }
+        return "Apple Silicon · Metal"
     }
 
     private func footerButton(
@@ -645,237 +1180,349 @@ struct MenuBarPanel: View {
         .buttonStyle(.ds(.secondary, size: .small))
         .fixedSize()
     }
-
-    private static func countersText(_ stats: ServerStats) -> String {
-        var parts = [L10n.format("完成 %lld", stats.requestsCompleted), L10n.format("失败 %lld", stats.requestsFailed)]
-        if stats.activeRequests > 0 { parts.append(L10n.format("并发 %lld", stats.activeRequests)) }
-        if stats.queuedRequests > 0 { parts.append(L10n.format("排队 %lld", stats.queuedRequests)) }
-        return parts.joined(separator: " · ")
-    }
 }
 
-// MARK: - 指标条
+// MARK: - 状态胶囊
 
-/// 三列读数：解码速度 / 首字延迟 / 预填充速度。值用等宽数字，列间发丝线分隔。
-private struct MetricStrip: View {
-    let decode: MetricReading
-    let ttft: TTFTReading
-    let prefill: MetricReading
-
-    var body: some View {
-        HStack(spacing: 0) {
-            cell(
-                "解码", value: number(decode.value), unit: "tok/s",
-                tag: decodeTag, tagTint: decodeTagTint)
-            DSDivider(vertical: true)
-            cell("首字", value: milliseconds(ttft.milliseconds), unit: "ms")
-            DSDivider(vertical: true)
-            cell(
-                "预填充", value: number(prefill.value), unit: "tok/s",
-                tag: prefillTag, tagTint: prefillTagTint)
-        }
-        .background(DS.bg, in: DS.rect(DS.Radius.md))
-        .overlay(
-            DS.rect(DS.Radius.md)
-                .strokeBorder(DS.line, lineWidth: 1)
-        )
-        // 读数条高度锁死：窗口高度被撑开时它也不跟着变高。
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func cell(
-        _ label: String,
-        value: String,
-        unit: String?,
-        tag: String? = nil,
-        tagTint: Color = DS.text3
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Text(L10n.t(label))
-                    .font(DS.Font.xs.weight(.medium))
-                    .foregroundStyle(DS.text3)
-                if let tag, value != "—" {
-                    Text(tag)
-                        .font(DS.Font.mono(8.5, weight: .semibold))
-                        .tracking(0.4)
-                        .foregroundStyle(tagTint)
-                        .lineLimit(1)
-                        .transition(.opacity)
-                }
-            }
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text(value)
-                    .font(DS.Font.mono(14.5, weight: .semibold))
-                    .foregroundStyle(value == "—" ? DS.text3 : DS.text)
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
-                    .animation(DS.Motion.snappy, value: value)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-                if let unit {
-                    Text(unit)
-                        .font(DS.Font.mono(9, weight: .medium))
-                        .foregroundStyle(DS.text3)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-    }
-
-    /// 解码格的角标：实时读数标 `LIVE`，退回模型平均时标 `AVG`。
-    private var decodeTag: String? {
-        switch decode.origin {
-        case .gatewayLive, .engineLive: return "LIVE"
-        case .gatewayMean, .engineMean: return "AVG"
-        default: return nil
-        }
-    }
-
-    private var decodeTagTint: Color {
-        switch decode.origin {
-        case .gatewayLive, .engineLive: return DS.ok
-        default: return DS.text3
-        }
-    }
-
-    /// 预填充格的角标：此刻在处理才 `LIVE`，做完的实测值标 `LAST`，累计均值标 `AVG`。
-    private var prefillTag: String? {
-        switch prefill.origin {
-        case .engineLive: return "LIVE"
-        case .gatewayLast, .engineLast: return "LAST"
-        case .gatewayMean, .engineMean: return "AVG"
-        default: return nil
-        }
-    }
-
-    private var prefillTagTint: Color {
-        prefill.origin == .engineLive ? DS.ok : DS.text3
-    }
-
-    private func number(_ value: Double?) -> String {
-        guard let value, value > 0 else { return "—" }
-        return Format.compact(value)
-    }
-
-    private func milliseconds(_ value: Double?) -> String {
-        guard let value, value > 0 else { return "—" }
-        return "\(Int(value.rounded()))"
-    }
-}
-
-// MARK: - 吞吐曲线
-
-/// 近 5 分钟解码速度：一条折线 + 渐隐面积，只在有足够样本时出现。
-private struct Sparkline: View {
-    let values: [Double]
-    let peak: Double
+private struct PanelStatusPill: View {
+    let status: ServerState
     let tint: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 5) {
-                Text("近 5 分钟吞吐")
-                    .font(DS.Font.xs.weight(.medium))
-                    .foregroundStyle(DS.text3)
-                Spacer(minLength: 4)
-                Text(L10n.format("峰值 %@ tok/s", Format.compact(peak)))
-                    .font(DS.Font.mono(10))
-                    .foregroundStyle(DS.text3)
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
+        HStack(spacing: 5) {
+            if status == .starting || status == .stopping {
+                ProgressView()
+                    .controlSize(.mini)
+                    .scaleEffect(0.62)
+                    .tint(tint)
+                    .frame(width: 10, height: 10)
+            } else {
+                DSStatusDot(color: tint, live: status == .ready, size: 6)
             }
-            GeometryReader { proxy in
-                let size = proxy.size
-                let maxValue = max(peak, 1)
-                let points = points(in: size, maxValue: maxValue)
+            Text(L10n.t(status.rawValue))
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(tint)
+                .lineLimit(1)
+                .contentTransition(.opacity)
+        }
+        .padding(.horizontal, 9)
+        .frame(height: 22)
+        .background(Capsule().fill(tint.opacity(0.12)))
+        .overlay(Capsule().strokeBorder(tint.opacity(0.26), lineWidth: 1))
+        .fixedSize()
+        .accessibilityElement(children: .combine)
+    }
+}
 
-                ZStack(alignment: .bottomLeading) {
-                    if let first = points.first, let last = points.last {
-                        Path { path in
-                            path.move(to: CGPoint(x: first.x, y: size.height))
-                            path.addLine(to: first)
-                            for point in points.dropFirst() { path.addLine(to: point) }
-                            path.addLine(to: CGPoint(x: last.x, y: size.height))
-                            path.closeSubpath()
-                        }
-                        .fill(
-                            LinearGradient(
-                                colors: [tint.opacity(0.22), tint.opacity(0.01)],
-                                startPoint: .top, endPoint: .bottom)
-                        )
-                    }
-                    Path { path in
-                        guard let first = points.first else { return }
-                        path.move(to: first)
-                        for point in points.dropFirst() { path.addLine(to: point) }
-                    }
-                    .stroke(
-                        tint.opacity(0.9),
-                        style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+// MARK: - 模型选择行
+
+private struct PanelModelRow: View {
+    let name: String
+    let engineTag: String?
+    let sizeText: String?
+    let selected: Bool
+    let switching: Bool
+    let stage: String
+    let disabled: Bool
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                if switching {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .scaleEffect(0.62)
+                        .frame(width: 12, height: 12)
+                } else {
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(selected ? DS.accent : DS.text4)
+                }
+
+                Text(verbatim: name)
+                    .font(.system(size: 11.5, weight: selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? DS.accent : DS.text2)
+                    .lineLimit(1)
+
+                Spacer(minLength: 4)
+
+                if switching, !stage.isEmpty {
+                    Text(verbatim: stage)
+                        .font(DS.Font.mono(9))
+                        .foregroundStyle(DS.warn)
+                        .lineLimit(1)
+                } else if let engineTag {
+                    Text(verbatim: engineTag)
+                        .font(DS.Font.mono(9))
+                        .foregroundStyle(DS.text3)
+                        .lineLimit(1)
+                } else if let sizeText {
+                    Text(verbatim: sizeText)
+                        .font(DS.Font.mono(9))
+                        .foregroundStyle(DS.text4)
+                        .lineLimit(1)
                 }
             }
-            .frame(height: 26)
+            .padding(.horizontal, 7)
+            .frame(height: 30)
+            .background(
+                DS.rect(DS.Radius.sm)
+                    .fill(selected ? DS.accentSoft : (hovering ? DS.hover : .clear))
+            )
+            .contentShape(Rectangle())
         }
-    }
-
-    private func points(in size: CGSize, maxValue: Double) -> [CGPoint] {
-        guard values.count > 1 else { return [] }
-        let step = size.width / CGFloat(values.count - 1)
-        return values.enumerated().map { index, value in
-            let normalized = min(max(value / maxValue, 0), 1)
-            return CGPoint(
-                x: CGFloat(index) * step,
-                y: size.height * (1 - CGFloat(normalized)) * 0.92 + 1)
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.45 : 1)
+        .onHover { value in
+            withAnimation(DS.Motion.snappy) { hovering = value }
         }
     }
 }
 
-// MARK: - 单行提示
+// MARK: - 小胶囊按钮
 
-private struct NoticeRow: View {
-    var symbol: String?
-    let text: String
-    var tint: Color = DS.text2
-    var showsSpinner: Bool = false
-    var actionLabel: String? = nil
-    var action: (() -> Void)? = nil
+/// 卡面微操作（切换模型、模型库、日志）：22pt 胶囊，悬停只抬底色，不抢主动作。
+private struct PanelMiniPill: View {
+    let title: String
+    var symbol: String? = nil
+    var rotating: Bool = false
+    let action: () -> Void
+
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hovering = false
 
     var body: some View {
-        HStack(alignment: .center, spacing: 7) {
-            if showsSpinner {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(tint)
-                    .scaleEffect(0.68)
-                    .frame(width: 12, height: 12)
-            } else if let symbol {
-                Image(systemName: symbol)
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(tint)
-            }
-            Text(L10n.t(text))
-                .font(DS.Font.xs)
-                .foregroundStyle(tint)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 4)
-            if let actionLabel, let action {
-                Button(action: action) {
-                    Text(L10n.t(actionLabel))
-                        .font(DS.Font.xs.weight(.medium))
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Text(L10n.t(title))
+                    .font(.system(size: 10.5, weight: .medium))
+                    .lineLimit(1)
+                if let symbol {
+                    Image(systemName: symbol)
+                        .font(.system(size: 8, weight: .bold))
+                        .rotationEffect(.degrees(rotating ? 180 : 0))
+                        .animation(DS.Motion.snappy, value: rotating)
                 }
-                .buttonStyle(.ds(.secondary, size: .small))
+            }
+            .foregroundStyle(hovering ? DS.text : DS.text2)
+            .padding(.horizontal, 7)
+            .frame(height: 20)
+            .background(
+                Capsule().fill(hovering ? DS.raised : DS.pillFill)
+            )
+            .overlay(
+                Capsule().strokeBorder(
+                    hovering ? DS.line2 : DS.pillBorder,
+                    lineWidth: 1)
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .opacity(isEnabled ? 1 : 0.42)
+        .onHover { value in
+            withAnimation(DS.Motion.snappy) { hovering = value }
+        }
+    }
+}
+
+// MARK: - 主动作按钮
+
+/// 面板里的 40pt 高对比动作键。主色沿用 `DS.ink`（浅色皮肤是墨黑、深色皮肤是
+/// 近白），危险键是淡红底 + 红字，玻璃键与卡面同族的胶囊。
+private struct PanelButton: View {
+    enum Kind { case primary, danger, glass }
+
+    let title: String
+    var symbol: String? = nil
+    var kind: Kind = .glass
+    var fillsWidth: Bool = false
+    var height: CGFloat = 40
+    var minWidth: CGFloat = 0
+    let action: () -> Void
+
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
+
+    private var radius: CGFloat { height >= 36 ? 13 : 9 }
+    private var shape: RoundedRectangle { DS.rect(radius) }
+
+    private var foreground: Color {
+        switch kind {
+        case .primary: return DS.inkText
+        case .danger: return DS.dangerText
+        case .glass: return DS.text
+        }
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                if let symbol {
+                    Image(systemName: symbol)
+                        .font(.system(size: height >= 36 ? 11 : 9.5, weight: .semibold))
+                }
+                Text(L10n.t(title))
+                    .font(.system(size: height >= 36 ? 12.5 : 11.5, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(foreground)
+            .padding(.horizontal, height >= 36 ? 12 : 9)
+            .frame(minWidth: minWidth)
+            .frame(maxWidth: fillsWidth ? .infinity : nil)
+            .frame(height: height)
+            .background(background)
+            .overlay(border)
+            .contentShape(shape)
+        }
+        .buttonStyle(DSPressStyle(scale: 0.985))
+        .opacity(isEnabled ? 1 : 0.42)
+        .onHover { value in
+            guard !reduceMotion else {
+                hovering = value
+                return
+            }
+            withAnimation(DS.Motion.snappy) { hovering = value }
+        }
+    }
+
+    @ViewBuilder
+    private var background: some View {
+        switch kind {
+        case .primary:
+            shape.fill(
+                LinearGradient(
+                    colors: [DS.ink, DS.ink.opacity(hovering ? 0.92 : 0.84)],
+                    startPoint: .top,
+                    endPoint: .bottom)
+            )
+        case .danger:
+            shape.fill(hovering ? DS.err.opacity(0.16) : DS.dangerFill)
+        case .glass:
+            shape.fill(hovering ? DS.raised : DS.pillFill)
+        }
+    }
+
+    @ViewBuilder
+    private var border: some View {
+        switch kind {
+        case .primary:
+            shape.strokeBorder(
+                LinearGradient(
+                    colors: [DS.glassSpecular.opacity(0.38), .clear],
+                    startPoint: .top,
+                    endPoint: .bottom),
+                lineWidth: 1)
+        case .danger:
+            shape.strokeBorder(DS.dangerStroke, lineWidth: 1)
+        case .glass:
+            shape.strokeBorder(hovering ? DS.line2 : DS.line, lineWidth: 1)
+        }
+    }
+}
+
+// MARK: - 迷你吞吐曲线
+
+/// 解码格里的 5 分钟走势：只有折线，不带坐标轴与说明。
+private struct PanelSparkline: View {
+    let values: [Double]
+    let tint: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+            let peak = max(values.max() ?? 1, 1)
+            let points = points(in: size, peak: peak)
+
+            Path { path in
+                guard let first = points.first else { return }
+                path.move(to: first)
+                for point in points.dropFirst() { path.addLine(to: point) }
+            }
+            .stroke(
+                tint.opacity(0.90),
+                style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func points(in size: CGSize, peak: Double) -> [CGPoint] {
+        guard values.count > 1, size.width > 1, size.height > 1 else { return [] }
+        let step = size.width / CGFloat(values.count - 1)
+        return values.enumerated().map { index, value in
+            let normalized = min(max(value / peak, 0), 1)
+            return CGPoint(
+                x: CGFloat(index) * step,
+                y: size.height - CGFloat(normalized) * (size.height - 2) - 1)
+        }
+    }
+}
+
+// MARK: - 阶段进度条
+
+/// 启动 / 切换 / 停止中的一行：转圈 + 阶段文案，底部一条不确定进度，
+/// 让「点下去有反应」这件事在面板里也看得见。
+private struct PanelStageBar: View {
+    let text: String
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var phase: CGFloat = 0
+
+    var body: some View {
+        HStack(spacing: 7) {
+            ProgressView()
+                .controlSize(.small)
+                .scaleEffect(0.72)
+                .tint(DS.accent)
+                .frame(width: 14, height: 14)
+            Text(verbatim: text)
+                .font(DS.Font.sm.weight(.medium))
+                .foregroundStyle(DS.text2)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 11)
+        .frame(maxWidth: .infinity)
+        .frame(height: 40)
+        .background(DS.rect(13).fill(DS.accentSoft))
+        .overlay(DS.rect(13).strokeBorder(DS.accent.opacity(0.20), lineWidth: 1))
+        .overlay(alignment: .bottom) {
+            if !reduceMotion {
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(DS.accent.opacity(0.10))
+                        Capsule()
+                            .fill(DS.accent.opacity(0.55))
+                            .frame(width: max(24, proxy.size.width * 0.28))
+                            .offset(x: phase * max(0, proxy.size.width * 0.72))
+                    }
+                }
+                .frame(height: 2)
+                .padding(.horizontal, 1)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(DS.bg, in: DS.rect(DS.Radius.md))
-        .overlay(
-            DS.rect(DS.Radius.md)
-                .strokeBorder(DS.line, lineWidth: 1)
-        )
+        .clipShape(DS.rect(13))
+        .onAppear {
+            guard !reduceMotion else { return }
+            phase = 0
+            withAnimation(.linear(duration: 1.15).repeatForever(autoreverses: false)) {
+                phase = 1
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
+}
+
+// MARK: - 角标
+
+private struct PanelBadge: Identifiable {
+    let text: String
+    let tinted: Bool
+
+    var id: String { "\(tinted)|\(text)" }
 }

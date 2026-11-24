@@ -25,16 +25,20 @@ extension EngineController {
         logs.close()
         stats = nil
         status = nil
-        liveRates.reset()
         // 停止要先读一次：三行之后 `transition` 就把阶段改掉了，那时候再问
         // 「是不是读者点的停止」已经没人记得。
         let wasStopping = isStopping
         if wasStopping {
+            exitDiagnostic = nil
             logs.append("==> 服务已停止", level: .system)
             transition(to: .stopped)
         } else if finished.terminationStatus == 0 {
+            exitDiagnostic = nil
             transition(to: .stopped)
         } else {
+            exitDiagnostic = EngineExitDiagnostic(
+                code: finished.terminationStatus,
+                isSignal: finished.terminationReason == .uncaughtSignal)
             let message = lastError ?? "服务异常退出（退出码 \(finished.terminationStatus)）"
             failureMessage = message
             logs.append("==> \(message)", level: .system)

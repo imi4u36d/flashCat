@@ -324,7 +324,7 @@ public final class GatewaySessionMeter: @unchecked Sendable {
     public static func requestTimings(_ value: Any?) -> RequestTimings? {
         guard let json = value as? [String: Any] else { return nil }
         let prompt = Int(JSONValue.number(json["prompt_n"]) ?? 0)
-        let cached = Int(JSONValue.number(json["cached_n"]) ?? 0)
+        let cached = Int(JSONValue.number(json["cached_n"]) ?? JSONValue.number(json["cache_n"]) ?? 0)
         let promptMs = JSONValue.number(json["prompt_ms"]) ?? 0
         let predicted = Int(JSONValue.number(json["predicted_n"]) ?? 0)
         let predictedMs = JSONValue.number(json["predicted_ms"]) ?? 0
@@ -403,12 +403,12 @@ public final class GatewaySessionMeter: @unchecked Sendable {
             let first = session.firstTokenAt, session.promptTokens > 0
         else { return nil }
         let ttft = first.timeIntervalSince(session.startedAt)
-        guard ttft > 0.001 else { return nil }
+        guard ttft >= 0.025 else { return nil }
         let forwarded = max(0, session.promptTokens - session.cachedPromptTokens)
         guard forwarded >= RequestTimings.prefillSampleTokens else { return nil }
         let rate = Double(forwarded) / ttft
-        guard rate.isFinite else { return nil }
-        return min(rate, 200_000)
+        guard rate.isFinite, rate > 0, rate <= RequestTimings.maxPlausiblePrefillRate else { return nil }
+        return rate
     }
 
     /// 一条请求的全程解码速度（「最近请求」每一行读它）。
@@ -562,6 +562,36 @@ public final class GatewaySessionMeter: @unchecked Sendable {
     }
 
     // MARK: 快照
+
+    /// 一条请求目前的生成量与解码时长。
+    ///
+    /// 应用内对话的消息级读数（usage 缺席时的 token 数、消息下方的 tok/s、
+    /// 生成期间的上下文估算）读这里——和概览曲线同一份按请求打点，不再在
+    /// 本地维护第二套累计。会话收尾后仍然可读（表里保留到被后续请求挤出），
+    /// 消息收尾时能拿到终值。
+    ///
+    /// `tokens` 是小数权重的估算值，末帧 usage 到达后会向上校正；
+    /// `decodingSeconds` 与曲线同口径（首分片 → 末分片，含 0.35 秒下限）。
+    public struct Progress: Sendable {
+        public let tokens: Double
+        public let decodingSeconds: TimeInterval
+
+        init(tokens: Double, decodingSeconds: TimeInterval) {
+            self.tokens = tokens
+            self.decodingSeconds = decodingSeconds
+        }
+    }
+
+    /// 按 id 读取一条请求的生成量与解码时长。会话还在表里就能读到，
+    /// 包括已收尾的那一条。
+    public func progress(_ id: Int) -> Progress? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let session = sessions.first(where: { $0.id == id }) else { return nil }
+        return Progress(
+            tokens: session.completionTokens,
+            decodingSeconds: session.meter.decodingSeconds)
+    }
 
     /// 最近 `limit` 条请求的快照；`nil` 表示全部。已结束的请求仍然在表里，
     /// 所以概览的「最近请求」在收尾后不会变空；上限由 `sessionLimit` 控制。

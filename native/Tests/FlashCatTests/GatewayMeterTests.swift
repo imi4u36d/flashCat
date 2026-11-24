@@ -201,6 +201,24 @@ final class GatewayMeterTests: XCTestCase {
         XCTAssertEqual(meter.snapshot().first?.completionTokens, 500)
     }
 
+    /// 消息级读数与曲线同源：`progress(id)` 给出这条请求的生成量与解码时长，
+    /// 收尾后仍可读；未知 id 返回 nil。应用内对话的上下文估算与消息 tok/s
+    /// 兜底都读它，不再在本地维护第二套累计。
+    func testProgressReportsTokensAndDecodeSpanAfterFinish() {
+        let meter = GatewayMeter()
+        let start = Date()
+        let id = meter.begin(model: "m", dialect: "test", promptTokens: 10, at: start)
+        for step in 0..<5 {
+            meter.addTokens(id, 10, at: start.addingTimeInterval(Double(step) * 0.1))
+        }
+        meter.finish(id, at: start.addingTimeInterval(0.5))
+
+        let progress = meter.progress(id)
+        XCTAssertEqual(progress?.tokens ?? 0, 50, accuracy: 0.001)
+        XCTAssertEqual(progress?.decodingSeconds ?? 0, 0.4, accuracy: 0.001)
+        XCTAssertNil(meter.progress(999))
+    }
+
     /// 多路并发时概览是各路速率之和，才能和「最近请求」逐行相加对上。
     func testConcurrentSessionsSumTheirRates() {
         let meter = GatewayMeter()
@@ -748,5 +766,56 @@ final class GatewayMeterTests: XCTestCase {
     private static func clientGoneWriting(_ frame: String) -> Bool {
         _ = frame
         return false
+    }
+
+    /// `requestTimings` 兼容 llama.cpp 标准的 `cache_n` 字段，扣除缓存后再算预填充速率。
+    func testRequestTimingsReadsCacheNField() {
+        let timings = GatewayMeter.requestTimings([
+            "prompt_n": 2_000,
+            "cache_n": 1_500,
+            "prompt_ms": 250.0,
+            "predicted_n": 20,
+            "predicted_ms": 500.0,
+        ])
+        XCTAssertNotNil(timings)
+        XCTAssertEqual(timings?.cachedTokens, 1_500)
+        XCTAssertEqual(timings?.forwardedTokens, 500)
+        XCTAssertEqual(timings?.prefillRate ?? 0, 2_000, accuracy: 0.5)
+    }
+
+    /// 网关侧预填充对过短 TTFT（< 25 ms）和超出物理上限的异常速率直接丢弃，
+    /// 不再产出几十万或封顶 200_000 的失真数字。
+    func testPrefillRejectsSub25msTTFTAndImplausibleRates() {
+        let meter = GatewayMeter()
+        let start = Date()
+
+        // 1. TTFT = 10 ms (< 25 ms 下限)：1000 / 0.01 = 100_000 tok/s → 丢弃。
+        let shortTTFT = meter.begin(model: "m", dialect: "openai", promptTokens: 1_000, at: start)
+        meter.addTokens(shortTTFT, 4, at: start.addingTimeInterval(0.01))
+        meter.noteUsage(shortTTFT, promptTokens: 1_000, completionTokens: 4)
+        meter.finish(shortTTFT, at: start.addingTimeInterval(0.2))
+        XCTAssertNil(meter.recentPrefill())
+
+        // 2. TTFT = 30 ms 但未扣缓存导致 10_000 / 0.03 = 333_333 tok/s (> maxPlausiblePrefillRate) → 丢弃。
+        let implausibleTTFT = meter.begin(
+            model: "m", dialect: "openai", promptTokens: 10_000,
+            at: start.addingTimeInterval(1))
+        meter.addTokens(implausibleTTFT, 4, at: start.addingTimeInterval(1.03))
+        meter.noteUsage(implausibleTTFT, promptTokens: 10_000, completionTokens: 4)
+        meter.finish(implausibleTTFT, at: start.addingTimeInterval(1.2))
+        XCTAssertNil(meter.recentPrefill())
+
+        // 3. `RequestTimings` 自身超物理上限同样返回 nil。
+        let implausibleTimings = GatewayMeter.RequestTimings(
+            promptTokens: 10_000,
+            cachedTokens: 0,
+            promptMilliseconds: 50,
+            predictedTokens: 20,
+            predictedMilliseconds: 400)
+        XCTAssertNil(implausibleTimings.prefillRate)
+        let timed = meter.begin(model: "m", dialect: "openai", promptTokens: 10_000, at: start.addingTimeInterval(2))
+        meter.noteTimings(timed, implausibleTimings)
+        meter.finish(timed, at: start.addingTimeInterval(2.2))
+        XCTAssertNil(meter.recentPrefill())
     }
 }

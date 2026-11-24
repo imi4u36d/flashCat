@@ -327,14 +327,15 @@ final class StatusParserTests: XCTestCase {
                     "histograms": ["prefill_time_seconds": ["count": 214, "sum": 66.5]],
                 ])
         ])
-        XCTAssertEqual(status.extras[EngineRateCounters.decodeLive], 36_000)
+        // 解码速度不在这里：网关按请求打点，解析器不再交出 `generation_tokens_live`。
+        XCTAssertNil(status.extras["rate.decode_live"])
         XCTAssertEqual(status.extras[EngineRateCounters.prefillLive], 0)
         XCTAssertEqual(status.extras[EngineRateCounters.prefillTokens], 88_000)
         XCTAssertEqual(status.extras[EngineRateCounters.prefillSeconds], 66.5)
         XCTAssertEqual(status.extras["total_cached_tokens"], 16_000_000)
         // 命中率的分母：与命中量同一代的提示词总量。
         XCTAssertEqual(status.extras["prompt_tokens_total"], 16_100_000)
-        // 解析器本身不报速率，粒度也就无从谈起；由轮询侧差分后标成 `.live`。
+        // 解析器本身不报实时速率，粒度也就无从谈起；预填充由轮询侧差分后标成 `.live`。
         XCTAssertNil(status.decodeTokensPerSecond)
         XCTAssertEqual(status.decodeRateKind, .none)
     }

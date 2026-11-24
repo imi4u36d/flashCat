@@ -218,7 +218,6 @@ extension ChatRunner {
         sendGeneration &+= 1
         let generation = sendGeneration
         chatStartupStage = needsStartup ? "模型正在启动中…" : nil
-        metrics.resetStreamMeter()
 
         var options = ChatOptions(
             temperature: settings.temperature,
@@ -276,6 +275,10 @@ extension ChatRunner {
             var usage = ChatUsage()
             var rounds = 0
             var drawn = 0
+            // 整轮的生成量与解码时长：每趟请求各有一条网关会话，收尾时把
+            // 各趟的读数相加，给消息下方的 tok/s 兜底。usage 齐全时用不到。
+            var decodedSeconds: TimeInterval = 0
+            var estimatedTokens: Double = 0
             self.setToolStage("正在规划画面…", generation: generation)
 
             // 每一趟都是一次完整的对话请求：模型要么交出画图调用，要么给出最终
@@ -297,6 +300,7 @@ extension ChatRunner {
                 let meterID = GatewayMeter.shared.begin(
                     model: chatModel, dialect: "chat",
                     promptTokens: promptTokens, client: "flashCat")
+                self.adoptMeter(meterID)
                 GatewayMeter.shared.markStarted(meterID, at: started)
 
                 let result = await self.chatClient.send(
@@ -309,7 +313,7 @@ extension ChatRunner {
                         GatewayMeter.shared.addTokens(meterID, TokenEstimator.fractional(piece), at: at)
                         Task { @MainActor in
                             guard self.sendGeneration == generation else { return }
-                            let found = self.updateStreamingMessage { message in
+                            self.updateStreamingMessage { message in
                                 if message.firstTokenSeconds == nil {
                                     let ttft = at.timeIntervalSince(started)
                                     message.firstTokenSeconds = ttft
@@ -319,20 +323,16 @@ extension ChatRunner {
                                 message.toolStage = nil
                                 message.content += piece
                             }
-                            guard found else { return }
-                            self.recordStreamDelta(piece, at: at)
                         }
                     },
                     onReasoning: { piece, at in
                         GatewayMeter.shared.addTokens(meterID, TokenEstimator.fractional(piece), at: at)
                         Task { @MainActor in
                             guard self.sendGeneration == generation else { return }
-                            let found = self.updateStreamingMessage { message in
+                            self.updateStreamingMessage { message in
                                 message.reasoning = (message.reasoning ?? "") + piece
                                 if message.content.isEmpty { self.generationStatus = "思考中" }
                             }
-                            guard found else { return }
-                            self.recordStreamDelta(piece, at: at)
                         }
                     },
                     onUsage: { reported in
@@ -341,6 +341,9 @@ extension ChatRunner {
                             promptTokens: reported.promptTokens,
                             completionTokens: reported.completionTokens,
                             cachedPromptTokens: reported.cachedPromptTokens)
+                        if let timings = reported.timings {
+                            GatewayMeter.shared.noteTimings(meterID, timings)
+                        }
                     },
                     onStatus: { status in
                         Task { @MainActor in
@@ -351,10 +354,6 @@ extension ChatRunner {
                     onToolCall: { piece, at in
                         // 工具参数也是模型真写出来的字，和网关的统计口径一致。
                         GatewayMeter.shared.addTokens(meterID, TokenEstimator.fractional(piece), at: at)
-                        Task { @MainActor in
-                            guard self.sendGeneration == generation else { return }
-                            self.recordStreamDelta(piece, at: at)
-                        }
                     })
 
                 // 收尾先看代数：被「停止」或被新的一轮顶掉时，打点收掉即可，
@@ -370,6 +369,12 @@ extension ChatRunner {
                 case .success(let text):
                     GatewayMeter.shared.finish(meterID)
                     if stale { return }
+                    // 这一趟的生成量与解码时长并进整轮：消息收尾时的 tok/s
+                    // 兜底按各趟相加，而不是本地另起一份累计。
+                    if let progress = GatewayMeter.shared.progress(meterID) {
+                        decodedSeconds += progress.decodingSeconds
+                        estimatedTokens += progress.tokens
+                    }
                     answer = text
                     transcript += text
                 }
@@ -390,7 +395,8 @@ extension ChatRunner {
                 guard !calls.isEmpty else {
                     self.finishImageToolTurn(
                         content: transcript, usage: usage,
-                        generation: generation, started: turnStarted)
+                        generation: generation, started: turnStarted,
+                        decodedSeconds: decodedSeconds, estimatedTokens: estimatedTokens)
                     return
                 }
 
@@ -736,11 +742,18 @@ extension ChatRunner {
     }
 
     /// 这一轮画完：压上累计用量、收掉「生成中」，再落盘。
+    ///
+    /// `decodedSeconds` / `estimatedTokens` 是各趟请求在网关打点里的读数之和
+    /// （`GatewaySessionMeter.progress`）。usage 齐全时用真实 token 除以同一段
+    /// 解码时长；usage 缺席时才退回估算量——和概览曲线同一份数据，不再在本地
+    /// 另起一套累计。
     func finishImageToolTurn(
         content: String,
         usage: ChatUsage,
         generation: Int,
-        started: Date
+        started: Date,
+        decodedSeconds: TimeInterval = 0,
+        estimatedTokens: Double = 0
     ) {
         guard sendGeneration == generation else { return }
         let elapsed = Date().timeIntervalSince(started)
@@ -751,16 +764,16 @@ extension ChatRunner {
             message.seconds = elapsed
             if usage.completionTokens > 0 {
                 message.usage = usage
-                if metrics.streamDecodingSeconds > 0 {
-                    message.tokensPerSecond = Double(usage.completionTokens) / metrics.streamDecodingSeconds
+                if decodedSeconds > 0 {
+                    message.tokensPerSecond = Double(usage.completionTokens) / decodedSeconds
                 }
             } else {
                 // 流式响应常省略 usage，退回按分片估的数字，消息右下角不至于是空的。
-                let tokens = Int(metrics.streamTotalTokens.rounded())
+                let tokens = Int(estimatedTokens.rounded())
                 if tokens > 0 {
                     message.usage = ChatUsage(promptTokens: 0, completionTokens: tokens)
-                    if metrics.streamDecodingSeconds > 0 {
-                        message.tokensPerSecond = Double(tokens) / metrics.streamDecodingSeconds
+                    if decodedSeconds > 0 {
+                        message.tokensPerSecond = Double(tokens) / decodedSeconds
                     }
                 }
             }

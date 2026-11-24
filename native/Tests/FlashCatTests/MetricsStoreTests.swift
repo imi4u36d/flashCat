@@ -195,6 +195,41 @@ final class MetricsStoreTests: XCTestCase {
         XCTAssertTrue(store.throughput.isEmpty)
     }
 
+    /// 总解码曲线只认网关这一路探测。网关还有会话没收尾时，即使这一拍读数是 0
+    /// （预填充 / 分片间隙），也不能拿引擎的实时计数补点——两套探测覆盖的
+    /// 请求范围不同，混用就是同一个请求被双重采样。
+    @MainActor
+    func testThroughputDoesNotBorrowEngineProbeWhileGatewaySessionIsLive() {
+        let meter = GatewayMeter()
+        _ = meter.begin(model: "m", dialect: "test", promptTokens: 10)
+        let store = MetricsStore(meter: meter)
+        var stats = ServerStats()
+        stats.decodeTokensPerSecond = 50
+        stats.decodeRateKind = .live
+        stats.activeRequests = 1
+
+        // 用真实时刻：网关读数的新鲜度门槛拿 `Date()` 比，锚点时间会被判成过期。
+        store.tick(now: Date(), stats: stats, isRunning: true, activeEngine: .splash)
+        XCTAssertTrue(store.throughput.isEmpty)
+        XCTAssertTrue(store.gatewayRateIsLive)
+    }
+
+    /// 引擎自报的实时解码速度不再是曲线来源：网关没有在跑会话时，即使引擎说
+    /// 自己在 50 tok/s（客户端直连引擎端口），曲线也不落点。这条曲线只回答
+    /// 「网关看见的请求多快」。
+    @MainActor
+    func testThroughputIgnoresEngineProbeWithoutGatewaySessions() {
+        let store = MetricsStore(meter: GatewayMeter())
+        var stats = ServerStats()
+        stats.decodeTokensPerSecond = 50
+        stats.decodeRateKind = .live
+        stats.activeRequests = 1
+
+        store.tick(now: Date(), stats: stats, isRunning: true, activeEngine: .splash)
+        XCTAssertTrue(store.throughput.isEmpty)
+        XCTAssertFalse(store.gatewayRateIsLive)
+    }
+
     /// 没有会话在跑时不冻结曲线：启动即空闲不算「收尾」。
     @MainActor
     func testTickDoesNotFreezeChartWhenNeverLive() {
@@ -203,19 +238,5 @@ final class MetricsStoreTests: XCTestCase {
         XCTAssertNil(store.throughputFrozenAt)
         // 解冻时右缘跟着挂钟走，而不是钉在某个旧时刻。
         XCTAssertEqual(store.overviewChartEnd.timeIntervalSinceNow, 0, accuracy: 5)
-    }
-
-    /// 流式分片喂进的是 store 的 meter；reset 之后计数归零，下一轮回复不带上一条尾巴。
-    @MainActor
-    func testStreamMeterResetsBetweenGenerations() {
-        let store = MetricsStore(meter: GatewayMeter())
-        store.recordStreamDelta("hello world", at: Self.anchor)
-        store.recordStreamDelta("hello world", at: Self.anchor.addingTimeInterval(1))
-        XCTAssertGreaterThan(store.streamTotalTokens, 0)
-        XCTAssertGreaterThan(store.streamDecodingSeconds, 0)
-
-        store.resetStreamMeter()
-        XCTAssertEqual(store.streamTotalTokens, 0)
-        XCTAssertEqual(store.streamDecodingSeconds, 0)
     }
 }

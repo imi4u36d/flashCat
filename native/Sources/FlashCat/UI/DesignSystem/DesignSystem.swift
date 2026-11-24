@@ -37,13 +37,26 @@ enum DS {
         light: 0x1F2D50, dark: 0x000000, studio: 0x0F172A,
         lightAlpha: 0.30, darkAlpha: 0.62, studioAlpha: 0.14)
 
-    /// 侧栏（贴在玻璃窗口左侧的竖条）。
+    /// 侧栏贴边形态的底（左边一条贴住窗口的毛玻璃）。
     static let sidebarFill = Color.glass(
-        light: 0xF2F5FC, dark: 0x0C0F19, studio: 0xF2F4F7,
-        lightAlpha: 0.42, darkAlpha: 0.52, studioAlpha: 1, studioDarkAlpha: 1)
+        light: 0xF6F8FE, dark: 0x0E1220, studio: 0xF2F4F7,
+        lightAlpha: 0.62, darkAlpha: 0.62, studioAlpha: 1, studioDarkAlpha: 1)
     static let sidebarBorder = Color.glass(
         light: 0x0F172A, dark: 0xFFFFFF, studio: 0x0F172A,
         lightAlpha: 0.07, darkAlpha: 0.08, studioAlpha: 0.07)
+
+    /// 侧栏悬浮形态的玻璃卡片：四周留 10pt，圆角 16，带一层投影。
+    /// 比普通卡片略透，背后的窗口玻璃仍能透回来。
+    static let sidebarCardFill = Color.glass(
+        light: 0xFFFFFF, dark: 0x161C2E, studio: 0xFFFFFF,
+        lightAlpha: 0.56, darkAlpha: 0.56, studioAlpha: 1, studioDarkAlpha: 1)
+    static let sidebarCardBorder = Color.glass(
+        light: 0xFFFFFF, dark: 0xFFFFFF, studio: 0x0F172A,
+        lightAlpha: 0.80, darkAlpha: 0.13, studioAlpha: 0.08)
+    /// 悬浮侧栏里的小卡片（运行时遥测坞）：比卡片再淡一层。
+    static let sidebarDockFill = Color.glass(
+        light: 0xFFFFFF, dark: 0x20283F, studio: 0xF8FAFC,
+        lightAlpha: 0.72, darkAlpha: 0.72, studioAlpha: 1, studioDarkAlpha: 0.92)
 
     /// 卡片 / 面板。
     static let surface = Color.glass(
@@ -67,6 +80,12 @@ enum DS {
     static let floating = Color.glass(
         light: 0xFBFCFE, dark: 0x1C2133, studio: 0xFFFFFF,
         lightAlpha: 0.94, darkAlpha: 0.94, studioAlpha: 1, studioDarkAlpha: 1)
+    /// 菜单栏面板的玻璃底：比 `floating` 略透一档，但没有系统材质可依靠，
+    /// 所以仍保持高不透明度，保证 11–15pt 的小字压在壁纸上也读得清。
+    /// studio 两档是实色，极简皮肤不折射背后的内容。
+    static let panelFill = Color.glass(
+        light: 0xFBFCFE, dark: 0x1B2032, studio: 0xFFFFFF,
+        lightAlpha: 0.92, darkAlpha: 0.92, studioAlpha: 1, studioDarkAlpha: 1)
     /// 行悬停底。
     static let hover = Color.glass(
         light: 0xFFFFFF, dark: 0xFFFFFF, studio: 0xF8FAFC,
@@ -248,11 +267,15 @@ enum DS {
     // MARK: Layout
 
     enum Layout {
-        static let sidebarWidth: CGFloat = 224
+        static let sidebarWidth: CGFloat = 260
+        /// 窄栏模式的宽度（含卡片自身的左右内边距，图标列宽 48）。
+        static let sidebarCompactWidth: CGFloat = 68
+        /// 悬浮侧栏与窗口边缘之间的留白。
+        static let sidebarInset: CGFloat = 10
         static let titlebarHeight: CGFloat = 48
         /// 玻璃窗口与 AppKit 窗口边缘之间的壁纸留白。
         static let windowInset: CGFloat = 10
-        static let sidebarHeaderHeight: CGFloat = 44
+        static let sidebarHeaderHeight: CGFloat = 40
         static let rowHeight: CGFloat = 30
         static let controlHeight: CGFloat = 28
         static let pageMaxWidth: CGFloat = 1180

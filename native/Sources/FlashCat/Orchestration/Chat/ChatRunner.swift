@@ -39,7 +39,6 @@ final class ChatRunner {
     let chatClient: any ChatStreaming
     let imageClient: any ImageGenerating
     let videoClient: any VideoGenerating
-    let metrics: MetricsStore
 
     init(
         chat: ChatStore,
@@ -51,8 +50,7 @@ final class ChatRunner {
         conversation: ConversationStore,
         chatClient: any ChatStreaming,
         imageClient: any ImageGenerating,
-        videoClient: any VideoGenerating,
-        metrics: MetricsStore
+        videoClient: any VideoGenerating
     ) {
         self.chat = chat
         self.session = session
@@ -64,7 +62,6 @@ final class ChatRunner {
         self.chatClient = chatClient
         self.imageClient = imageClient
         self.videoClient = videoClient
-        self.metrics = metrics
     }
 
     // MARK: - store 转发
@@ -195,10 +192,21 @@ final class ChatRunner {
         host?.notice = message
     }
 
-    /// 流式回复的本地测速委托给指标 store：低通估计器跟着指标一起搬走了，
-    /// 对话页直播条读到的还是同一条曲线。
-    func recordStreamDelta(_ piece: String, at event: Date) {
-        metrics.recordStreamDelta(piece, at: event)
+    /// 本轮生成在网关打点里的请求 id。消息 tok/s、usage 缺席时的 token 数与
+    /// 生成期间的上下文估算都按它读 `GatewaySessionMeter.progress(_:)`——和
+    /// 概览曲线同一份数据，不再在本地维护第二套 token 累计。
+    private(set) var activeMeterID: Int?
+
+    /// 画图链路在另一个文件里，`private(set)` 的 setter 只在本文件可见，
+    /// 所以登记走这个方法。
+    func adoptMeter(_ id: Int) {
+        activeMeterID = id
+    }
+
+    /// 本轮已生成的小数权重 token 数（网关会话的读数）。
+    var liveCompletionTokens: Double {
+        guard let id = activeMeterID else { return 0 }
+        return GatewayMeter.shared.progress(id)?.tokens ?? 0
     }
 
     func gatewayModelIsResident(_ target: String, in controller: EngineController) -> Bool {
@@ -288,6 +296,8 @@ final class ChatRunner {
             setNotice("还没有选择模型")
             return
         }
+        // 新一轮开始：上一轮的打点 id 立刻失效，上下文估算不能读到旧会话。
+        activeMeterID = nil
         if activeModelSupportsVideo {
             sendVideo(
                 trimmed, attachment: attachment, lastFrame: lastFrame,
@@ -336,7 +346,6 @@ final class ChatRunner {
         sendGeneration &+= 1
         let generation = sendGeneration
         chatStartupStage = needsStartup ? "模型正在启动中…" : nil
-        metrics.resetStreamMeter()
 
         // 最大生成 tokens：思考与正文共享的总输出上限。留空时取模型自身上限
         // 并按引擎生效窗口封顶（见 effectiveMaxTokens），4096 那种小默认会让
@@ -374,6 +383,7 @@ final class ChatRunner {
             dialect: "chat",
             promptTokens: promptTokens,
             client: "flashCat")
+        activeMeterID = meterID
 
         Task {
             if needsStartup {
@@ -411,7 +421,7 @@ final class ChatRunner {
                     GatewayMeter.shared.addTokens(meterID, TokenEstimator.fractional(piece), at: at)
                     Task { @MainActor in
                         guard self.sendGeneration == generation else { return }
-                        let found = self.updateStreamingMessage { message in
+                        self.updateStreamingMessage { message in
                             if message.firstTokenSeconds == nil {
                                 let ttft = at.timeIntervalSince(started)
                                 message.firstTokenSeconds = ttft
@@ -421,24 +431,18 @@ final class ChatRunner {
                             }
                             message.content += piece
                         }
-                        guard found else { return }
-                        self.recordStreamDelta(piece, at: at)
                     }
                 },
                 onReasoning: { piece, at in
                     GatewayMeter.shared.addTokens(meterID, TokenEstimator.fractional(piece), at: at)
                     Task { @MainActor in
                         guard self.sendGeneration == generation else { return }
-                        let found = self.updateStreamingMessage { message in
+                        self.updateStreamingMessage { message in
                             message.reasoning = (message.reasoning ?? "") + piece
                             if message.content.isEmpty {
                                 self.generationStatus = "思考中"
                             }
                         }
-                        guard found else { return }
-                        // 思考流同样计入本地测速：思考模型的输出大头在 reasoning，
-                        // 不计的话思考阶段的直播条一直是空的，只能显示「— tok/s」。
-                        self.recordStreamDelta(piece, at: at)
                     }
                 },
                 onUsage: { usage in
@@ -447,6 +451,9 @@ final class ChatRunner {
                         promptTokens: usage.promptTokens,
                         completionTokens: usage.completionTokens,
                         cachedPromptTokens: usage.cachedPromptTokens)
+                    if let timings = usage.timings {
+                        GatewayMeter.shared.noteTimings(meterID, timings)
+                    }
                     Task { @MainActor in
                         guard self.sendGeneration == generation else { return }
                         guard self.updateStreamingMessage({ $0.usage = usage }) else { return }
@@ -485,6 +492,9 @@ final class ChatRunner {
             case .success(let text):
                 GatewayMeter.shared.finish(meterID)
                 guard !stale else { return }
+                // 消息级读数与概览曲线同一份打点：usage 缺席时用网关会话的
+                // 估算 token 兜底，分母取首分片 → 末分片的真实解码时长。
+                let progress = GatewayMeter.shared.progress(meterID)
                 self.updateStreamingMessage { message in
                     message.content = text
                     message.seconds = elapsed
@@ -495,16 +505,16 @@ final class ChatRunner {
                         // Streaming responses often omit usage; fall back to the
                         // accumulated fraction-weighted estimate so the message
                         // still shows a token count and rate.
-                        tokens = Int(metrics.streamTotalTokens.rounded())
+                        tokens = Int((progress?.tokens ?? 0).rounded())
                         if tokens > 0 {
                             message.usage = ChatUsage(promptTokens: 0, completionTokens: tokens)
                         }
                     }
                     // 分母取「首分片 → 末分片」，不再把 TTFT / prefill 混进
-                    // decode 时长：旧口径让消息下方的总平均天生比直播条低一大截，
-                    // 两个数字看起来像彼此矛盾。
-                    if tokens > 0, metrics.streamDecodingSeconds > 0 {
-                        message.tokensPerSecond = Double(tokens) / metrics.streamDecodingSeconds
+                    // decode 时长：旧口径把预填充也摊进分母，消息下方的平均
+                    // 天生低一大截。
+                    if tokens > 0, let seconds = progress?.decodingSeconds, seconds > 0 {
+                        message.tokensPerSecond = Double(tokens) / seconds
                     }
                 }
             case .failure(let error):

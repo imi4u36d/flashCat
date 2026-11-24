@@ -46,30 +46,10 @@ extension EngineController {
         }
     }
 
-    /// 用累计计数器的差分补上引擎不直接上报的实时速率（目前是 mlx-serve）。
-    /// 别的引擎没有这些键，`observe` 返回空读数，不会覆盖它们自己的口径。
-    func applyLiveRates(to parsed: inout EngineStatus) {
-        let reading = liveRates.observe(parsed, at: Date())
-        if let decode = reading.decode.value, decode > 0 {
-            parsed.decodeTokensPerSecond = decode
-            parsed.decodeRateKind = reading.decode.kind
-        }
-        if let prefill = reading.prefill.value, prefill > 0 {
-            parsed.prefillTokensPerSecond = prefill
-            parsed.prefillRateKind = reading.prefill.kind
-        }
-    }
-
     func poll() async {
         if pollInFlight || process == nil { return }
         pollInFlight = true
         defer { pollInFlight = false }
-
-        // 每秒都读引擎的自报值，不再空闲隔秒。省下的那次请求要重新解析
-        // `prefill_tokens_total` / `prefill_time_seconds` 这类累计计数，隔秒轮询
-        // 会把差分窗口从 1 秒拉成 2 秒——曲线变糙是小事，更要紧的是实时速率与
-        // 均值本来只差在「多久动一次」，采样间隔一飘，两种口径就更难分辨了。
-        // 空闲时这一轮只是几个本地回环 GET，成本远低于它换来的读数一致性。
 
         let health = await probeHealth()
         guard health.ready else {
@@ -94,7 +74,6 @@ extension EngineController {
         guard !documents.isEmpty else { return }
         var parsed = EngineStatusParser.parse(documents: documents, fallbackState: .ready)
         await adoptEngineReportedEfforts(into: &parsed)
-        applyLiveRates(to: &parsed)
         status = parsed
         stats = ServerStats(engineStatus: parsed, previous: stats)
         if process == nil { logs.pollFollow() }

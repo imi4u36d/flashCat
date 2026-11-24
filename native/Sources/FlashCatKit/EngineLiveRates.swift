@@ -6,14 +6,15 @@ import Foundation
 /// 引擎自报的原始计数键。解析器把引擎的累计/瞬时计数放进 `EngineStatus.extras`，
 /// 由 `EngineLiveRates` 换算成速率；这几处必须用同一组键。
 ///
-/// mlx-serve 的 `/metrics.json` 不直接给速率，只给原始量：
-/// `generation_tokens_live`（在跑会话已生成 + 本步已生成）、`prefill_tokens_live`
-/// （当前请求已前向的提示词 token，逐请求归零）、`prefill_tokens_total` 与
-/// `prefill_time_seconds`（已完成请求真正前向的 token 数与耗时）。
-/// 它自己的监控页也是拿这些做差分。
+/// mlx-serve 的 `/metrics.json` 不直接给预填充速率，只给原始量：
+/// `prefill_tokens_live`（当前请求已前向的提示词 token，逐请求归零）、
+/// `prefill_tokens_total` 与 `prefill_time_seconds`（已完成请求真正前向的
+/// token 数与耗时）。它自己的监控页也是拿这些做差分。
+///
+/// 解码速度不在这组键里：它统一由网关按请求打点（`GatewaySessionMeter`），
+/// 不再对引擎的 `generation_tokens_live` 做应用侧差分——同一个请求被两套
+/// 探测各采一次只会让读数对不上，也多一份每秒计算。
 public enum EngineRateCounters {
-    /// 在跑请求已经生成的 token 数（含本步），差分即实时解码速度。
-    public static let decodeLive = "rate.decode_live"
     /// 当前预填充请求已经前向的 token 数。
     public static let prefillLive = "rate.prefill_live"
     /// 累计「真正前向过」的提示词 token；前缀缓存恢复的部分不算。
@@ -24,22 +25,23 @@ public enum EngineRateCounters {
     public static let prefilling = "rate.prefilling"
 }
 
-/// 把引擎计数器折成实时解码 / 预填充速度。纯值类型，时间由调用方注入。
+/// 把引擎计数器折成实时预填充速度。纯值类型，时间由调用方注入。
 ///
 /// 预填充的分子刻意只取 `prefill_tokens`（引擎真正前向的 token），不取
 /// `prompt_tokens`。同一会话的第二轮请求几乎全部命中前缀缓存：一份 108K
 /// 上下文的请求实际只前向几百个 token，用 108K 除以首字耗时会把读数放大
 /// 两个数量级。引擎已经把「缓存恢复」和「真正计算」分开计数，这里照它的
 /// 口径走。
+///
+/// 解码不在这里：概览的当前速度与曲线只认网关的按请求窗口读数。引擎的
+/// 累计计数器差分覆盖整台进程（含网关看不见的直连流量），和网关那一路
+/// 量的不是同一批请求，混用就是双重采样。
 public struct EngineLiveRates {
     public struct Reading: Equatable, Sendable {
-        /// 实时解码速度；空闲或这一格没有新增 token 时为 nil。
-        public var decode: EngineRateSample
         /// 预填充速度；没有新完成请求时为 `.none`，由上层决定回落。
         public var prefill: EngineRateSample
 
-        public init(decode: EngineRateSample = .none, prefill: EngineRateSample = .none) {
-            self.decode = decode
+        public init(prefill: EngineRateSample = .none) {
             self.prefill = prefill
         }
     }
@@ -47,12 +49,9 @@ public struct EngineLiveRates {
     /// 每个字段都单独可选：某个引擎版本少报一项时，其余读数仍然可用，
     /// 不能因为缺一个 histogram 就把整台引擎的速率一起丢掉。
     private struct Sample {
-        let at: Date
-        let decodeTokens: Double?
         let prefillLiveTokens: Double?
         let prefillTokens: Double?
         let prefillSeconds: Double?
-        let running: Int
         let prefilling: Int
     }
 
@@ -95,7 +94,7 @@ public struct EngineLiveRates {
     }
 
     public mutating func observe(_ status: EngineStatus, at now: Date) -> Reading {
-        guard let sample = Self.sample(from: status, at: now) else {
+        guard let sample = Self.sample(from: status) else {
             previous = nil
             return Reading()
         }
@@ -128,22 +127,6 @@ public struct EngineLiveRates {
             forgetPrefillRound()
         }
 
-        if let last = previous {
-            let elapsed = now.timeIntervalSince(last.at)
-            // 轮询间隔通常在 1~2 秒；太短会把计数器量化成尖峰，太长（休眠/卡顿）
-            // 算出来的只是平均值而不是当前速度。
-            if elapsed >= 0.2, elapsed <= 30 {
-                if sample.running > 0,
-                    let current = sample.decodeTokens, let lastDecode = last.decodeTokens,
-                    current >= lastDecode
-                {
-                    let delta = current - lastDecode
-                    if delta > 0 {
-                        reading.decode = EngineRateSample(value: delta / elapsed, kind: .live)
-                    }
-                }
-            }
-        }
         // 预填充结束就交空读数。上一请求的实测值不再作为 `.lastRequest`
         // 挂出来——概览已取消 LAST 采集入口，空闲时宁可画「—」。
         return reading
@@ -213,21 +196,17 @@ public struct EngineLiveRates {
         }
     }
 
-    private static func sample(from status: EngineStatus, at now: Date) -> Sample? {
-        let decode = status.extras[EngineRateCounters.decodeLive]
+    private static func sample(from status: EngineStatus) -> Sample? {
         let prefillLive = status.extras[EngineRateCounters.prefillLive]
         let prefillTokens = status.extras[EngineRateCounters.prefillTokens]
         let prefillSeconds = status.extras[EngineRateCounters.prefillSeconds]
         // 这台引擎不报任何一项：交给别的口径，不要把「没有数据」说成 0。
-        guard decode != nil || prefillTokens != nil || prefillSeconds != nil || prefillLive != nil
+        guard prefillTokens != nil || prefillSeconds != nil || prefillLive != nil
         else { return nil }
         return Sample(
-            at: now,
-            decodeTokens: decode,
             prefillLiveTokens: prefillLive,
             prefillTokens: prefillTokens,
             prefillSeconds: prefillSeconds,
-            running: status.activeRequests,
             prefilling: Int(status.extras[EngineRateCounters.prefilling] ?? 0))
     }
 }

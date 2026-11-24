@@ -151,6 +151,16 @@
         }
       }
     },
+    "%@ 不提供官方推荐；用模型广场下载的权重会存进这个目录。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ ships no official recommendations; weights downloaded from the Model Hub go into this folder."
+          }
+        }
+      }
+    },
     "%@ 安装失败：%@": {
       "localizations": {
         "en": {
@@ -167,6 +177,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ belongs to %@. Switching will stop %@ first, then start %@ with this model."
+          }
+        }
+      }
+    },
+    "%@ 引擎尚未安装": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ engine is not installed"
           }
         }
       }
@@ -447,6 +467,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "%lld installed"
+          }
+        }
+      }
+    },
+    "%lld 个权重": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld weights"
           }
         }
       }
@@ -1071,6 +1101,16 @@
         }
       }
     },
+    "一键安装 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Install %@"
+          }
+        }
+      }
+    },
     "三步开跑": {
       "localizations": {
         "en": {
@@ -1621,6 +1661,26 @@
         }
       }
     },
+    "体积从大到小": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Size: Largest First"
+          }
+        }
+      }
+    },
+    "体积从小到大": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Size: Smallest First"
+          }
+        }
+      }
+    },
     "作为系统消息置于每段对话之前": {
       "localizations": {
         "en": {
@@ -1881,6 +1941,16 @@
         }
       }
     },
+    "全部视图": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All"
+          }
+        }
+      }
+    },
     "全部量化": {
       "localizations": {
         "en": {
@@ -1917,6 +1987,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Total %@"
+          }
+        }
+      }
+    },
+    "共 %d 段对话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d conversations"
           }
         }
       }
@@ -2137,6 +2217,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Memory critical"
+          }
+        }
+      }
+    },
+    "内存访问异常": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Memory access fault"
           }
         }
       }
@@ -3561,6 +3651,16 @@
         }
       }
     },
+    "复制日志": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy Log"
+          }
+        }
+      }
+    },
     "复制模型 ID": {
       "localizations": {
         "en": {
@@ -3577,6 +3677,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Copy model name"
+          }
+        }
+      }
+    },
+    "复制监听端口": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy Listening Port"
           }
         }
       }
@@ -3637,6 +3747,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Copy call snippet"
+          }
+        }
+      }
+    },
+    "复制路径": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy Path"
           }
         }
       }
@@ -3777,6 +3897,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Install"
+          }
+        }
+      }
+    },
+    "安装 %@ 后即可浏览并下载对应格式的 Apple Silicon 量化权重模型。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Install %@ to browse and download Apple Silicon quantized weights in its format."
           }
         }
       }
@@ -3971,6 +4101,16 @@
         }
       }
     },
+    "对话模式": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chat"
+          }
+        }
+      }
+    },
     "导出": {
       "localizations": {
         "en": {
@@ -4071,12 +4211,32 @@
         }
       }
     },
+    "展开侧栏": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expand Sidebar"
+          }
+        }
+      }
+    },
     "展开思考": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Show thought"
+          }
+        }
+      }
+    },
+    "展开控制台": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expand Console"
           }
         }
       }
@@ -4137,6 +4297,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Done"
+          }
+        }
+      }
+    },
+    "已下载": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloaded"
           }
         }
       }
@@ -4267,6 +4437,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Deleted chat \"%@\""
+          }
+        }
+      }
+    },
+    "已占用": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Used"
           }
         }
       }
@@ -4791,6 +4971,16 @@
         }
       }
     },
+    "引擎服务": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Engine Service"
+          }
+        }
+      }
+    },
     "引擎未运行": {
       "localizations": {
         "en": {
@@ -5201,6 +5391,16 @@
         }
       }
     },
+    "悬浮琉璃": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Floating Glass"
+          }
+        }
+      }
+    },
     "成功": {
       "localizations": {
         "en": {
@@ -5361,6 +5561,16 @@
         }
       }
     },
+    "执行了非法指令": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Executed an illegal instruction"
+          }
+        }
+      }
+    },
     "把宽高限制在引擎支持的范围内并应用": {
       "localizations": {
         "en": {
@@ -5397,6 +5607,36 @@
           "stringUnit": {
             "state": "translated",
             "value": "Rewrite this technical note to be tighter, clearer, and well-structured"
+          }
+        }
+      }
+    },
+    "折叠为窄栏": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Collapse to Rail"
+          }
+        }
+      }
+    },
+    "折叠控制台": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Collapse Console"
+          }
+        }
+      }
+    },
+    "折叠窄栏": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compact Rail"
           }
         }
       }
@@ -5881,6 +6121,16 @@
         }
       }
     },
+    "收到终止信号": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Received a termination signal"
+          }
+        }
+      }
+    },
     "收起": {
       "localizations": {
         "en": {
@@ -6157,6 +6407,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Pause"
+          }
+        }
+      }
+    },
+    "暂停下载": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pause download"
           }
         }
       }
@@ -6527,6 +6787,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Local chats and generation"
+          }
+        }
+      }
+    },
+    "本地存储": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local Storage"
           }
         }
       }
@@ -7111,6 +7381,16 @@
         }
       }
     },
+    "模型目录路径已复制": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model folder path copied"
+          }
+        }
+      }
+    },
     "模型详情加载失败": {
       "localizations": {
         "en": {
@@ -7307,6 +7587,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "No download tasks"
+          }
+        }
+      }
+    },
+    "没有匹配当前筛选条件的已安装模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No installed models match the current filters"
+          }
+        }
+      }
+    },
+    "没有匹配当前筛选条件的推荐模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No recommended models match the current filters"
           }
         }
       }
@@ -7617,6 +7917,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Click a row to run the command"
+          }
+        }
+      }
+    },
+    "点击切换暂停或恢复服务": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click to pause or resume the service"
           }
         }
       }
@@ -7937,6 +8247,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Launch at Login"
+          }
+        }
+      }
+    },
+    "监听端口": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Listening Port"
+          }
+        }
+      }
+    },
+    "监听端口已复制": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Listening port copied"
           }
         }
       }
@@ -8371,6 +8701,16 @@
         }
       }
     },
+    "统一内存": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unified Memory"
+          }
+        }
+      }
+    },
     "统一内存占用": {
       "localizations": {
         "en": {
@@ -8551,6 +8891,16 @@
         }
       }
     },
+    "置顶对话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pin Conversation"
+          }
+        }
+      }
+    },
     "背景模糊": {
       "localizations": {
         "en": {
@@ -8657,6 +9007,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Falls forward when taken; the actual port is written to control.json"
+          }
+        }
+      }
+    },
+    "被系统强制终止，通常是统一内存不足": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Killed by the system, usually from unified memory pressure"
           }
         }
       }
@@ -8811,6 +9171,16 @@
         }
       }
     },
+    "访问了非法内存地址": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accessed an invalid memory address"
+          }
+        }
+      }
+    },
     "访问令牌": {
       "localizations": {
         "en": {
@@ -8907,6 +9277,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Resize chat column"
+          }
+        }
+      }
+    },
+    "贴边毛玻璃": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Edge Glass"
           }
         }
       }
@@ -9031,6 +9411,16 @@
         }
       }
     },
+    "运行时快捷控制": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime Quick Controls"
+          }
+        }
+      }
+    },
     "近 5 分钟吞吐": {
       "localizations": {
         "en": {
@@ -9047,6 +9437,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Back"
+          }
+        }
+      }
+    },
+    "返回 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Back to %@"
           }
         }
       }
@@ -9287,6 +9687,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Process not started"
+          }
+        }
+      }
+    },
+    "进程自行中止，可能触发了断言": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aborted itself, possibly from an assertion"
           }
         }
       }
@@ -9597,6 +10007,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Rescan"
+          }
+        }
+      }
+    },
+    "重新扫描这个引擎的模型目录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rescan this engine's model folder"
           }
         }
       }
@@ -10011,6 +10431,16 @@
         }
       }
     },
+    "默认排序": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Default Order"
+          }
+        }
+      }
+    },
     "默认模型": {
       "localizations": {
         "en": {
@@ -10047,6 +10477,46 @@
           "stringUnit": {
             "state": "translated",
             "value": "(No prompt recorded)"
+          }
+        }
+      }
+    },
+    "侧边栏": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sidebar"
+          }
+        }
+      }
+    },
+    "悬浮琉璃 / 贴边毛玻璃 / 折叠窄栏": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Floating Glass / Edge Glass / Compact Rail"
+          }
+        }
+      }
+    },
+    "从已安装引擎中一键启动，即可恢复本地推理服务与 API 监听。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start an installed engine with one click to bring local inference and the API listener back online."
+          }
+        }
+      }
+    },
+    "请先从下方引擎目录下载并安装至少一款本地推理引擎。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download and install at least one local inference engine from the engine catalog below first."
           }
         }
       }

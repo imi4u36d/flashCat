@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
+import FlashCatKit
 import Foundation
 
 /// 模型发起的一次工具调用。流式协议里 `arguments` 是逐段拼接的 JSON 文本，
@@ -73,16 +74,20 @@ package struct ChatUsage: Equatable {
     /// 本轮结束原因（choice.finish_reason）。`length` 意味着输出触及
     /// max_tokens 上限被硬截断——思考与正文共享该上限，思考一长正文就没了。
     package var finishReason: String?
+    /// 引擎在末片自报的逐请求耗时（`timings`），回传给 `GatewayMeter` 以对齐网关口径。
+    package var timings: GatewayRequestTimings?
 
     package init(
         promptTokens: Int = 0, completionTokens: Int = 0, cachedPromptTokens: Int = 0,
-        reasoningTokens: Int? = nil, finishReason: String? = nil
+        reasoningTokens: Int? = nil, finishReason: String? = nil,
+        timings: GatewayRequestTimings? = nil
     ) {
         self.promptTokens = promptTokens
         self.completionTokens = completionTokens
         self.cachedPromptTokens = cachedPromptTokens
         self.reasoningTokens = reasoningTokens
         self.finishReason = finishReason
+        self.timings = timings
     }
 }
 
@@ -478,6 +483,9 @@ package final class ChatClient: NSObject, URLSessionDataDelegate, @unchecked Sen
                     let reasoning = Self.intValue(details["reasoning_tokens"])
                     if reasoning > 0 { usage.reasoningTokens = reasoning }
                 }
+            }
+            if let timings = GatewaySessionMeter.requestTimings(json["timings"]) {
+                usage.timings = timings
             }
             flushDelta()
         }

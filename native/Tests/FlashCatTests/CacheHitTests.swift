@@ -15,24 +15,24 @@ import XCTest
 final class CacheHitTests: XCTestCase {
     // MARK: owner 表
 
-    /// 网关按代累计优先；没有网关样本时才退回引擎的开机以来读数。
-    func testCacheHitPrefersGatewayAggregate() {
-        let reading = AppState.cacheHitReading(gateway: 0.86, requests: 3, engine: 0.4)
+    /// 缓存命中率统一只认网关按代累计；没有网关样本时画「—」，不再回退引擎。
+    func testCacheHitUsesGatewayAggregateOnly() {
+        let reading = AppState.cacheHitReading(gateway: 0.86, requests: 3)
         XCTAssertEqual(reading.origin, .gatewayMean)
         XCTAssertEqual(reading.value ?? 0, 0.86, accuracy: 0.0001)
 
-        let fallback = AppState.cacheHitReading(gateway: 0, requests: 0, engine: 0.4)
-        XCTAssertEqual(fallback.origin, .engineMean)
-        XCTAssertEqual(fallback.value ?? 0, 0.4, accuracy: 0.0001)
+        XCTAssertEqual(AppState.cacheHitReading(gateway: 0, requests: 0), .none)
+        XCTAssertEqual(AppState.cacheHitReading(gateway: 1.2, requests: 1), .none)
+        XCTAssertEqual(AppState.cacheHitReading(gateway: -0.1, requests: 1), .none)
     }
 
     /// 0% 是合法读数（有样本、一次都没命中）；「没有样本」才画「—」。
     func testZeroIsAReadingAndNoSamplesIsNot() {
-        let zero = AppState.cacheHitReading(gateway: 0, requests: 2, engine: nil)
+        let zero = AppState.cacheHitReading(gateway: 0, requests: 2)
         XCTAssertEqual(zero.origin, .gatewayMean)
         XCTAssertEqual(zero.value, 0)
 
-        XCTAssertEqual(AppState.cacheHitReading(gateway: 0, requests: 0, engine: nil), .none)
+        XCTAssertEqual(AppState.cacheHitReading(gateway: 0, requests: 0), .none)
     }
 
     /// 两个累计计数器的比值就是命中率；分母为 0（进程刚起、还没有请求）

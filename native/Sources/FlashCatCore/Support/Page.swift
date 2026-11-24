@@ -24,7 +24,7 @@ package enum Page: String, CaseIterable, Identifiable {
         case .engines: return "cpu"
         case .logs: return "doc.plaintext"
         case .settings: return "slider.horizontal.3"
-        case .lab: return "flask"
+        case .lab: return "photo.on.rectangle.angled"
         }
     }
 

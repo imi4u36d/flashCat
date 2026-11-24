@@ -155,6 +155,10 @@ struct DSSearchField: View {
     @Binding var query: String
     var placeholder: String = "搜索"
     var width: CGFloat? = nil
+    /// 行尾的快捷键提示（例如侧栏的 ⌘F）。有内容时让位给清除按钮。
+    var shortcut: String? = nil
+    /// 外部聚焦请求：计数变化即把键盘焦点送进输入框。
+    var focusTrigger: Int = 0
 
     @FocusState private var focused: Bool
 
@@ -189,6 +193,15 @@ struct DSSearchField: View {
                 .buttonStyle(.plain)
                 .help(L10n.t("清除搜索"))
                 .accessibilityLabel(L10n.t("清除搜索"))
+            } else if let shortcut {
+                Text(verbatim: shortcut)
+                    .font(DS.Font.mono(10, weight: .medium))
+                    .foregroundStyle(DS.text3)
+                    .padding(.horizontal, 5)
+                    .frame(height: 16)
+                    .background(DS.rect(5).fill(DS.hover))
+                    .overlay(DS.rect(5).strokeBorder(DS.line, lineWidth: 1))
+                    .accessibilityHidden(true)
             }
         }
         .padding(.horizontal, 10)
@@ -202,6 +215,10 @@ struct DSSearchField: View {
         )
         .contentShape(shape)
         .onTapGesture { focused = true }
+        .onChange(of: focusTrigger) { _, _ in focused = true }
+        // 侧栏被隐藏后重新出现时，视图是新建的；onChange 收不到那次请求，
+        // 所以还要在出现时补一次。
+        .onAppear { if focusTrigger > 0 { focused = true } }
         .animation(DS.Motion.snappy, value: focused)
     }
 }

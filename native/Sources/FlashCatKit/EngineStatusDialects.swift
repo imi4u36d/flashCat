@@ -675,11 +675,9 @@ enum EngineStatusDialects {
                 sum: "histograms.time_to_first_token_seconds.sum",
                 count: "histograms.time_to_first_token_seconds.count"), kind: .lifetimeMean),
         extras: [
-            // 速率不在这里算：解析器是无状态纯函数，实时速度只能靠相邻两次采样
-            // 差分。这里只交出原始计数，由 `EngineLiveRates` 换算。
-            StatusExtraRule(
-                key: EngineRateCounters.decodeLive,
-                value: .number(["gauges.generation_tokens_live"])),
+            // 预填充速率不在这里算：解析器是无状态纯函数，实时速度只能靠相邻
+            // 两次采样差分。解码不走这条路——它统一由网关按请求打点，应用侧
+            // 不再对 `generation_tokens_live` 做差分。
             StatusExtraRule(
                 key: EngineRateCounters.prefillLive,
                 value: .number(["gauges.prefill_tokens_live"])),

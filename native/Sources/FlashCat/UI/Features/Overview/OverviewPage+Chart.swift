@@ -225,7 +225,6 @@ extension OverviewPage {
         }
         switch speedOrigin {
         case .gatewayLive: return ("网关", DS.info, true)
-        case .engineLive: return ("引擎", engineTint, true)
         case .none: return (state.isRunning ? "等待" : "空闲", DS.text4, false)
         }
     }

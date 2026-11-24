@@ -15,30 +15,26 @@ package struct ThroughputSample: Identifiable {
     package let value: Double
 }
 
-/// 概览速度读数的来源。速度类指标统一走网关按请求打点，避免同一个页面里
-/// 引擎的 LIVE / AVG 和网关估算混着用；引擎实时计数只作为兜底。
-/// 收尾后的上一请求终值（LAST）不再是一个可用来源：概览只认「此刻在跑」。
+/// 概览当前速度的来源。速度类指标**只认网关按请求打点**：一份数据、一个口径，
+/// 不再和引擎的计数器差分混着用。收尾后的上一请求终值（LAST）不是一个可用
+/// 来源：概览只认「此刻在跑」。
 package enum SpeedOrigin: Equatable {
-    /// 没有在跑会话，也没有可用的引擎实时计数：没有当前速度。
+    /// 没有在跑的网关会话：没有当前速度。
     case none
     /// 网关在跑会话的合计速率（重采样后的窗口读数）。窗口读数就是当前速度本身，
-    /// 所以活跃期间不区分估算与精确计数——引擎侧的 tok/s 同样是计数器差分的估计。
+    /// 所以活跃期间不区分估算与精确计数。只要还有没收尾的会话，这一路就是
+    /// 唯一 owner：读数是 0（预填充 / 分片间隙）也由它如实说 0。
     case gatewayLive
-    /// 网关看不见的直连请求，用引擎的实时计数兜底。
-    case engineLive
 }
 
 /// 一个指标格当前的**取数来源**。owner 表算出来的就是这个值，界面直接按它
-/// 打角标与说明文案，不再各自 switch `EngineRateKind`/`SpeedOrigin`。
+/// 打角标与说明文案。
 ///
-/// 速度格只认 LIVE：它只回答「此刻多快」，上一请求的终值不参与。预填充格
-/// 是唯一的例外——预填充本来就是一次性的，短提示词在 1 秒采样里常常抓不到
-/// 正在处理的那一刻，所以它允许把**明确标成 LAST**的最近一次实测值留在卡片上。
-/// 这个实测值优先由网关自己按请求算（`.gatewayLast`），引擎的 `.engineLast`
-/// 只在网关没有会话记录（客户端绕过网关直连引擎端口）时兜底。平均解码速度
-/// 单独有 `.gatewayMean` / `.engineMean` 这一档，只服务 hero 的「模型启动以来平均」。
+/// 概览与菜单栏的所有请求性能指标（实时解码、平均解码、预填充、首字延迟、
+/// 缓存命中率）统一只认网关按请求打点（`GatewaySessionMeter`），不再读引擎
+/// 自报速率或对引擎计数器做差分。
 package enum MetricOrigin: Equatable {
-    /// 没有任何可用读数（引擎未上报、或值 ≤ 0）。
+    /// 没有任何可用读数（网关尚无样本、或值 ≤ 0）。
     case none
     /// 网关按请求打点的实时读数（重采样窗口）。
     case gatewayLive
@@ -46,12 +42,6 @@ package enum MetricOrigin: Equatable {
     case gatewayLast
     /// 网关按会话累计的「模型启动以来平均」——hero 的解码均值与缓存命中率共用。
     case gatewayMean
-    /// 引擎此刻正在量的实时值。
-    case engineLive
-    /// 引擎测过的上一请求值：数字是真的，描述的是刚结束的那一次。
-    case engineLast
-    /// 引擎进程 / 会话累计均值。
-    case engineMean
 }
 
 /// 一格指标的 owner 表输出：数值 + 它回答的是哪个问题。
@@ -65,17 +55,12 @@ package struct MetricReading: Equatable {
 
 /// 首字延迟格的取数结果：数值 + 它来自哪一侧的观测。
 ///
-/// 首字和预填充一样是一次性观测，但它没有 `MetricOrigin` 那套速度语义：
-/// 引擎 status 里有样本时优先（splash 给 p50，mlx-serve 给直方图均值，
-/// MTPLX 给上一请求值），引擎没有这个字段（oMLX）或还没有样本
-/// （splash 首个请求前 p50 = 0）时，退回网关逐请求量到的最近一次首字。
-/// 两侧都没有才是 「—」。
+/// 首字和预填充一样是一次性观测，统一取网关按请求实测的最近一次首字；
+/// 网关还没有样本时画「—」。
 package struct TTFTReading: Equatable {
     package enum Source: Equatable {
         /// 没有任何首字样本。
         case none
-        /// 引擎 status 上报的首字统计。
-        case engine
         /// 网关按请求实测的最近一次首字。
         case gateway
     }
@@ -115,9 +100,9 @@ package final class MetricsStore: ObservableObject {
     /// `nonisolated`：窗口裁剪在纯静态函数里做，测试要能不等主线程直接调用。
     nonisolated private static let sampleRetention: TimeInterval = 600
 
-    /// 概览总解码曲线的样本。速度统一取网关按请求打点的聚合；网关没有
-    /// 在跑会话时，只收引擎的实时计数（且引擎必须有在跑请求），引擎的
-    /// LAST/AVG 不再被画成时间序列。
+    /// 概览总解码曲线的样本。速度**只取网关按请求打点的聚合**：应用内对话
+    /// 也注册在 `GatewayMeter` 里，所以这条曲线覆盖全部经过网关的请求。
+    /// 引擎的计数器差分不再参与（那是另一批请求、另一把尺）。
     @Published package private(set) var throughput: [ThroughputSample] = []
     /// 草稿接受率（DFlash2 / MTP）的时间序列，采样节奏与吞吐一致，
     /// 概览页用它画第二条实时曲线。value 是 0…1 的比例。
@@ -125,26 +110,21 @@ package final class MetricsStore: ObservableObject {
 
     // MARK: 网关聚合读数
     //
-    // 预填充不再由应用自己按「整段提示词 / 首字耗时」估算。同一会话的第二轮
-    // 几乎全部命中前缀缓存，分子里的 token 大部分根本没被前向，TTFT 里还混着
-    // 排队和缓存恢复，两者一除能把读数放大两个数量级。现在只显示引擎真的
-    // 量过的数：mlx-serve 用 prefill_tokens_total / prefill_time_seconds
-    //（都不含缓存恢复），其余引擎用它自己的 prefill 字段；引擎没有时回落到
-    // 网关的按请求打点。
+    // 所有请求性能指标（实时解码、平均解码、预填充、TTFT、缓存命中率）统一由
+    // 网关按请求打点给出（应用内对话也注册在 `GatewayMeter` 里），不再退回引擎
+    // 自报的速率或计数差分。
+
     /// 网关按请求打点的聚合速率。概览曲线与「最近请求」同源，
     /// 应用内对话也注册在 `GatewayMeter` 里。收尾后归零：只表示「此刻多快」。
     @Published package private(set) var gatewayDecodeRate: Double = 0
     /// `gatewayDecodeRate` 是否来自在跑会话。false = 没有在跑会话（或引擎
     /// 已经收尾），此时没有当前速度，读数不挂上一请求的终值。
     @Published package private(set) var gatewayRateIsLive = false
-    /// 网关自己量出来的预填充速度（最近一次完成的预填充）。分子是 usage
-    /// 报告的提示词 token 减去前缀缓存命中量，分母是请求发出到首 token 的
-    /// 墙钟——不读任何引擎自报的预填充字段，所以换引擎不会让这格变空。
+    /// 网关自己量出来的预填充速度（最近一次完成的预填充）。引擎返回 `timings`
+    /// 时以逐请求 `timings` 为准，否则用 `(promptTokens - cachedTokens) / TTFT`。
     /// 0 = 还没有可用的实测值。
     @Published package private(set) var gatewayPrefillRate: Double = 0
-    /// 网关自己量出来的最近一次首字耗时（毫秒）。引擎 status 里没有 TTFT
-    /// （oMLX），或还没有样本（splash 首个请求前 p50 = 0）时，
-    /// 首字格退到这条按请求的实测值。0 = 还没有可用的实测值。
+    /// 网关自己量出来的最近一次首字耗时（毫秒）。0 = 还没有可用的实测值。
     @Published package private(set) var gatewayTTFTMilliseconds: Double = 0
     /// 网关按代累计的缓存命中率（0…1）。分子是 usage 里的前缀缓存命中量，
     /// 分母是同一批请求的提示词总量（按 token 加权）；只统计真的收到 usage
@@ -172,16 +152,12 @@ package final class MetricsStore: ObservableObject {
     private var lifetimeIdentity: String?
     /// 上一次观察到的引擎运行秒数，用于在没有 pid/startedAt 时检测重启。
     private var previousUptimeSeconds: Double?
-    /// 生成期间的连续时间低通速率估计。不再用「攒够 0.9 秒就清零」的窗口：
-    /// 那种非重叠窗口让相邻读数互不相关，SSE 分片一抖数字就跟着跳。
-    /// 只服务对话页直播条——概览按每秒一拍读网关，不在分片回调里改。
-    private var decodeMeter = DecodeRateMeter()
     /// 概览速度读数的上一拍。`syncController` 会被引擎的多次状态变化触发，
     /// 不加闸就会在一秒内发布好几次——概览的刻钟是 1 秒，不是事件驱动。
     private var lastSpeedPublishAt: Date?
     /// 解码速度读数与它自己的时间基之间的最大跨度。超过这个跨度，重采样器
     /// 的窗口就覆盖不到调用方所在的时间——这个读数就不再回答「此刻多快」，
-    /// 降级为「没有当前速度」，让引擎 LIVE 计数补位。
+    /// 降级为「没有当前速度」。
     nonisolated private static let rateReadingFreshness: TimeInterval = 2.0
     /// `gatewayDecodeRate` 最后一次刷新的时刻，用于 `decodeReading` 的新鲜度
     /// 门槛。只在主线程读写。
@@ -196,216 +172,116 @@ package final class MetricsStore: ObservableObject {
 
     // MARK: 指标 owner 表
     //
-    // 每个指标格只有一个 owner，owner 缺席时才走声明好的降级链。以前同一个页面
-    // 里 hero 走网关、预填充格走引擎、灵动岛又是引擎优先，两处数字天然对不上；
-    // 现在所有界面（概览 / 灵动岛 / 菜单栏）都从下面这几个函数取数，一格一个
-    // 来源、一个粒度，角标与说明文案由 `MetricOrigin` 直接给出。
+    // 每个指标格只有一个 owner：网关按请求打点（`GatewaySessionMeter`）。
+    // 所有请求性能界面（概览 / 灵动岛 / 菜单栏）都从下面这几个函数取数，
+    // 一格一个来源、一个粒度，不再混用引擎自报速率或计数器差分。
     //
-    // 分工的物理边界：网关只看得见流里的东西（分片节奏、TTFT、请求合计、
-    // usage 里的缓存命中量），队列深度、KV 驻留、显存、草稿接受率这些只有引擎
-    // 量得到。速度类指标 owner = 网关；引擎实时计数只在网关没有会话在跑时兜底
-    //（客户端直连引擎端口），LAST/AVG 永远不参与当前速度。
+    // 分工的物理边界：网关负责一切请求级吞吐与延迟指标（解码速度、平均解码、
+    // 预填充、TTFT、缓存命中率、请求上下文），引擎状态仅保留进程生命周期、
+    // 显存、温度、内存压力、上下文上限与草稿接受率等运行态事实。
 
-    /// 解码格的 owner 表输出：`speedOrigin` 的判定 + 它的值，永远同源。
+    /// 解码格的输出：`speedOrigin` 的判定 + 它的值，永远同源。
     /// 概览曲线与菜单栏的「当前解码速度」都读它；收尾后归零，不挂 LAST。
-    package func decodeReading(stats: ServerStats?, isRunning: Bool) -> MetricReading {
+    package func decodeReading(isRunning: Bool) -> MetricReading {
         Self.reading(
-            origin: currentSpeedOrigin(stats: stats, isRunning: isRunning),
-            gateway: gatewayDecodeRate,
-            engine: stats?.decodeTokensPerSecond)
+            origin: currentSpeedOrigin(isRunning: isRunning),
+            gateway: gatewayDecodeRate)
     }
 
     package nonisolated static func reading(
         origin: SpeedOrigin,
-        gateway: Double,
-        engine: Double?
+        gateway: Double
     ) -> MetricReading {
         switch origin {
         case .gatewayLive: return MetricReading(value: gateway, origin: .gatewayLive)
-        case .engineLive: return MetricReading(value: engine, origin: .engineLive)
         case .none: return .none
         }
     }
 
     /// HERO 大数字：模型启动以来的平均解码速度，而不是曲线的实时值。
     ///
-    /// 优先用网关按会话结算的累计量（覆盖所有经过网关的请求，含应用内对话）；
-    /// 没有网关样本时退回引擎自己的 `.lifetimeMean`。两者都不是当前速度，
-    /// 所以 `origin` 是 `gatewayMean` / `engineMean`，界面打 `AVG`。
-    package func averageDecodeReading(stats: ServerStats?, isRunning: Bool) -> MetricReading {
-        guard isRunning else { return .none }
-        if averageDecodeRate > 0 {
-            return MetricReading(value: averageDecodeRate, origin: .gatewayMean)
-        }
-        if let lifetime = stats?.lifetimeDecodeTokensPerSecond, lifetime > 0 {
-            return MetricReading(value: lifetime, origin: .engineMean)
-        }
-        if stats?.decodeRateKind == .lifetimeMean,
-            let engine = stats?.decodeTokensPerSecond, engine > 0
-        {
-            return MetricReading(value: engine, origin: .engineMean)
-        }
-        return .none
+    /// 统一取网关按会话结算的累计量（覆盖所有经过网关的请求，含应用内对话）；
+    /// 没有样本时返回 `.none`，界面画「—」。
+    package func averageDecodeReading(isRunning: Bool) -> MetricReading {
+        guard isRunning, averageDecodeRate > 0 else { return .none }
+        return MetricReading(value: averageDecodeRate, origin: .gatewayMean)
     }
 
     /// 菜单栏解码格：有实时读数就报实时，空闲时退回「模型启动以来平均」。
     /// 面板只有一格，不能像概览那样把实时曲线和大数字分开摆——空闲时那格
-    /// 若空着，读者会以为测速坏了。退回的值带着 `.gatewayMean` / `.engineMean`
-    /// 的 origin，面板据此打 `AVG` 角标，不把平均值冒充成此刻速度。
-    package func menuBarDecodeReading(stats: ServerStats?, isRunning: Bool) -> MetricReading {
-        let live = decodeReading(stats: stats, isRunning: isRunning)
+    /// 若空着，读者会以为测速坏了。退回的值带着 `.gatewayMean` 的 origin，
+    /// 面板据此打 `AVG` 角标，不把平均值冒充成此刻速度。
+    package func menuBarDecodeReading(isRunning: Bool) -> MetricReading {
+        let live = decodeReading(isRunning: isRunning)
         guard live.value == nil else { return live }
-        return averageDecodeReading(stats: stats, isRunning: isRunning)
+        return averageDecodeReading(isRunning: isRunning)
     }
 
-    /// 预填充格的 owner 表输出。
-    ///
-    /// 预填充是一次性动作，短提示词（几百 token）在 1 秒采样里几乎抓不到
-    /// 引擎的 `in_flight` 实时窗口；换一台引擎，引擎自报字段的名字和粒度还会
-    /// 整个变掉。所以 LAST 这一档走**按请求的实测值**：引擎在响应里自报的
-    /// `timings`（`prompt_n − cached_n` / `prompt_ms`，流式与非流式都带）优先，
-    /// 没有它才退回网关自己算的 TTFT 口径（分子是 usage 里的提示词 token 减去
-    /// 前缀缓存命中量，分母是请求发出到首 token 的墙钟，只对流式响应成立）。
-    /// 只有「此刻真的在预填充」才用引擎的 `.live`（那时网关还没有首 token），
-    /// 其余时间按请求的实测值优先，引擎的 LAST/AVG 只在网关没有会话记录时兜底。
-    ///
-    /// 预填充**没有**网关侧聚合：网关的「(整段提示词 − 缓存命中) / 首字耗时」
-    /// 口径已废弃（分母混着排队与缓存恢复，分子要等末帧 usage），概览只显示
-    /// 引擎自报的速率。`GatewayMeter` 仍为「最近请求」逐行保留各自的预填充读数。
-    package func prefillReading(stats: ServerStats?, isRunning: Bool) -> MetricReading {
+    /// 预填充格的 owner 表输出：仅认网关按请求测得的最近一次实测值。
+    package func prefillReading(isRunning: Bool) -> MetricReading {
         guard isRunning else { return .none }
-        return Self.prefillReading(
-            gateway: gatewayPrefillRate,
-            engine: stats?.prefillTokensPerSecond,
-            engineKind: stats?.prefillRateKind ?? .none)
+        return Self.prefillReading(gateway: gatewayPrefillRate)
     }
 
-    /// 预填充格的完整 owner 顺序：就地预填充（引擎 LIVE）→ 网关实测 LAST →
-    /// 引擎 LAST / AVG。抽成纯函数，测试可以钉住优先级。
-    package nonisolated static func prefillReading(
-        gateway: Double,
-        engine: Double?,
-        engineKind: EngineRateKind = .none
-    ) -> MetricReading {
-        let engineReading = prefillReading(engine: engine, engineKind: engineKind)
-        // 实时预填充只有引擎量得到：这时网关连首 token 都还没拿到。
-        if engineReading.origin == .engineLive { return engineReading }
-        if gateway > 0 { return MetricReading(value: gateway, origin: .gatewayLast) }
-        return engineReading
+    /// 预填充格的纯函数口径，便于测试直接验证。
+    package nonisolated static func prefillReading(gateway: Double) -> MetricReading {
+        guard gateway > 0 else { return .none }
+        return MetricReading(value: gateway, origin: .gatewayLast)
     }
 
-    /// 引擎自报速率的翻译层，不含网关。保留给测试和网关缺席时的兜底。
-    package nonisolated static func prefillReading(
-        engine: Double?,
-        engineKind: EngineRateKind = .none
-    ) -> MetricReading {
-        guard let engine, engine > 0 else { return .none }
-        switch engineKind {
-        case .live:
-            return MetricReading(value: engine, origin: .engineLive)
-        case .lastRequest:
-            return MetricReading(value: engine, origin: .engineLast)
-        case .lifetimeMean:
-            return MetricReading(value: engine, origin: .engineMean)
-        case .none:
-            return .none
-        }
-    }
-
-    /// 首字延迟格的 owner 表输出：引擎 status → 网关最近一次实测 → 没有。
-    ///
-    /// 引擎的 TTFT 统计是首选：它有样本时覆盖所有经过引擎的请求，splash 还给
-    /// 的是 p50。但它不是每家都有——oMLX 的 status 没有这个字段，
-    /// splash 在首个请求之前报 0——这时退到网关逐请求量到的首字（应用内对话
-    /// 也注册在网关里）。两侧都没有才画「—」：0 不是「首字很快」。
-    package func ttftReading(stats: ServerStats?, isRunning: Bool) -> TTFTReading {
+    /// 首字延迟格的 owner 表输出：仅认网关逐请求实测的最近一次首字。
+    /// 没有正样本时画「—」：0 不是「首字很快」。
+    package func ttftReading(isRunning: Bool) -> TTFTReading {
         guard isRunning else { return .none }
-        return Self.ttftReading(
-            engine: stats?.ttftMilliseconds,
-            engineKind: stats?.ttftKind ?? .none,
-            gateway: gatewayTTFTMilliseconds)
+        return Self.ttftReading(gateway: gatewayTTFTMilliseconds)
     }
 
-    /// 首字格的 owner 顺序，抽成纯函数给测试钉住。引擎值必须 > 0 才算样本；
-    /// 网关值是「最近一次真的量到首字」的请求，同样 > 0 才可用。
-    package nonisolated static func ttftReading(
-        engine: Double?,
-        engineKind: EngineTTFTKind = .none,
-        gateway: Double
-    ) -> TTFTReading {
-        if let engine, engine > 0 {
-            return TTFTReading(milliseconds: engine, source: .engine, kind: engineKind)
-        }
-        if gateway > 0 {
-            return TTFTReading(milliseconds: gateway, source: .gateway, kind: .lastRequest)
-        }
-        return .none
+    /// 首字格的纯函数口径：网关值是「最近一次真的量到首字」的请求，> 0 才可用。
+    package nonisolated static func ttftReading(gateway: Double) -> TTFTReading {
+        guard gateway > 0 else { return .none }
+        return TTFTReading(milliseconds: gateway, source: .gateway, kind: .lastRequest)
     }
 
-    /// 缓存命中率格的 owner 表输出。
-    ///
-    /// 主口径是网关按代累计的「命中量 / 提示词总量」（按 token 加权）：它和
-    /// 其他格一样按请求打点，覆盖应用内对话与所有经过网关的客户端，也不依赖
-    /// 任何一家引擎自报字段——换引擎不会让这格变空。网关一个带 usage 的请求
-    /// 都没有时（客户端绕过网关直连引擎端口），退回引擎自己报的开机以来
-    /// 命中率：mlx-serve / MTPLX 的 `cached / prompt` 两个累计计数器、oMLX 的
-    /// `total_cached_tokens / total_prompt_tokens`。两个口径都是累计平均，
-    /// 所以角标只有 `AVG`；没有样本时画「—」，不拿 0% 冒充「一次都没命中」。
-    package func cacheHitReading(stats: ServerStats?, isRunning: Bool) -> MetricReading {
+    /// 缓存命中率格的 owner 表输出：仅认网关按代累计的「命中量 / 提示词总量」
+    /// （按 token 加权），没有样本时画「—」，不拿 0% 冒充「一次都没命中」。
+    package func cacheHitReading(isRunning: Bool) -> MetricReading {
         guard isRunning else { return .none }
         return Self.cacheHitReading(
             gateway: gatewayCacheHitRate,
-            requests: gatewayCacheHitRequests,
-            engine: stats?.cacheHitRate)
+            requests: gatewayCacheHitRequests)
     }
 
-    /// 缓存命中率的 owner 顺序：网关按代累计 → 引擎开机以来。抽成纯函数，
-    /// 测试可以钉住「网关样本优先」与「0% 是合法读数、没样本才是 —」。
+    /// 缓存命中率的纯函数口径：测试钉住「0% 是合法读数、没样本才是 —」。
     package nonisolated static func cacheHitReading(
         gateway: Double,
-        requests: Int,
-        engine: Double?
+        requests: Int
     ) -> MetricReading {
-        if requests > 0, gateway >= 0, gateway <= 1 {
-            return MetricReading(value: gateway, origin: .gatewayMean)
-        }
-        if let engine, engine >= 0, engine <= 1 {
-            return MetricReading(value: engine, origin: .engineMean)
-        }
-        return .none
+        guard requests > 0, gateway >= 0, gateway <= 1 else { return .none }
+        return MetricReading(value: gateway, origin: .gatewayMean)
     }
 
-    /// 速度来源的判定。抽成纯函数，测试可以钉住「引擎 LIVE 不能压过网关」、
-    /// 「引擎 LAST/AVG 不算当前速度」「空闲不显示旧值」「读数过旧降级」。
+    /// 速度来源的判定。当前速度只有两种状态：网关在跑会话（`gatewayLive`），
+    /// 或者没有当前速度（`none`）。抽成纯函数，测试可以钉住「收尾后不挂 LAST」
+    /// 「空闲不显示旧值」「读数过旧降级」。
+    ///
     /// `gatewayIsLive == false` 时网关值一律不参与——没有 LAST 这种"降级"。
+    /// 判定只看会话是否在跑，不看这一拍的读数是多少：网关的读数由
+    /// `reading(origin:gateway:)` 原样带出，0 也是网关的答案。
     package nonisolated static func speedOrigin(
-        gateway: Double,
         gatewayIsLive: Bool = true,
-        engine: Double?,
-        engineKind: EngineRateKind = .none,
-        activeRequests: Int = 0,
         gatewayAge: TimeInterval? = nil
     ) -> SpeedOrigin {
-        if gateway > 0, gatewayIsLive,
-            gatewayAge.map({ $0 <= rateReadingFreshness }) ?? true
-        {
-            return .gatewayLive
+        guard gatewayIsLive, gatewayAge.map({ $0 <= rateReadingFreshness }) ?? true else {
+            return .none
         }
-        if engineKind == .live, let engine, engine > 0, activeRequests > 0 {
-            return .engineLive
-        }
-        return .none
+        return .gatewayLive
     }
 
     /// `speedOrigin` 的界面可见口径：带上主线程那份 `gatewayDecodeRate` 的年龄。
-    package func currentSpeedOrigin(stats: ServerStats?, isRunning: Bool) -> SpeedOrigin {
+    package func currentSpeedOrigin(isRunning: Bool) -> SpeedOrigin {
         guard isRunning else { return .none }
         return Self.speedOrigin(
-            gateway: gatewayDecodeRate,
             gatewayIsLive: gatewayRateIsLive,
-            engine: stats?.decodeTokensPerSecond,
-            engineKind: stats?.decodeRateKind ?? .none,
-            activeRequests: stats?.activeRequests ?? 0,
             gatewayAge: gatewayReadingAt.map(Date().timeIntervalSince))
     }
 
@@ -467,8 +343,8 @@ package final class MetricsStore: ObservableObject {
     /// 并同频采样草稿接受率。
     ///
     /// 只由 `AppState.syncController` 调用——它已经是全应用唯一的一秒节拍源
-    /// （引擎轮询 1 秒）。应用内对话的分片回调只喂对话页直播条，不再顺带刷新
-    /// 概览，也不在这里事件驱动地重发布。
+    /// （引擎轮询 1 秒）。应用内对话的分片回调只往网关打点里记 token（消息
+    /// 读数也读那一份），不刷新概览，也不在这里事件驱动地重发布。
     package func tick(
         now: Date,
         stats: ServerStats?,
@@ -509,10 +385,9 @@ package final class MetricsStore: ObservableObject {
         publishGatewayCacheHit(isRunning: isRunning)
         publishGatewayContext(isRunning: isRunning)
         publishAverageDecodeRate(isRunning: isRunning)
-        // 直连引擎端口的请求网关看不见：引擎自己报的 activeRequests 也算
-        // 「还有东西在跑」，Chart 不该在它跑完之前冻结。
-        let live = overview.isLive || (stats?.activeRequests ?? 0) > 0
-        sampleSpeed(at: now, stats: stats, isRunning: isRunning, isLive: live)
+        // 曲线落点与冻结完全由网关会话驱动。
+        let live = overview.isLive
+        sampleSpeed(at: now, isRunning: isRunning, isLive: live)
         updateChartFreeze(isLive: live, at: now)
     }
 
@@ -580,12 +455,16 @@ package final class MetricsStore: ObservableObject {
         if gatewayContextIsLive != isLive { gatewayContextIsLive = isLive }
     }
 
-    /// 把一次网关读数落到 60 秒曲线上。只有「在跑」且读数 > 0 时落点：
+    /// 把一次读数落到 60 秒曲线上。只有「在跑」且读数 > 0 时落点：
     /// 静默段不拿 0 去填谷，曲线保留最后一段真实形状；请求收尾由
     /// `updateChartFreeze` 冻结整张图。一拍一个点由调用方的 1 秒闸保证。
-    private func sampleSpeed(at now: Date, stats: ServerStats?, isRunning: Bool, isLive: Bool) {
+    ///
+    /// 采样与 `decodeReading` 走同一条 owner 表：整条曲线只含网关的窗口读数
+    /// （0 不落点）。引擎的计数器差分不再参与——同一个请求被两套探测各采一次
+    /// 只会让曲线忽高忽低，和「最近请求」逐行相加也对不上。
+    private func sampleSpeed(at now: Date, isRunning: Bool, isLive: Bool) {
         guard isLive else { return }
-        let sample = decodeReading(stats: stats, isRunning: isRunning).value ?? 0
+        let sample = decodeReading(isRunning: isRunning).value ?? 0
         guard sample > 0 else { return }
         throughput.append(ThroughputSample(at: now, value: sample))
         throughput = Self.trimmed(throughput, at: now)
@@ -599,7 +478,7 @@ package final class MetricsStore: ObservableObject {
             lastAt: acceptance.last?.at,
             lastValue: acceptance.last?.value,
             latest: latest,
-            reportedDecodeRate: stats?.decodeTokensPerSecond,
+            reportedDecodeRate: gatewayRateIsLive ? gatewayDecodeRate : nil,
             throughputLastValue: throughput.last?.value,
             now: now)
         guard shouldSample else { return }
@@ -609,8 +488,9 @@ package final class MetricsStore: ObservableObject {
 
     /// 接受率的三条落点门槛，抽成纯函数给测试钉住：
     /// 0.9 秒的最短采样间隔、1e-4 的「数值真的变了」、0.15 的「解码读数在动」。
-    /// `reportedDecodeRate` 是引擎自报的 tok/s；它与曲线末端的差超过 0.15 就
-    /// 认为读数在动（因此即使接受率没变也要落点，曲线才跟得上）。
+    /// `reportedDecodeRate` 是这一拍的当前解码读数（网关在跑会话的合计）；
+    /// 它与曲线末端的差超过 0.15 就认为读数在动（因此即使接受率没变也要落点，
+    /// 曲线才跟得上）。
     package nonisolated static func shouldSampleAcceptance(
         lastAt: Date?,
         lastValue: Double?,
@@ -683,35 +563,5 @@ package final class MetricsStore: ObservableObject {
         if gatewayCacheHitRequests != 0 { gatewayCacheHitRequests = 0 }
         if gatewayContextTokens != 0 { gatewayContextTokens = 0 }
         if gatewayContextIsLive { gatewayContextIsLive = false }
-    }
-
-    // MARK: 对话页直播条
-
-    /// 流式回复的本地测速：每个增量按小数权重累进到连续时间估计器里。
-    ///
-    /// liveDecodeRate 迁出后这条估计器的**速率**已无读者，留下的是两个累计量：
-    /// usage 缺席时消息下方的 tok/s（分母取首分片→末分片的真实解码时长，不把
-    /// TTFT 混进来）与生成期间的上下文占用估算。喂入因此不能按节流丢片——
-    /// 丢了总量和时长都会偏小；概览的曲线与大数字走统一的 1 秒节拍读网关。
-    package func recordStreamDelta(_ piece: String, at event: Date) {
-        let tokens = TokenEstimator.fractional(piece)
-        guard tokens > 0 else { return }
-        // 用分片真正到达的时刻，而不是主线程排到这一条任务的时刻。UI 忙时
-        // 一批回调会被挤在一起处理，若在此时取 `Date()`，估计器会以为几十个
-        // token 是「瞬间」吐出来的，读数被抬出一个尖峰。
-        decodeMeter.add(tokens: tokens, at: event)
-    }
-
-    /// 本轮生成累计的（小数权重）token 数：usage 缺席时消息的 token 数、
-    /// 生成期间的上下文占用估算都读它。
-    package var streamTotalTokens: Double { decodeMeter.totalTokens }
-
-    /// 本轮生成真正观测到解码的时长（首分片 → 末分片）：消息下方的平均
-    /// tok/s 拿它当分母，不把 TTFT / 预填充混进来。
-    package var streamDecodingSeconds: TimeInterval { decodeMeter.decodingSeconds }
-
-    /// 新一轮生成开始时清空低通估计器，不然上一轮的尾巴会被算进这一轮。
-    package func resetStreamMeter() {
-        decodeMeter.reset()
     }
 }

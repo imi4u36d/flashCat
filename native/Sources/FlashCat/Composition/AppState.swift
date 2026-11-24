@@ -203,6 +203,12 @@ final class AppState: ObservableObject {
         get { ui.showsSidebar }
         set { ui.showsSidebar = newValue }
     }
+    /// 侧栏形态与顶部分段器的过滤范围。视图读这里，改动走带持久化 / 动画的
+    /// 方法，别直接写 `ui`。
+    var sidebarStyle: SidebarStyle { ui.sidebarStyle }
+    var sidebarScope: SidebarScope { ui.sidebarScope }
+    /// 会话搜索框的聚焦请求计数；侧栏用它把键盘焦点送进搜索框。
+    var chatSearchFocusTick: Int { ui.chatSearchFocusTick }
     /// 侧栏动画截止时刻：只是调度信息，不进 `objectWillChange`。
     var sidebarAnimUntil: Date {
         get { ui.sidebarAnimUntil }
@@ -309,7 +315,7 @@ final class AppState: ObservableObject {
             chat: chat, session: chatSession, drafts: chatDrafts,
             engineSession: engineSession, settings: settings,
             history: history, conversation: conversation, chatClient: chatClient,
-            imageClient: imageClient, videoClient: videoClient, metrics: metrics)
+            imageClient: imageClient, videoClient: videoClient)
         // 三条编排都走协议（`ChatHost` / `ModelHost` / `DownloadHost`），
         // 见文件末尾的 host 赋值；下载完成事件仍走独立回调。
         downloads.onEvent = { [weak self] event in self?.modelOps.handle(event) }
@@ -374,7 +380,9 @@ final class AppState: ObservableObject {
     /// `prompt + completion`，所以静止时的数字仍然是 KV 里真正躺着的量。
     var contextUsedTokens: Int {
         if generating, runner.livePromptTokens > 0 {
-            return runner.livePromptTokens + Int(metrics.streamTotalTokens.rounded())
+            // 已生成量读网关会话的同一份打点（`GatewaySessionMeter.progress`），
+            // 本地不再维护第二套 token 累计。
+            return runner.livePromptTokens + Int(runner.liveCompletionTokens.rounded())
         }
         guard let last = messages.last(where: { $0.role == "assistant" && ($0.usage?.promptTokens ?? 0) > 0 }),
             let usage = last.usage
@@ -409,6 +417,8 @@ final class AppState: ObservableObject {
 
     var port: Int { service.port }
     var failureMessage: String? { service.failureMessage }
+    /// 最近一次异常退出的信号诊断，菜单栏异常卡把退出码翻成 SIGKILL 这类名字。
+    var engineExitDiagnostic: EngineExitDiagnostic? { service.exitDiagnostic }
     var downloadProgress: Double? { service.downloadProgress }
     /// Non-nil when nothing can run yet. Every engine — splash included — is an
     /// installed pack, so this is simply "no pack installed".
@@ -460,15 +470,14 @@ final class AppState: ObservableObject {
     var gatewayContextIsLive: Bool { metrics.gatewayContextIsLive }
     var throughputFrozenAt: Date? { metrics.throughputFrozenAt }
 
-    /// 读数入口都显式收 `stats`/`isRunning`：这两样是 AppState 的状态，
-    /// store 里再存一份就会有两个真相。
-    var decodeReading: MetricReading { metrics.decodeReading(stats: stats, isRunning: isRunning) }
-    var averageDecodeReading: MetricReading { metrics.averageDecodeReading(stats: stats, isRunning: isRunning) }
-    var menuBarDecodeReading: MetricReading { metrics.menuBarDecodeReading(stats: stats, isRunning: isRunning) }
-    var prefillReading: MetricReading { metrics.prefillReading(stats: stats, isRunning: isRunning) }
-    var ttftReading: TTFTReading { metrics.ttftReading(stats: stats, isRunning: isRunning) }
-    var cacheHitReading: MetricReading { metrics.cacheHitReading(stats: stats, isRunning: isRunning) }
-    var speedOrigin: SpeedOrigin { metrics.currentSpeedOrigin(stats: stats, isRunning: isRunning) }
+    /// 读数入口由 `MetricsStore` 统一给出（纯网关口径）。
+    var decodeReading: MetricReading { metrics.decodeReading(isRunning: isRunning) }
+    var averageDecodeReading: MetricReading { metrics.averageDecodeReading(isRunning: isRunning) }
+    var menuBarDecodeReading: MetricReading { metrics.menuBarDecodeReading(isRunning: isRunning) }
+    var prefillReading: MetricReading { metrics.prefillReading(isRunning: isRunning) }
+    var ttftReading: TTFTReading { metrics.ttftReading(isRunning: isRunning) }
+    var cacheHitReading: MetricReading { metrics.cacheHitReading(isRunning: isRunning) }
+    var speedOrigin: SpeedOrigin { metrics.currentSpeedOrigin(isRunning: isRunning) }
     var overviewChartEnd: Date { metrics.overviewChartEnd }
 
     func overviewThroughput(window: TimeInterval) -> [ThroughputSample] {
@@ -481,62 +490,37 @@ final class AppState: ObservableObject {
 
     // MARK: 纯函数转发
     //
-    // 这 7 个静态纯函数被既有测试直接调用（DecodeRateTotalTests / CacheHitTests），
+    // 这几个静态纯函数被既有测试直接调用（DecodeRateTotalTests / CacheHitTests），
     // 实现已经搬进 store，留一层转发让测试原样通过。
 
     nonisolated static func reading(
         origin: SpeedOrigin,
-        gateway: Double,
-        engine: Double?
-    ) -> MetricReading {
-        MetricsStore.reading(origin: origin, gateway: gateway, engine: engine)
-    }
-
-    nonisolated static func prefillReading(
-        gateway: Double,
-        engine: Double?,
-        engineKind: EngineRateKind = .none
-    ) -> MetricReading {
-        MetricsStore.prefillReading(gateway: gateway, engine: engine, engineKind: engineKind)
-    }
-
-    nonisolated static func prefillReading(
-        engine: Double?,
-        engineKind: EngineRateKind = .none
-    ) -> MetricReading {
-        MetricsStore.prefillReading(engine: engine, engineKind: engineKind)
-    }
-
-    nonisolated static func ttftReading(
-        engine: Double?,
-        engineKind: EngineTTFTKind = .none,
         gateway: Double
-    ) -> TTFTReading {
-        MetricsStore.ttftReading(engine: engine, engineKind: engineKind, gateway: gateway)
+    ) -> MetricReading {
+        MetricsStore.reading(origin: origin, gateway: gateway)
+    }
+
+    nonisolated static func prefillReading(gateway: Double) -> MetricReading {
+        MetricsStore.prefillReading(gateway: gateway)
+    }
+
+    nonisolated static func ttftReading(gateway: Double) -> TTFTReading {
+        MetricsStore.ttftReading(gateway: gateway)
     }
 
     nonisolated static func cacheHitReading(
         gateway: Double,
-        requests: Int,
-        engine: Double?
+        requests: Int
     ) -> MetricReading {
-        MetricsStore.cacheHitReading(gateway: gateway, requests: requests, engine: engine)
+        MetricsStore.cacheHitReading(gateway: gateway, requests: requests)
     }
 
     nonisolated static func speedOrigin(
-        gateway: Double,
         gatewayIsLive: Bool = true,
-        engine: Double?,
-        engineKind: EngineRateKind = .none,
-        activeRequests: Int = 0,
         gatewayAge: TimeInterval? = nil
     ) -> SpeedOrigin {
         MetricsStore.speedOrigin(
-            gateway: gateway,
             gatewayIsLive: gatewayIsLive,
-            engine: engine,
-            engineKind: engineKind,
-            activeRequests: activeRequests,
             gatewayAge: gatewayAge)
     }
 
@@ -693,6 +677,8 @@ final class AppState: ObservableObject {
         service.setDefaultModel(id, engine: engine)
     }
     func applyModel(_ id: String) { service.applyModel(id) }
+    /// 菜单栏面板已经用自己的确认行问过读者；这里直接把切换跑掉。
+    func applyModelConfirmed(_ id: String) { service.applyModel(id, confirmed: true) }
     func confirmModelSwitch() { service.confirmModelSwitch() }
     func cancelModelSwitchRequest() { service.cancelModelSwitchRequest() }
     func startService() { service.startService() }
@@ -844,6 +830,14 @@ final class AppState: ObservableObject {
     func clearIslandNotices() { ui.clearIslandNotices() }
 
     func toggleSidebar() { ui.toggleSidebar() }
+
+    func setSidebarStyle(_ style: SidebarStyle) { ui.setSidebarStyle(style) }
+
+    func toggleSidebarCompact() { ui.toggleSidebarCompact() }
+
+    func setSidebarScope(_ scope: SidebarScope) { ui.setSidebarScope(scope) }
+
+    func focusChatSearch() { ui.focusChatSearch() }
 }
 
 let splashVersion = "1.4.0"

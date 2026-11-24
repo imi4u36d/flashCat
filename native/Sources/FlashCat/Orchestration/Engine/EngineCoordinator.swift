@@ -81,6 +81,9 @@ final class EngineCoordinator {
 
     var activeEngine: EngineID { engines?.activeID ?? .splash }
 
+    /// 最近一次异常退出的信号诊断（菜单栏异常卡用）。
+    var exitDiagnostic: EngineExitDiagnostic? { controller?.exitDiagnostic }
+
     var availableEngines: [EngineID] { engines?.installedIDs ?? [] }
 
     /// 模型目录扫描的缓存在这里，所以失效入口也在这里：`AppState`
@@ -150,7 +153,7 @@ final class EngineCoordinator {
 
         let now = Date()
         // 指标那一半（网关聚合 / 曲线 / 接受率）搬进了 store，仍然按 **1 秒一拍**
-        // 发布：引擎轮询是 1s，应用内对话的分片回调只喂对话页直播条，不再顺带刷新
+        // 发布：引擎轮询是 1s，应用内对话的分片回调只往网关打点里记 token，不刷新
         // 概览。`@Published` 只在数值真的变化时发布，空闲时不重绘；这里只负责把
         // 这一拍的引擎状态递进去。
         metrics.tick(now: now, stats: host.stats, isRunning: host.isRunning, activeEngine: host.activeEngine)

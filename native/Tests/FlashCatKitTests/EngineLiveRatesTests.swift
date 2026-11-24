@@ -5,58 +5,29 @@ import XCTest
 
 @testable import FlashCatKit
 
-/// 引擎累计计数器 → 实时速率的换算。
+/// 引擎累计计数器 → 实时预填充速率的换算。
 ///
-/// 这些用例钉住的正是线上看到的两类错数：
-/// - 同一会话的第二轮请求几乎全命中前缀缓存，按「整段提示词 / 首字耗时」
-///   算出来的预填充会被放大两个数量级；
-/// - 引擎明明在解码，概览却显示 0 tok/s（只统计了网关看得见的请求）。
+/// 这些用例钉住的是线上看到的那类错数：同一会话的第二轮请求几乎全命中
+/// 前缀缓存，按「整段提示词 / 首字耗时」算出来的预填充会被放大两个数量级。
+/// 解码速度不在这里——它统一由网关按请求打点，应用侧不再对引擎的累计生成
+/// 计数做差分。
 final class EngineLiveRatesTests: XCTestCase {
     private let epoch = Date(timeIntervalSinceReferenceDate: 2_000_000)
 
     private func status(
-        decode: Double = 1_000,
         prefillLive: Double = 0,
         prefillTokens: Double = 0,
         prefillSeconds: Double = 0,
-        running: Int = 1,
         prefilling: Int = 0
     ) -> EngineStatus {
         EngineStatus(
             state: .ready,
-            activeRequests: running,
             extras: [
-                EngineRateCounters.decodeLive: decode,
                 EngineRateCounters.prefillLive: prefillLive,
                 EngineRateCounters.prefillTokens: prefillTokens,
                 EngineRateCounters.prefillSeconds: prefillSeconds,
                 EngineRateCounters.prefilling: Double(prefilling),
             ])
-    }
-
-    // MARK: 解码
-
-    func testDecodeRateIsTheGaugeDelta() {
-        var meter = EngineLiveRates()
-        _ = meter.observe(status(decode: 1_000), at: epoch)
-        let reading = meter.observe(status(decode: 1_050), at: epoch.addingTimeInterval(1))
-        XCTAssertEqual(reading.decode.value ?? 0, 50, accuracy: 0.001)
-        XCTAssertEqual(reading.decode.kind, .live)
-    }
-
-    func testDecodeIsNilWhenNothingIsRunning() {
-        var meter = EngineLiveRates()
-        _ = meter.observe(status(decode: 1_000, running: 0), at: epoch)
-        let reading = meter.observe(status(decode: 1_400, running: 0), at: epoch.addingTimeInterval(1))
-        // 计数器涨了但引擎说没有在跑的请求（可能是收尾的那一格），不能报速度。
-        XCTAssertNil(reading.decode.value)
-    }
-
-    func testDecodeIgnoresBackwardsCounters() {
-        var meter = EngineLiveRates()
-        _ = meter.observe(status(decode: 9_000), at: epoch)
-        let reading = meter.observe(status(decode: 20), at: epoch.addingTimeInterval(1))
-        XCTAssertNil(reading.decode.value)
     }
 
     // MARK: 预填充
@@ -87,7 +58,7 @@ final class EngineLiveRatesTests: XCTestCase {
         XCTAssertNil(reading.prefill.value)
 
         let idle = meter.observe(
-            status(prefillTokens: 400, prefillSeconds: 1.2, running: 0),
+            status(prefillTokens: 400, prefillSeconds: 1.2),
             at: epoch.addingTimeInterval(9))
         XCTAssertNil(idle.prefill.value)
         XCTAssertEqual(idle.prefill.kind, .none)
@@ -234,10 +205,9 @@ final class EngineLiveRatesTests: XCTestCase {
             status(prefillTokens: 5_500, prefillSeconds: 5.5),
             at: epoch.addingTimeInterval(1))
         let restarted = meter.observe(
-            status(decode: 0, prefillTokens: 0, prefillSeconds: 0, running: 0),
+            status(prefillTokens: 0, prefillSeconds: 0),
             at: epoch.addingTimeInterval(2))
         XCTAssertNil(restarted.prefill.value)
-        XCTAssertNil(restarted.decode.value)
     }
 
     /// 没有这些计数键的引擎（splash / oMLX / MTPLX）不会被这套逻辑改写口径。

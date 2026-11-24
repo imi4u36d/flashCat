@@ -350,28 +350,7 @@ struct LabPage: View {
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let directory = panel.url else { return }
 
-        var exported = 0
-        for path in selectedPaths {
-            let source = URL(fileURLWithPath: path)
-            guard FileManager.default.fileExists(atPath: path) else { continue }
-            var destination = directory.appendingPathComponent(source.lastPathComponent)
-            var suffix = 2
-            while FileManager.default.fileExists(atPath: destination.path) {
-                let stem = source.deletingPathExtension().lastPathComponent
-                let ext = source.pathExtension
-                destination =
-                    directory
-                    .appendingPathComponent("\(stem)-\(suffix)")
-                    .appendingPathExtension(ext)
-                suffix += 1
-            }
-            do {
-                try FileManager.default.copyItem(at: source, to: destination)
-                exported += 1
-            } catch {
-                continue
-            }
-        }
+        let exported = MediaFiles.export(selectedPaths.sorted(), to: directory)
         state.toast(L10n.format("已导出 %lld 项", Int64(exported)))
         selecting = false
         selectedPaths.removeAll()
@@ -771,7 +750,7 @@ private struct GalleryVideoTile: View {
                             loading = false
                             return
                         }
-                        guard FileManager.default.fileExists(atPath: video.path) else {
+                        guard MediaFiles.exists(video.path) else {
                             cover = nil
                             missing = true
                             loading = false
@@ -786,7 +765,7 @@ private struct GalleryVideoTile: View {
                     }
                     .task(id: video.path) {
                         duration = nil
-                        guard FileManager.default.fileExists(atPath: video.path) else { return }
+                        guard MediaFiles.exists(video.path) else { return }
                         let asset = AVURLAsset(url: URL(fileURLWithPath: video.path))
                         guard let value = try? await asset.load(.duration) else { return }
                         let seconds = CMTimeGetSeconds(value)

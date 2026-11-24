@@ -88,7 +88,7 @@ struct GalleryDetailSheet: View {
     }()
 
     private var fileExists: Bool {
-        FileManager.default.fileExists(atPath: item.path)
+        MediaFiles.exists(item.path)
     }
 
     private var currentIndex: Int? {
@@ -216,7 +216,7 @@ struct GalleryDetailSheet: View {
                 missingVideo = false
                 return
             }
-            let exists = FileManager.default.fileExists(atPath: item.path)
+            let exists = MediaFiles.exists(item.path)
             missingVideo = !exists
             guard exists else { return }
             player = AVPlayer(url: URL(fileURLWithPath: item.path))
@@ -357,10 +357,8 @@ struct GalleryDetailSheet: View {
     }
 
     private var fileSize: String {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: item.path),
-            let bytes = attributes[.size] as? NSNumber
-        else { return L10n.t("未知") }
-        return ByteCountFormatter.string(fromByteCount: bytes.int64Value, countStyle: .file)
+        guard let bytes = MediaFiles.size(item.path) else { return L10n.t("未知") }
+        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 }
 

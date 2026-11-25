@@ -450,7 +450,7 @@ private struct CodeBlockView: View {
             .padding(.leading, style.chat ? 14 : 12)
             .padding(.trailing, style.chat ? 8 : 12)
             .frame(height: style.chat ? 32 : 30)
-            .background(style.chat ? Color.clear : DS.surface)
+            .background(style.chat ? DS.bg.opacity(0.75) : DS.surface)
 
             Rectangle()
                 .fill(DS.line)
@@ -459,12 +459,29 @@ private struct CodeBlockView: View {
             HighlightedCode(code: code, language: language, style: style)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DS.rect(style.chat ? 10 : DS.Radius.md).fill(style.chat ? Color.clear : DS.bg))
-        .overlay(
-            DS.rect(style.chat ? 10 : DS.Radius.md)
-                .strokeBorder(style.chat ? DS.line : DS.line2, lineWidth: 1)
+        .background(
+            DS.rect(style.chat ? 12 : DS.Radius.md)
+                .fill(style.chat ? DS.surface.opacity(0.82) : DS.bg)
         )
-        .clipShape(DS.rect(style.chat ? 10 : DS.Radius.md))
+        .overlay {
+            if style.chat {
+                DS.rect(12).strokeBorder(
+                    LinearGradient(
+                        colors: [DS.glassSpecular.opacity(0.7), DS.line2],
+                        startPoint: .top,
+                        endPoint: .bottom),
+                    lineWidth: 1)
+            } else {
+                DS.rect(DS.Radius.md).strokeBorder(DS.line2, lineWidth: 1)
+            }
+        }
+        .clipShape(DS.rect(style.chat ? 12 : DS.Radius.md))
+        .shadow(
+            color: style.chat ? DS.glassShadow.opacity(0.35) : .clear,
+            radius: 8,
+            x: 0,
+            y: 3
+        )
         .onDisappear {
             resetTask?.cancel()
             resetTask = nil
@@ -567,8 +584,8 @@ private struct QuoteBlockView: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                .fill(DS.text3.opacity(0.45))
-                .frame(width: 2)
+                .fill(DS.accent.opacity(0.45))
+                .frame(width: 2.5)
 
             Text(composed)
                 .lineSpacing(style.lineSpacing)
@@ -576,8 +593,13 @@ private struct QuoteBlockView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.leading, 2)
-        .padding(.vertical, 2)
+        .padding(.horizontal, style.chat ? 10 : 2)
+        .padding(.vertical, style.chat ? 6 : 2)
+        .background {
+            if style.chat {
+                DS.rect(DS.Radius.sm).fill(DS.bg.opacity(0.5))
+            }
+        }
     }
 }
 

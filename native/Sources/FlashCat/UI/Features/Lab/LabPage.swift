@@ -66,7 +66,7 @@ struct LabPage: View {
             .background(WindowDragArea())
 
             header
-                .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
+                .padding(.leading, Console.contentPadding)
                 .padding(.trailing, Console.contentPadding)
                 .padding(.bottom, 12)
 

@@ -5,12 +5,13 @@ import FlashCatCore
 import FlashCatKit
 import SwiftUI
 
-/// 输入卡底排的模型槽：状态点 + 模型名 + 下拉箭头，悬停才浮出底色。
-/// 点开仍是原来的两级菜单（模型列表 / 图像工具模型），但外观对齐 Splash 的
-/// `EngineSlot`，不再是一枚描边胶囊。
+/// 模型胶囊选择器：引擎图标 + 状态点 + 模型短名 + 下拉箭头，采用 Liquid Glass 胶囊语言。
+/// 输入卡底排与对话顶栏共用同一个控件，按位置传入高度与弹出方向。
 struct ChatModelControl: View {
     @ObservedObject var state: AppState
     @ObservedObject var chat: ChatStore
+    var height: CGFloat = 26
+    var arrowEdge: Edge = .top
 
     @State private var open = false
     @State private var hovering = false
@@ -21,22 +22,22 @@ struct ChatModelControl: View {
             open.toggle()
         } label: {
             HStack(spacing: 6) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 6, height: 6)
+                EngineMark(id: state.activeEngine, size: 14)
+                DSStatusDot(color: statusColor, live: state.canChat, size: 5.5)
                 Text(modelName)
-                    .font(DS.Font.prose(13))
-                    .foregroundStyle(DS.text2)
+                    .font(DS.Font.prose(12, weight: .medium))
+                    .foregroundStyle(hovering || open ? DS.text : DS.text2)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 8.5, weight: .semibold))
                     .foregroundStyle(DS.text3)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(DS.rect(7).fill(hovering ? DS.hover : .clear))
-            .contentShape(DS.rect(7))
+            .padding(.horizontal, 9)
+            .frame(height: height)
+            .background(Capsule().fill(hovering || open ? DS.raised : DS.pillFill))
+            .overlay(Capsule().strokeBorder(hovering || open ? DS.line2 : DS.pillBorder, lineWidth: 1))
+            .contentShape(Capsule())
         }
         .buttonStyle(.plainHit)
         .disabled(chat.generating)
@@ -47,7 +48,7 @@ struct ChatModelControl: View {
                 withAnimation(DS.Motion.snappy) { hovering = value }
             }
         }
-        // 底排只放得下短名；完整仓库 id 与引擎在悬停时给出。
+        // 底排与顶栏只放得下短名；完整仓库 id 与引擎在悬停时给出。
         .help(
             state.selectedModel.isEmpty
                 ? L10n.t("切换模型")
@@ -55,7 +56,7 @@ struct ChatModelControl: View {
         )
         .accessibilityLabel(L10n.t("模型"))
         .accessibilityValue(modelName)
-        .popover(isPresented: $open, arrowEdge: .top) {
+        .popover(isPresented: $open, arrowEdge: arrowEdge) {
             ModelPickerPopover(state: state) { open = false }
         }
     }
@@ -65,6 +66,7 @@ struct ChatModelControl: View {
     }
 
     private var statusColor: Color {
+        if state.serverState == .failed { return DS.err }
         if state.isModelBusy { return DS.warn }
         return state.canChat ? DS.ok : DS.text4
     }

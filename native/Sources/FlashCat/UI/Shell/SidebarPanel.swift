@@ -9,8 +9,7 @@ import SwiftUI
 
 // MARK: - Navigation panel
 
-/// Liquid Glass 侧边栏：标题栏避让、视图焦点分段器、工作区 / 控制台导航、
-/// 最近对话与底部运行时遥测坞。
+/// Liquid Glass 侧边栏：标题栏避让、工作区 / 控制台导航、最近对话与底部内联运行时状态栏。
 struct ConsoleNavigationPanel: View {
     @ObservedObject var state: AppState
     @ObservedObject var chat: ChatStore
@@ -26,17 +25,12 @@ struct ConsoleNavigationPanel: View {
     @State private var sections: [ChatThreadSections.Section]?
     /// 控制台分组是否折叠。窄栏里始终展开——那里只有图标，没有折叠的意义。
     @State private var consoleCollapsed = false
-    @State private var showRuntimePopover = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var style: SidebarStyle { state.sidebarStyle }
     private var compact: Bool { style == .compact }
-    private var scope: SidebarScope { compact ? .all : state.sidebarScope }
     private var sidebarWidth: CGFloat {
         compact ? DS.Layout.sidebarCompactWidth : DS.Layout.sidebarWidth
-    }
-    private var contentWidth: CGFloat {
-        sidebarWidth - (compact ? 16 : 20)
     }
 
     var body: some View {
@@ -58,8 +52,8 @@ struct ConsoleNavigationPanel: View {
         .animation(reduceMotion ? nil : DS.Motion.smooth, value: style)
     }
 
-    /// 悬浮 / 窄栏共用的玻璃卡片外壳。宽度、圆角和阴影都跟 `style` 走，
-    /// 因此窄栏切换时列宽和内容一起收放。
+    /// 悬浮 / 窄栏共用的玻璃卡片外壳。宽度、圆角、顶部留白和阴影都跟 `style` 走；
+    /// 窄栏下移到红绿灯下方起始，顶部区域留给红绿灯与拖窗手柄。
     private var card: some View {
         let shape = RoundedRectangle(cornerRadius: DS.Radius.xl, style: .continuous)
         return
@@ -80,54 +74,41 @@ struct ConsoleNavigationPanel: View {
                     lineWidth: 1)
             }
             .padding(.leading, DS.Layout.sidebarInset)
-            .padding(.vertical, DS.Layout.sidebarInset)
+            .padding(.top, compact ? DS.Layout.sidebarCompactTopClearance : DS.Layout.sidebarInset)
+            .padding(.bottom, DS.Layout.sidebarInset)
+            .overlay(alignment: .top) {
+                if compact {
+                    WindowDragArea()
+                        .frame(height: DS.Layout.sidebarCompactTopClearance)
+                }
+            }
     }
 
     private var panelBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
 
-            if !compact {
-                NativeSegmented(
-                    selection: Binding(
-                        get: { state.sidebarScope },
-                        set: { state.setSidebarScope($0) }),
-                    options: SidebarScope.allCases,
-                    labels: SidebarScope.allCases.map(\.label),
-                    width: contentWidth,
-                    size: .small
-                )
-                .padding(.horizontal, 10)
-                .padding(.bottom, 8)
-            }
-
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 0) {
-                    if scope != .console {
-                        creativeSection
-                    }
+                    creativeSection
 
                     if compact {
                         DSDivider()
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 8)
                     }
 
-                    if scope != .chat {
-                        consoleSection
-                    }
+                    consoleSection
 
-                    if !compact, scope == .all {
+                    if !compact {
                         DSDivider()
                             .padding(.horizontal, 10)
                             .padding(.top, 10)
-                    }
-
-                    if !compact, scope != .console {
                         recentsSection
                     }
                 }
                 .padding(.horizontal, compact ? 8 : 10)
+                .padding(.top, compact ? 8 : 2)
                 .padding(.bottom, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -141,35 +122,36 @@ struct ConsoleNavigationPanel: View {
 
     // MARK: Header
 
-    /// 顶部一行：真实红绿灯留在窗口坐标里，这一行只负责避让与折叠按钮。
-    /// 整行可拖窗。
-    private var header: some View {
-        ZStack(alignment: .topLeading) {
-            WindowDragArea()
+    /// 顶部一行：真实红绿灯留在窗口坐标里。
+    /// 宽栏与红绿灯同区并向右避让；窄栏整体下移到红绿灯下方，卡片顶部居中放展开按钮。
+    @ViewBuilder private var header: some View {
+        if compact {
+            VStack(spacing: 0) {
+                collapseButton(size: 30)
+                    .padding(.top, 9)
+                    .padding(.bottom, 6)
+                DSDivider()
+                    .padding(.horizontal, 10)
+            }
+            .frame(maxWidth: .infinity)
+        } else {
+            ZStack(alignment: .topLeading) {
+                WindowDragArea()
 
-            if compact {
-                VStack(spacing: 6) {
-                    // 让开真实红绿灯：它们横跨窗口左上角，这里只补垂直空间。
-                    Color.clear.frame(height: 22)
-                    collapseButton(size: 26)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.top, 8)
-            } else {
                 HStack(spacing: 6) {
                     // 系统红绿灯画在窗口坐标里，这里让出它们的位置。
-                    Color.clear.frame(width: 64)
+                    Color.clear.frame(width: 72)
                     Spacer(minLength: 0)
                     collapseButton(size: 24)
                 }
                 .padding(.horizontal, 10)
                 // 红绿灯中线固定在窗口顶下 26pt。悬浮卡的顶边在 10pt，
-                // 卡内 4pt 让按钮避开圆角；贴边卡再下移 10pt 对齐。
-                .padding(.top, state.sidebarStyle == .edge ? 14 : 4)
+                // 卡内 4pt 让按钮中心落在 26pt；贴边卡下移 14pt 对齐。
+                .padding(.top, style == .edge ? 14 : 4)
                 .frame(maxWidth: .infinity, alignment: .top)
             }
+            .frame(height: style == .edge ? 48 : DS.Layout.sidebarHeaderHeight)
         }
-        .frame(height: compact ? 80 : DS.Layout.sidebarHeaderHeight)
     }
 
     private func collapseButton(size: CGFloat) -> some View {
@@ -198,7 +180,6 @@ struct ConsoleNavigationPanel: View {
                 }
             }
         }
-        .padding(.top, compact ? 2 : 0)
     }
 
     private var consoleSection: some View {
@@ -413,21 +394,13 @@ struct ConsoleNavigationPanel: View {
     private var dock: some View {
         Group {
             if compact {
-                HStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    SidebarCompactDockButton(
-                        state: state,
-                        showPopover: $showRuntimePopover)
-                    Spacer(minLength: 0)
-                }
-                .padding(.bottom, 10)
+                SidebarCompactFooter(state: state)
+                    .frame(maxWidth: .infinity)
+                    .padding(.bottom, 10)
             } else {
-                SidebarRuntimeDock(
-                    state: state,
-                    showPopover: $showRuntimePopover
-                )
-                .padding(.horizontal, 10)
-                .padding(.bottom, 10)
+                SidebarRuntimeFooter(state: state)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 10)
             }
         }
         .padding(.top, 4)
@@ -602,323 +575,286 @@ struct SidebarLens: View {
     }
 }
 
-// MARK: - Runtime dock
+// MARK: - Runtime footer (inline)
 
-/// 底部硬件遥测坞：引擎状态、实时解码速度、统一内存水位与芯片事实。
-/// 整块可点，向上弹出运行时快捷浮层。
-private struct SidebarRuntimeDock: View {
-    @ObservedObject var state: AppState
-    @Binding var showPopover: Bool
+/// 侧栏底部运行时状态的共享读数：状态文案、当前模型、实时速度与统一内存水位。
+@MainActor
+private struct SidebarRuntimeMetrics {
+    let state: AppState
 
-    @State private var hovering = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var tint: Color { sidebarStatusTint(state) }
+    var live: Bool { state.isRunning && !state.isModelBusy }
 
-    private var dockShape: RoundedRectangle { DS.rect(12) }
-
-    private var tint: Color { sidebarStatusTint(state) }
-    private var live: Bool { state.isRunning }
-
-    private var statusText: String {
+    var statusText: String {
         if state.isSwitchingModel { return L10n.t("切换中") }
         if state.isModelBusy { return L10n.t("加载中") }
         return L10n.t(state.serverState.rawValue)
     }
 
-    private var speedReading: MetricReading { state.menuBarDecodeReading }
-    private var speedText: String {
-        guard state.isRunning, let value = speedReading.value, value > 0 else {
-            return "—"
-        }
-        return "\(Format.compact(value)) tok/s"
-    }
-    /// 空闲时那格退回模型启动以来的平均速度，和菜单栏一样打 `AVG`。
-    private var speedBadge: String? {
-        speedReading.origin == .gatewayMean ? "AVG" : nil
-    }
-
-    private var memoryUsed: Int { state.stats?.memoryBytes ?? 0 }
-    private var memoryTotal: Int {
-        state.stats?.physicalMemoryBytes ?? Int(ProcessInfo.processInfo.physicalMemory)
-    }
-    private var memoryFraction: Double {
-        guard memoryTotal > 0 else { return 0 }
-        return min(1, max(0, Double(memoryUsed) / Double(memoryTotal)))
-    }
-    private var memoryText: String {
-        let total = Int((Double(memoryTotal) / 1_073_741_824).rounded())
-        guard let used = state.stats?.memoryBytes else { return "— / \(total) GB" }
-        return String(format: "%.1f / %d GB", Double(used) / 1_073_741_824, total)
-    }
-
-    var body: some View {
-        Button {
-            showPopover = true
-        } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 5) {
-                    DSStatusDot(color: tint, live: live, size: 6)
-                    Text(verbatim: state.activeEngine.displayName)
-                        .font(DS.Font.prose(12, weight: .bold))
-                        .tracking(-0.1)
-                        .foregroundStyle(DS.text)
-                        .lineLimit(1)
-                    Text(verbatim: statusText)
-                        .font(DS.Font.prose(10.5, weight: .medium))
-                        .foregroundStyle(tint)
-                        .lineLimit(1)
-                    Spacer(minLength: 2)
-                    Text(verbatim: speedText)
-                        .font(DS.Font.mono(10.5, weight: .semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(DS.text)
-                        .contentTransition(.numericText())
-                    if let speedBadge {
-                        Text(verbatim: speedBadge)
-                            .font(DS.Font.mono(8, weight: .semibold))
-                            .tracking(0.3)
-                            .foregroundStyle(DS.text4)
-                    }
-                }
-
-                VStack(spacing: 4) {
-                    HStack(spacing: 4) {
-                        Text(L10n.t("统一内存"))
-                            .font(DS.Font.prose(10))
-                            .foregroundStyle(DS.text3)
-                        Spacer(minLength: 2)
-                        Text(verbatim: memoryText)
-                            .font(DS.Font.mono(10))
-                            .monospacedDigit()
-                            .foregroundStyle(DS.text2)
-                    }
-                    SidebarMemoryBar(fraction: memoryFraction)
-                }
-
-                DSDivider()
-
-                HStack(spacing: 4) {
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(DS.accent)
-                            .frame(width: 5, height: 5)
-                        Text(verbatim: "Apple Silicon")
-                            .font(DS.Font.prose(10.5, weight: .medium))
-                            .foregroundStyle(DS.text2)
-                    }
-                    Spacer(minLength: 2)
-                    Text(verbatim: "MLX Metal")
-                        .font(DS.Font.mono(9.5))
-                        .foregroundStyle(DS.text3)
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 9)
-            .background {
-                ZStack {
-                    dockShape
-                        .fill(hovering ? DS.raised : DS.sidebarDockFill)
-                        .shadow(
-                            color: DS.glassShadow.opacity(hovering ? 0.9 : 0.55),
-                            radius: hovering ? 9 : 6,
-                            x: 0,
-                            y: hovering ? 4 : 2)
-                    if hovering {
-                        dockShape.fill(DS.hover)
-                    }
-                }
-            }
-            .overlay(dockShape.strokeBorder(DS.glassBorder, lineWidth: 1))
-            .contentShape(dockShape)
-        }
-        .buttonStyle(.plainHit)
-        .offset(y: hovering ? -1 : 0)
-        .animation(reduceMotion ? nil : DS.Motion.snappy, value: hovering)
-        .onHover { value in
-            if reduceMotion {
-                hovering = value
-            } else {
-                withAnimation(DS.Motion.snappy) { hovering = value }
-            }
-        }
-        .popover(isPresented: $showPopover, arrowEdge: .bottom) {
-            SidebarRuntimePopover(state: state)
-                .frame(width: 270)
-                .padding(14)
-                .dsPopoverSurface()
-        }
-        .help(L10n.t("运行时快捷控制"))
-        .accessibilityLabel(Text(L10n.t("运行时快捷控制")))
-    }
-}
-
-/// 窄栏里的遥测坞：44pt 图标 + 状态点，点击弹出同一张浮层。
-private struct SidebarCompactDockButton: View {
-    @ObservedObject var state: AppState
-    @Binding var showPopover: Bool
-
-    @State private var hovering = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var tint: Color { sidebarStatusTint(state) }
-
-    var body: some View {
-        Button {
-            showPopover = true
-        } label: {
-            ZStack(alignment: .topTrailing) {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(hovering ? DS.raised : DS.sidebarDockFill)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(DS.glassBorder, lineWidth: 1)
-                    }
-
-                Image(systemName: "cpu")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(DS.accent)
-                    .frame(width: 44, height: 44)
-
-                DSStatusDot(
-                    color: tint,
-                    live: state.isRunning,
-                    size: 6
-                )
-                .padding(7)
-            }
-            .frame(width: 44, height: 44)
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-        .buttonStyle(.plainHit)
-        .onHover { value in
-            if reduceMotion {
-                hovering = value
-            } else {
-                withAnimation(DS.Motion.snappy) { hovering = value }
-            }
-        }
-        .popover(isPresented: $showPopover, arrowEdge: .leading) {
-            SidebarRuntimePopover(state: state)
-                .frame(width: 270)
-                .padding(14)
-                .dsPopoverSurface()
-        }
-        .help(L10n.t("运行时快捷控制"))
-        .accessibilityLabel(Text(L10n.t("运行时快捷控制")))
-    }
-}
-
-/// 运行时快捷浮层：当前模型、监听端口、引擎启停开关。
-private struct SidebarRuntimePopover: View {
-    @ObservedObject var state: AppState
-
-    private var tint: Color { sidebarStatusTint(state) }
-    private var live: Bool { state.isRunning }
-
-    private var statusText: String {
-        if state.isSwitchingModel { return L10n.t("切换中") }
-        if state.isModelBusy { return L10n.t("加载中") }
-        return L10n.t(state.serverState.rawValue)
-    }
-
-    private var modelName: String {
+    var modelName: String {
         if let info = state.selectedModelInfo { return info.shortName }
         let name = state.shortModelName(state.selectedModel)
         return name.isEmpty ? L10n.t("未选择模型") : name
     }
 
-    private var portText: String { "127.0.0.1:\(state.port)" }
+    var speedReading: MetricReading { state.menuBarDecodeReading }
 
-    private var running: Binding<Bool> {
-        Binding(
-            get: { state.isRunning },
-            set: { value in
-                guard value != state.isRunning else { return }
-                state.toggleService()
-            })
+    var hasSpeedValue: Bool {
+        state.isRunning && (speedReading.value ?? 0) > 0
+    }
+
+    var speedText: String {
+        guard state.isRunning, let value = speedReading.value, value > 0 else {
+            return "— tok/s"
+        }
+        return "\(Format.compact(value)) tok/s"
+    }
+
+    var speedBadge: String? {
+        hasSpeedValue && speedReading.origin == .gatewayMean ? "AVG" : nil
+    }
+
+    var memoryUsed: Int { state.stats?.memoryBytes ?? 0 }
+    var memoryTotal: Int {
+        state.stats?.physicalMemoryBytes ?? Int(ProcessInfo.processInfo.physicalMemory)
+    }
+
+    var memoryFraction: Double {
+        guard memoryTotal > 0 else { return 0 }
+        return min(1, max(0, Double(memoryUsed) / Double(memoryTotal)))
+    }
+
+    var memoryText: String {
+        let total = Int((Double(memoryTotal) / 1_073_741_824).rounded())
+        guard let used = state.stats?.memoryBytes else { return "— / \(total) GB" }
+        return String(format: "%.1f / %d GB", Double(used) / 1_073_741_824, total)
+    }
+}
+
+/// 侧栏底部内联运行时状态栏：引擎与模型摘要（点击直达概览）+ 直接启停按钮 + 速度与内存水位条。
+private struct SidebarRuntimeFooter: View {
+    @ObservedObject var state: AppState
+
+    @State private var hoveringInfo = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var metrics: SidebarRuntimeMetrics { SidebarRuntimeMetrics(state: state) }
+    private var dockShape: RoundedRectangle { DS.rect(12) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Button {
+                    state.section = .overview
+                } label: {
+                    HStack(spacing: 8) {
+                        EngineMark(
+                            id: state.activeEngine,
+                            size: 24,
+                            ring: engineAccent(state.activeEngine))
+
+                        VStack(alignment: .leading, spacing: 1) {
+                            HStack(spacing: 5) {
+                                Text(verbatim: state.activeEngine.displayName)
+                                    .font(DS.Font.prose(12, weight: .semibold))
+                                    .foregroundStyle(DS.text)
+                                    .lineLimit(1)
+                                DSStatusDot(color: metrics.tint, live: metrics.live, size: 5.5)
+                                Text(verbatim: metrics.statusText)
+                                    .font(DS.Font.prose(10, weight: .medium))
+                                    .foregroundStyle(metrics.tint)
+                                    .lineLimit(1)
+                            }
+                            Text(verbatim: metrics.modelName)
+                                .font(DS.Font.prose(10.5))
+                                .foregroundStyle(hoveringInfo ? DS.text2 : DS.text3)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+
+                        Spacer(minLength: 2)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plainHit)
+                .onHover { value in
+                    if reduceMotion {
+                        hoveringInfo = value
+                    } else {
+                        withAnimation(DS.Motion.snappy) { hoveringInfo = value }
+                    }
+                }
+                .help(L10n.t("查看概览"))
+                .accessibilityLabel(L10n.t("查看概览"))
+
+                SidebarEngineToggleButton(state: state, width: 26, height: 26)
+            }
+
+            VStack(spacing: 4) {
+                HStack(spacing: 4) {
+                    HStack(spacing: 3) {
+                        Text(verbatim: metrics.speedText)
+                            .font(DS.Font.mono(10, weight: .semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(metrics.hasSpeedValue ? DS.text2 : DS.text3)
+                            .contentTransition(.numericText())
+                        if let speedBadge = metrics.speedBadge {
+                            Text(verbatim: speedBadge)
+                                .font(DS.Font.mono(8, weight: .semibold))
+                                .tracking(0.3)
+                                .foregroundStyle(DS.text4)
+                        }
+                    }
+                    Spacer(minLength: 4)
+                    Text(verbatim: metrics.memoryText)
+                        .font(DS.Font.mono(10))
+                        .monospacedDigit()
+                        .foregroundStyle(DS.text3)
+                }
+                SidebarMemoryBar(fraction: metrics.memoryFraction)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background {
+            dockShape
+                .fill(DS.sidebarDockFill)
+                .shadow(color: DS.glassShadow.opacity(0.45), radius: 6, x: 0, y: 2)
+        }
+        .overlay {
+            dockShape.strokeBorder(
+                LinearGradient(
+                    colors: [DS.glassSpecular.opacity(0.75), DS.glassBorder],
+                    startPoint: .top,
+                    endPoint: .bottom),
+                lineWidth: 1)
+        }
+    }
+}
+
+/// 窄栏底栏：引擎徽标与状态点（点击进概览）+ 独立内联启停按钮，无弹窗。
+private struct SidebarCompactFooter: View {
+    @ObservedObject var state: AppState
+
+    @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var metrics: SidebarRuntimeMetrics { SidebarRuntimeMetrics(state: state) }
+
+    private var compactHelpText: String {
+        "\(state.activeEngine.displayName) · \(metrics.statusText)\n\(metrics.modelName) · \(metrics.speedText)"
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 7) {
-                DSStatusDot(color: tint, live: live, size: 6)
-                Text(L10n.t("运行时快捷控制"))
-                    .font(DS.Font.prose(12.5, weight: .bold))
-                    .foregroundStyle(DS.text)
-                Spacer(minLength: 6)
-                DSChip(
-                    text: statusText,
-                    dot: tint,
-                    live: live && !state.isModelBusy,
-                    tint: state.isModelBusy ? DS.warn : (state.isRunning ? DS.ok : nil))
-            }
-
-            VStack(spacing: 0) {
-                factRow(L10n.t("当前模型")) {
-                    Text(verbatim: modelName)
-                        .font(DS.Font.prose(11.5, weight: .semibold))
-                        .foregroundStyle(DS.text)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                DSDivider()
-                factRow(L10n.t("监听端口")) {
-                    Button {
-                        state.copy(portText, label: L10n.t("监听端口已复制"))
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(verbatim: portText)
-                                .font(DS.Font.mono(11, weight: .medium))
-                            Image(systemName: "doc.on.doc")
-                                .font(.system(size: 9.5, weight: .medium))
+        VStack(spacing: 6) {
+            Button {
+                state.section = .overview
+            } label: {
+                ZStack(alignment: .topTrailing) {
+                    DS.rect(10)
+                        .fill(hovering ? DS.raised : DS.sidebarDockFill)
+                        .overlay {
+                            DS.rect(10).strokeBorder(
+                                hovering ? DS.line2 : DS.glassBorder,
+                                lineWidth: 1)
                         }
-                        .foregroundStyle(DS.accent)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plainHit)
-                    .help(L10n.t("复制监听端口"))
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 2)
-            .dsSubcard(radius: 10)
 
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(verbatim: state.activeEngine.displayName)
-                        .font(DS.Font.prose(12, weight: .semibold))
-                        .foregroundStyle(DS.text)
-                    Text(L10n.t("点击切换暂停或恢复服务"))
-                        .font(DS.Font.prose(10.5))
-                        .foregroundStyle(DS.text3)
-                }
-                Spacer(minLength: 4)
-                Toggle("", isOn: running)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .labelsHidden()
-                    .tint(state.isRunning ? DS.ok : DS.accent)
-                    .disabled(
-                        state.isModelBusy
-                            || (!state.isRunning && state.selectedModel.isEmpty)
+                    EngineMark(
+                        id: state.activeEngine,
+                        size: 20,
+                        ring: engineAccent(state.activeEngine)
                     )
-                    .accessibilityLabel(Text(L10n.t("引擎服务")))
+                    .frame(width: 38, height: 34)
+
+                    DSStatusDot(
+                        color: metrics.tint,
+                        live: metrics.live,
+                        size: 5.5
+                    )
+                    .padding(5)
+                }
+                .frame(width: 38, height: 34)
+                .contentShape(DS.rect(10))
             }
+            .buttonStyle(.plainHit)
+            .onHover { value in
+                if reduceMotion {
+                    hovering = value
+                } else {
+                    withAnimation(DS.Motion.snappy) { hovering = value }
+                }
+            }
+            .help(compactHelpText)
+            .accessibilityLabel(L10n.t("查看概览"))
+
+            SidebarEngineToggleButton(state: state, width: 38, height: 26)
         }
     }
+}
 
-    private func factRow<Value: View>(
-        _ label: String,
-        @ViewBuilder value: () -> Value
-    ) -> some View {
-        HStack(spacing: 8) {
-            Text(verbatim: label)
-                .font(DS.Font.prose(11.5))
-                .foregroundStyle(DS.text3)
-                .frame(width: 62, alignment: .leading)
-            value()
-                .frame(maxWidth: .infinity, alignment: .trailing)
+/// 内联引擎启停键：宽栏 26×26 方钮与窄栏 38×26 胶囊共用同一套状态配色与禁用逻辑。
+private struct SidebarEngineToggleButton: View {
+    @ObservedObject var state: AppState
+    var width: CGFloat
+    var height: CGFloat
+
+    @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var disabled: Bool {
+        state.isModelBusy || (!state.isRunning && state.selectedModel.isEmpty)
+    }
+
+    private var shape: RoundedRectangle { DS.rect(8) }
+
+    private var helpText: String {
+        L10n.t(state.isRunning ? "停止引擎" : "启动引擎")
+    }
+
+    private var fillColor: Color {
+        if state.isModelBusy { return DS.pillFill }
+        if state.isRunning {
+            return hovering && !disabled ? DS.err.opacity(0.18) : DS.dangerFill
         }
-        .frame(height: 28)
+        return hovering && !disabled ? DS.ok.opacity(0.18) : DS.successFill
+    }
+
+    private var borderColor: Color {
+        if state.isModelBusy { return DS.line }
+        return state.isRunning ? DS.dangerStroke : DS.successStroke
+    }
+
+    var body: some View {
+        Button {
+            state.toggleService()
+        } label: {
+            Group {
+                if state.isModelBusy {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else {
+                    Image(systemName: state.isRunning ? "stop.fill" : "play.fill")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(state.isRunning ? DS.dangerText : DS.ok)
+                }
+            }
+            .frame(width: width, height: height)
+            .background(shape.fill(fillColor))
+            .overlay(shape.strokeBorder(borderColor, lineWidth: 1))
+            .contentShape(shape)
+        }
+        .buttonStyle(DSPressStyle(scale: 0.95))
+        .disabled(disabled)
+        .opacity(disabled && !state.isModelBusy ? 0.42 : 1)
+        .onHover { value in
+            if reduceMotion {
+                hovering = value
+            } else {
+                withAnimation(DS.Motion.snappy) { hovering = value }
+            }
+        }
+        .help(helpText)
+        .accessibilityLabel(helpText)
     }
 }
 
@@ -948,7 +884,7 @@ private struct SidebarMemoryBar: View {
                 }
             }
         }
-        .frame(height: 6)
+        .frame(height: 4)
         .animation(DS.Motion.smooth, value: clamped)
         .accessibilityElement(children: .ignore)
         .accessibilityValue("\(Int((clamped * 100).rounded()))%")

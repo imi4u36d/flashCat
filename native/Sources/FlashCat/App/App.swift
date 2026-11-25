@@ -156,6 +156,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let window = note.object as? NSWindow else { return }
             MainActor.assumeIsolated { self?.configure(window) }
         }
+        NotificationCenter.default.addObserver(
+            forName: .flashCatSidebarLayoutChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                for target in NSApp.windows { self?.offsetTrafficLights(in: target) }
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didExitFullScreenNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let window = note.object as? NSWindow else { return }
+            MainActor.assumeIsolated {
+                DispatchQueue.main.async { [weak self, weak window] in
+                    guard let window else { return }
+                    self?.offsetTrafficLights(in: window)
+                }
+            }
+        }
     }
 
     private func configure(_ target: NSWindow) {
@@ -233,21 +255,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.setFrame(NSRect(origin: origin, size: size), display: true)
     }
 
-    /// 红绿灯往右下偏移，与自绘标题栏控件及灵动岛的 `25pt` 水平中线精确对齐。
+    /// 按侧栏形态动态定位红绿灯：
+    /// - 悬浮宽栏：与顶部玻璃卡同区对齐
+    /// - 贴边宽栏：贴近左缘并与顶栏中线对齐
+    /// - 折叠窄栏：水平居中悬于窄栏正上方，避免与窄栏圆角或右侧页面碰撞
+    /// - 隐藏边栏 / 启动页：回落标准左缘位置，右侧展开按钮与之对齐
     private func offsetTrafficLights(in window: NSWindow) {
         guard window.canBecomeMain,
             window is NSPanel == false,
             !window.styleMask.contains(.fullScreen)
         else { return }
-        // 内容贴着窗口边缘；红绿灯中线与侧栏头（卡内 4pt + 40pt 行）的中心对齐。
-        let titlebarCenterFromTop: CGFloat = 26
         let types: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
         for (index, type) in types.enumerated() {
             guard let button = window.standardWindowButton(type) else { continue }
             if trafficLightOrigins[index] == nil {
                 trafficLightOrigins[index] = button.frame.origin
             }
-            guard let origin = trafficLightOrigins[index] else { continue }
+        }
+        guard let closeOrigin = trafficLightOrigins[0] else { return }
+
+        let zoomButton = window.standardWindowButton(.zoomButton)
+        let span: CGFloat
+        if let zoomOrigin = trafficLightOrigins[2], let zoomButton {
+            span = (zoomOrigin.x - closeOrigin.x) + zoomButton.frame.width
+        } else {
+            span = 52
+        }
+
+        let state = AppState.shared
+        let isOnboarding = state.isPresentingLaunchPage || state.showsRecommendationPage
+        let targetCloseX: CGFloat
+        let titlebarCenterFromTop: CGFloat
+
+        if isOnboarding || !state.showsSidebar {
+            targetCloseX = 16
+            titlebarCenterFromTop = 24
+        } else {
+            switch state.sidebarStyle {
+            case .floating:
+                targetCloseX = 22
+                titlebarCenterFromTop = 26
+            case .edge:
+                targetCloseX = 16
+                titlebarCenterFromTop = 26
+            case .compact:
+                let railCenter = DS.Layout.sidebarInset + DS.Layout.sidebarCompactWidth / 2
+                targetCloseX = max(12, (railCenter - span / 2).rounded())
+                titlebarCenterFromTop = 24
+            }
+        }
+
+        for (index, type) in types.enumerated() {
+            guard let button = window.standardWindowButton(type),
+                let origin = trafficLightOrigins[index]
+            else { continue }
+            let dx = origin.x - closeOrigin.x
+            let targetX = targetCloseX + dx
             let targetY: CGFloat
             if let superview = button.superview,
                 let content = window.contentView,
@@ -263,7 +326,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let dy: CGFloat = button.superview?.isFlipped == true ? 9 : -9
                 targetY = origin.y + dy
             }
-            button.setFrameOrigin(NSPoint(x: origin.x + 10, y: targetY))
+            button.setFrameOrigin(NSPoint(x: targetX, y: targetY))
         }
     }
 

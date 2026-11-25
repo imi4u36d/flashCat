@@ -35,22 +35,8 @@ enum SidebarStyle: Int, CaseIterable, Identifiable, Hashable {
     }
 }
 
-/// 侧栏顶部分段器：只看全部 / 对话相关 / 控制台相关。
-/// 它只过滤侧栏自身的内容，不改当前页面。
-enum SidebarScope: String, CaseIterable, Identifiable, Hashable {
-    case all
-    case chat
-    case console
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .all: return "全部视图"
-        case .chat: return "对话模式"
-        case .console: return "控制台"
-        }
-    }
+extension Notification.Name {
+    static let flashCatSidebarLayoutChanged = Notification.Name("flashCat.sidebarLayoutChanged")
 }
 
 /// 界面上「现在在哪一页、要不要响一声」的状态：当前页、启动页、侧栏折叠与通知流。
@@ -89,10 +75,8 @@ final class UIStateStore: ObservableObject {
     /// 悬浮导航列是否显示。隐藏后主视口铺满窗口，重新显示时恢复玻璃列；
     /// 状态落盘到 UserDefaults 的 `sidebarVisible`，重启后沿用上次的样子。
     @Published var showsSidebar: Bool
-    /// 侧栏形态：悬浮玻璃卡 / 贴边 / 68pt 窄栏。落盘到 `sidebarStyle`。
+    /// 侧栏形态：悬浮玻璃卡 / 贴边 / 64pt 窄栏。落盘到 `sidebarStyle`。
     @Published var sidebarStyle: SidebarStyle
-    /// 顶部分段器的过滤范围。只影响侧栏内容，不切换当前页。
-    @Published var sidebarScope: SidebarScope = .all
     /// 窄栏展开时回到哪一副形态。窄栏自己不参与「上一次展开」，
     /// 否则会从窄栏永远回不到悬浮 / 贴边。
     private var lastExpandedSidebarStyle: SidebarStyle
@@ -190,6 +174,7 @@ final class UIStateStore: ObservableObject {
         }
         sidebarAnimUntil = Date().addingTimeInterval(0.35)
         UserDefaults.standard.set(showsSidebar, forKey: "sidebarVisible")
+        NotificationCenter.default.post(name: .flashCatSidebarLayoutChanged, object: nil)
     }
 
     /// 换一副侧栏形态。宽度、圆角与内边距都跟着这一个动画事务走，
@@ -207,6 +192,7 @@ final class UIStateStore: ObservableObject {
         }
         sidebarAnimUntil = Date().addingTimeInterval(0.4)
         UserDefaults.standard.set(style.rawValue, forKey: "sidebarStyle")
+        NotificationCenter.default.post(name: .flashCatSidebarLayoutChanged, object: nil)
     }
 
     /// 头部那枚按钮：展开时收成窄栏，窄栏时回到上一次的展开形态。
@@ -218,25 +204,16 @@ final class UIStateStore: ObservableObject {
         }
     }
 
-    func setSidebarScope(_ scope: SidebarScope) {
-        guard scope != sidebarScope else { return }
-        withAnimation(.smooth(duration: 0.24)) {
-            sidebarScope = scope
-        }
-    }
-
-    /// 把焦点送进「最近对话」搜索框。窄栏会先展开，控制台范围会切回全部，
-    /// 侧栏被隐藏时也会重新出现——这个动作只服务一个目的：立刻能搜。
+    /// 把焦点送进「最近对话」搜索框。窄栏会先展开，侧栏被隐藏时也会重新出现——
+    /// 这个动作只服务一个目的：立刻能搜。
     func focusChatSearch() {
         if !showsSidebar {
             showsSidebar = true
             UserDefaults.standard.set(true, forKey: "sidebarVisible")
+            NotificationCenter.default.post(name: .flashCatSidebarLayoutChanged, object: nil)
         }
         if sidebarStyle == .compact {
             setSidebarStyle(lastExpandedSidebarStyle)
-        }
-        if sidebarScope == .console {
-            setSidebarScope(.all)
         }
         chatSearchFocusTick += 1
     }

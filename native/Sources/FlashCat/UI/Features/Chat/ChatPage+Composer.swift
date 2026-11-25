@@ -18,8 +18,8 @@ extension ChatPage {
     /// 未聚焦且草稿为空时只留一行高度；光标进来或已有内容才长到可写多行。
     /// 卡片因此是「安静时矮、要写字时高」，而不是一直占着一块空白。
     var composerFieldHeight: CGFloat {
-        if composerFocused || !draft.isEmpty || hasAttachedMedia { return 40 }
-        return 22
+        if composerFocused || !draft.isEmpty || hasAttachedMedia { return 44 }
+        return 24
     }
 
     var editBanner: some View {
@@ -234,22 +234,42 @@ extension ChatPage {
 
                 sendStopButton
             }
-            // 第一个控件的字形与正文左缘对齐。
-            .padding(.leading, -6)
+            // 第一个控件的字形与正文左缘协调。
+            .padding(.leading, -4)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.top, 13)
+        .padding(.bottom, 10)
         .background {
             DS.rect(22)
-                .fill(colorScheme == .dark ? DS.raised : DS.surface)
+                .fill(DS.floating)
         }
         .overlay {
-            DS.rect(22).strokeBorder(DS.line, lineWidth: 1)
+            if composerFocused {
+                DS.rect(22)
+                    .strokeBorder(DS.accent.opacity(0.52), lineWidth: 1)
+                    .overlay {
+                        DS.rect(23)
+                            .strokeBorder(DS.accent.opacity(0.14), lineWidth: 2.5)
+                            .padding(-1)
+                    }
+            } else {
+                DS.rect(22)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [DS.glassSpecular, DS.glassBorder],
+                            startPoint: .top,
+                            endPoint: .bottom),
+                        lineWidth: 1)
+            }
         }
         .shadow(
-            color: Color.black.opacity(colorScheme == .dark ? 0.28 : 0.06),
-            radius: 14, y: 4
+            color: DS.glassShadow.opacity(composerFocused ? 1.0 : 0.78),
+            radius: composerFocused ? 20 : 14,
+            x: 0,
+            y: composerFocused ? 8 : 5
         )
+        .animation(reduceMotion ? nil : DS.Motion.snappy, value: composerFocused)
         .contentShape(DS.rect(22))
         .onTapGesture { focusComposer() }
         .overlay {
@@ -297,11 +317,11 @@ extension ChatPage {
         }
     }
 
-    /// Splash 的发送键：一个实心圆，能发时用强调色，不能发时退成灰底；
-    /// 生成中原地变成停止键。
+    /// 发送 / 停止圆钮：能发时用强调色并带轻微投影，生成中原地变成高对比停止键。
     var sendStopButton: some View {
         let streaming = chat.generating
         let enabled = streaming || canSend
+        let stopFill = Color.glass(light: 0xDC2626, dark: 0xEF4444, studio: 0xDC2626)
         return Button {
             if streaming {
                 state.cancelGeneration()
@@ -312,17 +332,30 @@ extension ChatPage {
             Image(systemName: streaming ? "stop.fill" : "arrow.up")
                 .font(
                     .system(
-                        size: streaming ? 9.5 : 12.5,
-                        weight: streaming ? .bold : .semibold)
+                        size: streaming ? 10 : 13,
+                        weight: .semibold)
                 )
                 .foregroundStyle(enabled ? Color.white : DS.text3)
-                .frame(width: 28, height: 28)
-                .background(
-                    Circle().fill(enabled ? DS.accent : DS.hover)
+                .frame(width: 30, height: 30)
+                .background {
+                    Circle().fill(
+                        streaming ? stopFill : (enabled ? DS.accent : DS.pillFill)
+                    )
+                }
+                .overlay {
+                    if !enabled {
+                        Circle().strokeBorder(DS.line, lineWidth: 1)
+                    }
+                }
+                .shadow(
+                    color: (!streaming && enabled) ? DS.accent.opacity(0.28) : .clear,
+                    radius: 6,
+                    x: 0,
+                    y: 2
                 )
                 .contentShape(Circle())
         }
-        .buttonStyle(.plainHit)
+        .buttonStyle(DSPressStyle(scale: 0.94))
         .disabled(!enabled)
         .help(streaming ? "停止生成 (Esc)" : "发送（回车）· ⇧回车换行")
         .accessibilityLabel(streaming ? L10n.t("停止生成") : L10n.t("发送"))

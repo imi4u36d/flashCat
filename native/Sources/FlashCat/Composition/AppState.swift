@@ -203,10 +203,9 @@ final class AppState: ObservableObject {
         get { ui.showsSidebar }
         set { ui.showsSidebar = newValue }
     }
-    /// 侧栏形态与顶部分段器的过滤范围。视图读这里，改动走带持久化 / 动画的
+    /// 侧栏形态。视图读这里，改动走带持久化 / 动画的
     /// 方法，别直接写 `ui`。
     var sidebarStyle: SidebarStyle { ui.sidebarStyle }
-    var sidebarScope: SidebarScope { ui.sidebarScope }
     /// 会话搜索框的聚焦请求计数；侧栏用它把键盘焦点送进搜索框。
     var chatSearchFocusTick: Int { ui.chatSearchFocusTick }
     /// 侧栏动画截止时刻：只是调度信息，不进 `objectWillChange`。
@@ -834,8 +833,6 @@ final class AppState: ObservableObject {
     func setSidebarStyle(_ style: SidebarStyle) { ui.setSidebarStyle(style) }
 
     func toggleSidebarCompact() { ui.toggleSidebarCompact() }
-
-    func setSidebarScope(_ scope: SidebarScope) { ui.setSidebarScope(scope) }
 
     func focusChatSearch() { ui.focusChatSearch() }
 }

@@ -75,9 +75,9 @@ enum Console {
     static let contentBottomInset: CGFloat = DS.Space.xxl
     /// 页面顶栏（无全局标题栏占位，紧贴顶部窗口区域，与红绿灯保持 `25pt` 同一中线）。
     static let pageTopPadding: CGFloat = 1
-    /// 侧栏收起时页面顶部行首需避让左上角红绿灯与折叠按钮（右侧止于 `118pt`，留 `16pt` 间距）。
+    /// 侧栏隐藏时页面顶部行首需避让左上角红绿灯与展开按钮（按钮止于 `110pt`，留 `16pt` 间距）。
     static func topBarLeading(sidebarShown: Bool, base: CGFloat = contentPadding) -> CGFloat {
-        sidebarShown ? base : max(base, 134)
+        sidebarShown ? base : max(base, 126)
     }
     /// 无顶部工具栏的纯滚动页面顶部留白：展开侧栏时紧凑贴顶，收起时让出红绿灯与折叠按钮高度。
     static func scrollTopInset(sidebarShown: Bool) -> CGFloat {

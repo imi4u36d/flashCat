@@ -81,8 +81,8 @@
       {
         "version": "0.8.3",
         "url": "omlx-0.8.3-arm64-macos15.0.tar.gz",
-        "sha256": "c803bbe66d397c333dff3c6a8ae4507b21b9505b0eaa36a78339f33a0384ddcd",
-        "bytes": 380954322,
+        "sha256": "25308c0d563c07a20990275d8fdc891ef2e064fc34b1ccb977fca51984a5db20",
+        "bytes": 377519860,
         "minMacOS": "15.0",
         "notes": ""
       },

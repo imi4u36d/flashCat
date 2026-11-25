@@ -109,7 +109,7 @@ struct ChatStageLayout: Layout {
 
         if newChat {
             let contentSize = content.sizeThatFits(ProposedViewSize(width: width, height: nil))
-            let gap: CGFloat = 20
+            let gap: CGFloat = 24
             let group = contentSize.height + gap + composerSize.height
             let room = bounds.height - group - bottom
             let top = max(0, min(room / 3, bounds.height - bottom - group))
@@ -160,7 +160,7 @@ struct ChatTitleMenu: View {
         } label: {
             HStack(spacing: 5) {
                 Text(thread.title.isEmpty ? L10n.t("新对话") : thread.title)
-                    .font(DS.Font.prose(15, weight: .medium))
+                    .font(DS.Font.prose(14.5, weight: .semibold))
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Image(systemName: "chevron.down")
@@ -168,10 +168,11 @@ struct ChatTitleMenu: View {
                     .foregroundStyle(DS.text3)
             }
             .foregroundStyle(DS.text)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(DS.rect(7).fill(hovering ? DS.hover : .clear))
-            .contentShape(DS.rect(7))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(DS.rect(9).fill(hovering ? DS.surface : .clear))
+            .overlay(DS.rect(9).strokeBorder(hovering ? DS.line : .clear, lineWidth: 1))
+            .contentShape(DS.rect(9))
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -207,8 +208,18 @@ struct ComposerIconButton: View {
                 .font(.system(size: 12.5, weight: .medium))
                 .foregroundStyle(active ? DS.accent : (hovering ? DS.text : DS.text2))
                 .frame(width: 28, height: 28)
-                .background(DS.rect(7).fill(hovering || active ? DS.hover : .clear))
-                .contentShape(DS.rect(7))
+                .background(
+                    DS.rect(8).fill(
+                        active ? DS.accentSoft : (hovering ? DS.hover : .clear)
+                    )
+                )
+                .overlay(
+                    DS.rect(8).strokeBorder(
+                        active ? DS.accent.opacity(0.28) : (hovering ? DS.line : .clear),
+                        lineWidth: 1
+                    )
+                )
+                .contentShape(DS.rect(8))
         }
         .buttonStyle(.plainHit)
         .onHover { value in
@@ -260,8 +271,8 @@ struct ChatContextRing: View {
                 .stroke(tint, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                 .rotationEffect(.degrees(-90))
         }
-        .frame(width: 14, height: 14)
-        // 环本身只有 14pt，周围留一圈命中区，悬停才容易碰到。
+        .frame(width: 15, height: 15)
+        // 环本身只有 15pt，周围留一圈命中区，悬停才容易碰到。
         .padding(5)
         .contentShape(Rectangle())
         .help(explanation)
@@ -281,9 +292,17 @@ struct LatestScrollButton: View {
             Image(systemName: "arrow.down")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(DS.text)
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(hovering ? DS.selected : DS.raised))
-                .overlay(Circle().strokeBorder(DS.line, lineWidth: 1))
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(hovering ? DS.raised : DS.floating))
+                .overlay(
+                    Circle().strokeBorder(
+                        LinearGradient(
+                            colors: [DS.glassSpecular, DS.glassBorder],
+                            startPoint: .top,
+                            endPoint: .bottom),
+                        lineWidth: 1)
+                )
+                .shadow(color: DS.glassShadow, radius: 10, x: 0, y: 4)
                 .contentShape(Circle())
         }
         .buttonStyle(.plainHit)

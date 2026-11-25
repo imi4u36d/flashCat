@@ -56,7 +56,7 @@ struct LogsPage: View {
             .background(WindowDragArea())
 
             filterRow(data)
-                .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
+                .padding(.leading, Console.contentPadding)
                 .padding(.trailing, Console.contentPadding)
 
             console(data)

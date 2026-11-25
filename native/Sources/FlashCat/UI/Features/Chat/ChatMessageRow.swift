@@ -115,15 +115,12 @@ struct MessageRow: View, Equatable {
 
     // MARK: User
 
-    private var userBubbleFill: Color {
-        DS.accent.opacity(colorScheme == .dark ? 0.17 : 0.12)
-    }
-
     private var userBody: some View {
         VStack(alignment: .trailing, spacing: 8) {
             userAttachments
 
             if !message.content.isEmpty {
+                let bubbleShape = RoundedRectangle(cornerRadius: 18, style: .continuous)
                 Text(message.content)
                     .font(DS.Font.prose(15))
                     .lineSpacing(3)
@@ -131,10 +128,34 @@ struct MessageRow: View, Equatable {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 16)
-                    .padding(.vertical, 8.5)
-                    .background(
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(userBubbleFill))
+                    .padding(.vertical, 9.5)
+                    .background {
+                        bubbleShape
+                            .fill(DS.surface.opacity(0.75))
+                            .overlay {
+                                bubbleShape.fill(
+                                    LinearGradient(
+                                        colors: [
+                                            DS.accent.opacity(colorScheme == .dark ? 0.22 : 0.14),
+                                            DS.accent.opacity(colorScheme == .dark ? 0.14 : 0.08),
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing)
+                                )
+                            }
+                            .shadow(color: DS.glassShadow.opacity(0.45), radius: 8, x: 0, y: 3)
+                    }
+                    .overlay {
+                        bubbleShape.strokeBorder(
+                            LinearGradient(
+                                colors: [
+                                    DS.glassSpecular.opacity(0.85),
+                                    DS.accent.opacity(colorScheme == .dark ? 0.30 : 0.22),
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom),
+                            lineWidth: 1)
+                    }
             }
 
             if !message.streaming {
@@ -149,7 +170,7 @@ struct MessageRow: View, Equatable {
     }
 
     private var userActionsRow: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 1) {
             MessageActionButton(
                 systemName: copied ? "checkmark" : "doc.on.doc",
                 help: copied ? L10n.t("已复制") : L10n.t("复制问题"),
@@ -164,7 +185,10 @@ struct MessageRow: View, Equatable {
                 help: L10n.t("从这里分支"),
                 action: onBranch)
         }
-        .frame(height: 20)
+        .padding(.horizontal, 4)
+        .frame(height: 24)
+        .background(Capsule().fill(DS.surface))
+        .overlay(Capsule().strokeBorder(DS.line, lineWidth: 1))
     }
 
     @ViewBuilder private var userAttachments: some View {
@@ -188,6 +212,8 @@ struct MessageRow: View, Equatable {
 
     private var assistantBody: some View {
         VStack(alignment: .leading, spacing: 10) {
+            assistantHeader
+
             if showsThinkingLine {
                 thinkingLine
             }
@@ -203,6 +229,22 @@ struct MessageRow: View, Equatable {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var assistantHeader: some View {
+        HStack(spacing: 7) {
+            ModelFamilyIcon(
+                family: ModelFamily.resolve(id: message.model ?? modelName),
+                size: 18)
+            Text(verbatim: modelName.isEmpty ? "flashCat" : modelName)
+                .font(DS.Font.prose(12, weight: .semibold))
+                .foregroundStyle(DS.text2)
+                .lineLimit(1)
+            if message.streaming {
+                DSStatusDot(color: DS.accent, live: true, size: 5)
+            }
+            Spacer(minLength: 0)
+        }
     }
 
     @ViewBuilder private var messageBody: some View {
@@ -282,56 +324,80 @@ struct MessageRow: View, Equatable {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
-    private var thinkingLine: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                guard !reasoning.isEmpty else { return }
-                withAnimation(reduceMotion ? nil : Motion.settle) {
-                    manualThinking = !isThinkingOpen
+    @ViewBuilder private var thinkingLine: some View {
+        if isThinkingOpen, !reasoning.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                thinkingToggleButton(expanded: true)
+                DSDivider().opacity(0.7)
+                reasoningBlock
+            }
+            .background(DS.rect(12).fill(DS.surface.opacity(0.65)))
+            .overlay(DS.rect(12).strokeBorder(DS.line, lineWidth: 1))
+            .clipShape(DS.rect(12))
+            .animation(reduceMotion ? nil : Motion.settle, value: isThinkingOpen)
+        } else {
+            thinkingToggleButton(expanded: false)
+                .background(
+                    Capsule().fill(
+                        hoveringToggle && !reasoning.isEmpty ? DS.raised : DS.pillFill)
+                )
+                .overlay(Capsule().strokeBorder(DS.line, lineWidth: 1))
+                .animation(reduceMotion ? nil : Motion.settle, value: isThinkingOpen)
+        }
+    }
+
+    private func thinkingToggleButton(expanded: Bool) -> some View {
+        Button {
+            guard !reasoning.isEmpty else { return }
+            withAnimation(reduceMotion ? nil : Motion.settle) {
+                manualThinking = !isThinkingOpen
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(DS.accent)
+
+                Text(thinkingVerb)
+                    .font(DS.Font.prose(12, weight: .medium))
+                    .foregroundStyle(DS.text2)
+
+                if message.streaming {
+                    ElapsedThinkingSeconds(since: message.createdAt ?? Date())
+                } else if let facts = finishedThinkingFacts {
+                    Text("·")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(DS.text4)
+                    Text(facts)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(DS.text3)
+                        .monospacedDigit()
                 }
-            } label: {
-                HStack(spacing: 4) {
+
+                if expanded {
+                    Spacer(minLength: 4)
+                }
+
+                if !reasoning.isEmpty {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(DS.text3)
                         .rotationEffect(.degrees(isThinkingOpen ? 90 : 0))
-                        .opacity(reasoning.isEmpty ? 0 : 1)
                         .frame(width: 10)
-
-                    Text(thinkingVerb)
-
-                    if message.streaming {
-                        ElapsedThinkingSeconds(since: message.createdAt ?? Date())
-                    } else if let facts = finishedThinkingFacts {
-                        Text("·").foregroundStyle(DS.text3)
-                        Text(facts).foregroundStyle(DS.text3)
-                    }
                 }
-                .font(.system(size: 12))
-                .foregroundStyle(DS.text2)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(
-                    DS.rect(7).fill(
-                        hoveringToggle && !reasoning.isEmpty ? DS.hover : .clear)
-                )
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plainHit)
-            .onHover { value in
-                withAnimation(reduceMotion ? nil : Motion.quick) { hoveringToggle = value }
-            }
-            .disabled(reasoning.isEmpty)
-            .help(reasoning.isEmpty ? "" : (isThinkingOpen ? L10n.t("收起思考") : L10n.t("展开思考")))
-            .accessibilityLabel(thinkingVerb)
-            .accessibilityValue(isThinkingOpen ? L10n.t("已展开") : L10n.t("已收起"))
-
-            if isThinkingOpen, !reasoning.isEmpty {
-                reasoningBlock
-                    .transition(.opacity)
-            }
+            .padding(.horizontal, expanded ? 12 : 10)
+            .padding(.vertical, expanded ? 7.5 : 5)
+            .contentShape(Rectangle())
         }
-        .padding(.leading, -6)
-        .animation(reduceMotion ? nil : Motion.settle, value: isThinkingOpen)
+        .buttonStyle(.plainHit)
+        .onHover { value in
+            withAnimation(reduceMotion ? nil : Motion.quick) { hoveringToggle = value }
+        }
+        .disabled(reasoning.isEmpty)
+        .help(reasoning.isEmpty ? "" : (isThinkingOpen ? L10n.t("收起思考") : L10n.t("展开思考")))
+        .accessibilityLabel(thinkingVerb)
+        .accessibilityValue(isThinkingOpen ? L10n.t("已展开") : L10n.t("已收起"))
     }
 
     private var reasoningBlock: some View {
@@ -340,7 +406,7 @@ struct MessageRow: View, Equatable {
         let latest = message.streaming && contentEmpty && manualThinking == nil
         return HStack(alignment: .top, spacing: 10) {
             RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                .fill(DS.text3.opacity(0.45))
+                .fill(DS.accent.opacity(0.45))
                 .frame(width: 2)
 
             PacedText(
@@ -366,8 +432,8 @@ struct MessageRow: View, Equatable {
                 }
             }
         }
-        .padding(.leading, 14)
-        .padding(.top, 8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
     }
 
     // MARK: Actions

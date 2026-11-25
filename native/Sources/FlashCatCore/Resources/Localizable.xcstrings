@@ -10520,6 +10520,26 @@
           }
         }
       }
+    },
+    "查看概览": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "View Overview"
+          }
+        }
+      }
+    },
+    "有什么可以帮你的？": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "How can I help you?"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

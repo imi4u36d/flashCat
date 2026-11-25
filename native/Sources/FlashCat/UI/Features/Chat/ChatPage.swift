@@ -18,6 +18,7 @@ struct ChatPage: View {
     @ObservedObject var draftStore: ChatDraftStore
 
     @State var showsParameters = false
+    @State var showsEmptyModelPicker = false
     @State var atBottom = true
     /// 用户正在主动滚动时，内容长高不再把视图拽回底部。
     @State var userScrolling = false
@@ -259,7 +260,7 @@ struct ChatPage: View {
                 ChatTitleMenu(state: state, thread: thread)
             } else if let title = restoredTitle {
                 Text(title)
-                    .font(DS.Font.prose(15, weight: .medium))
+                    .font(DS.Font.prose(14.5, weight: .semibold))
                     .foregroundStyle(DS.text)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -267,7 +268,20 @@ struct ChatPage: View {
             }
             Spacer(minLength: 0)
 
-            DSIconButton(systemName: "square.and.pencil", help: "新对话", size: 26) {
+            if !chat.messages.isEmpty {
+                ChatModelControl(
+                    state: state,
+                    chat: chat,
+                    height: 28,
+                    arrowEdge: .bottom)
+            }
+
+            DSIconButton(
+                systemName: "square.and.pencil",
+                help: "新对话",
+                size: 28,
+                style: .outlined
+            ) {
                 state.newConversation()
                 state.section = .chat
             }
@@ -277,6 +291,13 @@ struct ChatPage: View {
         .frame(height: DS.Layout.titlebarHeight)
         .padding(.top, Console.pageTopPadding)
         .background(WindowDragArea())
+        .overlay(alignment: .bottom) {
+            if !chat.messages.isEmpty {
+                Rectangle()
+                    .fill(DS.line.opacity(0.55))
+                    .frame(height: 1)
+            }
+        }
     }
 
     // MARK: Transcript
@@ -399,6 +420,15 @@ struct ChatPage: View {
             // 上面的滚动回调都挂在这个 id 里面，换会话时随旧视图退场，只对
             // 同一段对话里的增删生效。
             .id(state.currentThreadID)
+            .mask {
+                VStack(spacing: 0) {
+                    LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 16)
+                    Rectangle().fill(Color.black)
+                    LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 24)
+                }
+            }
             .overlay(alignment: .bottom) {
                 if !atBottom {
                     LatestScrollButton {
@@ -495,10 +525,14 @@ struct ChatPage: View {
                     .foregroundStyle(DS.text3)
                     .accessibilityLabel(L10n.t("关闭通知"))
                 }
-                .padding(.horizontal, 10)
-                .frame(height: 30)
-                .background(DS.rect(DS.Radius.sm).fill(DS.raised))
-                .overlay(DS.rect(DS.Radius.sm).strokeBorder(DS.line, lineWidth: 1))
+                .padding(.horizontal, 12)
+                .frame(height: 32)
+                .background(DS.rect(10).fill(DS.surface))
+                .overlay(
+                    DS.rect(10).strokeBorder(
+                        ratio >= 0.95 ? DS.warn.opacity(0.42) : DS.line,
+                        lineWidth: 1)
+                )
             }
         }
     }
@@ -542,19 +576,101 @@ struct ChatPage: View {
 
     // MARK: Empty
 
-    /// 新会话只留品牌标记与一行状态，不再摆快捷提示卡——Splash 的空态就是
-    /// 这样，让输入卡成为页面唯一的动作入口。
+    /// 新会话空态：玻璃品牌徽章、欢迎语与可交互模型 / 启动胶囊，引导聚焦输入卡。
     var emptyState: some View {
-        VStack(spacing: 0) {
-            BrandMark(size: 44)
-            Text(emptyStatusNote)
-                .font(DS.Font.prose(13))
-                .foregroundStyle(DS.text3)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .padding(.horizontal, 32)
-                .frame(height: 28)
+        VStack(spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [DS.accent.opacity(0.22), .clear],
+                            center: .center,
+                            startRadius: 4,
+                            endRadius: 56)
+                    )
+                    .frame(width: 112, height: 112)
+                    .allowsHitTesting(false)
+
+                BrandMark(size: 42)
+                    .frame(width: 66, height: 66)
+                    .background {
+                        DS.rect(20)
+                            .fill(DS.surface)
+                            .shadow(color: DS.glassShadow, radius: 14, x: 0, y: 6)
+                    }
+                    .overlay {
+                        DS.rect(20)
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [DS.glassSpecular, DS.glassBorder],
+                                    startPoint: .top,
+                                    endPoint: .bottom),
+                                lineWidth: 1)
+                    }
+            }
+            .frame(width: 66, height: 66)
+
+            Text(L10n.t("有什么可以帮你的？"))
+                .font(DS.Font.prose(22, weight: .semibold))
+                .tracking(-0.4)
+                .foregroundStyle(DS.text)
+
+            HStack(spacing: 8) {
+                Button {
+                    showsEmptyModelPicker = true
+                } label: {
+                    HStack(spacing: 7) {
+                        EngineMark(id: state.activeEngine, size: 15)
+                        DSStatusDot(color: emptyStatusTint, live: state.canChat, size: 6)
+                        Text(emptyStatusNote)
+                            .font(DS.Font.prose(12, weight: .medium))
+                            .foregroundStyle(DS.text2)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8.5, weight: .semibold))
+                            .foregroundStyle(DS.text3)
+                    }
+                    .padding(.horizontal, 11)
+                    .frame(height: 28)
+                    .dsGlassPill()
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(DSPressStyle(scale: 0.98))
+                .disabled(chat.generating)
+                .popover(isPresented: $showsEmptyModelPicker, arrowEdge: .bottom) {
+                    ModelPickerPopover(state: state) { showsEmptyModelPicker = false }
+                }
+                .help(L10n.t("切换模型"))
+
+                if !state.isRunning && !state.isModelBusy && !state.selectedModel.isEmpty {
+                    Button {
+                        state.startService()
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "play.fill")
+                                .font(.system(size: 9, weight: .semibold))
+                            Text(L10n.t("启动"))
+                                .font(DS.Font.prose(12, weight: .medium))
+                        }
+                        .foregroundStyle(DS.ok)
+                        .padding(.horizontal, 11)
+                        .frame(height: 28)
+                        .background(Capsule().fill(DS.successFill))
+                        .overlay(Capsule().strokeBorder(DS.successStroke, lineWidth: 1))
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(DSPressStyle(scale: 0.97))
+                    .help(L10n.t("启动引擎"))
+                }
+            }
         }
+    }
+
+    var emptyStatusTint: Color {
+        if state.serverState == .failed { return DS.err }
+        if state.isModelBusy { return DS.warn }
+        return state.canChat ? DS.ok : DS.text4
     }
 
     var emptyStatusNote: String {

@@ -268,10 +268,12 @@ enum DS {
 
     enum Layout {
         static let sidebarWidth: CGFloat = 260
-        /// 窄栏模式的宽度（含卡片自身的左右内边距，图标列宽 48）。
-        static let sidebarCompactWidth: CGFloat = 68
+        /// 窄栏模式的宽度（图标列居中排布）。
+        static let sidebarCompactWidth: CGFloat = 64
         /// 悬浮侧栏与窗口边缘之间的留白。
         static let sidebarInset: CGFloat = 10
+        /// 窄栏模式顶部为红绿灯保留的垂直空间，卡片从红绿灯下方起始。
+        static let sidebarCompactTopClearance: CGFloat = 46
         static let titlebarHeight: CGFloat = 48
         /// 玻璃窗口与 AppKit 窗口边缘之间的壁纸留白。
         static let windowInset: CGFloat = 10

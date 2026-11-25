@@ -49,18 +49,19 @@ struct ConsoleView: View {
         // 而深色窗口那条系统投影明显更重（见 ThemeController.apply(to:)）；
         // 皮肤改由窗口的 contentView 外观承担，SwiftUI 的 colorScheme 也跟着
         // 那一层解析，切换时和窗口一起重画，不必等激活事件。
-        // 侧栏展开时折叠按钮活在侧栏头里；收起时退回红绿灯右侧的浮层位置。
+        // 侧栏展开时折叠按钮活在侧栏头里；隐藏时退回红绿灯右侧，与各页顶栏精确对齐。
         .overlay(alignment: .topLeading) {
             if !state.showsSidebar && !isShowingOnboarding {
                 DSIconButton(
                     systemName: "sidebar.left",
                     help: "显示边栏",
+                    size: 28,
                     style: .outlined
                 ) {
                     state.toggleSidebar()
                 }
-                .padding(.leading, 90)
-                .padding(.top, 11)
+                .padding(.leading, 82)
+                .padding(.top, 10)
             }
         }
         .overlay {
@@ -147,6 +148,9 @@ struct ConsoleView: View {
         }
         .onChange(of: state.pendingThreadRename) { _, thread in
             if let thread { renameText = thread.title }
+        }
+        .onChange(of: isShowingOnboarding) { _, _ in
+            NotificationCenter.default.post(name: .flashCatSidebarLayoutChanged, object: nil)
         }
     }
 

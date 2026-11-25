@@ -295,14 +295,8 @@ struct LatestScrollButton: View {
                 .frame(width: 32, height: 32)
                 .background(Circle().fill(hovering ? DS.raised : DS.floating))
                 .overlay(
-                    Circle().strokeBorder(
-                        LinearGradient(
-                            colors: [DS.glassSpecular, DS.glassBorder],
-                            startPoint: .top,
-                            endPoint: .bottom),
-                        lineWidth: 1)
+                    Circle().strokeBorder(DS.line2, lineWidth: 1)
                 )
-                .shadow(color: DS.glassShadow, radius: 10, x: 0, y: 4)
                 .contentShape(Circle())
         }
         .buttonStyle(.plainHit)

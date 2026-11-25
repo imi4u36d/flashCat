@@ -197,15 +197,11 @@ final class AppState: ObservableObject {
     var islandNotices: [IslandNotice] { ui.islandNotices }
     /// 尚未查看过的通知数量。
     var islandUnread: Int { ui.islandUnread }
-    /// 悬浮导航列是否显示。隐藏后主视口铺满窗口，重新显示时恢复玻璃列；
-    /// 状态落盘到 UserDefaults 的 `sidebarVisible`，重启后沿用上次的样子。
+    /// 侧栏是否显示。视图读这里，改动走带持久化的方法，别直接写 `ui`。
     var showsSidebar: Bool {
         get { ui.showsSidebar }
         set { ui.showsSidebar = newValue }
     }
-    /// 侧栏形态。视图读这里，改动走带持久化 / 动画的
-    /// 方法，别直接写 `ui`。
-    var sidebarStyle: SidebarStyle { ui.sidebarStyle }
     /// 会话搜索框的聚焦请求计数；侧栏用它把键盘焦点送进搜索框。
     var chatSearchFocusTick: Int { ui.chatSearchFocusTick }
     /// 侧栏动画截止时刻：只是调度信息，不进 `objectWillChange`。
@@ -321,14 +317,11 @@ final class AppState: ObservableObject {
         // 视图只订阅 AppState：每个 store / 编排对象的发布都要桥回来，否则数值
         // 在变而页面不重绘。八个 owner 分别是指标、下载中心、Hub 浏览、对话会话、
         // 引擎会话、模型库、界面状态、日志流。放在 init 末尾：前面的赋值不该触发重绘。
-        metricsBridge = makeBridge(metrics)
         downloadsBridge = makeBridge(downloads)
-        hubBridge = makeBridge(hub)
         chatSessionBridge = makeBridge(chatSession)
         engineSessionBridge = makeBridge(engineSession)
         modelLibraryBridge = makeBridge(modelLibrary)
         uiBridge = makeBridge(ui)
-        logFeedBridge = makeBridge(logFeed)
         makeTuningObserver()
         // 编排层是装配链的最后一环：等 hook 和桥都接好再把 `self` 交过去，
         // 否则构造期间的回调会摸到一个还没装配完的 AppState。
@@ -442,19 +435,15 @@ final class AppState: ObservableObject {
     // AppState 只把界面已经读惯的名字转过去，所以视图层一行都不用改。
     // 好处是这些读数变化时不再连带动整棵 AppState 状态树重绘。
 
-    /// 指标状态机。它的 `objectWillChange` 在 `init` 里桥到 AppState 自己的。
+    /// 指标状态机。直接由 `OverviewPage` 与 `MenuBarPanel` 观察，避免每秒采样驱动整页重绘。
     let metrics = MetricsStore()
 
-    /// store 的发布桥回 `objectWillChange`。视图仍然是 `@ObservedObject var state`，
-    /// 桥断了数值虽然在变，页面却不会重画——这是搬移里最容易漏的一根线。
-    private var metricsBridge: AnyCancellable?
+    /// store 的发布桥回 `objectWillChange`（仅低频业务状态；metrics/hub/logFeed 由消费视图直接观察）。
     private var downloadsBridge: AnyCancellable?
-    private var hubBridge: AnyCancellable?
     private var modelLibraryBridge: AnyCancellable?
     private var engineSessionBridge: AnyCancellable?
     private var chatSessionBridge: AnyCancellable?
     private var uiBridge: AnyCancellable?
-    private var logFeedBridge: AnyCancellable?
 
     var throughput: [ThroughputSample] { metrics.throughput }
     var acceptance: [ThroughputSample] { metrics.acceptance }
@@ -468,6 +457,7 @@ final class AppState: ObservableObject {
     var gatewayContextTokens: Int { metrics.gatewayContextTokens }
     var gatewayContextIsLive: Bool { metrics.gatewayContextIsLive }
     var throughputFrozenAt: Date? { metrics.throughputFrozenAt }
+    var chartEmptyIsNonStreamed: Bool { metrics.chartEmptyIsNonStreamed }
 
     /// 读数入口由 `MetricsStore` 统一给出（纯网关口径）。
     var decodeReading: MetricReading { metrics.decodeReading(isRunning: isRunning) }
@@ -499,8 +489,17 @@ final class AppState: ObservableObject {
         MetricsStore.reading(origin: origin, gateway: gateway)
     }
 
-    nonisolated static func prefillReading(gateway: Double) -> MetricReading {
-        MetricsStore.prefillReading(gateway: gateway)
+    nonisolated static func prefillReading(
+        gateway: Double,
+        engine: Double? = nil,
+        engineKind: EngineRateKind = .none,
+        isLive: Bool = false
+    ) -> MetricReading {
+        MetricsStore.prefillReading(
+            gateway: gateway,
+            engine: engine,
+            engineKind: engineKind,
+            isLive: isLive)
     }
 
     nonisolated static func ttftReading(gateway: Double) -> TTFTReading {
@@ -606,6 +605,8 @@ final class AppState: ObservableObject {
     func libraryRecommendations(for engine: EngineID) -> [ModelRecommendation] {
         modelOps.libraryRecommendations(for: engine)
     }
+
+    var installedModelCount: Int { modelOps.installedModelCount }
 
     func libraryEntries(for engine: EngineID) -> [ModelLibraryEntry] {
         modelOps.libraryEntries(for: engine)
@@ -806,6 +807,16 @@ final class AppState: ObservableObject {
 
     func finishTermination() { modelOps.finishTermination() }
 
+    /// 在 Finder 中打开指定引擎的模型目录（若尚未创建则退回模型根目录）。
+    func revealModelFolder(for engine: EngineID) {
+        let path = EnginePaths.modelsDirectory(engine)
+        if FileManager.default.fileExists(atPath: path) {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+        } else {
+            NSWorkspace.shared.open(URL(fileURLWithPath: EnginePaths.modelsRoot))
+        }
+    }
+
     /// 复制到剪贴板并顺带提示一次；提示本身走 `UIStateStore`，视图不必自己弹。
     func copy(_ text: String, label: String = "已复制") { ui.copy(text, label: label) }
 
@@ -828,11 +839,9 @@ final class AppState: ObservableObject {
 
     func clearIslandNotices() { ui.clearIslandNotices() }
 
+    func setShowsSidebar(_ visible: Bool) { ui.setShowsSidebar(visible) }
+
     func toggleSidebar() { ui.toggleSidebar() }
-
-    func setSidebarStyle(_ style: SidebarStyle) { ui.setSidebarStyle(style) }
-
-    func toggleSidebarCompact() { ui.toggleSidebarCompact() }
 
     func focusChatSearch() { ui.focusChatSearch() }
 }

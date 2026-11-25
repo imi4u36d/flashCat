@@ -13,6 +13,7 @@ import SwiftUI
 /// 看得见，出问题时反而先多一步。
 struct LogsPage: View {
     @ObservedObject var state: AppState
+    @ObservedObject var logFeed: LogFeedService
     @State private var source: LogFeedSource = .all
     @State private var level: LogsFilter = .all
     @State private var query = ""
@@ -22,6 +23,29 @@ struct LogsPage: View {
     @State private var frozen: [LogFeedEntry] = []
     @State private var expanded: Set<String> = []
     @State private var confirmingClear = false
+    @State private var cachedDigest: LogsDigest?
+    @State private var isWide = true
+
+    private struct DigestTrigger: Equatable {
+        let lastID: Int?
+        let count: Int
+        let revision: Int
+        let source: LogFeedSource
+        let level: LogsFilter
+        let query: String
+        let paused: Bool
+    }
+
+    private var digestTrigger: DigestTrigger {
+        DigestTrigger(
+            lastID: logFeed.logs.last?.id,
+            count: logFeed.logs.count,
+            revision: logFeed.logsRevision,
+            source: effectiveSource,
+            level: level,
+            query: appliedQuery,
+            paused: paused)
+    }
 
     /// 选中的引擎被卸载后回落到「全部日志」：菜单里已经没有这一项了。
     private var effectiveSource: LogFeedSource {
@@ -31,14 +55,15 @@ struct LogsPage: View {
 
     private func display() -> LogsDigest {
         LogsDigest.make(
-            from: paused ? frozen : state.logEntries(for: effectiveSource),
+            from: paused ? frozen : logFeed.logEntries(for: effectiveSource),
             level: level,
             query: appliedQuery)
     }
 
     var body: some View {
-        let data = display()
-        VStack(alignment: .leading, spacing: 10) {
+        let data = cachedDigest ?? display()
+        let horizontal = Console.pageHorizontalPadding(compact: !isWide)
+        VStack(alignment: .leading, spacing: Console.pageSectionGap) {
             DSPageHeader(
                 title: "日志",
                 subtitle: L10n.t(effectiveSource.title),
@@ -49,21 +74,30 @@ struct LogsPage: View {
             ) {
                 actionButtons(data)
             }
-            .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
-            .padding(.trailing, Console.contentPadding)
-            .padding(.top, Console.pageTopPadding)
-            .padding(.bottom, 2)
+            .padding(.horizontal, horizontal)
+            .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
             .background(WindowDragArea())
 
             filterRow(data)
-                .padding(.leading, Console.contentPadding)
-                .padding(.trailing, Console.contentPadding)
+                .padding(.horizontal, horizontal)
 
             console(data)
-                .padding(.horizontal, Console.contentPadding)
+                .padding(.horizontal, horizontal)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onGeometryChange(for: Bool.self) { proxy in
+            proxy.size.width >= Console.compactContentWidth
+        } action: { wide in
+            isWide = wide
         }
         .dsPageColumn()
         .padding(.bottom, Console.contentBottomInset)
+        .onAppear {
+            cachedDigest = display()
+        }
+        .onChange(of: digestTrigger) { _, _ in
+            cachedDigest = display()
+        }
         .task(id: query) {
             if query == appliedQuery { return }
             try? await Task.sleep(nanoseconds: 200_000_000)
@@ -75,6 +109,7 @@ struct LogsPage: View {
                 state.clearLogs(for: effectiveSource)
                 frozen = []
                 expanded = []
+                cachedDigest = display()
             }
             Button(L10n.t("取消"), role: .cancel) {}
         } message: {
@@ -132,7 +167,7 @@ struct LogsPage: View {
                     paused = false
                     frozen = []
                 } else {
-                    frozen = state.logEntries(for: effectiveSource)
+                    frozen = logFeed.logEntries(for: effectiveSource)
                     paused = true
                 }
             } label: {
@@ -298,8 +333,8 @@ struct LogsPage: View {
                     }
                 }
             }
-            .dsSurface(radius: DS.Radius.lg)
-            .clipShape(DS.rect(DS.Radius.lg))
+            .dsSurface(radius: DS.Radius.card)
+            .clipShape(DS.rect(DS.Radius.card))
             .frame(maxHeight: .infinity)
         }
     }

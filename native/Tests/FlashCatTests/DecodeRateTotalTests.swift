@@ -71,11 +71,40 @@ final class DecodeRateTotalTests: XCTestCase {
 
     // MARK: 预填充格
 
-    /// 预填充统一只认网关按请求算出的实测值（LAST），不再读取引擎自报字段。
+    /// 预填充优先级：引擎实时预填充（LIVE）→ 请求进行中且引擎刚完成预填充批次（LAST）→
+    /// 网关逐请求实测（LAST）→ 引擎 LAST / AVG 兜底。
     func testPrefillUsesGatewayMeasurementOnly() {
         let reading = AppState.prefillReading(gateway: 1_800)
         XCTAssertEqual(reading.origin, .gatewayLast)
         XCTAssertEqual(reading.value ?? 0, 1_800, accuracy: 0.001)
+
+        // 正在预填充时，引擎 1 Hz LIVE 读数优先于上一轮的网关终值。
+        let live = AppState.prefillReading(
+            gateway: 1_800, engine: 3_200, engineKind: .live, isLive: true)
+        XCTAssertEqual(live.origin, .engineLive)
+        XCTAssertEqual(live.value ?? 0, 3_200, accuracy: 0.001)
+
+        // 请求进入解码阶段、末帧 usage 尚未到达时，引擎刚完成的预填充批次立即顶上。
+        let inFlightBatch = AppState.prefillReading(
+            gateway: 1_800, engine: 3_640, engineKind: .lastRequest, isLive: true)
+        XCTAssertEqual(inFlightBatch.origin, .engineLast)
+        XCTAssertEqual(inFlightBatch.value ?? 0, 3_640, accuracy: 0.001)
+
+        // 请求结束后优先网关逐请求实测；网关无样本时才退回引擎 LAST / AVG。
+        let settled = AppState.prefillReading(
+            gateway: 1_800, engine: 3_640, engineKind: .lastRequest, isLive: false)
+        XCTAssertEqual(settled.origin, .gatewayLast)
+        XCTAssertEqual(settled.value ?? 0, 1_800, accuracy: 0.001)
+
+        let fallbackLast = AppState.prefillReading(
+            gateway: 0, engine: 3_640, engineKind: .lastRequest, isLive: false)
+        XCTAssertEqual(fallbackLast.origin, .engineLast)
+        XCTAssertEqual(fallbackLast.value ?? 0, 3_640, accuracy: 0.001)
+
+        let fallbackMean = AppState.prefillReading(
+            gateway: 0, engine: 2_100, engineKind: .lifetimeMean, isLive: false)
+        XCTAssertEqual(fallbackMean.origin, .engineMean)
+        XCTAssertEqual(fallbackMean.value ?? 0, 2_100, accuracy: 0.001)
 
         XCTAssertEqual(AppState.prefillReading(gateway: 0), .none)
         XCTAssertEqual(AppState.prefillReading(gateway: -1), .none)

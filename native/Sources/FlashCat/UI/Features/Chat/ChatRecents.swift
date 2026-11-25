@@ -90,7 +90,7 @@ struct ChatThreadRow: View {
                 .frame(height: 28)
                 .background {
                     if active {
-                        SidebarLens(radius: DS.Radius.sm)
+                        shape.fill(DS.selected)
                     } else if hovering {
                         shape.fill(DS.hover)
                     }
@@ -161,7 +161,7 @@ struct ChatThreadRow: View {
 /// 把目光挪到侧栏。
 struct ChatHistoryButton: View {
     @ObservedObject var state: AppState
-    @ObservedObject var chat: ChatStore
+    let chat: ChatStore
 
     @State private var open = false
 

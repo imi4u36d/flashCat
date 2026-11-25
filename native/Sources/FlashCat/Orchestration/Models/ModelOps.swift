@@ -38,12 +38,13 @@ final class ModelOps {
     /// 启动前补件期间为真：那段时间的下载收尾不能再另起一次切模型。
     private var supplementInFlight = false
 
-    /// 模型目录扫描的短缓存。`libraryEntries(for:)` 会被侧栏计数、模型页、
-    /// 选择器等视图在每次重绘时调用；以前每秒的指标刷新都会触发多次目录枚举
-    /// 与 JSON 读取。这里缓存 1 秒，下载/删除/重新加载时立即失效。
+    /// 模型目录扫描的缓存。`libraryEntries(for:)` 会被侧栏计数、模型页、
+    /// 选择器等视图在每次重绘时调用；15 秒 TTL 避免每秒指标刷新触发主线程目录扫描，
+    /// 下载/删除/重新加载时仍会立即失效。
     /// 引擎侧那份同名缓存在 `EngineCoordinator` 手里，共用这一档 TTL。
-    static let modelListTTL: TimeInterval = 1.0
+    static let modelListTTL: TimeInterval = 15.0
     private var libraryEntriesCache: [EngineID: (entries: [ModelLibraryEntry], at: Date)] = [:]
+    private var installedModelCountCache: (count: Int, at: Date)?
 
     init(
         settings: AppSettings,
@@ -60,6 +61,7 @@ final class ModelOps {
     /// 模型库清单的扫描缓存：和引擎那份一起在下载 / 删除 / 重扫时失效。
     func invalidateLibraryCache() {
         libraryEntriesCache.removeAll()
+        installedModelCountCache = nil
     }
 
     // MARK: - store 转发（状态不复制，只转发）
@@ -217,6 +219,22 @@ final class ModelOps {
     /// list, MTPLX's official catalog. oMLX and MLX-Serve ship none.
     func libraryRecommendations(for engine: EngineID) -> [ModelRecommendation] {
         ModelRecommendations.list(for: engine)
+    }
+
+    var installedModelCount: Int {
+        if let hit = installedModelCountCache,
+            Date().timeIntervalSince(hit.at) < Self.modelListTTL
+        {
+            return hit.count
+        }
+        let count = Set(
+            EngineCatalog.allIDs
+                .flatMap { libraryEntries(for: $0) }
+                .filter(\.installed)
+                .map { ModelSharing.canonical($0.model.id) }
+        ).count
+        installedModelCountCache = (count, Date())
+        return count
     }
 
     /// Installed weights plus the engine's suggestions as one grid — the same

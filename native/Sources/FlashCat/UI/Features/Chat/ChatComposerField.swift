@@ -18,6 +18,7 @@ struct ChatComposerField: NSViewRepresentable {
     @Binding var text: String
     @Binding var isFocused: Bool
     var isEnabled: Bool
+    var isActive: Bool = true
     /// 当前草稿属于哪段会话。切会话时即使两段草稿文字相同，也把视图里的
     /// 编辑历史与选区重置，避免一段会话的撤销改到另一段。
     var conversation: String = ""
@@ -107,12 +108,14 @@ struct ChatComposerField: NSViewRepresentable {
         textView.string = text
         context.coordinator.lastReportedText = text
         context.coordinator.syncHeight()
+        container.isHidden = !isActive
         return container
     }
 
     func updateNSView(_ nsView: ComposerContainer, context: Context) {
         let coordinator = context.coordinator
         coordinator.parent = self
+        nsView.isHidden = !isActive
 
         let textView = nsView.textView
         textView.isEditable = isEnabled
@@ -141,11 +144,22 @@ struct ChatComposerField: NSViewRepresentable {
 
         // 只负责把「要聚焦」这件事落地。反向（草稿不再聚焦就辞职第一响应者）
         // 不接管：焦点只由用户和 AppKit 决定，免得组字中途被抢走。
+        // 但页面隐藏时必须交出第一响应者，避免不可见的 NSTextView 抢走其他页面的键盘输入。
         guard let window = nsView.window else { return }
+        if !isActive {
+            if window.firstResponder === textView {
+                DispatchQueue.main.async {
+                    if textView.window?.firstResponder === textView {
+                        textView.window?.makeFirstResponder(nil)
+                    }
+                }
+            }
+            return
+        }
         if isFocused, window.firstResponder !== textView {
             // 不在更新过程中改第一响应者，等这一步结束。
             DispatchQueue.main.async {
-                guard textView.window != nil else { return }
+                guard textView.window != nil, coordinator.parent.isActive else { return }
                 textView.window?.makeFirstResponder(textView)
             }
         }

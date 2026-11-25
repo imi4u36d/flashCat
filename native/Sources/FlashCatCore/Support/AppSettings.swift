@@ -238,10 +238,8 @@ package final class AppSettings {
     /// Which skin the console wears. `.system` follows the macOS appearance.
     package var appearance: AppAppearance {
         get {
-            guard let raw = defaults.object(forKey: "appearance") as? Int,
-                let value = AppAppearance(rawValue: raw)
-            else { return .system }
-            return value
+            guard let raw = defaults.object(forKey: "appearance") as? Int else { return .system }
+            return AppAppearance.normalized(rawValue: raw)
         }
         set { defaults.set(newValue.rawValue, forKey: "appearance") }
     }

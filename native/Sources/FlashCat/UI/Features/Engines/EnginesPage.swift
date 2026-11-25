@@ -16,30 +16,12 @@ struct EnginesPage: View {
     @ObservedObject var state: AppState
     @ObservedObject var installs: EngineInstallCenter
 
-    private enum Filter: String, CaseIterable, Identifiable {
-        case all
-        case installed
-        case mlx
-        case gguf
-
-        var id: String { rawValue }
-
-        var label: String {
-            switch self {
-            case .all: return "全部"
-            case .installed: return "已安装"
-            case .mlx: return "支持 MLX"
-            case .gguf: return "支持 GGUF"
-            }
-        }
-    }
-
     @State private var configuring: EngineID?
     @State private var pendingRemoval: EngineID?
     @State private var gridColumns = 0
     @State private var refreshing = false
     @State private var hoveringEngine: EngineID?
-    @State private var filter: Filter = .all
+    @State private var isWide = true
 
     private static let cardMinWidth: CGFloat = 400
     private static let cardSpacing: CGFloat = 14
@@ -52,51 +34,31 @@ struct EnginesPage: View {
         state.isRunning ? 1 : 0
     }
 
-    private var filteredEngines: [EngineID] {
-        EngineCatalog.allIDs.filter { id in
-            switch filter {
-            case .all: return true
-            case .installed: return state.engineIsInstalled(id)
-            case .mlx: return id.modelFormats.contains(.mlx)
-            case .gguf: return id.modelFormats.contains(.gguf)
-            }
-        }
-    }
-
-    private var installedEngines: [EngineID] {
-        EngineCatalog.allIDs.filter { state.engineIsInstalled($0) }
-    }
-
     private var activeBusy: Bool {
         let phase = installs.phases[state.activeEngine] ?? .idle
         return phase.isBusy || installs.building == state.activeEngine
     }
 
-    /// 引擎实际加载的模型。优先用应用选中的模型；用户绕过界面、由网关
-    /// 直接热加载时，退回引擎上报的 model，避免主卡显示「未选择模型」。
     private var loadedModelID: String {
         if !state.selectedModel.isEmpty { return state.selectedModel }
         return state.stats?.model ?? ""
     }
 
     var body: some View {
+        let horizontal = Console.pageHorizontalPadding(compact: !isWide)
         VStack(alignment: .leading, spacing: 0) {
-            header
+            header(horizontal: horizontal)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    runtimeSection
+                VStack(alignment: .leading, spacing: Console.pageSectionGap) {
+                    if state.isRunning {
+                        runtimeSection
+                    }
                     catalogSection
-                    EngineMatrixCard(
-                        installed: Set(installedEngines),
-                        active: state.engineIsInstalled(state.activeEngine)
-                            ? state.activeEngine : nil,
-                        running: state.isRunning)
                 }
-                .padding(.horizontal, Console.contentPadding)
-                .padding(.top, 12)
+                .padding(.horizontal, horizontal)
+                .padding(.top, 4)
                 .padding(.bottom, Console.contentBottomInset)
-                .dsPageColumn()
             }
             .scrollIndicators(.never)
             .dsTrackColumns(
@@ -104,6 +66,12 @@ struct EnginesPage: View {
                 minWidth: Self.cardMinWidth,
                 spacing: Self.cardSpacing,
                 maxColumns: 2)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onGeometryChange(for: Bool.self) { proxy in
+            proxy.size.width >= Console.compactContentWidth
+        } action: { wide in
+            isWide = wide
         }
         .dsPageColumn()
         .task {
@@ -144,30 +112,31 @@ struct EnginesPage: View {
 
     // MARK: - Header
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) {
+    private func header(horizontal: CGFloat) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                headerIdentity
+                Spacer(minLength: 12)
+                headerControls
+            }
+            .frame(height: Console.pageHeaderHeight)
+
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(spacing: 8) {
                     headerIdentity
-                    Spacer(minLength: 10)
-                    headerControls
+                    Spacer(minLength: 0)
                 }
-                VStack(alignment: .leading, spacing: 9) {
-                    headerIdentity
+                .frame(minHeight: Console.pageHeaderHeight)
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
                     headerControls
                 }
             }
         }
-        .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
-        .padding(.trailing, Console.contentPadding)
-        .padding(.top, Console.pageTopPadding)
+        .padding(.horizontal, horizontal)
+        .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
         .padding(.bottom, 10)
         .background(WindowDragArea())
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(DS.line)
-                .frame(height: 1)
-        }
     }
 
     private var headerIdentity: some View {
@@ -212,50 +181,27 @@ struct EnginesPage: View {
     }
 
     private var headerControls: some View {
-        HStack(spacing: 8) {
-            filterBar
-            refreshButton
-        }
-        .fixedSize()
-    }
-
-    private var filterBar: some View {
-        HStack(spacing: 2) {
-            ForEach(Filter.allCases) { item in
-                EngineFilterButton(
-                    title: item.label,
-                    selected: filter == item
-                ) {
-                    guard filter != item else { return }
-                    withAnimation(DS.Motion.smooth) {
-                        filter = item
-                    }
-                }
-            }
-        }
-        .padding(2)
-        .background(Capsule().fill(DS.pillFill))
-        .overlay(Capsule().strokeBorder(DS.pillBorder, lineWidth: 1))
+        refreshButton
     }
 
     private var refreshButton: some View {
         Button(action: refreshEngines) {
-            Image(systemName: "arrow.clockwise")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(refreshing ? DS.accent : DS.text2)
-                .rotationEffect(.degrees(refreshing ? 360 : 0))
-                .animation(
-                    refreshing
-                        ? .linear(duration: 0.9).repeatForever(autoreverses: false)
-                        : .easeOut(duration: 0.2),
-                    value: refreshing
-                )
-                .frame(width: 28, height: 28)
-                .background(DS.rect(DS.Radius.md).fill(DS.surface))
-                .overlay(
-                    DS.rect(DS.Radius.md)
-                        .strokeBorder(refreshing ? DS.accent.opacity(0.4) : DS.line2, lineWidth: 1))
-                .contentShape(DS.rect(DS.Radius.md))
+            Group {
+                if refreshing {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(DS.text2)
+                }
+            }
+            .frame(width: 28, height: 28)
+            .background(DS.rect(DS.Radius.md).fill(DS.surface))
+            .overlay(
+                DS.rect(DS.Radius.md)
+                    .strokeBorder(refreshing ? DS.accent.opacity(0.4) : DS.line2, lineWidth: 1))
+            .contentShape(DS.rect(DS.Radius.md))
         }
         .buttonStyle(DSPressStyle())
         .disabled(refreshing)
@@ -265,99 +211,41 @@ struct EnginesPage: View {
 
     // MARK: - Runtime hero
 
-    @ViewBuilder
     private var runtimeSection: some View {
-        if state.isRunning {
-            EngineRuntimeCard(
-                engine: state.activeEngine,
-                version: installedVersion(state.activeEngine).map(versionText),
-                status: state.serverState,
-                port: state.port,
-                modelName: loadedModelID.isEmpty
-                    ? "" : state.shortModelName(loadedModelID),
-                modelID: loadedModelID,
-                stats: state.stats,
-                decodeRate: state.averageDecodeReading.value ?? 0,
-                busy: activeBusy,
-                actions: EngineRuntimeCard.Actions(
-                    configure: { configuring = state.activeEngine },
-                    logs: { state.section = .logs },
-                    restart: { state.restartService() },
-                    stop: { state.toggleService() },
-                    copyEndpoint: {
-                        state.copy(
-                            "127.0.0.1:\(state.port)",
-                            label: L10n.format("%@ 监听端点已复制", state.activeEngine.displayName))
-                    }
-                )
+        EngineRuntimeStrip(
+            engine: state.activeEngine,
+            version: installedVersion(state.activeEngine).map(versionText),
+            status: state.serverState,
+            port: state.port,
+            modelName: loadedModelID.isEmpty ? "" : state.shortModelName(loadedModelID),
+            busy: activeBusy,
+            actions: EngineRuntimeStrip.Actions(
+                configure: { configuring = state.activeEngine },
+                logs: { state.section = .logs },
+                restart: { state.restartService() },
+                stop: { state.toggleService() },
+                copyEndpoint: {
+                    state.copy(
+                        "127.0.0.1:\(state.port)",
+                        label: L10n.format("%@ 监听端点已复制", state.activeEngine.displayName))
+                }
             )
-        } else {
-            EngineIdleRuntimeCard(
-                installed: installedEngines,
-                active: state.activeEngine,
-                hasSelection: !state.selectedModel.isEmpty,
-                switching: state.isSwitchingModel,
-                failureMessage: state.failureMessage,
-                start: startEngine
-            )
-        }
+        )
     }
 
     // MARK: - Catalog
 
     private var catalogSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text(L10n.t("可用推理引擎"))
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(DS.text2)
-                Text(L10n.format("%lld 项", Int64(filteredEngines.count)))
-                    .font(DS.Font.mono(10.5))
-                    .foregroundStyle(DS.text4)
-                    .monospacedDigit()
-                Spacer(minLength: 8)
-                Text(L10n.t("支持原生 Apple Silicon Metal 加速 · 单引擎独占显存调度"))
-                    .font(.system(size: 11))
-                    .foregroundStyle(DS.text4)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-
-            if filteredEngines.isEmpty {
-                emptyCatalog
-            } else {
-                DSAnimatedGrid(
-                    columns: gridColumns,
-                    minWidth: Self.cardMinWidth,
-                    spacing: Self.cardSpacing,
-                    maxColumns: 2
-                ) {
-                    ForEach(filteredEngines, id: \.self) { id in
-                        engineCard(id)
-                            .transition(.dsRowInsert)
-                    }
-                }
-                .animation(DS.Motion.smooth, value: filteredEngines)
+        DSAnimatedGrid(
+            columns: gridColumns,
+            minWidth: Self.cardMinWidth,
+            spacing: Self.cardSpacing,
+            maxColumns: 2
+        ) {
+            ForEach(EngineCatalog.allIDs, id: \.self) { id in
+                engineCard(id)
             }
         }
-    }
-
-    private var emptyCatalog: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "line.3.horizontal.decrease.circle")
-                .font(.system(size: 20, weight: .light))
-                .foregroundStyle(DS.text4)
-            Text(L10n.t("当前筛选条件下暂无匹配的引擎。"))
-                .font(DS.Font.prose(12.5))
-                .foregroundStyle(DS.text3)
-            Button(L10n.t("显示全部")) {
-                withAnimation(DS.Motion.smooth) { filter = .all }
-            }
-            .buttonStyle(.ds(.secondary, size: .small))
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 28)
-        .dsSurface(radius: DS.Radius.card)
     }
 
     // MARK: - Engine card
@@ -693,16 +581,6 @@ struct EnginesPage: View {
 
     // MARK: - Actions
 
-    private func startEngine(_ id: EngineID) {
-        if id == state.activeEngine {
-            state.toggleService()
-        } else {
-            Task { @MainActor in
-                _ = await state.switchEngine(id, start: true)
-            }
-        }
-    }
-
     private func switchEngine(_ id: EngineID) {
         Task { @MainActor in
             _ = await state.switchEngine(id, start: true)
@@ -782,48 +660,6 @@ struct EnginesPage: View {
 
     private func versionText(_ version: String) -> String {
         version.hasPrefix("v") ? version : "v\(version)"
-    }
-}
-
-// MARK: - Filter button
-
-private struct EngineFilterButton: View {
-    var title: String
-    var selected: Bool
-    var action: () -> Void
-
-    @State private var hovering = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        Button(action: action) {
-            Text(L10n.t(title))
-                .font(.system(size: 11.5, weight: selected ? .semibold : .medium))
-                .foregroundStyle(selected ? DS.text : (hovering ? DS.text : DS.text3))
-                .lineLimit(1)
-                .padding(.horizontal, 9)
-                .frame(height: 24)
-                .background {
-                    if selected {
-                        Capsule()
-                            .fill(DS.pillActive)
-                            .overlay(Capsule().strokeBorder(DS.pillBorder, lineWidth: 1))
-                            .shadow(color: DS.glassShadow.opacity(0.6), radius: 4, y: 1)
-                    } else if hovering {
-                        Capsule().fill(DS.hover)
-                    }
-                }
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .onHover { inside in
-            if reduceMotion {
-                hovering = inside
-            } else {
-                withAnimation(DS.Motion.snappy) { hovering = inside }
-            }
-        }
-        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 

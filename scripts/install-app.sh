@@ -76,11 +76,13 @@ if [ "${STOP_SERVER:-0}" = "1" ]; then
     fi
 fi
 
-# 3. Park the previous install as a backup so a failed copy can be rolled back.
-#    Pruning older backups is deferred to the end: it is bookkeeping, and a
-#    failure there (permissions, a locked bundle, an interrupted process) used
-#    to abort the script *after* the old app was moved aside but *before* the
-#    new one landed — leaving the prefix with no flashCat.app at all.
+# 3. Park the previous install aside for the length of the copy, so a failed
+#    install can put it back. It is deleted once the new bundle verifies; no
+#    rollback copy is kept after the fact.
+#    Deleting it is deferred to the end: it is bookkeeping, and a failure there
+#    (permissions, a locked bundle, an interrupted process) must not abort the
+#    script *after* the old app was moved aside but *before* the new one landed —
+#    that would leave the prefix with no flashCat.app at all.
 BACKUP=""
 if [ -e "$TARGET" ]; then
     BACKUP="$PREFIX/.flashCat-previous-$(date +%Y%m%d-%H%M%S).app"
@@ -144,19 +146,24 @@ if [ -x "$TARGET/Contents/Helpers/flashcat" ]; then
     fi
 fi
 
-# 6b. Bookkeeping only, now that the new bundle is in place: drop older
-#     backups. Never fatal — a leftover backup costs disk, a missing app costs
-#     the install.
+# 6b. Bookkeeping only, now that the new bundle is in place: no rollback copy is
+#     kept. Each install used to park the old bundle in
+#     ~/Library/Application Support/flashCat/backups and that directory grew by
+#     ~30 MB per build; the previous version is reproducible from the checkout,
+#     so the space is not worth it. The parked copy only exists to make the
+#     install atomic, and it goes away here. Never fatal — a leftover backup
+#     costs disk, a missing app costs the install.
 if [ -n "$BACKUP" ] && [ -d "$BACKUP" ]; then
-    # Keep the rollback copy outside $PREFIX and outside Spotlight's index, so
-    # it can never be launched in place of the installed app.
-    BACKUP_DIR="$HOME/Library/Application Support/flashCat/backups"
-    if mkdir -p "$BACKUP_DIR" 2>/dev/null && mv "$BACKUP" "$BACKUP_DIR/" 2>/dev/null; then
-        echo "     previous install kept at $BACKUP_DIR/$(basename "$BACKUP")"
-    else
-        rm -rf "$BACKUP" 2>/dev/null || echo "note: could not remove old backup $BACKUP"
-    fi
+    rm -rf "$BACKUP" 2>/dev/null || echo "note: could not remove old backup $BACKUP"
 fi
+# Backups written by older versions of this script.
+BACKUP_DIR="$HOME/Library/Application Support/flashCat/backups"
+for old in "$BACKUP_DIR"/.flashCat-previous-*.app; do
+    [ -e "$old" ] || continue
+    "$LSREGISTER" -u "$old" >/dev/null 2>&1 || true
+    rm -rf "$old" 2>/dev/null || echo "note: could not remove old backup $old"
+done
+rmdir "$BACKUP_DIR" 2>/dev/null || true
 for old in "$PREFIX"/.flashCat-previous-*.app; do
     [ -e "$old" ] || continue
     "$LSREGISTER" -u "$old" >/dev/null 2>&1 || true

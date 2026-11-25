@@ -19,6 +19,7 @@ cd native && swift build          # 0 warning，CI 以 -warnings-as-errors 跑
 cd native && swift test           # Core + 应用 + Kit + CLI 用例（756 条执行，5 条按环境跳过），约 10 秒
 bash scripts/coverage.sh          # 覆盖率门禁：FlashCatCore ≥ 60%，FlashCatKit ≥ 80%
 make app                          # 组装 /Applications 里的 .app（或 INSTALL=0 只出 dist）
+make verify                       # 一键：构建 + 装进 /Applications + 启动并确认进程与内置 CLI 都正常
 ```
 
 界面全部在 `Sources/FlashCat/UI/`，直接跑 `swift run flashCat` 就能看；没有打包步骤，

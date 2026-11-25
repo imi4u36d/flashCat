@@ -10,9 +10,153 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// 输入卡与它的即时状态：草稿绑定、附件粘贴 / 选择、参考素材、发送与停止、
-/// 图像 / 视频参数入口。单独成文件是因为这一段有近九百行，和转录区的生命周期
-/// 没有关系；`ChatPage` 本体只负责版式与把两块拼起来。
-extension ChatPage {
+/// 图像 / 视频参数入口。独立成结构体并只观察 `AppState` 与 `ChatDraftStore`，
+/// 流式正文增量（`chat.messages`）不会触发输入卡重排。
+struct ChatComposerHost: View {
+    @ObservedObject var state: AppState
+    @ObservedObject var draftStore: ChatDraftStore
+    let chat: ChatStore
+    let isActive: Bool
+    @Binding var editingMessageID: UUID?
+    @Binding var composerFocused: Bool
+    @Binding var showsParameters: Bool
+
+    @State private var imageOptions = ImageOptionsStore.load()
+    @State private var videoOptions = VideoOptionsStore.load()
+    @State private var showsImageOptions = false
+    /// 拖拽悬停在输入卡上时给出投放提示；图像/视频模型才接受文件。
+    @State private var isDropTargeted = false
+    /// 上下文快满的提示按会话关一次；切会话重新计算。
+    @State private var contextWarningDismissed = false
+    @State private var generating = false
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        composer
+            .onAppear { generating = chat.generating }
+            .onReceive(chat.$generating) { value in
+                if generating != value { generating = value }
+            }
+            .onChange(of: state.selectedModel) { _, _ in
+                pruneIncompatibleAttachments()
+            }
+            .onChange(of: imageOptions) { _, newValue in
+                ImageOptionsStore.save(newValue)
+            }
+            .onChange(of: videoOptions) { _, newValue in
+                VideoOptionsStore.save(newValue)
+            }
+            .onChange(of: state.currentThreadID) { _, _ in
+                contextWarningDismissed = false
+            }
+            .onChange(of: isActive) { _, active in
+                if !active {
+                    showsImageOptions = false
+                    isDropTargeted = false
+                }
+            }
+    }
+
+    // MARK: Drafts
+
+    private var draftKey: String { state.currentThreadID }
+
+    private var draft: String {
+        get { draftStore.drafts[draftKey]?.text ?? "" }
+        nonmutating set {
+            var draft = draftStore.drafts[draftKey] ?? ChatDraft()
+            draft.text = newValue
+            // 用户一开始改字，上一次的附件回执就收起（Splash 的 `notice` 同理）。
+            draft.notice = nil
+            draftStore.drafts[draftKey] = draft
+        }
+    }
+
+    private func setDraftNotice(_ text: String) {
+        draftStore.drafts[draftKey, default: ChatDraft()].notice = text
+    }
+
+    private var imageAttachment: ChatImageAttachment? {
+        get { draftStore.drafts[draftKey]?.imageAttachment }
+        nonmutating set { draftStore.drafts[draftKey, default: ChatDraft()].imageAttachment = newValue }
+    }
+
+    private var lastFrameAttachment: ChatImageAttachment? {
+        get { draftStore.drafts[draftKey]?.lastFrameAttachment }
+        nonmutating set { draftStore.drafts[draftKey, default: ChatDraft()].lastFrameAttachment = newValue }
+    }
+
+    private var referenceImages: [ChatImageAttachment] {
+        get { draftStore.drafts[draftKey]?.referenceImages ?? [] }
+        nonmutating set { draftStore.drafts[draftKey, default: ChatDraft()].referenceImages = newValue }
+    }
+
+    private var referenceClips: [VideoReferenceClip] {
+        get { draftStore.drafts[draftKey]?.referenceClips ?? [] }
+        nonmutating set { draftStore.drafts[draftKey, default: ChatDraft()].referenceClips = newValue }
+    }
+
+    private var textBinding: Binding<String> {
+        Binding(
+            get: { draft },
+            set: { draft = $0 })
+    }
+
+    private func cancelEditing() {
+        editingMessageID = nil
+        draft = ""
+        focusComposer()
+    }
+
+    /// 接近上下文上限时在输入卡上方提示；按会话关一次，切走再回来会重新判断。
+    private var contextWarning: some View {
+        Group {
+            if let ratio = contextUsageRatio, ratio >= 0.8, !contextWarningDismissed {
+                HStack(spacing: 8) {
+                    Image(systemName: ratio >= 0.95 ? "exclamationmark.triangle.fill" : "info.circle")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(ratio >= 0.95 ? DS.warn : DS.text2)
+                    Text(
+                        L10n.format(
+                            "上下文已用 %lld%%，再长就会顶到窗口上限。",
+                            Int64((ratio * 100).rounded()))
+                    )
+                    .font(DS.Font.prose(11.5))
+                    .foregroundStyle(DS.text2)
+                    Spacer(minLength: 6)
+                    Button(L10n.t("新建对话")) {
+                        state.newConversation()
+                    }
+                    .buttonStyle(.ds(.secondary, size: .small))
+                    Button {
+                        contextWarningDismissed = true
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(DS.text3)
+                    .accessibilityLabel(L10n.t("关闭通知"))
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 32)
+                .background(DS.rect(10).fill(DS.surface))
+                .overlay(
+                    DS.rect(10).strokeBorder(
+                        ratio >= 0.95 ? DS.warn.opacity(0.42) : DS.line,
+                        lineWidth: 1)
+                )
+            }
+        }
+    }
+
+    private var contextUsageRatio: Double? {
+        guard let ceiling = state.contextWindowCeiling, ceiling > 0 else { return nil }
+        let used = state.contextUsedTokens
+        guard used > 0 else { return nil }
+        return min(1.5, Double(used) / Double(ceiling))
+    }
+
     // MARK: Composer
 
     /// 未聚焦且草稿为空时只留一行高度；光标进来或已有内容才长到可写多行。
@@ -76,10 +220,11 @@ extension ChatPage {
                     text: textBinding,
                     isFocused: $composerFocused,
                     isEnabled: true,
+                    isActive: isActive,
                     conversation: draftKey,
                     onSend: send,
                     onCancel: {
-                        guard chat.generating else { return false }
+                        guard generating else { return false }
                         state.cancelGeneration()
                         return true
                     },
@@ -192,7 +337,7 @@ extension ChatPage {
                             }
                         }
                     }
-                    .disabled(chat.generating)
+                    .disabled(generating)
                     .help("模型画图时用哪个图像模型")
                 }
 
@@ -222,7 +367,7 @@ extension ChatPage {
                     }
                 }
 
-                ChatModelControl(state: state, chat: chat)
+                ChatModelControl(state: state, chat: chat, isActive: isActive)
 
                 Spacer(minLength: 12)
 
@@ -319,9 +464,9 @@ extension ChatPage {
 
     /// 发送 / 停止圆钮：能发时用强调色并带轻微投影，生成中原地变成高对比停止键。
     var sendStopButton: some View {
-        let streaming = chat.generating
+        let streaming = generating
         let enabled = streaming || canSend
-        let stopFill = Color.glass(light: 0xDC2626, dark: 0xEF4444, studio: 0xDC2626)
+        let stopFill = Color.adaptive(dark: 0xEF4444, light: 0xDC2626)
         return Button {
             if streaming {
                 state.cancelGeneration()
@@ -407,7 +552,7 @@ extension ChatPage {
     }
 
     var canSend: Bool {
-        guard !chat.generating else { return false }
+        guard !generating else { return false }
         let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         // REF2VA 必须至少有一个参考素材；文字可以后补，素材不能空。
         if supportsVideoReferences { return hasReferenceMedia }
@@ -417,11 +562,12 @@ extension ChatPage {
 
     /// 点输入卡的留白也把光标交给输入框；生成中也可以继续写下一句。
     func focusComposer() {
+        guard isActive else { return }
         composerFocused = true
     }
 
     func send() {
-        guard !chat.generating else { return }
+        guard !generating else { return }
         guard !state.needsEngineSetup else {
             setDraftNotice(L10n.t("还没有安装推理引擎，请先在启动页选择一个"))
             return

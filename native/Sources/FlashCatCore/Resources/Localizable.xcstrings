@@ -1151,6 +1151,16 @@
         }
       }
     },
+    "上下文 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Context %@"
+          }
+        }
+      }
+    },
     "上下文 %@ / %@（%.0f%%）": {
       "localizations": {
         "en": {
@@ -1541,6 +1551,16 @@
         }
       }
     },
+    "从已安装引擎中一键启动，即可恢复本地推理服务与 API 监听。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start an installed engine with one click to bring local inference and the API listener back online."
+          }
+        }
+      }
+    },
     "从模型库选择一个模型": {
       "localizations": {
         "en": {
@@ -1747,6 +1767,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Using a custom image as the canvas background"
+          }
+        }
+      }
+    },
+    "侧边栏": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sidebar"
           }
         }
       }
@@ -2321,6 +2351,16 @@
         }
       }
     },
+    "切换": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switch"
+          }
+        }
+      }
+    },
     "切换中": {
       "localizations": {
         "en": {
@@ -2417,6 +2457,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Switch Model?"
+          }
+        }
+      }
+    },
+    "切换活动引擎为 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switch active engine to %@"
           }
         }
       }
@@ -2587,6 +2637,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Go to Chat"
+          }
+        }
+      }
+    },
+    "前往模型库": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Models"
+          }
+        }
+      }
+    },
+    "前往模型库下载适配本机内存的权重，即可一键启动推理。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download weights sized for this Mac in Models to start local inference in one click."
           }
         }
       }
@@ -3081,6 +3151,16 @@
         }
       }
     },
+    "可用磁盘": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Available Disk"
+          }
+        }
+      }
+    },
     "各引擎固定起始端口，互不抢占": {
       "localizations": {
         "en": {
@@ -3111,6 +3191,16 @@
         }
       }
     },
+    "启动 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start %@"
+          }
+        }
+      }
+    },
     "启动中": {
       "localizations": {
         "en": {
@@ -3131,12 +3221,32 @@
         }
       }
     },
+    "启动异常": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Launch Failed"
+          }
+        }
+      }
+    },
     "启动引擎": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
             "value": "Start Engine"
+          }
+        }
+      }
+    },
+    "启动引擎后将自动切换为 60 秒实时解码曲线": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switches automatically to the live 60-second decode chart once started"
           }
         }
       }
@@ -3157,6 +3267,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Start the engine and this card will keep the model, speed, and tokens of the first run."
+          }
+        }
+      }
+    },
+    "启动引擎并发起对话或 API 调用后将在此记录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Requests will appear here after starting an engine"
           }
         }
       }
@@ -4181,6 +4301,16 @@
         }
       }
     },
+    "尚未选择模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No Model Selected"
+          }
+        }
+      }
+    },
     "就绪": {
       "localizations": {
         "en": {
@@ -4327,6 +4457,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Downloaded %@. Switch to %@ to use it."
+          }
+        }
+      }
+    },
+    "已中断": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Interrupted"
           }
         }
       }
@@ -4587,6 +4727,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "%lld versions installed"
+          }
+        }
+      }
+    },
+    "已安装引擎": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installed Engines"
+          }
+        }
+      }
+    },
+    "已完成": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Completed"
           }
         }
       }
@@ -4981,6 +5141,16 @@
         }
       }
     },
+    "引擎未安装": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Engine Not Installed"
+          }
+        }
+      }
+    },
     "引擎未运行": {
       "localizations": {
         "en": {
@@ -5151,6 +5321,16 @@
         }
       }
     },
+    "当前活动引擎": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Active Engine"
+          }
+        }
+      }
+    },
     "当前由 **%@** 加载 **%@**。数据不出本机，离线也能用。": {
       "localizations": {
         "en": {
@@ -5191,6 +5371,16 @@
         }
       }
     },
+    "当前选择": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selected"
+          }
+        }
+      }
+    },
     "当前：%@": {
       "localizations": {
         "en": {
@@ -5227,6 +5417,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Idle"
+          }
+        }
+      }
+    },
+    "待机就绪": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ready"
+          }
+        }
+      }
+    },
+    "待选择模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select a Model"
           }
         }
       }
@@ -5397,6 +5607,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Floating Glass"
+          }
+        }
+      }
+    },
+    "悬浮琉璃 / 贴边毛玻璃 / 折叠窄栏": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Floating Glass / Edge Glass / Compact Rail"
           }
         }
       }
@@ -6641,6 +6861,16 @@
         }
       }
     },
+    "有什么可以帮你的？": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "How can I help you?"
+          }
+        }
+      }
+    },
     "服务": {
       "localizations": {
         "en": {
@@ -6871,6 +7101,16 @@
         }
       }
     },
+    "本地模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local Models"
+          }
+        }
+      }
+    },
     "本机 flashcat 命令的连接端口": {
       "localizations": {
         "en": {
@@ -6887,6 +7127,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "These weights are already on this Mac and ready in the model library"
+          }
+        }
+      }
+    },
+    "本机芯片": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apple Silicon"
           }
         }
       }
@@ -7047,6 +7297,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "View Logs"
+          }
+        }
+      }
+    },
+    "查看概览": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "View Overview"
           }
         }
       }
@@ -7457,6 +7717,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Switching models; will switch to %@ when done"
+          }
+        }
+      }
+    },
+    "正在加载模型…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Loading model…"
           }
         }
       }
@@ -8081,6 +8351,16 @@
         }
       }
     },
+    "生成输出": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Output"
+          }
+        }
+      }
+    },
     "生效 %lld": {
       "localizations": {
         "en": {
@@ -8641,6 +8921,16 @@
         }
       }
     },
+    "管理模型库": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Manage Models"
+          }
+        }
+      }
+    },
     "系统提示": {
       "localizations": {
         "en": {
@@ -9141,6 +9431,16 @@
         }
       }
     },
+    "解码速度": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Decode Speed"
+          }
+        }
+      }
+    },
     "警告": {
       "localizations": {
         "en": {
@@ -9207,6 +9507,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Please"
+          }
+        }
+      }
+    },
+    "请先从下方引擎目录下载并安装至少一款本地推理引擎。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download and install at least one local inference engine from the engine catalog below first."
           }
         }
       }
@@ -9421,6 +9731,26 @@
         }
       }
     },
+    "运行状态": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Status"
+          }
+        }
+      }
+    },
+    "运行环境": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Environment"
+          }
+        }
+      }
+    },
     "近 5 分钟吞吐": {
       "localizations": {
         "en": {
@@ -9447,6 +9777,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Back to %@"
+          }
+        }
+      }
+    },
+    "还有 %lld 个本地模型可在模型库中切换": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld more local models available in Models"
           }
         }
       }
@@ -9497,6 +9837,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "No client has connected yet. Use the chevron beside an endpoint to copy a snippet; after one request its source and count will show up here."
+          }
+        }
+      }
+    },
+    "还没有已安装的本地模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No local models installed yet"
           }
         }
       }
@@ -10451,6 +10801,146 @@
         }
       }
     },
+    "日间": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Light"
+          }
+        }
+      }
+    },
+    "夜间": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dark"
+          }
+        }
+      }
+    },
+    "玻璃": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Glass"
+          }
+        }
+      }
+    },
+    "玻璃配悬浮侧栏，纯净配贴边实色侧栏": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Glass pairs with the floating sidebar; Pure pairs with the flush solid sidebar"
+          }
+        }
+      }
+    },
+    "纯净": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pure"
+          }
+        }
+      }
+    },
+    "纯净（跟随系统）": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pure (System)"
+          }
+        }
+      }
+    },
+    "固定使用浅色外观": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Always use Light appearance"
+          }
+        }
+      }
+    },
+    "固定使用深色外观": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Always use Dark appearance"
+          }
+        }
+      }
+    },
+    "悬浮玻璃侧栏与柔和渐变玻璃层": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Floating glass sidebar and soft gradient glass layers"
+          }
+        }
+      }
+    },
+    "贴边纯色侧栏与实色分层表面": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Edge-to-edge solid sidebar and layered opaque surfaces"
+          }
+        }
+      }
+    },
+    "色彩模式": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Color Mode"
+          }
+        }
+      }
+    },
+    "跟随系统自动切换日间与夜间，或固定模式": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Follow macOS light/dark mode automatically, or fix to one"
+          }
+        }
+      }
+    },
+    "随 macOS 外观自动切换日间与夜间": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatically switch between Light and Dark with macOS"
+          }
+        }
+      }
+    },
+    "随 macOS 外观自动切换纯净日间 / 夜间皮肤": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatically switch between Pure Light and Pure Dark with macOS"
+          }
+        }
+      }
+    },
     "默认顺序": {
       "localizations": {
         "en": {
@@ -10477,66 +10967,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "(No prompt recorded)"
-          }
-        }
-      }
-    },
-    "侧边栏": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sidebar"
-          }
-        }
-      }
-    },
-    "悬浮琉璃 / 贴边毛玻璃 / 折叠窄栏": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Floating Glass / Edge Glass / Compact Rail"
-          }
-        }
-      }
-    },
-    "从已安装引擎中一键启动，即可恢复本地推理服务与 API 监听。": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Start an installed engine with one click to bring local inference and the API listener back online."
-          }
-        }
-      }
-    },
-    "请先从下方引擎目录下载并安装至少一款本地推理引擎。": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Download and install at least one local inference engine from the engine catalog below first."
-          }
-        }
-      }
-    },
-    "查看概览": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "View Overview"
-          }
-        }
-      }
-    },
-    "有什么可以帮你的？": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "How can I help you?"
           }
         }
       }

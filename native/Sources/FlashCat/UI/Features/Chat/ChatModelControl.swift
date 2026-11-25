@@ -9,12 +9,14 @@ import SwiftUI
 /// 输入卡底排与对话顶栏共用同一个控件，按位置传入高度与弹出方向。
 struct ChatModelControl: View {
     @ObservedObject var state: AppState
-    @ObservedObject var chat: ChatStore
+    let chat: ChatStore
     var height: CGFloat = 26
     var arrowEdge: Edge = .top
+    var isActive: Bool = true
 
     @State private var open = false
     @State private var hovering = false
+    @State private var generating = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -23,7 +25,7 @@ struct ChatModelControl: View {
         } label: {
             HStack(spacing: 6) {
                 EngineMark(id: state.activeEngine, size: 14)
-                DSStatusDot(color: statusColor, live: state.canChat, size: 5.5)
+                DSStatusDot(color: statusColor, live: isActive && state.canChat, size: 5.5)
                 Text(modelName)
                     .font(DS.Font.prose(12, weight: .medium))
                     .foregroundStyle(hovering || open ? DS.text : DS.text2)
@@ -40,7 +42,11 @@ struct ChatModelControl: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plainHit)
-        .disabled(chat.generating)
+        .disabled(generating)
+        .onAppear { generating = chat.generating }
+        .onReceive(chat.$generating) { value in
+            if generating != value { generating = value }
+        }
         .onHover { value in
             if reduceMotion {
                 hovering = value

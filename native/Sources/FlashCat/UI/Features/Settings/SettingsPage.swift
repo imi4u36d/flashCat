@@ -45,6 +45,7 @@ struct SettingsPage: View {
     }
 
     @State var appUpdate: AppUpdateState = .idle
+    @State private var isWide = true
 
     var hubSource: HubSource {
         HubSource(rawValue: storedHubSource) ?? .huggingFace
@@ -59,51 +60,48 @@ struct SettingsPage: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            let wide = proxy.size.width >= Console.compactContentWidth
-            VStack(alignment: .leading, spacing: 0) {
-                DSPageHeader(
-                    title: "设置",
-                    subtitle: "flashCat v\(appVersion) · \(device.chipName)"
-                )
-                .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
-                .padding(.trailing, Console.contentPadding)
-                .padding(.top, Console.pageTopPadding)
-                .padding(.bottom, 10)
-                .background(WindowDragArea())
+        let horizontal = Console.pageHorizontalPadding(compact: !isWide)
+        VStack(alignment: .leading, spacing: 0) {
+            DSPageHeader(
+                title: "设置",
+                subtitle: "flashCat v\(appVersion) · \(device.chipName)"
+            )
+            .padding(.horizontal, horizontal)
+            .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
+            .padding(.bottom, Console.pageSectionGap)
+            .background(WindowDragArea())
 
-                ScrollView {
-                    if wide {
-                        HStack(alignment: .top, spacing: 20) {
-                            settingsNav
-                                .frame(width: 148)
+            ScrollView {
+                if isWide {
+                    HStack(alignment: .top, spacing: Console.pageSectionGap) {
+                        settingsNav
+                            .padding(8)
+                            .frame(width: 164)
+                            .dsSurface(radius: DS.Radius.card)
 
-                            Rectangle()
-                                .fill(DS.line)
-                                .frame(width: 1)
-
-                            sectionContent(wide: true)
-                                .frame(maxWidth: 760, alignment: .leading)
-
-                            Spacer(minLength: 0)
-                        }
-                        .padding(.horizontal, Console.contentPadding)
-                        .padding(.top, 2)
-                    } else {
-                        VStack(alignment: .leading, spacing: 12) {
-                            settingsMenu
-                            sectionContent(wide: false)
-                        }
-                        .padding(.horizontal, Console.contentPadding)
-                        .padding(.top, 2)
+                        sectionContent(wide: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .padding(.horizontal, horizontal)
+                    .padding(.bottom, Console.contentBottomInset)
+                } else {
+                    VStack(alignment: .leading, spacing: Console.pageSectionGap) {
+                        settingsMenu
+                        sectionContent(wide: false)
+                    }
+                    .padding(.horizontal, horizontal)
+                    .padding(.bottom, Console.contentBottomInset)
                 }
-                .scrollIndicators(.never)
             }
+            .scrollIndicators(.never)
         }
-        // 设置页滚动视口的下沿同样收在侧栏底边上。
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onGeometryChange(for: Bool.self) { proxy in
+            proxy.size.width >= Console.compactContentWidth
+        } action: { wide in
+            isWide = wide
+        }
         .dsPageColumn()
-        .padding(.bottom, Console.contentBottomInset)
         .onAppear(perform: load)
         .sheet(isPresented: $showsChatParameters) {
             ChatParametersSheet(state: state)

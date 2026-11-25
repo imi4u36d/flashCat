@@ -23,10 +23,6 @@ private struct DSButtonBody: View {
     let size: DSButtonStyle.Size
 
     @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var hovering = false
-
-    private var activeHover: Bool { hovering && isEnabled }
 
     private var height: CGFloat {
         switch size {
@@ -62,30 +58,25 @@ private struct DSButtonBody: View {
         switch kind {
         case .primary: return DS.inkText
         case .secondary: return DS.text
-        case .ghost: return activeHover ? DS.text : DS.text2
+        case .ghost: return DS.text2
         case .danger: return DS.dangerText
         }
     }
 
     private var background: Color {
         switch kind {
-        case .primary:
-            return activeHover ? DS.ink.opacity(0.88) : DS.ink
-        case .secondary:
-            return activeHover ? DS.raised : DS.surface
-        case .ghost:
-            return activeHover ? DS.hover : .clear
-        case .danger:
-            return activeHover ? DS.err.opacity(0.16) : DS.dangerFill
+        case .primary: return DS.ink
+        case .secondary: return DS.surface
+        case .ghost: return .clear
+        case .danger: return DS.dangerFill
         }
     }
 
     private var borderColor: Color {
         switch kind {
-        case .primary: return .clear
-        case .secondary: return activeHover ? DS.line3 : DS.line2
-        case .ghost: return .clear
-        case .danger: return activeHover ? DS.err.opacity(0.38) : DS.dangerStroke
+        case .primary, .ghost: return .clear
+        case .secondary: return DS.line2
+        case .danger: return DS.dangerStroke
         }
     }
 
@@ -96,21 +87,10 @@ private struct DSButtonBody: View {
             .foregroundStyle(foreground)
             .padding(.horizontal, horizontalPadding)
             .frame(height: height)
-            .background {
-                ZStack {
-                    shape.fill(background)
-                    if kind == .secondary && activeHover {
-                        shape.fill(DS.hover)
-                    }
-                }
-            }
+            .background(shape.fill(background))
             .overlay(shape.strokeBorder(borderColor, lineWidth: 1))
             .contentShape(shape)
-            .scaleEffect((!reduceMotion && configuration.isPressed && isEnabled) ? 0.985 : 1)
-            .opacity(isEnabled ? 1 : 0.42)
-            .animation(reduceMotion ? nil : DS.Motion.snappy, value: configuration.isPressed)
-            .animation(reduceMotion ? nil : DS.Motion.snappy, value: activeHover)
-            .onHover { hovering = $0 }
+            .opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.42)
     }
 }
 
@@ -137,10 +117,6 @@ struct DSIconButton: View {
     var action: () -> Void
 
     @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var hovering = false
-
-    private var activeHover: Bool { hovering && isEnabled }
 
     private var shape: RoundedRectangle {
         DS.rect(size <= 24 ? DS.Radius.sm : DS.Radius.md)
@@ -152,37 +128,27 @@ struct DSIconButton: View {
             return tint != nil ? .white : DS.inkText
         case .outlined:
             if active { return tint != nil ? .white : DS.inkText }
-            return tint ?? (activeHover ? DS.text : DS.text2)
+            return tint ?? DS.text2
         case .ghost:
-            return tint ?? (active ? DS.accent : (activeHover ? DS.text : DS.text2))
+            return tint ?? (active ? DS.accent : DS.text2)
         }
     }
 
     private var background: Color {
         switch style {
         case .primary:
-            let base = tint ?? DS.ink
-            return activeHover ? base.opacity(0.88) : base
+            return tint ?? DS.ink
         case .outlined:
-            if active {
-                let base = tint ?? DS.ink
-                return activeHover ? base.opacity(0.90) : base
-            }
-            return activeHover ? DS.raised : DS.surface
+            return active ? (tint ?? DS.ink) : DS.surface
         case .ghost:
-            return active ? DS.accentSoft : (activeHover ? DS.hover : .clear)
+            return active ? DS.accentSoft : .clear
         }
     }
 
     private var border: Color {
         switch style {
-        case .primary:
-            return .clear
-        case .outlined:
-            if active { return .clear }
-            return activeHover ? DS.line3 : DS.line2
-        case .ghost:
-            return .clear
+        case .primary, .ghost: return .clear
+        case .outlined: return active ? .clear : DS.line2
         }
     }
 
@@ -192,28 +158,14 @@ struct DSIconButton: View {
                 .font(.system(size: size * 0.43, weight: .medium))
                 .foregroundStyle(foreground)
                 .frame(width: size, height: size)
-                .background {
-                    ZStack {
-                        shape.fill(background)
-                        if style == .outlined && !active && activeHover {
-                            shape.fill(DS.hover)
-                        }
-                    }
-                }
+                .background(shape.fill(background))
                 .overlay(shape.strokeBorder(border, lineWidth: 1))
                 .contentShape(shape)
         }
-        .buttonStyle(DSPressStyle(scale: 0.96))
+        .buttonStyle(.plain)
         .opacity(isEnabled ? 1 : 0.4)
         .help(L10n.t(help))
         .accessibilityLabel(L10n.t(help))
-        .onHover { value in
-            if reduceMotion {
-                hovering = value
-            } else {
-                withAnimation(DS.Motion.snappy) { hovering = value }
-            }
-        }
     }
 }
 
@@ -278,26 +230,18 @@ struct DSSourceBadge: View {
     }
 }
 
-/// 状态圆点；`live` 时外圈呼吸扩散。
+/// 状态圆点；`live` 时加一层静态柔光环，避免常驻无限动画消耗 CPU/GPU。
 struct DSStatusDot: View {
     var color: Color = DS.ok
     var live: Bool = false
     var size: CGFloat = 7
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     var body: some View {
         ZStack {
-            if live && !reduceMotion {
-                TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
-                    let t = context.date.timeIntervalSinceReferenceDate
-                    let phase = (t.truncatingRemainder(dividingBy: 1.8)) / 1.8
-                    Circle()
-                        .fill(color)
-                        .frame(width: size, height: size)
-                        .scaleEffect(1 + phase * 1.4)
-                        .opacity(0.45 * (1 - phase))
-                }
+            if live {
+                Circle()
+                    .fill(color.opacity(0.22))
+                    .frame(width: size * 1.9, height: size * 1.9)
             }
             Circle().fill(color).frame(width: size, height: size)
         }

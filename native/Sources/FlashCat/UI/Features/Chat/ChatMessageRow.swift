@@ -22,6 +22,7 @@ struct MessageRow: View, Equatable {
     let maxBubbleWidth: CGFloat
     let isLast: Bool
     let canRegenerate: Bool
+    var animateStreaming: Bool = false
     let onEdit: () -> Void
     let onBranch: () -> Void
     let onRegenerate: () -> Void
@@ -46,6 +47,7 @@ struct MessageRow: View, Equatable {
             && lhs.maxBubbleWidth == rhs.maxBubbleWidth
             && lhs.isLast == rhs.isLast
             && lhs.canRegenerate == rhs.canRegenerate
+            && lhs.animateStreaming == rhs.animateStreaming
     }
 
     private var isUser: Bool { message.role == "user" }
@@ -143,7 +145,6 @@ struct MessageRow: View, Equatable {
                                         endPoint: .bottomTrailing)
                                 )
                             }
-                            .shadow(color: DS.glassShadow.opacity(0.45), radius: 8, x: 0, y: 3)
                     }
                     .overlay {
                         bubbleShape.strokeBorder(
@@ -241,7 +242,7 @@ struct MessageRow: View, Equatable {
                 .foregroundStyle(DS.text2)
                 .lineLimit(1)
             if message.streaming {
-                DSStatusDot(color: DS.accent, live: true, size: 5)
+                DSStatusDot(color: DS.accent, live: animateStreaming, size: 5)
             }
             Spacer(minLength: 0)
         }
@@ -276,6 +277,7 @@ struct MessageRow: View, Equatable {
                 StreamingMarkdownView(
                     text: message.content,
                     streaming: message.streaming,
+                    isActive: animateStreaming,
                     fillsWidth: true,
                     style: .chat)
             }
@@ -363,7 +365,9 @@ struct MessageRow: View, Equatable {
                     .foregroundStyle(DS.text2)
 
                 if message.streaming {
-                    ElapsedThinkingSeconds(since: message.createdAt ?? Date())
+                    if animateStreaming {
+                        ElapsedThinkingSeconds(since: message.createdAt ?? Date())
+                    }
                 } else if let facts = finishedThinkingFacts {
                     Text("·")
                         .font(.system(size: 11.5))
@@ -412,6 +416,7 @@ struct MessageRow: View, Equatable {
             PacedText(
                 text: reasoning,
                 streaming: message.streaming,
+                isActive: animateStreaming,
                 tail: latest
             )
             .font(.system(size: 13))

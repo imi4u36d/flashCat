@@ -19,6 +19,17 @@ import SwiftUI
 enum MarkdownComposer {
     private static let inlineCodeBackground = Color.adaptive(dark: 0x26262E, light: 0xEEF0F4)
 
+    private struct TableCellKey: Hashable {
+        let text: String
+        let isHeader: Bool
+        let sizeBits: UInt
+    }
+
+    private static let tableCellLock = NSLock()
+    nonisolated(unsafe) private static var tableCellCache: [TableCellKey: AttributedString] = [:]
+    nonisolated(unsafe) private static var tableCellOrder: [TableCellKey] = []
+    private static let tableCellCacheLimit = 1024
+
     static func compose(
         _ blocks: [MarkdownBlock],
         style: MarkdownStyle = .standard,
@@ -35,13 +46,36 @@ enum MarkdownComposer {
             }
             result += content(for: block.kind, style: style)
         }
-        if let tailFadeAlpha, tailFadeAlpha < 0.99, !result.characters.isEmpty {
-            let count = min(2, result.characters.count)
-            let start = result.index(result.endIndex, offsetByCharacters: -count)
-            let baseColor = result[start..<result.endIndex].foregroundColor ?? DS.text
-            result[start..<result.endIndex].foregroundColor = baseColor.opacity(tailFadeAlpha)
+        return withTailFade(result, alpha: tailFadeAlpha)
+    }
+
+    static func withTailFade(_ source: AttributedString, alpha tailFadeAlpha: Double?) -> AttributedString {
+        guard let tailFadeAlpha, tailFadeAlpha < 0.99, !source.characters.isEmpty else {
+            return source
         }
+        var result = source
+        let count = min(2, result.characters.count)
+        let start = result.index(result.endIndex, offsetByCharacters: -count)
+        let baseColor = result[start..<result.endIndex].foregroundColor ?? DS.text
+        result[start..<result.endIndex].foregroundColor = baseColor.opacity(tailFadeAlpha)
         return result
+    }
+
+    static func composeQuote(_ lines: [AttributedString], style: MarkdownStyle = .standard) -> AttributedString {
+        var out = AttributedString()
+        for (index, line) in lines.enumerated() {
+            if index > 0 {
+                var br = AttributedString("\n")
+                br.font = DS.Font.prose(style.bodySize)
+                out += br
+            }
+            out += inline(
+                line,
+                size: style.bodySize,
+                color: DS.text2,
+                emphasisWeight: style.chat ? .semibold : .medium)
+        }
+        return out
     }
 
     static func inlineTableCell(
@@ -49,8 +83,20 @@ enum MarkdownComposer {
         isHeader: Bool,
         size: CGFloat = 12.5
     ) -> AttributedString {
+        let key = TableCellKey(text: text, isHeader: isHeader, sizeBits: size.bitPattern)
+        tableCellLock.lock()
+        if let hit = tableCellCache[key] {
+            tableCellLock.unlock()
+            return hit
+        }
+        tableCellLock.unlock()
+
         let parsed: AttributedString
-        if let attributed = try? AttributedString(
+        if !text.contains(where: { "*_`~\\[]<&".contains($0) }),
+            !text.contains("http")
+        {
+            parsed = AttributedString(text)
+        } else if let attributed = try? AttributedString(
             markdown: text,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         ) {
@@ -58,12 +104,24 @@ enum MarkdownComposer {
         } else {
             parsed = AttributedString(text)
         }
-        return inline(
+        let styled = inline(
             parsed,
             size: size,
             weight: isHeader ? (size >= 15 ? .semibold : .medium) : .regular,
             color: isHeader ? DS.text : DS.text2,
             emphasisWeight: size >= 15 ? .semibold : .medium)
+
+        tableCellLock.lock()
+        if tableCellCache[key] == nil {
+            tableCellCache[key] = styled
+            tableCellOrder.append(key)
+            if tableCellOrder.count > tableCellCacheLimit {
+                let oldest = tableCellOrder.removeFirst()
+                tableCellCache.removeValue(forKey: oldest)
+            }
+        }
+        tableCellLock.unlock()
+        return styled
     }
 
     private static func content(
@@ -217,10 +275,10 @@ struct MarkdownBlock: Identifiable {
     nonisolated(unsafe) private static var parseCache: [String: [MarkdownBlock]] = [:]
     nonisolated(unsafe) private static var parseCacheOrder: [String] = []
     nonisolated(unsafe) private static var streamingCache: (source: String, blocks: [MarkdownBlock])?
-    private static let parseCacheLimit = 32
+    private static let parseCacheLimit = 256
     nonisolated(unsafe) private static var inlineCache: [String: AttributedString] = [:]
     nonisolated(unsafe) private static var inlineCacheOrder: [String] = []
-    private static let inlineCacheLimit = 512
+    private static let inlineCacheLimit = 2048
 
     static func parse(_ source: String, caching: Bool = true) -> [MarkdownBlock] {
         if !caching {
@@ -504,6 +562,157 @@ struct MarkdownBlock: Identifiable {
         let rest = text[text.index(after: dot)...]
         guard rest.first == " " else { return nil }
         return (number, rest.trimmingCharacters(in: .whitespaces))
+    }
+}
+
+// MARK: - Render segments cache
+
+struct MarkdownListItem: Identifiable {
+    let id: Int
+    let marker: String
+    let content: AttributedString
+    let indent: Int
+    let ordered: Bool
+}
+
+enum RenderedMarkdownSegment {
+    case text(AttributedString)
+    case list([MarkdownListItem])
+    case code(String?, String)
+    case quote(AttributedString)
+    case table([[AttributedString]])
+    case rule
+}
+
+/// 缓存「已排版好的渲染段」（含合并后的正文 `AttributedString`、引用、表格单元格等），
+/// 避免视图切换或悬停重绘时重复执行 `MarkdownComposer.compose` 与 `AttributedString` 拼接。
+enum MarkdownRenderCache {
+    private struct RenderKey: Hashable {
+        let text: String
+        let style: MarkdownStyle
+    }
+
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var cache: [RenderKey: [RenderedMarkdownSegment]] = [:]
+    nonisolated(unsafe) private static var order: [RenderKey] = []
+    nonisolated(unsafe) private static var streamingCache: (key: RenderKey, segments: [RenderedMarkdownSegment])?
+    private static let cacheLimit = 256
+
+    static func segments(
+        for text: String,
+        style: MarkdownStyle,
+        caching: Bool
+    ) -> [RenderedMarkdownSegment] {
+        let key = RenderKey(text: text, style: style)
+        if !caching {
+            lock.lock()
+            if let hit = streamingCache, hit.key == key {
+                lock.unlock()
+                return hit.segments
+            }
+            lock.unlock()
+
+            let built = buildSegments(for: text, style: style, caching: false)
+
+            lock.lock()
+            streamingCache = (key, built)
+            lock.unlock()
+            return built
+        }
+
+        lock.lock()
+        if let hit = cache[key] {
+            if let idx = order.firstIndex(of: key) {
+                order.remove(at: idx)
+                order.append(key)
+            }
+            lock.unlock()
+            return hit
+        }
+        lock.unlock()
+
+        let built = buildSegments(for: text, style: style, caching: true)
+
+        lock.lock()
+        if cache[key] == nil {
+            cache[key] = built
+            order.append(key)
+            if order.count > cacheLimit {
+                let oldest = order.removeFirst()
+                cache.removeValue(forKey: oldest)
+            }
+        }
+        lock.unlock()
+        return built
+    }
+
+    private static func buildSegments(
+        for text: String,
+        style: MarkdownStyle,
+        caching: Bool
+    ) -> [RenderedMarkdownSegment] {
+        let blocks = MarkdownBlock.parse(text, caching: caching)
+        var result: [RenderedMarkdownSegment] = []
+        var textBuffer: [MarkdownBlock] = []
+
+        func flushText() {
+            guard !textBuffer.isEmpty else { return }
+            result.append(.text(MarkdownComposer.compose(textBuffer, style: style)))
+            textBuffer.removeAll(keepingCapacity: true)
+        }
+
+        for block in blocks {
+            switch block.kind {
+            case .heading, .paragraph:
+                textBuffer.append(block)
+            case .bullet(let items):
+                flushText()
+                result.append(
+                    .list(
+                        items.enumerated().map { offset, item in
+                            MarkdownListItem(
+                                id: offset,
+                                marker: item.indent.isMultiple(of: 2) ? "•" : "◦",
+                                content: item.content,
+                                indent: item.indent,
+                                ordered: false)
+                        }))
+            case .ordered(let items):
+                flushText()
+                result.append(
+                    .list(
+                        items.enumerated().map { offset, item in
+                            MarkdownListItem(
+                                id: offset,
+                                marker: "\(item.number).",
+                                content: item.content,
+                                indent: 0,
+                                ordered: true)
+                        }))
+            case .code(let language, let code):
+                flushText()
+                result.append(.code(language, code))
+            case .quote(let lines):
+                flushText()
+                result.append(.quote(MarkdownComposer.composeQuote(lines, style: style)))
+            case .table(let rows):
+                flushText()
+                let styledRows = rows.enumerated().map { rowIndex, row in
+                    row.map { cell in
+                        MarkdownComposer.inlineTableCell(
+                            cell,
+                            isHeader: rowIndex == 0,
+                            size: style.bodySize)
+                    }
+                }
+                result.append(.table(styledRows))
+            case .rule:
+                flushText()
+                result.append(.rule)
+            }
+        }
+        flushText()
+        return result
     }
 }
 

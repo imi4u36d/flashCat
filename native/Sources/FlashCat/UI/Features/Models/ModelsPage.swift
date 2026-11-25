@@ -47,6 +47,7 @@ struct ModelsPage: View {
     @State private var device = DeviceProfile.current()
     @State private var disk = DiskSpace.current()
     @State private var rescanning = false
+    @State private var isWide = true
 
     private static let scrollTopAnchor = "models.scroll.top"
     private static let railWidth: CGFloat = 206
@@ -111,38 +112,36 @@ struct ModelsPage: View {
     // MARK: - Body
 
     var body: some View {
-        GeometryReader { proxy in
-            let wide = proxy.size.width >= Console.compactContentWidth
-            VStack(alignment: .leading, spacing: 0) {
-                header
+        let horizontal = Console.pageHorizontalPadding(compact: !isWide)
+        VStack(alignment: .leading, spacing: 0) {
+            header(horizontal: horizontal)
 
-                if wide {
-                    HStack(alignment: .top, spacing: 0) {
-                        engineRail
-                            .frame(width: Self.railWidth)
-                            .frame(maxHeight: .infinity, alignment: .top)
-                            .background(DS.bg)
-                            .overlay(alignment: .trailing) {
-                                Rectangle()
-                                    .fill(DS.line)
-                                    .frame(width: 1)
-                            }
-                        contentPane
-                            .padding(.leading, 20)
-                            .padding(.trailing, Console.contentPadding)
-                    }
-                    .frame(maxHeight: .infinity, alignment: .top)
-                } else {
-                    VStack(alignment: .leading, spacing: 0) {
-                        engineTabs
-                            .padding(.horizontal, Console.contentPadding)
-                        DSDivider()
-                        contentPane
-                            .padding(.horizontal, Console.contentPadding)
-                    }
+            if isWide {
+                HStack(alignment: .top, spacing: Console.pageSectionGap) {
+                    engineRail
+                        .frame(width: Self.railWidth)
+                        .frame(maxHeight: .infinity, alignment: .top)
+                        .dsSurface(radius: DS.Radius.card)
+                        .clipShape(DS.rect(DS.Radius.card))
+                        .padding(.bottom, Console.contentBottomInset)
+                    contentPane
+                }
+                .padding(.horizontal, horizontal)
+                .frame(maxHeight: .infinity, alignment: .top)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    engineTabs
+                        .padding(.horizontal, horizontal)
+                    contentPane
+                        .padding(.horizontal, horizontal)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onGeometryChange(for: Bool.self) { proxy in
+            proxy.size.width >= Console.compactContentWidth
+        } action: { wide in
+            isWide = wide
         }
         .dsPageColumn()
         .onAppear { disk = .current() }
@@ -169,23 +168,17 @@ struct ModelsPage: View {
 
     // MARK: - Header
 
-    private var header: some View {
+    private func header(horizontal: CGFloat) -> some View {
         DSPageHeader(
             title: "模型库",
             subtitle: L10n.t("按引擎分开的模型目录")
         ) {
             actionControls
         }
-        .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
-        .padding(.trailing, Console.contentPadding)
-        .padding(.top, Console.pageTopPadding)
-        .padding(.bottom, 10)
+        .padding(.horizontal, horizontal)
+        .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
+        .padding(.bottom, Console.pageSectionGap)
         .background(WindowDragArea())
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(DS.line)
-                .frame(height: 1)
-        }
     }
 
     private var actionControls: some View {
@@ -203,7 +196,7 @@ struct ModelsPage: View {
                     }
                 }
             }
-            .buttonStyle(PillButtonStyle(height: 30))
+            .buttonStyle(PillButtonStyle(height: 28))
             .help(L10n.t("下载中心"))
 
             Button(action: openHub) {
@@ -214,11 +207,12 @@ struct ModelsPage: View {
                     Text(L10n.t("模型广场"))
                 }
             }
-            .buttonStyle(PillButtonStyle(height: 30))
+            .buttonStyle(PillButtonStyle(height: 28))
 
             CircleGlassButton(
                 systemName: "arrow.clockwise",
                 help: rescanning ? L10n.t("正在扫描…") : L10n.t("重新扫描这个引擎的模型目录"),
+                size: 28,
                 spinning: rescanning
             ) {
                 rescan()
@@ -324,8 +318,8 @@ struct ModelsPage: View {
                         recommendedSection
                     }
                 }
-                .padding(.top, 16)
-                .padding(.bottom, 24)
+                .padding(.top, 2)
+                .padding(.bottom, Console.contentBottomInset)
             }
             .scrollIndicators(.never)
             .onChange(of: engine) { _, _ in
@@ -754,8 +748,8 @@ struct ModelsPage: View {
     private func openHub() {
         showingHub = true
         state.searchHub(
-            state.hubQuery, sort: state.hubSort.rawValue,
-            filter: state.hubFilter.rawValue, page: 0)
+            state.hub.hubQuery, sort: state.hub.hubSort.rawValue,
+            filter: state.hub.hubFilter.rawValue, page: 0)
     }
 
     private func rescan() {
@@ -774,12 +768,7 @@ struct ModelsPage: View {
     }
 
     private func revealModelFolder() {
-        let path = EnginePaths.modelsDirectory(engine)
-        if FileManager.default.fileExists(atPath: path) {
-            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
-        } else {
-            NSWorkspace.shared.open(URL(fileURLWithPath: EnginePaths.modelsRoot))
-        }
+        state.revealModelFolder(for: engine)
     }
 
     private func displayPath(_ path: String) -> String {
@@ -864,7 +853,6 @@ private struct EngineRailRow: View {
                 if selected {
                     DS.rect(14)
                         .fill(DS.accentSoft)
-                        .shadow(color: DS.accent.opacity(0.14), radius: 7, y: 2)
                 } else if hovering {
                     DS.rect(14).fill(DS.hover)
                 }
@@ -1501,7 +1489,6 @@ private struct AccentPillButtonBody: View {
             .background(
                 Capsule().fill(DS.accent.opacity(hovering && isEnabled ? 0.88 : 1))
             )
-            .shadow(color: DS.accent.opacity(0.28), radius: 8, y: 3)
             .contentShape(Capsule())
             .scaleEffect((!reduceMotion && configuration.isPressed && isEnabled) ? 0.97 : 1)
             .opacity(isEnabled ? 1 : 0.42)
@@ -1522,20 +1509,20 @@ private struct CircleGlassButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: size * 0.4, weight: .medium))
-                .foregroundStyle(hovering && isEnabled ? DS.text : DS.text2)
-                .rotationEffect(.degrees(spinning ? 360 : 0))
-                .animation(
-                    spinning
-                        ? .linear(duration: 0.8).repeatForever(autoreverses: false)
-                        : .easeOut(duration: 0.2),
-                    value: spinning
-                )
-                .frame(width: size, height: size)
-                .background(Circle().fill(hovering && isEnabled ? DS.raised : DS.pillFill))
-                .overlay(Circle().strokeBorder(DS.pillBorder, lineWidth: 1))
-                .contentShape(Circle())
+            Group {
+                if spinning {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: systemName)
+                        .font(.system(size: size * 0.4, weight: .medium))
+                        .foregroundStyle(hovering && isEnabled ? DS.text : DS.text2)
+                }
+            }
+            .frame(width: size, height: size)
+            .background(Circle().fill(hovering && isEnabled ? DS.raised : DS.pillFill))
+            .overlay(Circle().strokeBorder(DS.pillBorder, lineWidth: 1))
+            .contentShape(Circle())
         }
         .buttonStyle(DSPressStyle(scale: 0.94))
         .opacity(isEnabled ? 1 : 0.4)

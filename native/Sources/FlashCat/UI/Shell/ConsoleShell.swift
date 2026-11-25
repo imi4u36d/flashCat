@@ -7,12 +7,10 @@ import FlashCatCore
 import FlashCatKit
 import SwiftUI
 
-/// 控制台根视图：左侧 ZCode 风格实体导航边栏 + 1px 发丝分隔线 + 七个原生页面。
+/// 控制台根视图：原生 `NavigationSplitView` 边栏 + 七个原生页面。
 struct ConsoleView: View {
     @ObservedObject var state: AppState
-    @ObservedObject private var theme = AppState.shared.theme
 
-    @State private var showCommand = false
     @State private var showDownloads = false
     @State private var showHub = false
     /// 重命名弹窗里的输入。线程本身挂在 `pendingThreadRename` 上，壳层只负责
@@ -20,49 +18,23 @@ struct ConsoleView: View {
     @State private var renameText = ""
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private var sidebarVisibility: Binding<NavigationSplitViewVisibility> {
+        Binding(
+            get: { state.showsSidebar ? .all : .detailOnly },
+            set: { visibility in
+                state.setShowsSidebar(visibility != .detailOnly)
+            }
+        )
+    }
+
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            // 壁纸铺满 AppKit 窗口；玻璃窗口以 10pt 留白浮在上面。
-            GlassWallpaper(skin: theme.skin)
-
-            HStack(spacing: 0) {
-                if state.showsSidebar {
-                    ConsoleNavigationPanel(state: state, chat: state.chat) {
-                        state.toggleSidebarCompact()
-                    }
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-                }
-
-                ZStack {
-                    pageContent
-                        .id(state.section)
-                        .transition(reduceMotion ? .opacity : .dsPage)
-                }
+        NavigationSplitView(columnVisibility: sidebarVisibility) {
+            ConsoleNavigationPanel(state: state, chat: state.chat)
+                .navigationSplitViewColumnWidth(min: 200, ideal: 224, max: 280)
+        } detail: {
+            detailContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .animation(reduceMotion ? nil : DS.Motion.smooth, value: state.section)
-                .clipped()
-            }
-            .background { GlassWindowBackground(skin: theme.skin) }
-            .animation(reduceMotion ? nil : DS.Motion.smooth, value: state.showsSidebar)
-        }
-        // 换肤不在这里做。`.preferredColorScheme` 会让 SwiftUI 去改窗口外观，
-        // 而深色窗口那条系统投影明显更重（见 ThemeController.apply(to:)）；
-        // 皮肤改由窗口的 contentView 外观承担，SwiftUI 的 colorScheme 也跟着
-        // 那一层解析，切换时和窗口一起重画，不必等激活事件。
-        // 侧栏展开时折叠按钮活在侧栏头里；隐藏时退回红绿灯右侧，与各页顶栏精确对齐。
-        .overlay(alignment: .topLeading) {
-            if !state.showsSidebar && !isShowingOnboarding {
-                DSIconButton(
-                    systemName: "sidebar.left",
-                    help: "显示边栏",
-                    size: 28,
-                    style: .outlined
-                ) {
-                    state.toggleSidebar()
-                }
-                .padding(.leading, 82)
-                .padding(.top, 10)
-            }
+                .background(Color(nsColor: .windowBackgroundColor))
         }
         .overlay {
             if isShowingOnboarding {
@@ -70,41 +42,16 @@ struct ConsoleView: View {
                     .transition(.opacity.animation(Motion.pageCrossfade))
             }
         }
-        .overlay {
-            if showCommand {
-                CommandPalette(
-                    state: state,
-                    openDownloads: { showDownloads = true },
-                    openHub: {
-                        showHub = true
-                        state.section = .models
-                    },
-                    dismiss: { showCommand = false }
-                )
-                .transition(.opacity)
-            }
-        }
-        // 侧栏收起时窗口左下角常驻一枚紧凑状态；通知到达时原地换成 toast。
-        // 侧栏展开时没有状态脊柱，通知同样浮在左下角，不再有第二个出口。
         .overlay(alignment: .bottomLeading) {
-            if !isShowingOnboarding {
-                if let notice = state.islandNotice {
-                    FloatingNoticeToast(notice: notice) { state.dismissToast() }
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                } else if !state.showsSidebar {
-                    CompactStatusPill(state: state)
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 20)
-                        .transition(.opacity)
-                }
+            if !isShowingOnboarding, let notice = state.islandNotice {
+                FloatingNoticeToast(notice: notice) { state.dismissToast() }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .animation(reduceMotion ? nil : DS.Motion.smooth, value: state.islandNotice?.id)
         .sheet(isPresented: $showDownloads) { DownloadCenterSheet(state: state) }
-        .sheet(isPresented: $showHub) { HubSheet(state: state, engine: state.libraryEngine) }
-        .onReceive(NotificationCenter.default.publisher(for: .flashCatOpenCommandPalette)) { _ in
-            guard !isShowingOnboarding else { return }
-            showCommand.toggle()
+        .sheet(isPresented: $showHub) {
+            HubSheet(state: state, hub: state.hub, engine: state.libraryEngine)
         }
         .alert("切换模型？", isPresented: modelSwitchShown) {
             Button("取消", role: .cancel) { state.cancelModelSwitchRequest() }
@@ -149,26 +96,27 @@ struct ConsoleView: View {
         .onChange(of: state.pendingThreadRename) { _, thread in
             if let thread { renameText = thread.title }
         }
-        .onChange(of: isShowingOnboarding) { _, _ in
-            NotificationCenter.default.post(name: .flashCatSidebarLayoutChanged, object: nil)
-        }
     }
 
     private var isShowingOnboarding: Bool {
         state.isPresentingLaunchPage || state.showsRecommendationPage
     }
 
-    @ViewBuilder private var pageContent: some View {
+    @ViewBuilder private var detailContent: some View {
         switch state.section {
-        case .overview: OverviewPage(state: state, chat: state.chat)
-        case .chat: ChatPage(state: state, chat: state.chat)
+        case .overview: OverviewPage(state: state, metrics: state.metrics)
+        case .chat:
+            ChatPage(
+                state: state,
+                chat: state.chat,
+                isActive: !isShowingOnboarding)
         case .models:
             ModelsPage(
                 state: state,
                 showingHub: $showHub,
                 showingDownloads: $showDownloads)
         case .engines: EnginesPage(state: state, installs: state.installs)
-        case .logs: LogsPage(state: state)
+        case .logs: LogsPage(state: state, logFeed: state.logFeed)
         case .settings: SettingsPage(state: state)
         case .lab: LabPage(state: state)
         }

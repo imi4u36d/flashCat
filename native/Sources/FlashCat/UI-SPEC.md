@@ -20,13 +20,12 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 
 | 文件 | 职责 |
 | --- | --- |
-| `UI/Shell/ConsoleShell.swift` | 窗口根视图、标题栏、侧栏、页路由与全局确认弹窗 |
-| `UI/Shell/StatusPill.swift` | 侧栏收起时的紧凑状态胶囊、窗口左下角的通知浮层与引擎详情弹层 |
+| `UI/Shell/ConsoleShell.swift` | 窗口根视图、原生 `NavigationSplitView` 边栏、页路由与全局确认弹窗 |
+| `UI/Shell/StatusPill.swift` | 窗口左下角的通知浮层与引擎图标 `EngineMark` |
 | `App/State/IslandNotice.swift` | 通知的数据模型与信息 / 成功 / 警告 / 错误分类 |
 | `UI/Components/ModelFamily.swift` | 模型家族识别与家族徽标 |
 | `UI/Features/Models/ModelCardText.swift` | Hugging Face 模型卡的 Markdown 清洗 |
-| `UI/Shell/CommandPalette.swift` | 命令面板：页面 / 动作 / 本地模型 / 最近对话（鼠标操作） |
-| `UI/Features/Overview/OverviewPage.swift` | 页头、当前模型条、三项实时指标、吞吐曲线 / 上次运行卡、上下文、接口与三步清单 |
+| `UI/Features/Overview/OverviewPage.swift` | 页头、当前模型条、三项实时指标、60 秒解码曲线、接口与运行状态卡、最近请求 |
 | `UI/Features/Chat/ChatPage.swift` | 会话转录、用户气泡 / 思考行 / 操作行（复制 / 编辑重发 / 分支）、新会话空态、输入卡与生成参数 |
 | `Core/Chat/ChatThreadSections.swift` | 「最近对话」的搜索、置顶与按日期分组 |
 | `UI/Features/Chat/ChatRecents.swift` | 与侧栏共用的会话行、新建对话按钮，以及对话页顶栏的历史弹层 |
@@ -50,31 +49,18 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 | `UI/Features/Chat/ChatColumn.swift` | 对话列宽换算：拖动上下限、落盘夹取与气泡 / 输入卡派生 |
 | `UI/Components/VideoPlayback.swift` | 用 QuickTime 打开生成视频，失败退回默认应用 |
 | `UI/Features/Launch/LaunchPage.swift` | 首次启动的硬件推荐与引擎安装 |
-| `UI/DesignSystem/DesignSystem.swift` | 唯一设计源 `DS`：色阶、字号、圆角、动效、页头（`DSPageHeader`）与基础控件 |
-| `UI/DesignSystem/Design.swift` / `UI/DesignSystem/Theme.swift` / `UI/DesignSystem/GlassChrome.swift` | 旧 token 的兼容别名、四档皮肤解析（`AppAppearance` / `GlassSkin`）与壁纸 / 玻璃窗口底 |
+| `UI/DesignSystem/DesignSystem.swift` / `DesignSystem+Shared.swift` / `Theme.swift` | 唯一设计源 `DS`、共享基础原语与三档原生外观（`跟随系统` / `日间` / `夜间`） |
 
 ## 窗口 chrome
 
-- **标题栏与红绿灯适配。** `AppDelegate.offsetTrafficLights` 按侧栏当前形态动态计算三颗红绿灯的精确位置：悬浮与贴边宽栏对齐 `26pt` 中线，侧栏顶部留出 `72pt` 避让区和折叠按钮；折叠窄栏（`64pt` 宽）下移到 `46pt` 起始，三颗红绿灯水平居中悬于窄栏正上方、完全不与圆角碰撞；完全隐藏侧栏或启动页时回落标准左缘 `16pt`、`24pt` 中线，右侧展开按钮紧跟在 `82pt` 处并与各页顶栏（`topBarLeading = 126pt`）对齐。
-- **侧栏。** Liquid Glass 侧边栏支持悬浮琉璃（260pt）、贴边毛玻璃（260pt）与折叠窄栏（64pt）三种形态，同时可通过「显示 → 隐藏边栏」（`⌃⌘S`）整体隐藏让主视口铺满窗口；顶部不再保留视图过滤分段器，直接展示主功能（对话 / 画廊）→ 可折叠「控制台」分组 → 「最近对话」搜索与日期分组列表。底部改为精简内联运行时状态栏（无点击弹窗）：宽栏展示引擎图标、状态、当前模型（点击直达概览）、直接启停按钮、实时解码速度与统一内存水位条；窄栏提供概览入口与独立内联启停胶囊。侧栏完全隐藏后，窗口左下角出现一枚紧凑状态胶囊（引擎 / 模型 / tok/s / 网关 / 未读通知）。
-- **状态胶囊。** 只在侧栏收起时出现，承载引擎与真实阶段、当前模型、解码读数与网关。
-  点开一张 322pt 实色弹层：引擎详情、启停、复制接口、查看日志，以及最近通知与清空。
-  命令面板同时搜索本地模型、最近 20 段对话与五个设置分区，选中模型直接切换、选中对话
-  直接打开、选中分区直接落到对应设置页。`UIStateStore.toast` 的通知统一由窗口左下角的
-  浮层承担，侧栏展开与收起都一样——不再有侧栏内的第二个出口。
-- **页头语法。** 七个页面共用 `DSPageHeader`：页名 20pt + 一行现场（引擎 / 端口 /
-  阶段，或计数）+ 右侧页面级动作；筛选条放在第二行。概览的模型名不再是页标题，
-  而是页内的「当前模型条」。
-- **页面切换。** 220ms 淡入 + 4pt 上移；侧栏选中态用 `matchedGeometryEffect` 在工作区导航行间滑动。
-- **动效。** `DS.Motion.snappy` 180ms 用于 hover/press，`DS.Motion.smooth` 280ms 用于页面与卡片状态，
-  `DS.Motion.bouncy` 轻弹簧用于命令面板；`accessibilityReduceMotion` 下关闭位移动画。
+- **标题栏与红绿灯适配。** 使用 macOS 原生统一标题栏（`.windowStyle(.titleBar)` + `.windowToolbarStyle(.unified)`）与 `NavigationSplitView`，红绿灯与侧栏折叠按钮完全由 AppKit 原生管理，不再手动计算坐标偏移。
+- **侧栏与窗口 chrome。** 使用 macOS 原生统一标题栏（`.windowStyle(.titleBar)` + `.windowToolbarStyle(.unified)`）与 `NavigationSplitView` + `List(.sidebar)`，红绿灯与侧栏折叠按钮完全由 AppKit 原生管理（状态落盘到 `sidebarVisible`）。侧栏包含：① 主动作「新对话」（⌘N）；② 工作区（对话 / 画廊）→ 可折叠 `Section(isExpanded:)`「控制台」分组（概览 / 模型库 / 引擎 / 日志）；③ 「最近对话」搜索与按日期分组列表。底部固定中性单色的「设置」（⌘,）。`UIStateStore.toast` 发布的通知统一由窗口左下角的 `FloatingNoticeToast` 浮层承担。
+- **页头与版面语法。** 概览、模型库、引擎、日志、设置、画廊六个控制台页面统一采用同一套几何与页头规范：顶部留白 `16pt`、左右留白 `20pt`（窄窗口 `< 900pt` 收紧至 `16pt`）、底部留白 `20pt`、区块垂直间距 `14pt`、卡片圆角 `16pt`（`DS.Radius.card`），宽屏内容统一收在 `1180pt`（`dsPageColumn()`）内；页头统一为单行 `34pt`（`DSPageHeader`）。
+- **动效与外观。** 外观统一收敛为「跟随系统 / 日间 / 夜间」三档原生实色分层表面与 1px 描边，不再使用材质模糊或双套皮肤分支；侧栏展开/收起交由系统 `NSSplitViewController` 原生驱动，`accessibilityReduceMotion` 下关闭位移动画。
 
 ## 控件
 
-- 控件统一走 macOS Liquid Glass：侧栏、按钮、分段控件、搜索框、命令面板、输入卡与浮层
-  使用半透明玻璃表面 + 上亮下淡的 1px 高光边；圆角层级为胶囊 / 16 / 10 / 8pt。
-  分段控件用玻璃轨道 + 白色滑块（`NativeSegmented`），菜单用高不透明度玻璃浮层
-  （`DSPopoverSurface` / `ModelPickerPopover`）；极简纯白 / 纯黑下关闭半透明、改实色分层。
+- 控件优先使用原生 SwiftUI / AppKit 原语：分段控件（`NativeSegmented` / `AppearanceSegmentedControl`）直接转发至系统 `Picker(.segmented)`；卡片表面在「玻璃」外观下使用原生 `.regularMaterial` + 1px 描边，「纯净」外观下使用实色分层 + 1px 描边。
 - 可点击 / 可悬停的卡片表面使用 `dsSurface(..., hoverable: true)`，悬停时轻微提亮并加深边框。
 - **模型卡内的动作按钮**采用 ZCode 紧凑次级描边按钮（`Radius.sm` = 6pt）；正在使用的模型卡以
   「使用中」徽标和强调色边框标记，不再整块叠色。
@@ -87,16 +73,24 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 
 ## 页面
 
-- **概览。** 页头（页名 + 引擎 / 端口 / 阶段胶囊 + 切换模型 / 启停）→ 5/12 当前模型卡
-  （引擎徽标、模型名、量化 / 体积、渐变上下文条）与 7/12 三格读数（平均解码 / 首字延迟 /
-  预填充，各带趋势线 / 延迟条 / 微柱）→ 64% 的 60 秒曲线 + 36% 的接口卡与引擎 2×2
-  事实格 → 最近请求（可按 chat / openai 筛选，行内一键复制摘要）。停引擎时曲线位置换成
-  带网格的「上次运行」卡：模型、解码、输出 tokens、时间与启动按钮；缓存命中率在引擎
-  事实格里。窄版自动折成单列。接口每行保留一键复制地址，右键给出 curl / Python 片段
-  （模型 ID 取当前模型），标题旁的闪电按钮发一条真实测试请求；「最近客户端」按会话表里的
-  `User-Agent` 聚合，内置对话登记为 `flashCat`。首次使用（缺引擎或缺本地权重）时
-  页头下出现三步清单：装引擎 → 下模型 → 启动，可关闭。曲线、上下文进度与「引擎实测」
-  角标统一取激活引擎的识别色，换引擎时数据色跟着换。皮肤切换在设置 → 通用里，不占页头。
+- **概览。** 区分「运行中」与「待机（无引擎启动）」两套布局，并在宽屏 / 全屏下将多栏 bento
+  内容列放宽至 `1480pt`、按视口高度弹性展开主区，避免全屏缩成居中孤岛。
+  - **运行中（实时遥测）：** 页头（页名 + 引擎 / 端口 / 阶段胶囊 + 切换模型 / 停引擎）→ 5/12
+    当前模型卡（引擎官方图标、模型名、量化 / 体积、引擎色上下文条）与 7/12 三格读数
+    （平均解码 / 首字延迟 / 预填充，无样本时隐藏趋势角标与彩色假柱）→ 64% 的 60 秒曲线 +
+    36% 的接口卡与引擎 2×2 实时遥测格 → 紧凑对齐的最近请求表（可按 chat / openai 筛选，
+    行内一键复制摘要）。
+  - **无引擎启动（待机启动台）：** 页头保持轻量（页名 + 状态胶囊 + 模型库 / 引擎快捷入口，
+    不再与下方重复摆两颗启动键）→ 顶部待机主卡（引擎官方图标、待机状态、当前选中模型与
+    量化 / 体积 / 上下文上限 / 推理特性 + 唯一主操作「启动引擎」与「切换模型」，异常时附
+    错误条与查看日志）→ 60% / 40% 双栏 bento：左栏为独立紧凑的「上次运行」摘要卡与可直接
+    点击切换的「本地模型」快选列表；右栏为始终在线的「接口」卡与全部展示真实硬件信息的
+    「运行环境」卡（端口 / 芯片 / 统一内存 / 可用磁盘 + 已安装引擎一键切换）→ 紧凑最近请求条。
+  - 窄版自动折成单列。接口每行保留一键复制地址，右键给出 curl / Python 片段（模型 ID 取
+    当前模型），标题旁的闪电按钮发一条真实测试请求；「最近客户端」按会话表里的 `User-Agent`
+    聚合，内置对话登记为 `flashCat`。首次使用（缺引擎或缺本地权重）时页头下出现三步清单：
+    装引擎 → 下模型 → 启动，可关闭。曲线、上下文进度与引擎徽标统一取激活引擎的识别色，
+    换引擎时数据色跟着换。皮肤切换在设置 → 通用里，不占页头。
 - **模型库。** 一条固定的引擎目录栏（宽版左侧竖排、窄版顶部横排），列出四台引擎、
   安装状态与各自的模型数；切换引擎只换右侧内容，选中的目录不随活动引擎变化。
   右侧先是一行引擎现场：名称、运行状态、已安装 / 可下载计数、模型目录路径与 Finder
@@ -110,8 +104,9 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 - **日志。** 页头（来源 + LIVE / PAUSED + 复制 / 打开 / 暂停 / 清空），第二行是
   来源、级别与搜索；搜索命中在行内高亮，详情同样高亮；控制台头只留 LIVE 与行数。
 - **设置。** 宽版左侧分区（通用 / 模型来源 / 接口 / 对话 / 关于），窄版折成分区下拉；
-  右侧只显示当前分区。通用里给出四档外观按钮（浅色琉璃 / 深色液态 / 极简纯白 / 极简纯黑）
-  与「跟随系统」开关；接口分区写明两个本机接口始终启用；关于页可检查 flashCat 自身更新。
+  右侧只显示当前分区。通用里给出两档视觉外观（「玻璃」配悬浮侧栏 / 「纯净」配贴边实色侧栏）
+  与三档色彩模式（「跟随系统」/「日间」/「夜间」），两套外观都支持跟随 macOS 自动切换日夜；
+  接口分区写明两个本机接口始终启用；关于页可检查 flashCat 自身更新。
 - **画廊。** 页头（图片 / 视频计数 + 选择、刷新、打开文件夹）+ 分段与搜索；视频封面标时长，
   选择模式可全选、批量导出到指定目录，或确认后批量删除（索引与落盘文件一起删）。
 
@@ -280,14 +275,14 @@ SwiftUI / AppKit 视图，直接读取 `AppState` 的 `@Published` 状态，用�
 - 字体沿用系统 SF Pro / PingFang；标题 20pt bold、KPI 28pt bold、正文 13pt、
   卡片标题 13.5pt；数字用 tabular，地址 / 代码用等宽。
 - 圆角层级：胶囊（状态 / 分段）/ 16（卡片）/ 22（窗口底）/ 10（控件）/ 8（小格）。
-- 换肤由 `ThemeController` 驱动：皮肤落在 **内容视图** 的外观上，窗口本身恒亮
-  （macOS 按窗口外观画阴影，`darkAqua` 会把投影压重）；极简纯白与浅色琉璃共用 Aqua，
-  用第二个 Aqua 实例迫使动态颜色重新解析。
-- `BackgroundSurface` 只负责窗口兜底的壁纸边角色；窗口始终不透明，玻璃层的半透明
-  只发生在 SwiftUI 内部，不把窗口本身变成透明窗口。
+- 换肤由 `ThemeController` 驱动：跟随系统时将 `window.appearance` 交还 macOS（`nil`），
+  固定日间/夜间时直接设到主窗口上，让原生工具栏、侧栏、`sheet` 与 `alert` 自动继承；
+  切换「玻璃 / 纯净」时标脏 `contentView` 重新解析动态颜色。
+- 侧边栏外观跟随全局外观联动：「玻璃」沿用原生 `List(.sidebar)` 材质，
+  「纯净」切换为实色背景与 1px 右边框；底部「设置」按钮保持中性单色。
+- `BackgroundSurface` 只负责窗口兜底边角色；窗口保持不透明，避免整窗离屏混合。
 - 跟随系统时 `ThemeController.systemIsDark` 是 `@Published`，系统换肤通知
-  （`AppleInterfaceThemeChangedNotification`）一到就重解并立即重绘。sheet / alert 是
-  自己的窗口，外观在 `NSApplication.didUpdateNotification` 里补齐。
+  （`AppleInterfaceThemeChangedNotification`）一到就重解并立即重绘。
 - 超宽窗口下七个控制台页面仍收在 `DS.Layout.pageMaxWidth`（1180pt）内居中，不在大屏上
   横向拉满。
 - 引擎识别色仍是页面上唯一的数据色：概览曲线、上下文进度与「引擎实测」角标取激活

@@ -25,6 +25,7 @@ extension EngineController {
         logs.close()
         stats = nil
         status = nil
+        liveRates.reset()
         // 停止要先读一次：三行之后 `transition` 就把阶段改掉了，那时候再问
         // 「是不是读者点的停止」已经没人记得。
         let wasStopping = isStopping

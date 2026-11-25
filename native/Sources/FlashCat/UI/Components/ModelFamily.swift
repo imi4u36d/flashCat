@@ -118,23 +118,34 @@ enum ModelFamily: String, CaseIterable {
     }
 
     var colors: [Color] {
+        let indigo = DS.accent
+        let blue = DS.info
+        let green = DS.ok
+        let yellow = DS.warn
+        let red = DS.err
+        let orange = Color.adaptive(dark: 0xFB923C, light: 0xEA580C)
+        let teal = Color.adaptive(dark: 0x2DD4BF, light: 0x0D9488)
+        let violet = Color.adaptive(dark: 0x9B87F5, light: 0x6D59C9)
+        let mint = Color.adaptive(dark: 0x34D399, light: 0x059669)
+        let pink = Color.adaptive(dark: 0xF472B6, light: 0xDB2777)
+
         switch self {
-        case .qwen: return [Color.adaptive(dark: 0x2F5BFF, light: 0x082DFF), Native.indigo]
+        case .qwen: return [Color.adaptive(dark: 0x2F5BFF, light: 0x082DFF), indigo]
         case .mimo: return [Color.adaptive(dark: 0x3A3A3C, light: 0x1B1B1E), Color(hex: 0x000000)]
-        case .deepseek: return [Native.blue, Native.indigo]
-        case .llama: return [Native.blue, Native.teal]
-        case .mistral: return [Native.orange, Native.yellow]
-        case .gemma: return [Native.blue, Native.teal]
-        case .phi: return [Native.blue, Native.indigo]
-        case .gpt: return [Native.green, Native.teal]
-        case .nemotron: return [Native.green, Native.mint]
-        case .granite: return [Native.indigo, Native.blue]
-        case .glm: return [Native.violet, Native.pink]
-        case .kimi: return [Native.indigo, Native.violet]
-        case .flux: return [Native.pink, Native.orange]
-        case .liquid: return [Native.teal, Native.blue]
-        case .minimax: return [Native.red, Native.orange]
-        case .other: return [Native.blue, Native.indigo]
+        case .deepseek: return [blue, indigo]
+        case .llama: return [blue, teal]
+        case .mistral: return [orange, yellow]
+        case .gemma: return [blue, teal]
+        case .phi: return [blue, indigo]
+        case .gpt: return [green, teal]
+        case .nemotron: return [green, mint]
+        case .granite: return [indigo, blue]
+        case .glm: return [violet, pink]
+        case .kimi: return [indigo, violet]
+        case .flux: return [pink, orange]
+        case .liquid: return [teal, blue]
+        case .minimax: return [red, orange]
+        case .other: return [blue, indigo]
         }
     }
 }

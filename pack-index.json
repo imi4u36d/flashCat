@@ -113,6 +113,14 @@
     ],
     "splash": [
       {
+        "version": "1.7.3",
+        "url": "splash-1.7.3-arm64-macos26.0.tar.gz",
+        "sha256": "e22473a720688e8961c186f5667515dc4204a63fc5aaf5a74d3880208273b173",
+        "bytes": 88148162,
+        "minMacOS": "26.0",
+        "notes": ""
+      },
+      {
         "version": "1.7.2",
         "url": "splash-1.7.2-arm64-macos26.0.tar.gz",
         "sha256": "819843ea51dace317ec0eee635b5cc80f803f76b0bf91c65e4da762d127dc0d7",

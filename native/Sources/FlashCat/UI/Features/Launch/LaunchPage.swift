@@ -26,7 +26,7 @@ struct LaunchPage: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            GlassWallpaper(skin: state.theme.skin)
+            Color(nsColor: .windowBackgroundColor).ignoresSafeArea()
             VStack(spacing: 0) {
                 Color.clear
                     .frame(height: DS.Layout.titlebarHeight)
@@ -413,7 +413,6 @@ private struct LaunchProgressBadge: View {
     let tint: Color
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var spinning = false
 
     private var clamped: Double { min(max(fraction, 0), 1) }
 
@@ -427,15 +426,6 @@ private struct LaunchProgressBadge: View {
                     .stroke(tint, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                     .animation(reduceMotion ? nil : DS.Motion.smooth, value: clamped)
-                if !reduceMotion {
-                    Circle()
-                        .trim(from: 0, to: 0.18)
-                        .stroke(tint.opacity(0.55), lineWidth: 1)
-                        .rotationEffect(.degrees(spinning ? 360 : 0))
-                        .animation(
-                            .linear(duration: 1.6).repeatForever(autoreverses: false),
-                            value: spinning)
-                }
             }
             .frame(width: 20, height: 20)
 
@@ -455,7 +445,6 @@ private struct LaunchProgressBadge: View {
         .overlay {
             DS.rect(DS.Radius.md).strokeBorder(DS.line, lineWidth: 1)
         }
-        .onAppear { spinning = true }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(label)
         .accessibilityValue("\(Int((clamped * 100).rounded()))%")

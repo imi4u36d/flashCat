@@ -45,4 +45,45 @@ final class BackgroundSurfaceTests: XCTestCase {
         XCTAssertGreaterThan(lightColor.redComponent, 0.8)
         XCTAssertLessThan(darkColor.redComponent, 0.15)
     }
+
+    func testThemeControllerSwitchesSystemLightAndDarkAppearance() throws {
+        let suite = "flashcat-theme-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let settings = AppSettings(defaults: defaults)
+        let theme = ThemeController(settings: settings)
+
+        theme.set(.light)
+        XCTAssertFalse(theme.isDark)
+        XCTAssertEqual(theme.resolvedAppearance?.name, .aqua)
+
+        theme.set(.dark)
+        XCTAssertTrue(theme.isDark)
+        XCTAssertEqual(theme.resolvedAppearance?.name, .darkAqua)
+
+        theme.toggleLightDark()
+        XCTAssertEqual(theme.mode, .light)
+        theme.toggleLightDark()
+        XCTAssertEqual(theme.mode, .dark)
+
+        theme.set(.system)
+        XCTAssertEqual(theme.isDark, theme.systemIsDark)
+    }
+
+    func testUIStateStorePersistsSidebarVisibility() throws {
+        let suite = "flashcat-uistate-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        defaults.set(false, forKey: "sidebarVisible")
+        let hidden = UIStateStore(defaults: defaults)
+        XCTAssertFalse(hidden.showsSidebar)
+
+        let shown = UIStateStore(defaults: UserDefaults())
+        shown.setShowsSidebar(false)
+        XCTAssertFalse(shown.showsSidebar)
+        shown.toggleSidebar()
+        XCTAssertTrue(shown.showsSidebar)
+    }
 }

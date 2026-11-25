@@ -46,6 +46,16 @@ extension EngineController {
         }
     }
 
+    /// 用累计计数器的滑动窗口差分补上不直接上报实时预填充速率的引擎（目前是 mlx-serve）。
+    /// 别的引擎不报这些键，`observe` 返回空读数，不会覆盖它们自己的口径。
+    func applyLiveRates(to parsed: inout EngineStatus) {
+        let reading = liveRates.observe(parsed, at: Date())
+        if let prefill = reading.prefill.value, prefill > 0 {
+            parsed.prefillTokensPerSecond = prefill
+            parsed.prefillRateKind = reading.prefill.kind
+        }
+    }
+
     func poll() async {
         if pollInFlight || process == nil { return }
         pollInFlight = true
@@ -61,21 +71,34 @@ extension EngineController {
             return
         }
 
-        if state == .starting,
-            descriptor.switchMode != .hot
-                || desiredModel == nil
-                || status?.loadedModels.contains(desiredModel ?? "") == true
-        {
-            markReady()
-        }
         await applyTuningIfNeeded()
         await ensureDesiredModelLoaded()
         let documents = await collectTelemetry(healthResponse: health.response)
-        guard !documents.isEmpty else { return }
+        guard !documents.isEmpty else {
+            if state == .starting,
+                descriptor.switchMode != .hot
+                    || desiredModel == nil
+                    || status?.loadedModels.contains(desiredModel ?? "") == true
+            {
+                markReady()
+            }
+            return
+        }
         var parsed = EngineStatusParser.parse(documents: documents, fallbackState: .ready)
         await adoptEngineReportedEfforts(into: &parsed)
+        applyLiveRates(to: &parsed)
         status = parsed
         stats = ServerStats(engineStatus: parsed, previous: stats)
+        // 先写入最新 `status` / `stats` 再宣告 `.ready`：`markReady()` 同步触发
+        // `onChange()` → `syncLifetimeIdentity`，确保等待就绪的对话或网关请求在
+        // `canChat` 变真之前就已经完成新代对齐，不会被随后到达的遥测误判为旧代。
+        if state == .starting,
+            descriptor.switchMode != .hot
+                || desiredModel == nil
+                || parsed.loadedModels.contains(desiredModel ?? "")
+        {
+            markReady()
+        }
         if process == nil { logs.pollFollow() }
         onChange()
     }

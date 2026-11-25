@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
-import AppKit
-import Charts
 import FlashCatCore
 import FlashCatKit
 import SwiftUI
@@ -27,9 +25,6 @@ extension OverviewPage {
     }
 
     // MARK: KPI cards
-    //
-    // 三格回答「这台机器现在多快」：平均解码、首字延迟、预填充。
-    // 上下文占用在模型卡里，缓存命中率在右栏的引擎事实里。
 
     var averageMetricCard: some View {
         kpiCard(
@@ -40,11 +35,6 @@ extension OverviewPage {
             if let averageBadge {
                 OverviewBadge(text: averageBadge, tint: DS.accent)
             }
-        } visual: {
-            OverviewSparkline(
-                values: Array(samples.suffix(16).map(\.value)),
-                color: engineTint)
-                .frame(height: 24)
         }
     }
 
@@ -60,31 +50,34 @@ extension OverviewPage {
                     tint: DS.ok,
                     dot: true)
             }
-        } visual: {
-            OverviewLatencyBar(milliseconds: ttftReading.milliseconds ?? 0)
         }
     }
 
     var prefillMetricCard: some View {
-        kpiCard(
+        let hasValue = prefillText != "—"
+        let isLivePrefill = prefillReading.origin == .engineLive
+        return kpiCard(
             title: "预填充",
             value: prefillText,
-            unit: prefillText == "—" ? nil : "tok/s"
+            unit: hasValue ? "tok/s" : nil
         ) {
-            OverviewBadge(text: "稳定", tint: DS.accentBlue, icon: "arrow.up.right")
-        } visual: {
-            OverviewMicroBars()
+            if hasValue {
+                OverviewBadge(
+                    text: isLivePrefill ? "LIVE" : "稳定",
+                    tint: isLivePrefill ? DS.ok : DS.accentBlue,
+                    dot: isLivePrefill,
+                    icon: isLivePrefill ? nil : "arrow.up.right")
+            }
         }
     }
 
-    func kpiCard<Badge: View, Visual: View>(
+    func kpiCard<Badge: View>(
         title: String,
         value: String,
         unit: String?,
-        @ViewBuilder badge: () -> Badge,
-        @ViewBuilder visual: () -> Visual
+        @ViewBuilder badge: () -> Badge
     ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 6) {
                 Text(L10n.t(title))
                     .font(.system(size: 12, weight: .medium))
@@ -93,6 +86,8 @@ extension OverviewPage {
                 Spacer(minLength: 4)
                 badge()
             }
+
+            Spacer(minLength: 0)
 
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(value)
@@ -110,10 +105,6 @@ extension OverviewPage {
                 }
                 Spacer(minLength: 0)
             }
-
-            Spacer(minLength: 2)
-            visual()
-                .frame(height: 24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .overviewCard()
@@ -129,12 +120,7 @@ extension OverviewPage {
                 unit: averageRate > 0 ? "tok/s" : nil,
                 badge: averageBadge,
                 badgeTint: DS.accent
-            ) {
-                OverviewSparkline(
-                    values: Array(samples.suffix(12).map(\.value)),
-                    color: engineTint)
-                    .frame(width: 88, height: 22)
-            }
+            )
             DSDivider()
             compactMetricRow(
                 title: "首字延迟",
@@ -142,59 +128,49 @@ extension OverviewPage {
                 unit: ttftText == "—" ? nil : "ms",
                 badge: ttftText == "—" ? nil : ((ttftReading.milliseconds ?? 0) <= 250 ? "极速" : "正常"),
                 badgeTint: DS.ok
-            ) {
-                OverviewLatencyBar(milliseconds: ttftReading.milliseconds ?? 0)
-                    .frame(width: 112)
-            }
+            )
             DSDivider()
             compactMetricRow(
                 title: "预填充",
                 value: prefillText,
                 unit: prefillText == "—" ? nil : "tok/s",
-                badge: prefillText == "—" ? nil : "稳定",
-                badgeTint: DS.accentBlue
-            ) {
-                OverviewMicroBars()
-                    .frame(width: 88)
-            }
+                badge: prefillText == "—" ? nil : (prefillReading.origin == .engineLive ? "LIVE" : "稳定"),
+                badgeTint: prefillReading.origin == .engineLive ? DS.ok : DS.accentBlue
+            )
         }
         .overviewCard(padding: 0)
     }
 
-    func compactMetricRow<Visual: View>(
+    func compactMetricRow(
         title: String,
         value: String,
         unit: String?,
         badge: String?,
-        badgeTint: Color,
-        @ViewBuilder visual: () -> Visual
+        badgeTint: Color
     ) -> some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(L10n.t(title))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(DS.text3)
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(value)
-                        .font(DS.Font.number(24, weight: .bold))
-                        .foregroundStyle(value == "—" ? DS.text4 : DS.text)
-                        .contentTransition(.numericText())
-                    if let unit {
-                        Text(unit)
-                            .font(.system(size: 11))
-                            .foregroundStyle(DS.text3)
-                    }
-                    if let badge {
-                        OverviewBadge(text: badge, tint: badgeTint)
-                            .padding(.leading, 2)
-                    }
+            Text(L10n.t(title))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(DS.text3)
+            Spacer(minLength: 8)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                if let badge {
+                    OverviewBadge(text: badge, tint: badgeTint)
+                        .padding(.trailing, 4)
+                }
+                Text(value)
+                    .font(DS.Font.number(22, weight: .bold))
+                    .foregroundStyle(value == "—" ? DS.text4 : DS.text)
+                    .contentTransition(.numericText())
+                if let unit {
+                    Text(unit)
+                        .font(.system(size: 11))
+                        .foregroundStyle(DS.text3)
                 }
             }
-            Spacer(minLength: 8)
-            visual()
         }
         .padding(.horizontal, 14)
-        .frame(height: 58)
+        .frame(height: 50)
     }
 
     // MARK: Metric formatting

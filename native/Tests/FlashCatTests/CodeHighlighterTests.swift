@@ -72,4 +72,25 @@ final class CodeHighlighterTests: XCTestCase {
         XCTAssertEqual(String(a[0].characters), "let a = 1")
         XCTAssertEqual(String(b[0].characters), "let b = 2")
     }
+
+    func testDocumentBuildsSingleAttributedBlockAndGutter() {
+        let doc = CodeHighlighter.document("let a = 1\nlet b = 2", language: "swift")
+        XCTAssertEqual(doc.lineCount, 2)
+        XCTAssertEqual(String(doc.attributed.characters), "let a = 1\nlet b = 2")
+
+        let trailing = CodeHighlighter.document("let a = 1\n", language: "swift")
+        XCTAssertEqual(trailing.lineCount, 2)
+        XCTAssertEqual(String(trailing.attributed.characters), "let a = 1\n\u{200B}")
+
+        let empty = CodeHighlighter.document("", language: nil)
+        XCTAssertEqual(empty.lineCount, 1)
+        XCTAssertEqual(String(empty.attributed.characters), " ")
+
+        let streaming = CodeHighlighter.document("let s = 1", language: "swift", caching: false)
+        XCTAssertEqual(streaming.lineCount, 1)
+        XCTAssertEqual(String(streaming.attributed.characters), "let s = 1")
+
+        XCTAssertEqual(CodeHighlighter.gutterText(lineCount: 1), "1")
+        XCTAssertEqual(CodeHighlighter.gutterText(lineCount: 3), "1\n2\n3")
+    }
 }

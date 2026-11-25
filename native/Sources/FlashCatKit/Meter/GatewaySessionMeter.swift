@@ -37,6 +37,7 @@ public final class GatewaySessionMeter: @unchecked Sendable {
     public typealias RequestTimings = GatewayRequestTimings
     public typealias Overview = GatewayMeterOverview
     public typealias CacheHitSample = GatewayCacheHitSample
+    public typealias CompletedStreamDecode = GatewayCompletedStreamDecode
     public typealias SessionSnapshot = GatewaySessionSnapshot
     public static let shared = GatewaySessionMeter()
 
@@ -48,9 +49,12 @@ public final class GatewaySessionMeter: @unchecked Sendable {
     private struct Session {
         let id: Int
         /// 这一路登记时所在的「代」。换引擎 / 换模型 / 引擎重启会开启新一代
-        /// （`resetLifetime`），预填充读数只认当代的请求——上一台模型的
+        /// （`resetLifetime`），预填充 / 均值 / 首字读数只认当代的请求——上一台模型的
         /// 2300 tok/s 不该挂在新模型的卡片上。
-        let epoch: Int
+        /// `var`：内置对话在冷启动引擎前先 `begin`，等引擎就绪后 `markStarted`
+        /// 才真正发出请求；启动完成后 `syncLifetimeIdentity` 可能已翻代，此时由
+        /// `markStarted` 认领当代 `epoch`，避免冷启动首轮请求被当成旧代丢弃。
+        var epoch: Int
         let model: String
         let dialect: String
         /// 请求方自报的名字（`User-Agent`）；内置对话登记为 `flashCat`。
@@ -160,12 +164,13 @@ public final class GatewaySessionMeter: @unchecked Sendable {
         return id
     }
 
-    /// 把计时起点挪到「真正发出请求」的那一刻。
+    /// 把计时起点挪到「真正发出请求」的那一刻，并认领当前代际 `epoch`。
     ///
     /// 应用内对话会在 `prepareChatSession` 之前登记会话——那时引擎可能还在
-    /// 加载几十 GB 权重。如果 TTFT 从登记时刻算起，冷启动后第一轮的预填充
-    /// 速度会把模型加载时间摊进分母，读数低到没有意义。启动等待不算预填充，
-    /// 与对话页「思考了 N 秒」的口径一致。
+    /// 加载几十 GB 权重，且启动完成时 `syncLifetimeIdentity` 会翻代。如果 TTFT
+    /// 从登记时刻算起，冷启动的加载时间会被摊进预填充分母；如果 `epoch` 不随之
+    /// 认领当前代，冷启动后的首轮请求还会被当成旧代丢弃（曲线有数据，而平均解码 /
+    /// 首字延迟 / 预填充全部为空）。
     public func markStarted(_ id: Int, at now: Date = Date()) {
         lock.lock()
         defer { lock.unlock() }
@@ -173,6 +178,7 @@ public final class GatewaySessionMeter: @unchecked Sendable {
             sessions[index].firstTokenAt == nil
         else { return }
         sessions[index].startedAt = now
+        sessions[index].epoch = epoch
     }
 
     public func finish(_ id: Int, failed: Bool = false, at now: Date = Date()) {
@@ -411,6 +417,27 @@ public final class GatewaySessionMeter: @unchecked Sendable {
         return rate
     }
 
+    /// 短提示词兜底预填充吞吐：当代还没有 ≥ 128 token 的高置信度请求时使用。
+    /// 要求至少 `shortPrefillMinimumTokens` 个真正前向 token，且未被缓存恢复主导
+    /// （`forwarded >= cachedPromptTokens`），避免把 98% 缓存命中的小增量误报成算力。
+    private static func shortPrefillRate(_ session: Session) -> Double? {
+        if let timings = session.timings {
+            return timings.shortPrefillRate
+        }
+        guard session.streamed, session.usageKnown,
+            let first = session.firstTokenAt, session.promptTokens > 0
+        else { return nil }
+        let ttft = first.timeIntervalSince(session.startedAt)
+        guard ttft >= 0.025 else { return nil }
+        let forwarded = max(0, session.promptTokens - session.cachedPromptTokens)
+        guard forwarded >= RequestTimings.shortPrefillMinimumTokens,
+            forwarded >= session.cachedPromptTokens
+        else { return nil }
+        let rate = Double(forwarded) / ttft
+        guard rate.isFinite, rate > 0, rate <= RequestTimings.maxPlausiblePrefillRate else { return nil }
+        return rate
+    }
+
     /// 一条请求的全程解码速度（「最近请求」每一行读它）。
     ///
     /// 引擎的 `timings` 优先；流式响应退回网关自己的到达窗口；两者都没有就
@@ -428,10 +455,10 @@ public final class GatewaySessionMeter: @unchecked Sendable {
     ///
     /// 概览的预填充格读这里，而不是引擎自报的 `latest.prefill_*` / `in_flight`
     /// ——换引擎不该让同一格时有时无。按收尾时刻排「最近一次」，并发时取真正的
-    /// 最后一路；最新那一路的样本太小（缓存命中、只剩几十个 token 的前向）时
-    /// 继续往前找，不把整格空掉。只认**当代**（`epoch`）的请求：换了引擎或模型，
-    /// 上一台的 2300 tok/s 不该冒充新模型的开机读数——那时宁可画「—」或退回
-    /// 引擎自己的均值。
+    /// 最后一路；优先使用前向 ≥ 128 token 的高置信度样本（缓存命中小增量不会覆盖它），
+    /// 当代尚未出现大提示词时再退回未被缓存恢复主导的短提示词实测，避免日常短对话
+    /// 一直画「—」。只认**当代**（`epoch`）的请求：换了引擎或模型，上一台的读数不该
+    /// 冒充新模型的开机读数。
     public func recentPrefill() -> Double? {
         lock.lock()
         defer { lock.unlock() }
@@ -442,6 +469,9 @@ public final class GatewaySessionMeter: @unchecked Sendable {
             .sorted { ($0.finishedAt ?? $0.startedAt) > ($1.finishedAt ?? $1.startedAt) }
         for session in ordered {
             if let rate = Self.prefillRate(session) { return rate }
+        }
+        for session in ordered {
+            if let rate = Self.shortPrefillRate(session) { return rate }
         }
         return nil
     }
@@ -561,6 +591,48 @@ public final class GatewaySessionMeter: @unchecked Sendable {
         return tokens / seconds
     }
 
+    /// 当代已收尾、流式传输、且测得有效解码速率的会话（按结束时刻升序）。
+    ///
+    /// 概览曲线按 1 Hz 采样；高速模型下 < 1 秒的简短流式回复可能完整落在两个节拍之间
+    /// （或首拍仍在预填充速率为 0、次拍已收尾）。`MetricsStore` 用它为未被实时拍命中
+    /// 的短流式请求补落采样点；非流式响应（`streamed == false`）不会进入此列表。
+    public func completedStreamedDecodes(afterSessionID: Int) -> [CompletedStreamDecode] {
+        lock.lock()
+        defer { lock.unlock() }
+        let current = epoch
+        return sessions
+            .compactMap { session -> CompletedStreamDecode? in
+                guard session.epoch == current,
+                    session.id > afterSessionID,
+                    session.streamed,
+                    let first = session.firstTokenAt,
+                    let finished = session.finishedAt,
+                    let rate = Self.decodeRate(session),
+                    rate > 0
+                else { return nil }
+                return CompletedStreamDecode(
+                    sessionID: session.id,
+                    startedAt: first,
+                    finishedAt: max(first, finished),
+                    rate: rate)
+            }
+            .sorted { lhs, rhs in
+                if lhs.finishedAt != rhs.finishedAt { return lhs.finishedAt < rhs.finishedAt }
+                return lhs.sessionID < rhs.sessionID
+            }
+    }
+
+    /// 当代已收尾的请求是否全部为非流式响应。
+    /// 概览曲线空态据此区分「非流式请求无逐秒曲线」与普通等待/异常空态。
+    public func hasOnlyNonStreamedCompletedSessions() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let current = epoch
+        let completed = sessions.filter { $0.epoch == current && $0.finishedAt != nil }
+        guard !completed.isEmpty else { return false }
+        return completed.allSatisfy { !$0.streamed }
+    }
+
     // MARK: 快照
 
     /// 一条请求目前的生成量与解码时长。
@@ -638,7 +710,7 @@ public final class GatewaySessionMeter: @unchecked Sendable {
                 promptTokens: session.promptTokens,
                 completionTokens: completion,
                 decodeRate: rate,
-                prefillRate: Self.prefillRate(session) ?? 0,
+                prefillRate: Self.prefillRate(session) ?? Self.shortPrefillRate(session) ?? 0,
                 ctxTokens: session.promptTokens + completion)
         }
     }

@@ -239,4 +239,209 @@ final class MetricsStoreTests: XCTestCase {
         // 解冻时右缘跟着挂钟走，而不是钉在某个旧时刻。
         XCTAssertEqual(store.overviewChartEnd.timeIntervalSinceNow, 0, accuracy: 5)
     }
+
+    /// 高速模型下的短流式请求：第一拍恰逢预填充（速率 0），随后 0.6 秒内完成吐字，
+    /// 下一拍已经收尾。曲线必须补落该请求的真实解码点，不能空白并误标成非流式。
+    @MainActor
+    func testTickBackfillsShortStreamedRequestCaughtInPrefill() {
+        let meter = GatewayMeter()
+        let store = MetricsStore(meter: meter)
+        let t0 = Date()
+        // 先跑一拍建立引擎代际身份（模拟引擎已就绪运行），再发起请求。
+        store.tick(now: t0.addingTimeInterval(-1.0), stats: ServerStats(), isRunning: true, activeEngine: .splash)
+        let id = meter.begin(model: "m", dialect: "chat", promptTokens: 45, at: t0)
+
+        // 第一拍仍在预填充：isLive = true，但速率为 0，实时拍不落点。
+        store.tick(now: t0, stats: ServerStats(), isRunning: true, activeEngine: .splash)
+        XCTAssertTrue(store.throughput.isEmpty)
+        XCTAssertTrue(store.gatewayRateIsLive)
+
+        // 0.1s 后首字，0.7s 收尾（共 75 tokens / 0.6s = 125 tok/s），均在两拍之间完成。
+        meter.addTokens(id, 35, at: t0.addingTimeInterval(0.1))
+        meter.addTokens(id, 40, at: t0.addingTimeInterval(0.7))
+        meter.noteUsage(id, promptTokens: 45, completionTokens: 75)
+        meter.finish(id, at: t0.addingTimeInterval(0.7))
+
+        // 第二拍已收尾：补记该短流式点并冻结右缘。
+        let t1 = t0.addingTimeInterval(1.0)
+        store.tick(now: t1, stats: ServerStats(), isRunning: true, activeEngine: .splash)
+        let visible = store.overviewThroughput(window: 60)
+        XCTAssertEqual(visible.count, 1)
+        XCTAssertEqual(visible.first?.value ?? 0, 75.0 / 0.6, accuracy: 1.0)
+        XCTAssertNotNil(store.throughputFrozenAt)
+        XCTAssertFalse(store.chartEmptyIsNonStreamed)
+        XCTAssertGreaterThan(store.gatewayPrefillRate, 0)
+    }
+
+    /// 两次短流式请求都完整落在 1 秒节拍之间时，每次都能补落采样点，
+    /// 且第二次请求会推进冻结右缘，确保两个点都在 60 秒冻结窗口内。
+    @MainActor
+    func testTickBackfillsShortStreamedRequestsBetweenTicksAndAdvancesFreeze() {
+        let meter = GatewayMeter()
+        let store = MetricsStore(meter: meter)
+        let t0 = Date()
+        store.tick(now: t0, stats: ServerStats(), isRunning: true, activeEngine: .splash)
+
+        // 第一次短请求完全落在 t0..t1 之间
+        let first = meter.begin(model: "m", dialect: "chat", promptTokens: 40, at: t0.addingTimeInterval(0.05))
+        meter.addTokens(first, 30, at: t0.addingTimeInterval(0.15))
+        meter.addTokens(first, 30, at: t0.addingTimeInterval(0.65))
+        meter.finish(first, at: t0.addingTimeInterval(0.65))
+
+        let t1 = t0.addingTimeInterval(1.0)
+        store.tick(now: t1, stats: ServerStats(), isRunning: true, activeEngine: .splash)
+        XCTAssertEqual(store.overviewThroughput(window: 60).count, 1)
+        XCTAssertEqual(store.throughputFrozenAt, t1)
+
+        // 第二次短请求在 5 秒后也完全落在两拍之间
+        let second = meter.begin(model: "m", dialect: "chat", promptTokens: 50, at: t0.addingTimeInterval(5.1))
+        meter.addTokens(second, 35, at: t0.addingTimeInterval(5.2))
+        meter.addTokens(second, 35, at: t0.addingTimeInterval(5.7))
+        meter.finish(second, at: t0.addingTimeInterval(5.7))
+
+        let t2 = t0.addingTimeInterval(6.0)
+        store.tick(now: t2, stats: ServerStats(), isRunning: true, activeEngine: .splash)
+        let visible = store.overviewThroughput(window: 60)
+        XCTAssertEqual(visible.count, 2)
+        XCTAssertEqual(store.throughputFrozenAt, t2)
+    }
+
+    /// 真正的非流式请求不会伪造逐秒曲线点，并正确标记非流式空态。
+    @MainActor
+    func testTickDoesNotBackfillNonStreamedRequest() throws {
+        let meter = GatewayMeter()
+        let store = MetricsStore(meter: meter)
+        let t0 = Date()
+        store.tick(now: t0, stats: ServerStats(), isRunning: true, activeEngine: .splash)
+        let id = meter.begin(model: "m", dialect: "openai", promptTokens: 200, at: t0.addingTimeInterval(0.1))
+        let body = try JSONSerialization.data(withJSONObject: [
+            "choices": [["message": ["content": "hello world"]]],
+            "usage": ["prompt_tokens": 200, "completion_tokens": 20],
+            "timings": [
+                "prompt_n": 200, "cached_n": 0, "prompt_ms": 100.0,
+                "predicted_n": 20, "predicted_ms": 200.0,
+            ],
+        ])
+        meter.ingestResponse(id, body: body)
+
+        store.tick(now: t0.addingTimeInterval(1.0), stats: ServerStats(), isRunning: true, activeEngine: .splash)
+        XCTAssertTrue(store.throughput.isEmpty)
+        XCTAssertTrue(store.chartEmptyIsNonStreamed)
+    }
+
+    /// 长流式请求在解码期间已被 1 Hz 实时拍命中，收尾时不额外补记重复点。
+    @MainActor
+    func testTickDoesNotDuplicateSampleForLongStreamedRequest() {
+        let meter = GatewayMeter()
+        let store = MetricsStore(meter: meter)
+        let t0 = Date()
+        let id = meter.begin(model: "m", dialect: "chat", promptTokens: 100, at: t0.addingTimeInterval(-1.5))
+        meter.addTokens(id, 50, at: t0.addingTimeInterval(-1.0))
+        meter.addTokens(id, 50, at: t0.addingTimeInterval(-0.5))
+        meter.addTokens(id, 50, at: t0.addingTimeInterval(-0.1))
+
+        // 实时拍命中解码区间
+        store.tick(now: t0, stats: ServerStats(), isRunning: true, activeEngine: .splash)
+        XCTAssertEqual(store.throughput.count, 1)
+
+        meter.addTokens(id, 50, at: t0.addingTimeInterval(0.3))
+        meter.finish(id, at: t0.addingTimeInterval(0.3))
+
+        // 收尾拍不再多补一个点
+        store.tick(now: t0.addingTimeInterval(1.0), stats: ServerStats(), isRunning: true, activeEngine: .splash)
+        XCTAssertEqual(store.throughput.count, 1)
+    }
+
+    /// 冷启动首轮对话：`begin` 发生在引擎首次上报 `stats` 之前，首次建立 `lifetimeIdentity`
+    /// 不得触发 `resetLifetime()` 把这轮正在跑的请求划进旧代；而随后真的换模型/重启时，
+    /// 即使距离上一拍不到 0.95 秒也必须立即翻代清零。
+    @MainActor
+    func testFirstIdentityDoesNotOrphanColdStartSessionAndModelSwitchResetsImmediately() {
+        let meter = GatewayMeter()
+        let store = MetricsStore(meter: meter)
+        let t0 = Date()
+
+        // 引擎启动期间先跑过一拍 `stats == nil`（模拟启动阶段每秒心跳）。
+        store.tick(now: t0, stats: nil, isRunning: true, activeEngine: .splash)
+
+        // 冷启动首轮请求在首次 stats 到达前已登记并开始吐字。
+        let first = meter.begin(model: "m1", dialect: "chat", promptTokens: 90, at: t0.addingTimeInterval(0.1))
+        meter.markStarted(first, at: t0.addingTimeInterval(0.2))
+        meter.addTokens(first, 60, at: t0.addingTimeInterval(0.3))
+        meter.addTokens(first, 60, at: t0.addingTimeInterval(0.9))
+        meter.noteUsage(first, promptTokens: 90, completionTokens: 120)
+        meter.finish(first, at: t0.addingTimeInterval(0.9))
+
+        var stats1 = ServerStats()
+        stats1.instancePid = 1001
+        stats1.startedAt = 1_700_000_000
+        stats1.model = "m1"
+        store.tick(now: t0.addingTimeInterval(1.0), stats: stats1, isRunning: true, activeEngine: .splash)
+
+        XCTAssertGreaterThan(store.averageDecodeRate, 0)
+        XCTAssertGreaterThan(store.gatewayTTFTMilliseconds, 0)
+        XCTAssertGreaterThan(store.gatewayPrefillRate, 0)
+        XCTAssertEqual(store.gatewayCacheHitRequests, 1)
+
+        // 0.2 秒后真的切了新模型（小于 0.95 秒节拍闸门）：必须立即翻代清零，不等下一秒。
+        var stats2 = stats1
+        stats2.instancePid = 2002
+        stats2.startedAt = 1_700_000_010
+        stats2.model = "m2"
+        store.tick(now: t0.addingTimeInterval(1.2), stats: stats2, isRunning: true, activeEngine: .splash)
+
+        XCTAssertEqual(store.averageDecodeRate, 0)
+        XCTAssertEqual(store.gatewayTTFTMilliseconds, 0)
+        XCTAssertEqual(store.gatewayPrefillRate, 0)
+        XCTAssertEqual(store.gatewayCacheHitRequests, 0)
+    }
+
+    /// 预填充进行中每一秒都应通过引擎 LIVE 读数实时刷新；进入解码后在末帧 usage
+    /// 到达前即展示引擎刚完成的批次速度，无需等到整轮回答结束才出现。
+    @MainActor
+    func testTickPublishesLivePrefillDuringPrefillAndImmediatelyInDecode() {
+        let meter = GatewayMeter()
+        let store = MetricsStore(meter: meter)
+        let t0 = Date()
+
+        var stats = ServerStats()
+        stats.instancePid = 1001
+        stats.startedAt = 1_700_000_000
+        stats.model = "m1"
+        store.tick(now: t0, stats: stats, isRunning: true, activeEngine: .splash)
+        XCTAssertEqual(store.prefillReading(isRunning: true), .none)
+
+        // 请求开始预填充：网关尚无任何 token，引擎第 1 秒与第 2 秒分别上报实时预填充速率。
+        let id = meter.begin(model: "m1", dialect: "chat", promptTokens: 4_000, at: t0.addingTimeInterval(0.2))
+        stats.prefillTokensPerSecond = 2_800
+        stats.prefillRateKind = .live
+        store.tick(now: t0.addingTimeInterval(1.0), stats: stats, isRunning: true, activeEngine: .splash)
+        XCTAssertEqual(store.prefillReading(isRunning: true), MetricReading(value: 2_800, origin: .engineLive))
+
+        stats.prefillTokensPerSecond = 3_400
+        stats.prefillRateKind = .live
+        store.tick(now: t0.addingTimeInterval(2.0), stats: stats, isRunning: true, activeEngine: .splash)
+        XCTAssertEqual(store.prefillReading(isRunning: true), MetricReading(value: 3_400, origin: .engineLive))
+
+        // 预填充完成进入解码（任务尚未结束，末帧 usage 未到）：引擎 `.lastRequest` 立即可见。
+        meter.addTokens(id, 40, at: t0.addingTimeInterval(2.3))
+        stats.prefillTokensPerSecond = 3_640
+        stats.prefillRateKind = .lastRequest
+        store.tick(now: t0.addingTimeInterval(3.0), stats: stats, isRunning: true, activeEngine: .splash)
+        XCTAssertEqual(store.prefillReading(isRunning: true), MetricReading(value: 3_640, origin: .engineLast))
+
+        // 任务收尾并收到 usage：交回网关逐请求实测（`.gatewayLast`）。
+        meter.noteTimings(
+            id,
+            GatewayMeter.RequestTimings(
+                promptTokens: 4_000,
+                cachedTokens: 0,
+                promptMilliseconds: 1_100,
+                predictedTokens: 100,
+                predictedMilliseconds: 800))
+        meter.finish(id, at: t0.addingTimeInterval(3.8))
+        store.tick(now: t0.addingTimeInterval(4.0), stats: stats, isRunning: true, activeEngine: .splash)
+        XCTAssertEqual(store.prefillReading(isRunning: true).origin, .gatewayLast)
+        XCTAssertEqual(store.prefillReading(isRunning: true).value ?? 0, 4_000.0 / 1.1, accuracy: 1.0)
+    }
 }

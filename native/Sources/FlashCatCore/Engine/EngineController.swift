@@ -123,6 +123,9 @@ package final class EngineController {
     /// oMLX applies MTP/DFlash through its own settings API, once per run.
     var tuningApplied = false
     var pollTimer: Timer?
+    /// mlx-serve 只报预填充累计计数器，实时预填充速率靠相邻 1 Hz 轮询差分。
+    /// 每个引擎进程一份基线；换进程或退出时清掉，避免拿上一轮计数当起点。
+    var liveRates = EngineLiveRates()
     var pollInFlight = false
     var lastError: String?
     /// Moves `.starting` out of limbo when the engine neither binds its port nor
@@ -504,6 +507,7 @@ package final class EngineController {
             failureMessage = nil
             stats = nil
             status = nil
+            liveRates.reset()
             // 阶段还是 start() 开头那个 `.starting`：从这里到 `task.run()` 之间
             // 没有 await，中途插不进 `stop()`，所以不必再迁一次（再迁一次会把
             // 起点刷成现在，「已等待」就把预下载和等端口的那几分钟丢了）。

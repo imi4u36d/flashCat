@@ -34,10 +34,12 @@ struct LabPage: View {
     @State private var selecting = false
     @State private var selectedPaths: Set<String> = []
     @State private var confirmingBulkDelete = false
+    @State private var isWide = true
 
     private static let gridSpacing: CGFloat = 16
 
     var body: some View {
+        let horizontal = Console.pageHorizontalPadding(compact: !isWide)
         VStack(alignment: .leading, spacing: 0) {
             DSPageHeader(
                 title: "画廊",
@@ -59,21 +61,19 @@ struct LabPage: View {
                 }
                 .buttonStyle(.ds(.secondary, size: .regular))
             }
-            .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar))
-            .padding(.trailing, Console.contentPadding)
-            .padding(.top, Console.pageTopPadding)
-            .padding(.bottom, 8)
+            .padding(.horizontal, horizontal)
+            .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
+            .padding(.bottom, Console.pageSectionGap)
             .background(WindowDragArea())
 
             header
-                .padding(.leading, Console.contentPadding)
-                .padding(.trailing, Console.contentPadding)
-                .padding(.bottom, 12)
+                .padding(.horizontal, horizontal)
+                .padding(.bottom, Console.pageSectionGap)
 
             if itemCount == 0 {
                 emptyState
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding(.horizontal, Console.contentPadding)
+                    .padding(.horizontal, horizontal)
                     .padding(.bottom, Console.contentBottomInset)
             } else if filteredCount == 0 {
                 VStack(spacing: 14) {
@@ -86,7 +86,7 @@ struct LabPage: View {
                         .buttonStyle(.ds(.secondary, size: .regular))
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.horizontal, Console.contentPadding)
+                .padding(.horizontal, horizontal)
                 .padding(.bottom, Console.contentBottomInset)
             } else {
                 ScrollView {
@@ -98,11 +98,17 @@ struct LabPage: View {
                     ) {
                         gridItems
                     }
-                    .padding(.horizontal, Console.contentPadding)
+                    .padding(.horizontal, horizontal)
                     .padding(.bottom, Console.contentBottomInset)
                 }
                 .scrollIndicators(.never)
             }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onGeometryChange(for: Bool.self) { proxy in
+            proxy.size.width >= Console.compactContentWidth
+        } action: { wide in
+            isWide = wide
         }
         .dsPageColumn()
         .dsTrackColumns(
@@ -566,7 +572,7 @@ private struct GalleryImageTile: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .dsSurface(radius: DS.Radius.lg, hoverable: true)
+        .dsSurface(radius: DS.Radius.card, hoverable: true)
         .help(image.prompt.isEmpty ? L10n.t("查看详情") : image.prompt)
         .contextMenu {
             Button(L10n.t("查看详情"), action: openDetail)
@@ -803,7 +809,7 @@ private struct GalleryVideoTile: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .dsSurface(radius: DS.Radius.lg, hoverable: true)
+        .dsSurface(radius: DS.Radius.card, hoverable: true)
         .help(video.prompt.isEmpty ? L10n.t("查看详情") : video.prompt)
         .contextMenu {
             Button(L10n.t("查看详情"), action: openDetail)

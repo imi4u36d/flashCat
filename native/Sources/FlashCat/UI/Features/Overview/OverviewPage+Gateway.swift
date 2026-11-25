@@ -10,7 +10,7 @@ import SwiftUI
 extension OverviewPage {
     // MARK: - API card
 
-    var gatewayCard: some View {
+    func gatewayCard(cardPadding: CGFloat = 14) -> some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 6) {
                 Text(L10n.t("接口"))
@@ -47,11 +47,8 @@ extension OverviewPage {
                     .foregroundStyle(DS.warn)
                     .lineLimit(2)
             }
-
-            DSDivider()
-            clientsList
         }
-        .overviewCard()
+        .overviewCard(padding: cardPadding)
         .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -102,77 +99,9 @@ extension OverviewPage {
         .help(L10n.t("点击复制接口地址"))
     }
 
-    // MARK: Recent clients
-
-    /// 网关只监听回环，`User-Agent` 是唯一能区分「谁在用」的线索。
-    var recentClients: [GatewayClientSummary] {
-        GatewayClientSummary.group(GatewayMeter.shared.snapshot(limit: 32))
-    }
-
-    func dialectLabel(_ value: String) -> String {
-        switch value {
-        case "openai": return "OpenAI"
-        case "claude": return "Claude"
-        case "chat": return L10n.t("对话")
-        case "image": return L10n.t("图像")
-        case "video": return L10n.t("视频")
-        default: return value.isEmpty ? "—" : value
-        }
-    }
-
-    var clientsList: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text(L10n.t("最近客户端"))
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(DS.text3)
-                Spacer(minLength: 0)
-                Text(verbatim: "\(recentClients.count)")
-                    .font(DS.Font.mono(10))
-                    .foregroundStyle(DS.text4)
-            }
-
-            if recentClients.isEmpty {
-                Text(L10n.t("还没有客户端连过。点地址复制片段，连一次后这里会显示来源与请求数。"))
-                    .font(DS.Font.prose(10.5))
-                    .foregroundStyle(DS.text4)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.vertical, 2)
-            } else {
-                ForEach(Array(recentClients.prefix(2))) { client in
-                    HStack(spacing: 6) {
-                        DSStatusDot(color: client.active ? DS.ok : DS.text4, size: 5)
-                        Text(client.name)
-                            .font(DS.Font.prose(11.5))
-                            .foregroundStyle(DS.text2)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .layoutPriority(1)
-                        Text(verbatim: dialectLabel(client.dialect))
-                            .font(DS.Font.mono(9))
-                            .foregroundStyle(DS.text3)
-                            .padding(.horizontal, 4)
-                            .frame(height: 14)
-                            .background(DS.rect(4).fill(DS.bg))
-                        Spacer(minLength: 4)
-                        Text(L10n.format("%lld 次", Int64(client.count)))
-                            .font(DS.Font.mono(9.5))
-                            .foregroundStyle(DS.text3)
-                            .fixedSize()
-                        Text(Format.relative(client.last))
-                            .font(DS.Font.mono(9.5))
-                            .foregroundStyle(DS.text4)
-                            .fixedSize()
-                    }
-                    .frame(height: 20)
-                }
-            }
-        }
-    }
-
     // MARK: - Engine card
 
-    var runtimeCard: some View {
+    func runtimeCard(cardPadding: CGFloat = 14) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Text(L10n.t("引擎状态"))
@@ -203,7 +132,7 @@ extension OverviewPage {
 
             Spacer(minLength: 0)
         }
-        .overviewCard()
+        .overviewCard(padding: cardPadding)
         .frame(maxHeight: .infinity, alignment: .top)
     }
 
@@ -362,48 +291,51 @@ extension OverviewPage {
         }
     }
 
-    var recentRequests: some View {
+    @ViewBuilder
+    func recentRequestsIfPresent(maxRows: Int = 6, cardPadding: CGFloat = 14) -> some View {
         TimelineView(.periodic(from: .now, by: (gateway.isRunning || state.isRunning) ? 1 : 5)) { _ in
-            let all = Array(GatewayMeter.shared.snapshot(limit: 6).reversed())
+            let all = Array(GatewayMeter.shared.snapshot(limit: maxRows).reversed())
             let sessions = filteredRequests(all)
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 8) {
-                    Text(L10n.t("最近请求"))
-                        .font(.system(size: 13.5, weight: .semibold))
-                        .foregroundStyle(DS.text)
-                    Spacer(minLength: 6)
-                    Button {
-                        requestFilterIndex = (requestFilterIndex + 1) % 3
-                    } label: {
-                        Text(L10n.t(requestFilterLabel))
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(DS.text2)
-                            .padding(.horizontal, 8)
-                            .frame(height: 22)
-                            .contentShape(Capsule())
+            if !all.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Text(L10n.t("最近请求"))
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundStyle(DS.text)
+                        Spacer(minLength: 6)
+                        Button {
+                            requestFilterIndex = (requestFilterIndex + 1) % 3
+                        } label: {
+                            Text(L10n.t(requestFilterLabel))
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(DS.text2)
+                                .padding(.horizontal, 8)
+                                .frame(height: 22)
+                                .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .dsGlassPill()
+                        .help(L10n.t("点击切换筛选条件"))
+                        Text(L10n.format("%lld 条", Int64(sessions.count)))
+                            .font(DS.Font.proseNumber(11.5))
+                            .foregroundStyle(DS.text3)
                     }
-                    .buttonStyle(.plain)
-                    .dsGlassPill()
-                    .help(L10n.t("点击切换筛选条件"))
-                    Text(L10n.format("%lld 条", Int64(sessions.count)))
-                        .font(DS.Font.proseNumber(11.5))
-                        .foregroundStyle(DS.text3)
-                }
 
-                if sessions.isEmpty {
-                    emptyRequests
-                } else {
-                    requestTable(sessions)
+                    if sessions.isEmpty {
+                        emptyRequests
+                    } else {
+                        requestTable(sessions)
+                    }
                 }
+                .overviewCard(padding: cardPadding)
             }
-            .overviewCard()
         }
     }
 
     var emptyRequests: some View {
         HStack(spacing: 8) {
             Image(systemName: "arrow.left.arrow.right")
-                .font(.system(size: 13, weight: .regular))
+                .font(.system(size: 12, weight: .regular))
                 .foregroundStyle(DS.text4)
             Text(L10n.t("暂无请求"))
                 .font(DS.Font.prose(12.5))
@@ -412,8 +344,14 @@ extension OverviewPage {
                 .font(DS.Font.mono(10.5))
                 .foregroundStyle(DS.text4)
             Spacer(minLength: 0)
+            if !isLiveDashboard {
+                Text(L10n.t("启动引擎并发起对话或 API 调用后将在此记录"))
+                    .font(DS.Font.prose(11))
+                    .foregroundStyle(DS.text4)
+                    .lineLimit(1)
+            }
         }
-        .frame(height: 54)
+        .frame(height: 36)
     }
 
     func requestTable(_ sessions: [GatewayMeter.SessionSnapshot]) -> some View {

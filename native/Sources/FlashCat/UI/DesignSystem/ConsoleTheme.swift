@@ -68,20 +68,30 @@ enum Console {
     static let pillRadius: CGFloat = DS.Radius.md
     static let sidebarWidth: CGFloat = DS.Layout.sidebarWidth
     static let titlebarHeight: CGFloat = DS.Layout.titlebarHeight
-    static let contentPadding: CGFloat = DS.Space.xxl
+    static let contentPadding: CGFloat = DS.Space.xl
+    /// 窄窗口（`< compactContentWidth`）下页面的左右留白，与概览页窄版保持一致。
+    static let compactContentPadding: CGFloat = DS.Space.lg
     /// 主视口的上下边界（顶栏悬浮在页面之上，内容区从顶栏下方 8pt 起步，滚动时平滑滑入顶栏玻璃之下）。
     static let titlebarGap: CGFloat = DS.Space.xl
     static let contentTopInset: CGFloat = DS.Layout.titlebarHeight + DS.Space.sm
-    static let contentBottomInset: CGFloat = DS.Space.xxl
-    /// 页面顶栏（无全局标题栏占位，紧贴顶部窗口区域，与红绿灯保持 `25pt` 同一中线）。
-    static let pageTopPadding: CGFloat = 1
-    /// 侧栏隐藏时页面顶部行首需避让左上角红绿灯与展开按钮（按钮止于 `110pt`，留 `16pt` 间距）。
+    static let contentBottomInset: CGFloat = DS.Space.xl
+    /// 页面主段之间的垂直间距，与概览页统一。
+    static let pageSectionGap: CGFloat = 14
+    /// 标准控制台页头的单行高度，与概览页统一（`16pt` 顶部留白 + `34pt` 页头 = `50pt`，对齐悬浮侧栏标题区底缘）。
+    static let pageHeaderHeight: CGFloat = 34
+    /// 对话页顶栏顶部偏移（`2 + 48 = 50pt`，中线对齐固定红绿灯 `26pt`）。
+    static let pageTopPadding: CGFloat = 2
+    /// 原生标题栏已管理红绿灯与折叠按钮，页面顶栏保持统一水平留白。
     static func topBarLeading(sidebarShown: Bool, base: CGFloat = contentPadding) -> CGFloat {
-        sidebarShown ? base : max(base, 126)
+        base
     }
-    /// 无顶部工具栏的纯滚动页面顶部留白：展开侧栏时紧凑贴顶，收起时让出红绿灯与折叠按钮高度。
+    /// 控制台页面的左右留白：宽版 `20pt`，窄版 `16pt`，七个页面共用同一口径。
+    static func pageHorizontalPadding(compact: Bool) -> CGFloat {
+        compact ? compactContentPadding : contentPadding
+    }
+    /// 控制台页面顶部留白：统一由原生标题栏下方 `16pt` 起始。
     static func scrollTopInset(sidebarShown: Bool) -> CGFloat {
-        sidebarShown ? DS.Space.lg : contentTopInset
+        DS.Space.lg
     }
     /// 内容区宽度低于这个值时，多栏页面切换为单栏纵向排布。
     static let compactContentWidth: CGFloat = 900
@@ -220,7 +230,7 @@ private struct EngineColorButtonBody: View {
     }
 }
 
-/// ZCode 风格圆角矩形分段控件：实体浅凹槽轨道 + 内层滑块卡片，与 `DSSearchField` 同高同圆角语言。
+/// 原生分段控件：转发到系统 `Picker(.segmented)`，零自绘状态与阴影开销。
 struct NativeSegmented<Value: Hashable>: View {
     @Binding var selection: Value
     var options: [Value]
@@ -229,9 +239,6 @@ struct NativeSegmented<Value: Hashable>: View {
     var size: DSButtonStyle.Size = .regular
 
     @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Namespace private var indicator
-    @State private var hoveredIndex: Int?
 
     init(
         selection: Binding<Value>, options: [Value], labels: [String], width: CGFloat? = nil,
@@ -255,92 +262,25 @@ struct NativeSegmented<Value: Hashable>: View {
         self.size = size
     }
 
-    private var height: CGFloat {
+    private var controlSize: ControlSize {
         switch size {
-        case .small: return 24
-        case .regular: return DS.Layout.controlHeight
-        case .large: return 34
+        case .small: return .small
+        case .regular: return .regular
+        case .large: return .large
         }
     }
-
-    private var fontSize: CGFloat {
-        switch size {
-        case .small: return 11.5
-        case .regular: return 12
-        case .large: return 13
-        }
-    }
-
-    private var horizontalPadding: CGFloat {
-        switch size {
-        case .small: return 8
-        case .regular: return 11
-        case .large: return 14
-        }
-    }
-
-    private var trackFill: Color { DS.pillFill }
-
-    private var activeFill: Color { DS.pillActive }
 
     var body: some View {
-        let trackShape = DS.rect(DS.Radius.md)
-        let segmentShape = DS.rect(DS.Radius.sm)
-        HStack(spacing: 2) {
-            ForEach(Array(zip(options, labels).enumerated()), id: \.offset) { index, pair in
-                let isSelected = selection == pair.0
-                let isHovered = isEnabled && hoveredIndex == index && !isSelected
-                Button {
-                    guard isEnabled, !isSelected else { return }
-                    if reduceMotion {
-                        selection = pair.0
-                    } else {
-                        withAnimation(DS.Motion.snappy) {
-                            selection = pair.0
-                        }
-                    }
-                } label: {
-                    Text(L10n.t(pair.1))
-                        .font(.system(size: fontSize, weight: isSelected ? .semibold : .medium))
-                        .foregroundStyle(isSelected ? DS.text : (isHovered ? DS.text : DS.text2))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
-                        .padding(.horizontal, horizontalPadding)
-                        .frame(maxWidth: width != nil ? .infinity : nil, maxHeight: .infinity)
-                        .background {
-                            if isSelected {
-                                segmentShape
-                                    .fill(activeFill)
-                                    .overlay(segmentShape.strokeBorder(DS.pillBorder, lineWidth: 1))
-                                    .shadow(color: DS.glassShadow.opacity(0.7), radius: 3, y: 1)
-                                    .matchedGeometryEffect(id: "activeSegment", in: indicator)
-                            } else if isHovered {
-                                segmentShape
-                                    .fill(DS.hover)
-                            }
-                        }
-                        .contentShape(segmentShape)
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(isSelected ? .isSelected : [])
-                .onHover { inside in
-                    let next = inside ? index : (hoveredIndex == index ? nil : hoveredIndex)
-                    if reduceMotion {
-                        hoveredIndex = next
-                    } else {
-                        withAnimation(DS.Motion.snappy) {
-                            hoveredIndex = next
-                        }
-                    }
-                }
+        Picker("", selection: $selection) {
+            ForEach(Array(zip(options, labels).enumerated()), id: \.offset) { _, pair in
+                Text(L10n.t(pair.1)).tag(pair.0)
             }
         }
-        .padding(2)
-        .frame(width: width, height: height)
-        .background(trackShape.fill(trackFill))
-        .overlay(trackShape.strokeBorder(DS.line, lineWidth: 1))
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(controlSize)
+        .frame(width: width)
         .opacity(isEnabled ? 1 : 0.45)
-        .animation(reduceMotion ? nil : DS.Motion.snappy, value: selection)
     }
 }
 

@@ -2,7 +2,6 @@
 // Copyright (c) 2026 wangzhuo
 
 import AppKit
-import Charts
 import FlashCatCore
 import FlashCatKit
 import SwiftUI
@@ -10,8 +9,6 @@ import SwiftUI
 extension OverviewPage {
     // MARK: Page header
 
-    /// 页头：页名 + 现场胶囊；右侧三段皮肤切换、模型下拉与启停按钮。
-    /// 窄版把动作折到第二行，避免 224pt 侧栏展开时把模型名挤掉。
     @ViewBuilder
     func pageHeader(compact: Bool) -> some View {
         if compact {
@@ -28,8 +25,7 @@ extension OverviewPage {
                 }
                 HStack(spacing: 8) {
                     Spacer(minLength: 0)
-                    modelPickerButton
-                    engineButton
+                    headerActions
                 }
             }
         } else {
@@ -42,11 +38,16 @@ extension OverviewPage {
                     tint: statusColor,
                     live: state.canChat)
                 Spacer(minLength: 12)
-                modelPickerButton
-                engineButton
+                headerActions
             }
-            .frame(height: 34)
+            .frame(height: Console.pageHeaderHeight)
         }
+    }
+
+    @ViewBuilder
+    var headerActions: some View {
+        modelPickerButton
+        engineButton
     }
 
     var pageTitle: some View {
@@ -116,7 +117,7 @@ extension OverviewPage {
     var modelHeroCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 11) {
-                modelIcon
+                EngineGlyph(id: state.activeEngine, color: engineTint, size: 40)
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
@@ -140,42 +141,47 @@ extension OverviewPage {
                 Spacer(minLength: 0)
             }
 
-            Spacer(minLength: 0)
-            contextBlock
+            if isLiveDashboard {
+                Spacer(minLength: 0)
+                contextBlock
+            } else if let failure = state.failureMessage, !failure.isEmpty {
+                failureBanner(failure)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: isLiveDashboard ? .infinity : nil, alignment: .topLeading)
         .overviewCard()
     }
 
-    var modelIcon: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [DS.accentBlue.opacity(0.22), DS.accent.opacity(0.30)],
-                        startPoint: .topLeading, endPoint: .bottomTrailing))
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(DS.accentBlue.opacity(0.30), lineWidth: 1)
-            Image(systemName: "cube.fill")
-                .font(.system(size: 19, weight: .medium))
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [DS.accentBlue, DS.accent],
-                        startPoint: .top, endPoint: .bottom))
+    private func failureBanner(_ message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(DS.err)
+            Text(message)
+                .font(DS.Font.prose(11.5))
+                .foregroundStyle(DS.err)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            Button(L10n.t("查看日志")) {
+                state.section = .logs
+            }
+            .buttonStyle(.ds(.secondary, size: .small))
         }
-        .frame(width: 40, height: 40)
-        .shadow(color: DS.accentBlue.opacity(0.28), radius: 8, y: 2)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 8)
+        .background(DS.rect(10).fill(DS.dangerFill))
+        .overlay(DS.rect(10).strokeBorder(DS.dangerStroke, lineWidth: 1))
     }
 
     var engineBadge: some View {
         Text(state.activeEngine.displayName.uppercased())
             .font(.system(size: 9.5, weight: .semibold))
             .tracking(0.5)
-            .foregroundStyle(DS.accentBlue)
+            .foregroundStyle(engineTint)
             .padding(.horizontal, 5)
             .frame(height: 16)
-            .background(DS.rect(5).fill(DS.accentBlue.opacity(0.10)))
-            .overlay(DS.rect(5).strokeBorder(DS.accentBlue.opacity(0.22), lineWidth: 1))
+            .background(DS.rect(5).fill(engineTint.opacity(0.11)))
+            .overlay(DS.rect(5).strokeBorder(engineTint.opacity(0.24), lineWidth: 1))
             .fixedSize()
     }
 
@@ -197,29 +203,25 @@ extension OverviewPage {
                     .foregroundStyle(DS.text2)
                 Text(verbatim: "(\(contextPercentText))")
                     .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(DS.accent)
+                    .foregroundStyle(state.overviewContextUsedTokens > 0 ? engineTint : DS.text4)
                     .fixedSize()
             }
 
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule().fill(DS.line2)
-                    Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [DS.accentBlue, DS.accent, Color(red: 0.55, green: 0.36, blue: 0.96)],
-                                startPoint: .leading, endPoint: .trailing))
-                        .frame(width: max(4, proxy.size.width * contextProgress))
-                        .shadow(color: DS.accent.opacity(0.35), radius: 3)
+                    if contextProgress > 0 {
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [engineTint.opacity(0.82), engineTint],
+                                    startPoint: .leading, endPoint: .trailing))
+                            .frame(width: max(4, proxy.size.width * contextProgress))
+                    }
                 }
             }
             .frame(height: 6)
-            .opacity(state.overviewContextUsedTokens > 0 ? 1 : 0.45)
         }
-    }
-
-    var modelFamily: ModelFamily {
-        ModelFamily.resolve(id: state.selectedModel, hint: state.selectedModelInfo?.family)
     }
 
     // MARK: First-run checklist
@@ -233,7 +235,6 @@ extension OverviewPage {
             && (state.runtimeMissing != nil || !activeEngineHasLocalModels)
     }
 
-    /// 首次使用的三步清单：装引擎 → 下模型 → 启动。三步都完成或用户关掉后不再出现。
     var setupChecklist: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 10) {

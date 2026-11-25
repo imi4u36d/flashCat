@@ -11,6 +11,7 @@ import SwiftUI
 /// 查询、排序、格式筛选和翻页都走 `AppState`；这里不直接发网络请求。
 struct HubSheet: View {
     @ObservedObject var state: AppState
+    @ObservedObject var hub: HubStore
     /// 打开广场时正在浏览的引擎：只作为存放目录的默认选项，不再决定「推荐用谁」。
     let engine: EngineID
 
@@ -28,7 +29,7 @@ struct HubSheet: View {
     @FocusState private var searchFocused: Bool
     @FocusState private var directRepoFocused: Bool
 
-    private var models: [HubModel] { state.hubResults }
+    private var models: [HubModel] { hub.hubResults }
 
     private var source: HubSource {
         HubSource(rawValue: storedSource) ?? .huggingFace
@@ -56,7 +57,7 @@ struct HubSheet: View {
                 detailPane.frame(maxWidth: .infinity)
             }
             DSDivider()
-            if !state.repoProbeRepo.isEmpty {
+            if !hub.repoProbeRepo.isEmpty {
                 probeRow
                 DSDivider()
             }
@@ -65,13 +66,13 @@ struct HubSheet: View {
         .frame(width: 1020, height: 700)
         .sheetCanvas()
         .onAppear {
-            if state.hubResults.isEmpty || state.hubSource != source {
+            if hub.hubResults.isEmpty || hub.hubSource != source {
                 state.searchHub(
                     "", sort: sort.rawValue, filter: filter.rawValue, page: 0,
                     source: source)
             }
         }
-        .onChange(of: state.hubDetail?.id) { _, _ in pickedVariant = nil }
+        .onChange(of: hub.hubDetail?.id) { _, _ in pickedVariant = nil }
         .onDisappear { state.closeHubDetail() }
         .onExitCommand { dismiss() }
         .sheet(item: $pendingDownload) { pending in
@@ -155,9 +156,9 @@ struct HubSheet: View {
             DSDivider()
             ScrollView {
                 LazyVStack(spacing: 10) {
-                    if state.hubLoading && models.isEmpty {
+                    if hub.hubLoading && models.isEmpty {
                         loadingRows
-                    } else if let error = state.hubError, models.isEmpty {
+                    } else if let error = hub.hubError, models.isEmpty {
                         errorState(error)
                     } else if models.isEmpty {
                         EmptyHint(
@@ -170,19 +171,19 @@ struct HubSheet: View {
                         ForEach(models) { model in
                             resultRow(model)
                         }
-                        if state.hubHasMore {
+                        if hub.hubHasMore {
                             Button {
                                 state.searchHub(
                                     query, sort: sort.rawValue,
                                     filter: filter.rawValue,
-                                    page: state.hubPage + 1,
+                                    page: hub.hubPage + 1,
                                     source: source)
                             } label: {
-                                Text(L10n.t(state.hubLoading ? "加载中…" : "加载更多"))
+                                Text(L10n.t(hub.hubLoading ? "加载中…" : "加载更多"))
                                     .frame(maxWidth: .infinity)
                             }
                             .buttonStyle(.ds(.secondary, size: .regular))
-                            .disabled(state.hubLoading)
+                            .disabled(hub.hubLoading)
                             .padding(.top, 2)
                         }
                     }
@@ -217,7 +218,7 @@ struct HubSheet: View {
                 }
                 Button("搜索") { runSearch(page: 0) }
                     .buttonStyle(.ds(.primary, size: .small))
-                    .disabled(state.hubLoading)
+                    .disabled(hub.hubLoading)
             }
             .padding(.horizontal, 10)
             .frame(height: 32)
@@ -327,7 +328,7 @@ struct HubSheet: View {
     private func resultRow(_ model: HubModel) -> some View {
         HubModelRowCard(
             model: model,
-            selected: state.hubDetail?.id == model.id,
+            selected: hub.hubDetail?.id == model.id,
             local: state.repoIsLocal(model.id),
             shortName: shortName(model.id),
             sizeText: {
@@ -367,16 +368,16 @@ struct HubSheet: View {
     // MARK: Right
 
     @ViewBuilder private var detailPane: some View {
-        if state.hubDetailLoading {
+        if hub.hubDetailLoading {
             VStack(spacing: 12) {
                 SkeletonBlock(height: 26, radius: 8).frame(width: 240)
                 SkeletonBlock(height: 14, radius: 6).frame(width: 320)
                 SkeletonBlock(height: 140, radius: 10)
             }
             .padding(24)
-        } else if let detail = state.hubDetail {
+        } else if let detail = hub.hubDetail {
             detailContent(detail)
-        } else if let error = state.hubError, !error.isEmpty {
+        } else if let error = hub.hubError, !error.isEmpty {
             VStack(spacing: 12) {
                 EmptyHint(
                     icon: "wifi.exclamationmark",
@@ -628,20 +629,20 @@ struct HubSheet: View {
             Spacer(minLength: 8)
 
             if !models.isEmpty {
-                Text("第 \(state.hubPage + 1) 页 · \(models.count) 条")
+                Text("第 \(hub.hubPage + 1) 页 · \(models.count) 条")
                     .font(DS.Font.mono(10.5))
                     .foregroundStyle(DS.text3)
                     .monospacedDigit()
                 HStack(spacing: 6) {
                     DSIconButton(systemName: "chevron.left", help: "上一页", style: .outlined) {
-                        runSearch(page: max(0, state.hubPage - 1))
+                        runSearch(page: max(0, hub.hubPage - 1))
                     }
-                    .disabled(state.hubPage == 0 || state.hubLoading)
+                    .disabled(hub.hubPage == 0 || hub.hubLoading)
 
                     DSIconButton(systemName: "chevron.right", help: "下一页", style: .outlined) {
-                        runSearch(page: state.hubPage + 1)
+                        runSearch(page: hub.hubPage + 1)
                     }
-                    .disabled(!state.hubHasMore || state.hubLoading)
+                    .disabled(!hub.hubHasMore || hub.hubLoading)
                 }
             }
         }
@@ -651,12 +652,12 @@ struct HubSheet: View {
 
     private var probeRow: some View {
         HStack(spacing: 8) {
-            if state.repoProbeLoading {
+            if hub.repoProbeLoading {
                 ProgressView().controlSize(.small)
-                Text("检查 \(state.repoProbeRepo)…")
+                Text("检查 \(hub.repoProbeRepo)…")
                     .font(DS.Font.mono(10.5))
                     .foregroundStyle(DS.text2)
-            } else if let error = state.repoProbeError, !error.isEmpty {
+            } else if let error = hub.repoProbeError, !error.isEmpty {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 10))
                     .foregroundStyle(DS.warn)
@@ -664,7 +665,7 @@ struct HubSheet: View {
                     .font(DS.Font.xs)
                     .foregroundStyle(DS.warn)
                     .lineLimit(1)
-            } else if let probe = state.repoProbe {
+            } else if let probe = hub.repoProbe {
                 Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: 10))
                     .foregroundStyle(DS.ok)

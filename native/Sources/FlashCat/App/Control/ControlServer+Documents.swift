@@ -440,8 +440,7 @@ extension ControlServer {
                 read: { ControlConfigGrammar.appearanceToken(state.theme.mode.rawValue) },
                 write: { value in
                     let raw = try ControlConfigGrammar.appearance(value)
-                    // grammar 只产出 0/1/2；fallback 只为避免强解包。
-                    state.theme.set(AppAppearance(rawValue: raw) ?? .system)
+                    state.theme.set(AppAppearance.normalized(rawValue: raw))
                 }),
             bool(
                 "autoStart", "随应用启动引擎", get: { settings.autoStart },

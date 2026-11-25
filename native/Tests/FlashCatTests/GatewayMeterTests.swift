@@ -373,16 +373,24 @@ final class GatewayMeterTests: XCTestCase {
 
     /// 应用内对话在引擎启动/加载之前就登记了会话；计时起点必须挪到真正发出
     /// 请求的那一刻，否则冷启动的模型加载时间会被摊进预填充分母。
+    /// 启动完成时 `syncLifetimeIdentity` 可能已触发 `resetLifetime()` 翻代，
+    /// `markStarted` 必须同步认领当前代际，否则该请求的平均解码、首字与预填充都会丢失。
     func testMarkStartedExcludesEngineStartupFromPrefill() {
         let meter = GatewayMeter()
         let start = Date()
         let id = meter.begin(model: "m", dialect: "test", promptTokens: 1_000, at: start)
+        // 模拟引擎在 `prepareChatSession` 期间重启 / 换模型导致翻代
+        meter.resetLifetime()
         meter.markStarted(id, at: start.addingTimeInterval(10))
-        meter.addTokens(id, 4, at: start.addingTimeInterval(10.5))
-        meter.noteUsage(id, promptTokens: 1_000, completionTokens: 4)
-        meter.finish(id, at: start.addingTimeInterval(11))
+        meter.addTokens(id, 50, at: start.addingTimeInterval(10.5))
+        meter.addTokens(id, 50, at: start.addingTimeInterval(11.0))
+        meter.noteUsage(id, promptTokens: 1_000, completionTokens: 100)
+        meter.finish(id, at: start.addingTimeInterval(11.0))
 
         XCTAssertEqual(meter.recentPrefill() ?? 0, 2_000, accuracy: 0.5)
+        XCTAssertEqual(meter.recentTTFTMilliseconds() ?? 0, 500, accuracy: 1)
+        XCTAssertNotNil(meter.lifetimeAverage())
+        XCTAssertEqual(meter.cacheHit()?.requests, 1)
     }
 
     /// 最新一路全命中缓存（没有前向 token）时不能把整格空掉：继续往前找
@@ -817,5 +825,71 @@ final class GatewayMeterTests: XCTestCase {
         meter.noteTimings(timed, implausibleTimings)
         meter.finish(timed, at: start.addingTimeInterval(2.2))
         XCTAssertNil(meter.recentPrefill())
+    }
+
+    /// 日常短对话（例如总上下文 125 token、无缓存命中、TTFT 102ms）在当代尚无 ≥ 128
+    /// token 大样本时也应给出预填充实测值，而不是一直空白；但被缓存恢复主导的小增量
+    /// 仍然拒绝，且一旦出现 ≥ 128 token 的高置信度样本，后续短请求不覆盖它。
+    func testRecentPrefillMeasuresShortColdPromptsAndPrefersLargeSamples() {
+        let meter = GatewayMeter()
+        let start = Date()
+
+        // 1. 被前缀缓存主导的小增量（500 里 470 命中，仅前向 30）：不报预填充。
+        let cacheDominated = meter.begin(model: "m", dialect: "chat", promptTokens: 500, at: start)
+        meter.addTokens(cacheDominated, 4, at: start.addingTimeInterval(0.08))
+        meter.noteUsage(cacheDominated, promptTokens: 500, completionTokens: 4, cachedPromptTokens: 470)
+        meter.finish(cacheDominated, at: start.addingTimeInterval(0.2))
+        XCTAssertNil(meter.recentPrefill())
+
+        // 2. 冷启动短对话（45 prompt tokens, 0 cached, TTFT = 102ms）：兜底给出实测值。
+        let shortCold = meter.begin(model: "m", dialect: "chat", promptTokens: 45, at: start.addingTimeInterval(1))
+        meter.addTokens(shortCold, 20, at: start.addingTimeInterval(1.102))
+        meter.noteUsage(shortCold, promptTokens: 45, completionTokens: 20, cachedPromptTokens: 0)
+        meter.finish(shortCold, at: start.addingTimeInterval(1.5))
+        XCTAssertEqual(meter.recentPrefill() ?? 0, 45.0 / 0.102, accuracy: 1.0)
+
+        // 3. 出现 ≥ 128 token 的高置信度样本后，优先高置信度样本；后续短请求不覆盖它。
+        let large = meter.begin(model: "m", dialect: "chat", promptTokens: 600, at: start.addingTimeInterval(3))
+        meter.addTokens(large, 10, at: start.addingTimeInterval(3.3))
+        meter.noteUsage(large, promptTokens: 600, completionTokens: 10, cachedPromptTokens: 0)
+        meter.finish(large, at: start.addingTimeInterval(3.8))
+        XCTAssertEqual(meter.recentPrefill() ?? 0, 2_000, accuracy: 1.0)
+
+        let laterShort = meter.begin(model: "m", dialect: "chat", promptTokens: 40, at: start.addingTimeInterval(5))
+        meter.addTokens(laterShort, 10, at: start.addingTimeInterval(5.1))
+        meter.noteUsage(laterShort, promptTokens: 40, completionTokens: 10, cachedPromptTokens: 0)
+        meter.finish(laterShort, at: start.addingTimeInterval(5.4))
+        XCTAssertEqual(meter.recentPrefill() ?? 0, 2_000, accuracy: 1.0)
+    }
+
+    /// 短流式补点查询只返回当代已完成且属于流式传输的会话；非流式响应被排除并能被单独识别。
+    func testCompletedStreamedDecodesAndNonStreamedDetection() throws {
+        let meter = GatewayMeter()
+        let start = Date()
+
+        let buffered = meter.begin(model: "m", dialect: "openai", promptTokens: 100, at: start)
+        let body = try JSONSerialization.data(withJSONObject: [
+            "choices": [["message": ["content": "hello"]]],
+            "usage": ["prompt_tokens": 100, "completion_tokens": 5],
+            "timings": [
+                "prompt_n": 100, "cached_n": 0, "prompt_ms": 50.0,
+                "predicted_n": 5, "predicted_ms": 100.0,
+            ],
+        ])
+        meter.ingestResponse(buffered, body: body)
+        XCTAssertTrue(meter.completedStreamedDecodes(afterSessionID: 0).isEmpty)
+        XCTAssertTrue(meter.hasOnlyNonStreamedCompletedSessions())
+
+        let streamed = meter.begin(model: "m", dialect: "chat", promptTokens: 45, at: start.addingTimeInterval(2))
+        meter.addTokens(streamed, 40, at: start.addingTimeInterval(2.1))
+        meter.addTokens(streamed, 40, at: start.addingTimeInterval(2.7))
+        meter.finish(streamed, at: start.addingTimeInterval(2.7))
+
+        let decodes = meter.completedStreamedDecodes(afterSessionID: 0)
+        XCTAssertEqual(decodes.count, 1)
+        XCTAssertEqual(decodes.first?.sessionID, streamed)
+        XCTAssertEqual(decodes.first?.rate ?? 0, 80.0 / 0.6, accuracy: 0.5)
+        XCTAssertFalse(meter.hasOnlyNonStreamedCompletedSessions())
+        XCTAssertTrue(meter.completedStreamedDecodes(afterSessionID: streamed).isEmpty)
     }
 }

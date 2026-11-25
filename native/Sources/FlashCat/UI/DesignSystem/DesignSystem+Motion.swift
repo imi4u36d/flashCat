@@ -114,35 +114,35 @@ struct DSAnimatedGrid: Layout {
 }
 
 private struct DSTrackColumnsModifier: ViewModifier {
+    private struct ColumnsKey: Equatable {
+        let columns: Int
+        let minWidth: CGFloat
+    }
+
     @Binding var columns: Int
     let minWidth: CGFloat
     let spacing: CGFloat
     let maxColumns: Int?
     let horizontalPadding: CGFloat
 
-    @State private var measuredWidth: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         content
-            .onGeometryChange(for: CGFloat.self) { proxy in
-                max(1, proxy.size.width - horizontalPadding * 2)
-            } action: { width in
-                measuredWidth = width
-                updateColumns(for: width, animate: columns > 0)
-            }
-            .onChange(of: minWidth) { _, _ in
-                guard measuredWidth > 1 else { return }
-                updateColumns(for: measuredWidth, animate: columns > 0)
+            .onGeometryChange(for: ColumnsKey.self) { proxy in
+                let width = max(1, proxy.size.width - horizontalPadding * 2)
+                let count = DSAnimatedGrid.columnCount(
+                    for: width,
+                    minWidth: minWidth,
+                    spacing: spacing,
+                    maxColumns: maxColumns)
+                return ColumnsKey(columns: count, minWidth: minWidth)
+            } action: { key in
+                updateColumns(to: key.columns, animate: columns > 0)
             }
     }
 
-    private func updateColumns(for width: CGFloat, animate: Bool) {
-        let next = DSAnimatedGrid.columnCount(
-            for: width,
-            minWidth: minWidth,
-            spacing: spacing,
-            maxColumns: maxColumns)
+    private func updateColumns(to next: Int, animate: Bool) {
         guard next != columns else { return }
         if animate && !reduceMotion {
             withAnimation(DS.Motion.smooth) { columns = next }

@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 wangzhuo
 
+import CoreText
 import FlashCatCore
 import Foundation
 import SwiftUI
 
 /// Markdown 的两套排版尺度：资料卡沿用原来的紧凑版，对话正文对齐 Splash 的
 /// 15pt / 24pt 阅读节奏（标题、段落间距、代码块与表格也一起换）。
-struct MarkdownStyle: Equatable {
+struct MarkdownStyle: Equatable, Hashable {
     var bodySize: CGFloat
     var lineSpacing: CGFloat
     /// 段落之间的额外空隙（合并进单个 `Text` 时用空行模拟）。
@@ -45,7 +46,7 @@ struct MarkdownStyle: Equatable {
 /// 解析是刻意保守的：只认行首语法，inline 用 Foundation 的 Markdown 解析器，
 /// 不认识的结构按段落原样显示。流式期间每次增量重解析，长回答的代价与文本长度
 /// 成正比，但一次只有一条消息在长。
-struct MarkdownView: View {
+struct MarkdownView: View, Equatable {
     let text: String
     /// 流式消息每次分片都会变成长字符串；把它塞进 LRU 会把已完成消息挤出
     /// 缓存，下一帧又要全部重解析。流式内容走独立的单槽缓存。
@@ -56,27 +57,20 @@ struct MarkdownView: View {
     var tailFadeAlpha: Double? = nil
     var style: MarkdownStyle = .standard
 
-    private var blocks: [MarkdownBlock] { MarkdownBlock.parse(text, caching: caching) }
-    private var segments: [MarkdownSegment] { MarkdownSegment.group(blocks) }
-
     var body: some View {
         // 连续的文字块（标题、段落）仍然合并成一个 `Text`，保持跨段落拖选与
         // 复制；列表单独成块，标记右对齐成一列；代码块、引用、表格、分隔线各自
         // 独立，避免字符级底色在每行后面画出参差不齐的高亮条。
-        //
-        // 分段结果只算一次：以前每个分段的闭包里又读一次 `segments.count`，
-        // 每次都会重新分组所有块，长回答的段落一多就变成平方级开销。
-        let segments = self.segments
+        let segments = MarkdownRenderCache.segments(for: text, style: style, caching: caching)
         return VStack(alignment: .leading, spacing: style.chat ? 14 : 10) {
             ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
                 switch segment {
-                case .text(let group):
+                case .text(let composed):
                     let isLast = index == segments.count - 1
                     Text(
-                        MarkdownComposer.compose(
-                            group,
-                            style: style,
-                            tailFadeAlpha: isLast ? tailFadeAlpha : nil)
+                        isLast
+                            ? MarkdownComposer.withTailFade(composed, alpha: tailFadeAlpha)
+                            : composed
                     )
                     .textSelection(.enabled)
                     .lineSpacing(style.lineSpacing)
@@ -87,10 +81,10 @@ struct MarkdownView: View {
                     MarkdownListView(items: items, style: style)
 
                 case .code(let language, let code):
-                    CodeBlockView(language: language, code: code, style: style)
+                    CodeBlockView(language: language, code: code, caching: caching, style: style)
 
-                case .quote(let lines):
-                    QuoteBlockView(lines: lines, style: style)
+                case .quote(let composed):
+                    QuoteBlockView(composed: composed, style: style)
 
                 case .table(let rows):
                     MarkdownTableView(rows: rows, style: style)
@@ -114,6 +108,7 @@ struct MarkdownView: View {
 struct StreamingMarkdownView: View {
     let text: String
     let streaming: Bool
+    var isActive: Bool = true
     var fillsWidth: Bool = false
     var style: MarkdownStyle = .standard
 
@@ -126,9 +121,16 @@ struct StreamingMarkdownView: View {
     @State private var pumpTask: Task<Void, Never>?
     @State private var lastTick = Date()
 
-    init(text: String, streaming: Bool, fillsWidth: Bool = false, style: MarkdownStyle = .standard) {
+    init(
+        text: String,
+        streaming: Bool,
+        isActive: Bool = true,
+        fillsWidth: Bool = false,
+        style: MarkdownStyle = .standard
+    ) {
         self.text = text
         self.streaming = streaming
+        self.isActive = isActive
         self.fillsWidth = fillsWidth
         self.style = style
         // 页面打开时已经存在的正文整段显示（Splash 的 `shown[key] ??= text`），
@@ -138,7 +140,7 @@ struct StreamingMarkdownView: View {
     }
 
     private var visibleText: String {
-        guard streaming, !reduceMotion, shown < target.count else { return target }
+        guard streaming, isActive, !reduceMotion, shown < target.count else { return target }
         return String(target.prefix(shown))
     }
 
@@ -150,16 +152,18 @@ struct StreamingMarkdownView: View {
             tailFadeAlpha: nil,
             style: style
         )
+        .equatable()
         .onAppear { sync() }
         .onChange(of: text) { _, _ in sync() }
         .onChange(of: streaming) { _, _ in sync() }
+        .onChange(of: isActive) { _, _ in sync() }
         .onChange(of: reduceMotion) { _, _ in sync() }
         .onDisappear { stopPump() }
     }
 
     private func sync() {
         target = text
-        if !streaming || reduceMotion {
+        if !streaming || !isActive || reduceMotion {
             shown = target.count
             stopPump()
             return
@@ -176,7 +180,7 @@ struct StreamingMarkdownView: View {
         guard pumpTask == nil else { return }
         lastTick = Date()
         pumpTask = Task { @MainActor in
-            while !Task.isCancelled, streaming, shown < target.count {
+            while !Task.isCancelled, streaming, isActive, shown < target.count {
                 try? await Task.sleep(for: .milliseconds(16))
                 guard !Task.isCancelled else { break }
                 let now = Date()
@@ -204,6 +208,7 @@ struct StreamingMarkdownView: View {
 struct PacedText: View {
     let text: String
     let streaming: Bool
+    var isActive: Bool = true
     /// 只画最后一段（思考行流式期间），吐字节奏仍按整段推进。
     var tail: Bool = false
 
@@ -215,9 +220,10 @@ struct PacedText: View {
     @State private var pumpTask: Task<Void, Never>?
     @State private var lastTick = Date()
 
-    init(text: String, streaming: Bool, tail: Bool = false) {
+    init(text: String, streaming: Bool, isActive: Bool = true, tail: Bool = false) {
         self.text = text
         self.streaming = streaming
+        self.isActive = isActive
         self.tail = tail
         _shown = State(initialValue: text)
         _target = State(initialValue: text)
@@ -228,6 +234,7 @@ struct PacedText: View {
             .onAppear { sync() }
             .onChange(of: text) { _, _ in sync() }
             .onChange(of: streaming) { _, _ in sync() }
+            .onChange(of: isActive) { _, _ in sync() }
             .onChange(of: reduceMotion) { _, _ in sync() }
             .onDisappear { stopPump() }
     }
@@ -244,7 +251,7 @@ struct PacedText: View {
 
     private func sync() {
         target = text
-        guard streaming, !reduceMotion else {
+        guard streaming, isActive, !reduceMotion else {
             shown = target
             stopPump()
             return
@@ -266,7 +273,7 @@ struct PacedText: View {
         guard pumpTask == nil else { return }
         lastTick = Date()
         pumpTask = Task { @MainActor in
-            while !Task.isCancelled, streaming, shown.count < target.count {
+            while !Task.isCancelled, streaming, isActive, shown.count < target.count {
                 try? await Task.sleep(for: .milliseconds(16))
                 guard !Task.isCancelled else { break }
                 let now = Date()
@@ -288,78 +295,7 @@ struct PacedText: View {
     }
 }
 
-// MARK: - Segments & Block Views
-
-private struct MarkdownListItem: Identifiable {
-    let id = UUID()
-    let marker: String
-    let content: AttributedString
-    let indent: Int
-    let ordered: Bool
-}
-
-private enum MarkdownSegment {
-    case text([MarkdownBlock])
-    case list([MarkdownListItem])
-    case code(String?, String)
-    case quote([AttributedString])
-    case table([[String]])
-    case rule
-
-    static func group(_ blocks: [MarkdownBlock]) -> [MarkdownSegment] {
-        var result: [MarkdownSegment] = []
-        var textBuffer: [MarkdownBlock] = []
-
-        func flushText() {
-            guard !textBuffer.isEmpty else { return }
-            result.append(.text(textBuffer))
-            textBuffer.removeAll(keepingCapacity: true)
-        }
-
-        for block in blocks {
-            switch block.kind {
-            case .heading, .paragraph:
-                textBuffer.append(block)
-            case .bullet(let items):
-                flushText()
-                result.append(
-                    .list(
-                        items.map { item in
-                            MarkdownListItem(
-                                marker: item.indent.isMultiple(of: 2) ? "•" : "◦",
-                                content: item.content,
-                                indent: item.indent,
-                                ordered: false)
-                        }))
-            case .ordered(let items):
-                flushText()
-                result.append(
-                    .list(
-                        items.map { item in
-                            MarkdownListItem(
-                                marker: "\(item.number).",
-                                content: item.content,
-                                indent: 0,
-                                ordered: true)
-                        }))
-            case .code(let language, let code):
-                flushText()
-                result.append(.code(language, code))
-            case .quote(let lines):
-                flushText()
-                result.append(.quote(lines))
-            case .table(let rows):
-                flushText()
-                result.append(.table(rows))
-            case .rule:
-                flushText()
-                result.append(.rule)
-            }
-        }
-        flushText()
-        return result
-    }
-}
+// MARK: - Block Views
 
 /// 列表：标记在一列里右对齐，内容在第二列左对齐；缩进项整体右移。
 private struct MarkdownListView: View {
@@ -396,6 +332,7 @@ private struct MarkdownListView: View {
 private struct CodeBlockView: View {
     let language: String?
     let code: String
+    var caching: Bool = true
     var style: MarkdownStyle = .standard
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -456,7 +393,7 @@ private struct CodeBlockView: View {
                 .fill(DS.line)
                 .frame(height: 1)
 
-            HighlightedCode(code: code, language: language, style: style)
+            HighlightedCode(code: code, language: language, caching: caching, style: style)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
@@ -476,12 +413,6 @@ private struct CodeBlockView: View {
             }
         }
         .clipShape(DS.rect(style.chat ? 12 : DS.Radius.md))
-        .shadow(
-            color: style.chat ? DS.glassShadow.opacity(0.35) : .clear,
-            radius: 8,
-            x: 0,
-            y: 3
-        )
         .onDisappear {
             resetTask?.cancel()
             resetTask = nil
@@ -502,10 +433,11 @@ private struct CodeBlockView: View {
 }
 
 /// 带语言高亮与行号的代码正文。行号栏固定不横滚，代码列单独横滚；
-/// 两列共用同一个行高，逐行渲染，长代码横向拖动时序号不会跟着跑掉。
+/// 整段行号与代码各用单个 `Text` 配合精确行高排版，避免 2N 个子视图带来的布局开销。
 private struct HighlightedCode: View {
     let code: String
     let language: String?
+    var caching: Bool
     var style: MarkdownStyle
 
     private var fontSize: CGFloat { style.chat ? 13 : 12 }
@@ -513,28 +445,22 @@ private struct HighlightedCode: View {
     private var verticalPadding: CGFloat { style.chat ? 10 : 8 }
 
     var body: some View {
-        // 高亮一次，行号栏与代码列共用同一份结果。以前 `lines` 是计算属性，
-        // 代码列的每一行闭包都会重新高亮整段代码：180 行的块一次布局要跑
-        // 180 遍全量正则，长对话切页、流式吐字都会被它拖住。
-        let lines = CodeHighlighter.lines(code, language: language)
-        let showsGutter = lines.count > 1
-        let gutterWidth = CGFloat(max(2, String(lines.count).count)) * 7 + 8
+        let doc = CodeHighlighter.document(code, language: language, caching: caching)
+        let showsGutter = doc.lineCount > 1
+        let gutterWidth = CGFloat(max(2, String(doc.lineCount).count)) * 7 + 8
 
         return HStack(alignment: .top, spacing: 0) {
             if showsGutter {
-                VStack(alignment: .trailing, spacing: 0) {
-                    ForEach(lines.indices, id: \.self) { index in
-                        Text(verbatim: "\(index + 1)")
-                            .font(DS.Font.mono(fontSize - 1.5))
-                            .foregroundStyle(DS.text4)
-                            .frame(
-                                width: gutterWidth, height: lineHeight,
-                                alignment: .trailing)
-                    }
-                }
-                .padding(.vertical, verticalPadding)
-                .background(DS.bg.opacity(0.55))
-                .accessibilityHidden(true)
+                Text(verbatim: CodeHighlighter.gutterText(lineCount: doc.lineCount))
+                    .font(DS.Font.mono(fontSize - 1.5))
+                    .lineHeight(.exact(points: lineHeight))
+                    .multilineTextAlignment(.trailing)
+                    .foregroundStyle(DS.text4)
+                    .fixedSize(horizontal: true, vertical: true)
+                    .frame(width: gutterWidth, alignment: .trailing)
+                    .padding(.vertical, verticalPadding)
+                    .background(DS.bg.opacity(0.55))
+                    .accessibilityHidden(true)
 
                 Rectangle()
                     .fill(DS.line)
@@ -542,18 +468,14 @@ private struct HighlightedCode: View {
             }
 
             ScrollView(.horizontal, showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(lines.indices, id: \.self) { index in
-                        Text(lines[index])
-                            .font(DS.Font.mono(fontSize))
-                            .foregroundStyle(DS.text)
-                            .frame(height: lineHeight, alignment: .leading)
-                            .fixedSize(horizontal: true, vertical: false)
-                    }
-                }
-                .padding(.horizontal, style.chat ? 12 : 10)
-                .padding(.vertical, verticalPadding)
-                .textSelection(.enabled)
+                Text(doc.attributed)
+                    .font(DS.Font.mono(fontSize))
+                    .lineHeight(.exact(points: lineHeight))
+                    .foregroundStyle(DS.text)
+                    .fixedSize(horizontal: true, vertical: true)
+                    .padding(.horizontal, style.chat ? 12 : 10)
+                    .padding(.vertical, verticalPadding)
+                    .textSelection(.enabled)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -561,25 +483,8 @@ private struct HighlightedCode: View {
 }
 
 private struct QuoteBlockView: View {
-    let lines: [AttributedString]
+    let composed: AttributedString
     var style: MarkdownStyle = .standard
-
-    private var composed: AttributedString {
-        var out = AttributedString()
-        for (index, line) in lines.enumerated() {
-            if index > 0 {
-                var br = AttributedString("\n")
-                br.font = DS.Font.prose(style.bodySize)
-                out += br
-            }
-            out += MarkdownComposer.inline(
-                line,
-                size: style.bodySize,
-                color: DS.text2,
-                emphasisWeight: style.chat ? .semibold : .medium)
-        }
-        return out
-    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -604,7 +509,7 @@ private struct QuoteBlockView: View {
 }
 
 private struct MarkdownTableView: View {
-    let rows: [[String]]
+    let rows: [[AttributedString]]
     var style: MarkdownStyle = .standard
 
     private var columnCount: Int {
@@ -634,18 +539,13 @@ private struct MarkdownTableView: View {
                     }
                     GridRow {
                         ForEach(0..<columnCount, id: \.self) { col in
-                            let cell = col < row.count ? row[col] : ""
-                            Text(
-                                MarkdownComposer.inlineTableCell(
-                                    cell,
-                                    isHeader: rowIndex == 0,
-                                    size: style.bodySize)
-                            )
-                            .lineSpacing(style.lineSpacing)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.vertical, rowIndex == 0 ? 0 : 8)
-                            .frame(maxWidth: 320, alignment: .leading)
+                            let cell = col < row.count ? row[col] : AttributedString()
+                            Text(cell)
+                                .lineSpacing(style.lineSpacing)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.vertical, rowIndex == 0 ? 0 : 8)
+                                .frame(maxWidth: 320, alignment: .leading)
                         }
                     }
                 }
@@ -667,19 +567,14 @@ private struct MarkdownTableView: View {
                     }
                     GridRow {
                         ForEach(0..<columnCount, id: \.self) { col in
-                            let cell = col < row.count ? row[col] : ""
-                            Text(
-                                MarkdownComposer.inlineTableCell(
-                                    cell,
-                                    isHeader: rowIndex == 0,
-                                    size: style.bodySize)
-                            )
-                            .lineSpacing(3)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .frame(maxWidth: 320, alignment: .leading)
+                            let cell = col < row.count ? row[col] : AttributedString()
+                            Text(cell)
+                                .lineSpacing(3)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .frame(maxWidth: 320, alignment: .leading)
                         }
                     }
                     .background(

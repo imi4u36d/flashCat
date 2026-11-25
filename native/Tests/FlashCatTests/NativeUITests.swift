@@ -77,50 +77,6 @@ final class NativeUITests: XCTestCase {
         XCTAssertFalse(LogsFilter.error.matches(.info))
     }
 
-    func testNoLiquidGlassRemainsInAppSources() throws {
-        let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()  // Tests/FlashCatTests/
-            .deletingLastPathComponent()  // Tests/
-            .deletingLastPathComponent()  // native/
-            .appendingPathComponent("Sources/FlashCat")
-        let enumerator = try XCTUnwrap(
-            FileManager.default.enumerator(
-                at: root,
-                includingPropertiesForKeys: nil,
-                options: [.skipsHiddenFiles]))
-        let files: [URL] = enumerator.compactMap { item in
-            guard let url = item as? URL, url.pathExtension == "swift" else { return nil }
-            return url
-        }
-        XCTAssertGreaterThan(files.count, 30, "源码目录扫描异常")
-
-        let banned = [
-            #"\.glassEffect\("#,
-            #"GlassEffectContainer"#,
-            #"\.buttonStyle\(\s*\.glass"#,
-            #"\.scrollEdgeEffectStyle"#,
-            #"\.regularMaterial"#,
-            #"\.ultraThinMaterial"#,
-            #"\.thinMaterial"#,
-            #"\.thickMaterial"#,
-            #"LiquidGlass"#,
-        ]
-        var offenders: [String] = []
-        for file in files {
-            let source = try String(contentsOf: file, encoding: .utf8)
-            let range = NSRange(source.startIndex..., in: source)
-            for pattern in banned {
-                let expression = try NSRegularExpression(pattern: pattern)
-                if expression.firstMatch(in: source, range: range) != nil {
-                    offenders.append(file.lastPathComponent + " ← " + pattern)
-                }
-            }
-        }
-        XCTAssertTrue(
-            offenders.isEmpty,
-            "系统内不应再使用 Liquid Glass / 材质模糊：\(offenders.joined(separator: " | "))")
-    }
-
     func testModelCardTextPreservesCodeFencesAndIndentation() {
         let raw = """
             ---
@@ -203,12 +159,12 @@ final class NativeUITests: XCTestCase {
         XCTAssertEqual(roundTripped.include, ["*Q4_K_M*.gguf"])
     }
 
-    func testPageCommandPaletteOrderAndShortcutsMatchApp() throws {
+    func testPageOrderAndShortcutsMatchApp() throws {
         XCTAssertEqual(Page.primaryPages, [.chat, .lab])
         XCTAssertEqual(Page.consolePages, [.overview, .models, .engines, .logs, .settings])
-        XCTAssertEqual(Page.orderedForCommandPalette, Page.primaryPages + Page.consolePages)
-        XCTAssertEqual(Set(Page.orderedForCommandPalette), Set(Page.allCases))
-        XCTAssertEqual(Page.orderedForCommandPalette.count, Page.allCases.count)
+        XCTAssertEqual(Page.ordered, Page.primaryPages + Page.consolePages)
+        XCTAssertEqual(Set(Page.ordered), Set(Page.allCases))
+        XCTAssertEqual(Page.ordered.count, Page.allCases.count)
 
         let appURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()  // Tests/FlashCatTests/
@@ -228,7 +184,7 @@ final class NativeUITests: XCTestCase {
         }
 
         XCTAssertEqual(appShortcuts.count, Page.allCases.count)
-        for page in Page.orderedForCommandPalette {
+        for page in Page.ordered {
             XCTAssertFalse(page.shortcutDisplay.isEmpty)
             let caseName = "\(page)"
             XCTAssertEqual(

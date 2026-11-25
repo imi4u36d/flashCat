@@ -13,12 +13,17 @@ extension SettingsPage {
         SettingsCard {
             SettingsRow(
                 title: "外观",
-                detail: "浅色琉璃 / 深色液态 / 极简纯白 / 极简纯黑"
+                detail: "跟随系统自动切换日间与夜间，或固定模式"
             ) {
                 if wide {
-                    AppearanceSkinControl(theme: state.theme)
+                    AppearanceSegmentedControl(
+                        options: AppAppearance.allCases,
+                        selection: state.theme.mode,
+                        label: \.label,
+                        detail: \.detail,
+                        onSelect: { state.theme.set($0) }
+                    )
                 } else {
-                    // 窄版式里四段控件会被压成一个看不清的胶囊，改成下拉。
                     DSMenu(size: .regular) {
                         DSMenuTriggerLabel(
                             title: state.theme.mode.label,
@@ -26,73 +31,14 @@ extension SettingsPage {
                             kind: .secondary,
                             size: .regular)
                     } content: {
-                        ForEach(AppAppearance.allCases) { mode in
+                        ForEach(AppAppearance.allCases) { appearance in
                             Button {
-                                state.theme.set(mode)
+                                state.theme.set(appearance)
                             } label: {
-                                if state.theme.mode == mode {
-                                    Label(L10n.t(mode.label), systemImage: "checkmark")
+                                if state.theme.mode == appearance {
+                                    Label(L10n.t(appearance.label), systemImage: "checkmark")
                                 } else {
-                                    Text(L10n.t(mode.label))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            DSDivider()
-            SettingsRow(
-                title: "跟随系统",
-                detail: "随 macOS 外观在浅色琉璃与深色液态之间切换"
-            ) {
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { state.theme.mode == .system },
-                        set: { followsSystem in
-                            if followsSystem {
-                                state.theme.set(.system)
-                            } else {
-                                state.theme.set(state.theme.isDark ? .dark : .light)
-                            }
-                        })
-                )
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .labelsHidden()
-                .tint(DS.accent)
-                .accessibilityLabel(L10n.t("跟随系统"))
-            }
-            DSDivider()
-            SettingsRow(
-                title: "侧边栏",
-                detail: "悬浮琉璃 / 贴边毛玻璃 / 折叠窄栏"
-            ) {
-                if wide {
-                    NativeSegmented(
-                        selection: Binding(
-                            get: { state.sidebarStyle },
-                            set: { state.setSidebarStyle($0) }),
-                        options: SidebarStyle.allCases,
-                        labels: SidebarStyle.allCases.map(\.label),
-                        width: 240,
-                        size: .small)
-                } else {
-                    DSMenu(size: .regular) {
-                        DSMenuTriggerLabel(
-                            title: state.sidebarStyle.label,
-                            systemImage: state.sidebarStyle.symbol,
-                            kind: .secondary,
-                            size: .regular)
-                    } content: {
-                        ForEach(SidebarStyle.allCases) { style in
-                            Button {
-                                state.setSidebarStyle(style)
-                            } label: {
-                                if state.sidebarStyle == style {
-                                    Label(L10n.t(style.label), systemImage: "checkmark")
-                                } else {
-                                    Text(L10n.t(style.label))
+                                    Text(L10n.t(appearance.label))
                                 }
                             }
                         }

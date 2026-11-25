@@ -58,13 +58,16 @@ final class ControlConfigGrammarTests: XCTestCase {
         XCTAssertEqual(try ControlConfigGrammar.appearance("system"), 0)
         XCTAssertEqual(try ControlConfigGrammar.appearance("light"), 1)
         XCTAssertEqual(try ControlConfigGrammar.appearance("dark"), 2)
-        XCTAssertEqual(try ControlConfigGrammar.appearance("studio"), 3)
-        XCTAssertEqual(try ControlConfigGrammar.appearance("studioDark"), 4)
+        // 旧别名兼容映射到对应 3 档原生外观
+        XCTAssertEqual(try ControlConfigGrammar.appearance("studio"), 1)
+        XCTAssertEqual(try ControlConfigGrammar.appearance("studioDark"), 2)
+        XCTAssertEqual(try ControlConfigGrammar.appearance("studioSystem"), 0)
         XCTAssertEqual(ControlConfigGrammar.appearanceToken(0), "system")
         XCTAssertEqual(ControlConfigGrammar.appearanceToken(1), "light")
         XCTAssertEqual(ControlConfigGrammar.appearanceToken(2), "dark")
-        XCTAssertEqual(ControlConfigGrammar.appearanceToken(3), "studio")
-        XCTAssertEqual(ControlConfigGrammar.appearanceToken(4), "studioDark")
+        XCTAssertEqual(ControlConfigGrammar.appearanceToken(3), "light")
+        XCTAssertEqual(ControlConfigGrammar.appearanceToken(4), "dark")
+        XCTAssertEqual(ControlConfigGrammar.appearanceToken(5), "system")
         XCTAssertEqual(ControlConfigGrammar.appearanceToken(7), "system")
     }
 

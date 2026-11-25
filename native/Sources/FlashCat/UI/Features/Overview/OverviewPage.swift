@@ -7,11 +7,10 @@ import FlashCatCore
 import FlashCatKit
 import SwiftUI
 
-/// 概览：macOS Liquid Glass 的 12 栏 bento——页头、当前模型 + 三格读数、
-/// 60 秒解码曲线 + 接口 / 引擎双卡、底部最近请求。
+/// 概览：页头、当前模型与上下文、实时指标与 60 秒解码曲线、接口与运行状态、最近请求。
 struct OverviewPage: View {
     @ObservedObject var state: AppState
-    @ObservedObject var chat: ChatStore
+    @ObservedObject var metrics: MetricsStore
     @ObservedObject var gateway = GatewayController.shared
 
     @Environment(\.accessibilityReduceMotion) var reduceMotion
@@ -20,9 +19,22 @@ struct OverviewPage: View {
     @State var checklistDismissed = false
     /// 最近请求的筛选：0 全部 / 1 仅 chat / 2 仅 openai。
     @State var requestFilterIndex = 0
+    @State private var layoutKey = LayoutKey(
+        isCompact: false, isSpacious: false, isExtraWide: false, height: 800)
+
+    struct LayoutKey: Equatable {
+        var isCompact: Bool
+        var isSpacious: Bool
+        var isExtraWide: Bool
+        var height: CGFloat
+    }
+
+    var isLiveDashboard: Bool {
+        state.isRunning || state.isSwitchingModel
+    }
 
     var stats: ServerStats? { state.stats }
-    var samples: [ThroughputSample] { state.overviewThroughput(window: 60) }
+    var samples: [ThroughputSample] { metrics.overviewThroughput(window: 60) }
     var peak: Double { max(samples.map(\.value).max() ?? 0, 1) }
 
     var modelTitle: String {
@@ -30,35 +42,23 @@ struct OverviewPage: View {
             ?? (state.selectedModel.isEmpty ? "未选择模型" : state.shortModelName(state.selectedModel))
     }
 
-    var modelTitleParts: (name: String, variant: String?) {
-        let title = modelTitle
-        guard let colon = title.lastIndex(of: ":") else { return (title, nil) }
-        let name = String(title[title.startIndex..<colon])
-        let variant = String(title[title.index(after: colon)...])
-        guard !name.isEmpty, !variant.isEmpty, variant.count <= 16 else { return (title, nil) }
-        return (name, variant)
-    }
-
-    /// 激活引擎的颜色是页面上唯一的数据色：曲线、上下文进度与
-    /// 「引擎实测」角标都跟着它走，换引擎时整页的重心跟着换。
     var engineTint: Color { engineAccent(state.activeEngine) }
 
-    var averageReading: MetricReading { state.averageDecodeReading }
+    var averageReading: MetricReading { metrics.averageDecodeReading(isRunning: state.isRunning) }
     var averageRate: Double { averageReading.value ?? 0 }
 
     var chartRate: Double { samples.last?.value ?? 0 }
-    var chartFrozen: Bool { state.throughputFrozenAt != nil }
-    var speedOrigin: SpeedOrigin { state.speedOrigin }
+    var chartFrozen: Bool { metrics.throughputFrozenAt != nil }
+    var speedOrigin: SpeedOrigin { metrics.currentSpeedOrigin(isRunning: state.isRunning) }
 
-    var prefillReading: MetricReading { state.prefillReading }
-    var ttftReading: TTFTReading { state.ttftReading }
-    var cacheHitReading: MetricReading { state.cacheHitReading }
+    var prefillReading: MetricReading { metrics.prefillReading(isRunning: state.isRunning) }
+    var ttftReading: TTFTReading { metrics.ttftReading(isRunning: state.isRunning) }
+    var cacheHitReading: MetricReading { metrics.cacheHitReading(isRunning: state.isRunning) }
 
     func rateText(_ value: Double) -> String {
         value > 0 ? Format.compact(value) : "—"
     }
 
-    /// hero 大数字只回答「模型启动以来平均」，所以角标只有 AVG。
     var averageBadge: String? {
         switch averageReading.origin {
         case .gatewayMean: return "AVG"
@@ -66,37 +66,78 @@ struct OverviewPage: View {
         }
     }
 
-    let sectionGap: CGFloat = 14
-    let contentPadding: CGFloat = 20
+    struct CanvasMetrics {
+        let layout: LayoutKey
+        let sidebarShown: Bool
 
-    var body: some View {
-        GeometryReader { proxy in
-            if proxy.size.width < Console.compactContentWidth {
-                compactLayout
-            } else {
-                wideLayout(proxy)
-            }
+        var isCompact: Bool { layout.isCompact }
+        var isSpacious: Bool { layout.isSpacious }
+        var maxWidth: CGFloat { 1480 }
+        var horizontalPadding: CGFloat {
+            if isCompact { return Console.compactContentPadding }
+            return layout.isExtraWide ? 28 : Console.contentPadding
         }
+        var topInset: CGFloat {
+            let base = Console.scrollTopInset(sidebarShown: sidebarShown)
+            return (sidebarShown && isSpacious) ? max(base, 20) : base
+        }
+        var bottomInset: CGFloat { isSpacious ? 24 : Console.contentBottomInset }
+        var sectionGap: CGFloat { isSpacious ? 16 : Console.pageSectionGap }
+        var columnGap: CGFloat { isSpacious ? 14 : 12 }
+        var cardPadding: CGFloat { isSpacious ? 16 : 14 }
+        var topKpiHeight: CGFloat { isSpacious ? 148 : 140 }
+
+        var liveMiddleMinHeight: CGFloat {
+            let reserved = topInset + bottomInset + Console.pageHeaderHeight + topKpiHeight + sectionGap * 3 + 110
+            let dynamic = layout.height - reserved
+            return min(460, max(320, dynamic))
+        }
+
+        var recentRequestLimit: Int { isSpacious ? 8 : 6 }
     }
 
-    var compactLayout: some View {
+    var body: some View {
+        let canvas = CanvasMetrics(layout: layoutKey, sidebarShown: state.showsSidebar)
+        Group {
+            if canvas.isCompact {
+                compactLayout(canvas)
+            } else {
+                wideLayout(canvas)
+            }
+        }
+        .onGeometryChange(for: LayoutKey.self) { proxy in
+            LayoutKey(
+                isCompact: proxy.size.width < Console.compactContentWidth,
+                isSpacious: proxy.size.width >= 1340,
+                isExtraWide: proxy.size.width >= 1440,
+                height: (proxy.size.height / 8).rounded() * 8)
+        } action: { newKey in
+            layoutKey = newKey
+        }
+        .animation(reduceMotion ? nil : DS.Motion.smooth, value: isLiveDashboard)
+    }
+
+    func compactLayout(_ canvas: CanvasMetrics) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: sectionGap) {
+            VStack(alignment: .leading, spacing: canvas.sectionGap) {
                 pageHeader(compact: true)
                 if showsChecklist { setupChecklist }
                 modelHeroCard
-                compactMetricsCard
-                decodeChart
-                    .frame(minHeight: 300)
-                gatewayCard
-                runtimeCard
-                recentRequests
-                    .frame(minHeight: 200)
+                if isLiveDashboard {
+                    compactMetricsCard
+                    decodeChart(cardPadding: canvas.cardPadding)
+                        .frame(minHeight: 280)
+                    gatewayCard(cardPadding: canvas.cardPadding)
+                    runtimeCard(cardPadding: canvas.cardPadding)
+                } else {
+                    gatewayCard(cardPadding: canvas.cardPadding)
+                }
+                recentRequestsIfPresent(maxRows: canvas.recentRequestLimit, cardPadding: canvas.cardPadding)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
-            .padding(.bottom, 20)
-            .dsPageColumn()
+            .padding(.horizontal, canvas.horizontalPadding)
+            .padding(.top, canvas.topInset)
+            .padding(.bottom, canvas.bottomInset)
+            .dsPageColumn(maxWidth: canvas.maxWidth)
         }
         .scrollIndicators(.never)
         .overlay(alignment: .top) {
@@ -104,41 +145,45 @@ struct OverviewPage: View {
         }
     }
 
-    func wideLayout(_ proxy: GeometryProxy) -> some View {
+    func wideLayout(_ canvas: CanvasMetrics) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: sectionGap) {
+            VStack(alignment: .leading, spacing: canvas.sectionGap) {
                 pageHeader(compact: false)
                 if showsChecklist { setupChecklist }
 
-                SplitRow(fraction: 5.0 / 12.0, spacing: 12) {
+                if isLiveDashboard {
+                    SplitRow(fraction: 5.0 / 12.0, spacing: canvas.columnGap) {
+                        modelHeroCard
+                    } trailing: {
+                        HStack(spacing: canvas.columnGap) {
+                            averageMetricCard
+                            ttftMetricCard
+                            prefillMetricCard
+                        }
+                    }
+                    .frame(height: canvas.topKpiHeight)
+
+                    SplitRow(fraction: 0.64, spacing: canvas.columnGap) {
+                        decodeChart(cardPadding: canvas.cardPadding)
+                    } trailing: {
+                        VStack(spacing: canvas.columnGap) {
+                            gatewayCard(cardPadding: canvas.cardPadding)
+                            runtimeCard(cardPadding: canvas.cardPadding)
+                        }
+                        .frame(maxHeight: .infinity, alignment: .top)
+                    }
+                    .frame(minHeight: canvas.liveMiddleMinHeight)
+                } else {
                     modelHeroCard
-                } trailing: {
-                    HStack(spacing: 12) {
-                        averageMetricCard
-                        ttftMetricCard
-                        prefillMetricCard
-                    }
+                    gatewayCard(cardPadding: canvas.cardPadding)
                 }
-                .frame(height: 152)
 
-                SplitRow(fraction: 0.64, spacing: 12) {
-                    decodeChart
-                } trailing: {
-                    VStack(spacing: 12) {
-                        gatewayCard
-                        runtimeCard
-                    }
-                    .frame(maxHeight: .infinity, alignment: .top)
-                }
-                .frame(minHeight: 372)
-
-                recentRequests
-                    .frame(minHeight: 196)
+                recentRequestsIfPresent(maxRows: canvas.recentRequestLimit, cardPadding: canvas.cardPadding)
             }
-            .padding(.horizontal, contentPadding)
-            .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
-            .padding(.bottom, 20)
-            .dsPageColumn()
+            .padding(.horizontal, canvas.horizontalPadding)
+            .padding(.top, canvas.topInset)
+            .padding(.bottom, canvas.bottomInset)
+            .dsPageColumn(maxWidth: canvas.maxWidth)
         }
         .scrollIndicators(.never)
         .overlay(alignment: .top) {

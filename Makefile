@@ -27,15 +27,19 @@ pkg: dmg
 dmg:
 	VERSION=$(VERSION) BUILD_NUMBER=$(BUILD_NUMBER) FLASHCAT_REQUIRE_DMG=1 ./scripts/make-installer.sh
 
-## Launch the installed app and confirm the native process stays alive.
-verify: install
+## One shot for "try the working tree": build, install into /Applications, launch,
+## then prove the native process stays up and the bundled CLI runs.
+## INSTALL=1 is forced here — `verify` without an install has nothing to verify.
+verify:
+	@$(MAKE) --no-print-directory app INSTALL=1
+	@echo "==> Launch $(INSTALLED_APP)"
 	@open "$(INSTALLED_APP)"
 	@sleep 4
 	@pgrep -f "$(INSTALLED_APP)/Contents/MacOS/flashCat" >/dev/null || { \
 		echo "error: installed app did not stay running" >&2; exit 1; }
-	@"$(INSTALLED_APP)/Contents/Helpers/flashcat" --version >/dev/null || { \
-		echo "error: bundled flashcat CLI did not run" >&2; exit 1; }
-	@echo "APP LAUNCH OK"
+	@BUNDLED="$$("$(INSTALLED_APP)/Contents/Helpers/flashcat" --version)" || { \
+		echo "error: bundled flashcat CLI did not run" >&2; exit 1; }; \
+	echo "APP LAUNCH OK — $$BUNDLED"
 
 run:
 	open "$(INSTALLED_APP)"
@@ -45,6 +49,7 @@ uninstall:
 	@for pid in $$(pgrep -f "$(INSTALLED_APP)/Contents/MacOS/flashCat" || true); do kill "$$pid"; done
 	@if [ -e "$(INSTALLED_APP)" ]; then rm -rf "$(INSTALLED_APP)"; echo "removed $(INSTALLED_APP)"; else echo "nothing installed"; fi
 	@rm -rf /Applications/.flashCat-previous-*.app
+	@rm -rf "$$HOME/Library/Application Support/flashCat/backups"
 	@rm -f "$$HOME/Library/LaunchAgents/com.zhuo.flashCat.plist"
 	@if [ -L /usr/local/bin/flashcat ] && [ "$$(readlink /usr/local/bin/flashcat)" = "$(INSTALLED_APP)/Contents/Helpers/flashcat" ]; then rm -f /usr/local/bin/flashcat; fi
 

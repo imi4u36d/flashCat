@@ -32,6 +32,61 @@ enum CodeHighlighter {
         }
     }
 
+    struct Document {
+        let attributed: AttributedString
+        let lineCount: Int
+    }
+
+    /// 把整段代码高亮并保留整块 `AttributedString`，供 `HighlightedCode` 一次渲染成单个 `Text`。
+    static func document(
+        _ code: String,
+        language rawLanguage: String?,
+        caching: Bool = true
+    ) -> Document {
+        let language = language(rawLanguage)
+        let key = LineCacheKey(code: code, language: language)
+        if !caching {
+            lineCacheLock.lock()
+            if let hit = streamingDocumentCache, hit.key == key {
+                lineCacheLock.unlock()
+                return hit.doc
+            }
+            lineCacheLock.unlock()
+
+            let value = makeDocument(code, language: language)
+
+            lineCacheLock.lock()
+            streamingDocumentCache = (key, value)
+            lineCacheLock.unlock()
+            return value
+        }
+
+        if let cached = cachedDocument(for: key) { return cached }
+        let value = makeDocument(code, language: language)
+        storeDocument(value, for: key)
+        return value
+    }
+
+    /// 预生成行号栏文本（`"1\n2\n..."`），避免为每一行单独创建 SwiftUI `Text` 视图。
+    static func gutterText(lineCount: Int) -> String {
+        let clamped = max(1, lineCount)
+        if clamped <= 2000 {
+            lineCacheLock.lock()
+            if let cached = gutterCache[clamped] {
+                lineCacheLock.unlock()
+                return cached
+            }
+            lineCacheLock.unlock()
+        }
+        let text = (1...clamped).map(String.init).joined(separator: "\n")
+        if clamped <= 2000 {
+            lineCacheLock.lock()
+            gutterCache[clamped] = text
+            lineCacheLock.unlock()
+        }
+        return text
+    }
+
     /// 把整段代码高亮后按 `\n` 切行，返回每一行的带属性文本。
     ///
     /// 结果按「代码 + 语言」缓存：`HighlightedCode` 的每一行都要取自己那份文本，
@@ -58,9 +113,35 @@ enum CodeHighlighter {
     private static let lineCacheLock = NSLock()
     nonisolated(unsafe) private static var lineCache: [LineCacheKey: [AttributedString]] = [:]
     nonisolated(unsafe) private static var lineCacheOrder: [LineCacheKey] = []
-    /// 只留最近几段代码。对话里同时可见的代码块不多，太小会让切回上一段
-    /// 会话时又整段重算，太大则让流式期间的半截代码占住内存。
-    private static let lineCacheLimit = 16
+    nonisolated(unsafe) private static var documentCache: [LineCacheKey: Document] = [:]
+    nonisolated(unsafe) private static var documentCacheOrder: [LineCacheKey] = []
+    nonisolated(unsafe) private static var streamingDocumentCache: (key: LineCacheKey, doc: Document)?
+    nonisolated(unsafe) private static var gutterCache: [Int: String] = [:]
+    /// 只留最近几段代码。长对话可能包含上百个历史代码块，提高上限避免切页或滚动时重复高亮。
+    private static let lineCacheLimit = 128
+
+    private static func cachedDocument(for key: LineCacheKey) -> Document? {
+        lineCacheLock.lock()
+        defer { lineCacheLock.unlock() }
+        guard let hit = documentCache[key] else { return nil }
+        if let index = documentCacheOrder.firstIndex(of: key) {
+            documentCacheOrder.remove(at: index)
+            documentCacheOrder.append(key)
+        }
+        return hit
+    }
+
+    private static func storeDocument(_ doc: Document, for key: LineCacheKey) {
+        lineCacheLock.lock()
+        defer { lineCacheLock.unlock() }
+        guard documentCache[key] == nil else { return }
+        documentCache[key] = doc
+        documentCacheOrder.append(key)
+        if documentCacheOrder.count > lineCacheLimit {
+            let oldest = documentCacheOrder.removeFirst()
+            documentCache.removeValue(forKey: oldest)
+        }
+    }
 
     private static func cachedLines(for key: LineCacheKey) -> [AttributedString]? {
         lineCacheLock.lock()
@@ -83,6 +164,19 @@ enum CodeHighlighter {
             let oldest = lineCacheOrder.removeFirst()
             lineCache.removeValue(forKey: oldest)
         }
+    }
+
+    private static func makeDocument(_ code: String, language: Language) -> Document {
+        let lineCount = max(1, code.utf8.reduce(1) { $0 + ($1 == 0x0A ? 1 : 0) })
+        if code.isEmpty {
+            return Document(attributed: AttributedString(" "), lineCount: 1)
+        }
+        var attributed = AttributedString(highlighted(code, language: language))
+        // 结尾是换行符时补零宽空格，让 SwiftUI `Text` 把最后的空行也算进布局高度，与行号栏对齐。
+        if code.hasSuffix("\n") {
+            attributed.append(AttributedString("\u{200B}"))
+        }
+        return Document(attributed: attributed, lineCount: lineCount)
     }
 
     private static func makeLines(_ code: String, language: Language) -> [AttributedString] {

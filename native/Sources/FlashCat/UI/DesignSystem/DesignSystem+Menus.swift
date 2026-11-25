@@ -53,10 +53,6 @@ struct DSMenu<Label: View, Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var hovering = false
-
-    private var activeHover: Bool { hovering && isEnabled }
 
     private var height: CGFloat {
         switch size {
@@ -79,17 +75,16 @@ struct DSMenu<Label: View, Content: View>: View {
 
     private var backgroundColor: Color {
         switch kind {
-        case .primary: return activeHover ? DS.ink.opacity(0.88) : DS.ink
-        case .secondary: return activeHover ? DS.raised : DS.surface
-        case .icon: return activeHover ? DS.raised : DS.surface
-        case .ghost: return activeHover ? DS.hover : .clear
+        case .primary: return DS.ink
+        case .secondary, .icon: return DS.surface
+        case .ghost: return .clear
         }
     }
 
     private var borderColor: Color {
         switch kind {
         case .primary, .ghost: return .clear
-        case .secondary, .icon: return activeHover ? DS.line3 : DS.line2
+        case .secondary, .icon: return DS.line2
         }
     }
 
@@ -100,14 +95,7 @@ struct DSMenu<Label: View, Content: View>: View {
             label()
                 .padding(.horizontal, horizontalPadding)
                 .frame(width: kind == .icon ? height : nil, height: height)
-                .background {
-                    ZStack {
-                        shape.fill(backgroundColor)
-                        if (kind == .secondary || kind == .icon) && activeHover {
-                            shape.fill(DS.hover)
-                        }
-                    }
-                }
+                .background(shape.fill(backgroundColor))
                 .overlay(shape.strokeBorder(borderColor, lineWidth: 1))
                 .contentShape(shape)
         }
@@ -116,8 +104,6 @@ struct DSMenu<Label: View, Content: View>: View {
         .buttonStyle(.plain)
         .fixedSize()
         .opacity(isEnabled ? 1 : 0.42)
-        .onHover { hovering = $0 }
-        .animation(reduceMotion ? nil : DS.Motion.snappy, value: activeHover)
     }
 }
 
@@ -208,18 +194,12 @@ struct DSSearchField: View {
         .frame(width: width, height: DS.Layout.controlHeight)
         .background(shape.fill(DS.surface))
         .overlay(shape.strokeBorder(focused ? DS.accent.opacity(0.70) : DS.line2, lineWidth: 1))
-        .overlay(
-            DS.rect(DS.Radius.md + 1)
-                .strokeBorder(focused ? DS.accent.opacity(0.16) : .clear, lineWidth: 2)
-                .padding(-1)
-        )
         .contentShape(shape)
         .onTapGesture { focused = true }
         .onChange(of: focusTrigger) { _, _ in focused = true }
         // 侧栏被隐藏后重新出现时，视图是新建的；onChange 收不到那次请求，
         // 所以还要在出现时补一次。
         .onAppear { if focusTrigger > 0 { focused = true } }
-        .animation(DS.Motion.snappy, value: focused)
     }
 }
 

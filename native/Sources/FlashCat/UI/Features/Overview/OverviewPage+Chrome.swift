@@ -7,7 +7,6 @@ import SwiftUI
 // MARK: - Layout & shared chrome
 
 extension View {
-    /// 概览卡片：16pt 圆角磨砂玻璃 + 14pt 内边距。
     func overviewCard(padding: CGFloat = 14) -> some View {
         self.padding(padding).dsSurface(radius: DS.Radius.card)
     }
@@ -79,9 +78,8 @@ private struct SplitLayout: Layout {
     }
 }
 
-// MARK: - KPI bits
+// MARK: - KPI & Status bits
 
-/// 小角标：AVG / 极速 / 稳定。
 struct OverviewBadge: View {
     var text: String
     var tint: Color
@@ -110,132 +108,6 @@ struct OverviewBadge: View {
     }
 }
 
-/// 解码趋势的迷你面积图：只负责形状，坐标按自身峰值缩放。
-struct OverviewSparkline: View {
-    var values: [Double]
-    var color: Color
-
-    var body: some View {
-        GeometryReader { proxy in
-            let points = scaledPoints(in: proxy.size)
-            if points.count > 1 {
-                let line = path(points)
-                ZStack {
-                    line
-                        .area(in: proxy.size)
-                        .fill(
-                            LinearGradient(
-                                colors: [color.opacity(0.30), color.opacity(0)],
-                                startPoint: .top, endPoint: .bottom))
-                    line
-                        .stroke(color, style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
-                }
-            } else {
-                Capsule()
-                    .fill(color.opacity(0.25))
-                    .frame(height: 1.5)
-                    .frame(maxHeight: .infinity, alignment: .center)
-            }
-        }
-    }
-
-    private func scaledPoints(in size: CGSize) -> [CGPoint] {
-        guard values.count > 1 else { return [] }
-        let peak = max(values.max() ?? 0, 1)
-        let step = size.width / CGFloat(values.count - 1)
-        return values.enumerated().map { index, value in
-            CGPoint(
-                x: CGFloat(index) * step,
-                y: size.height - 1 - CGFloat(max(0, value) / peak) * (size.height - 3))
-        }
-    }
-
-    private func path(_ points: [CGPoint]) -> Path {
-        Path { path in
-            guard let first = points.first else { return }
-            path.move(to: first)
-            for point in points.dropFirst() {
-                path.addLine(to: point)
-            }
-        }
-    }
-}
-
-private extension Path {
-    func area(in size: CGSize) -> Path {
-        var copy = self
-        let bounds = copy.boundingRect
-        copy.addLine(to: CGPoint(x: bounds.maxX, y: size.height))
-        copy.addLine(to: CGPoint(x: bounds.minX, y: size.height))
-        copy.closeSubpath()
-        return copy
-    }
-}
-
-/// 预填充的上升微柱：只表达趋势，数值在左侧大字里。
-struct OverviewMicroBars: View {
-    var tint: Color = DS.accentBlue
-    private let heights: [CGFloat] = [0.42, 0.55, 0.48, 0.68, 0.75, 0.84, 0.96]
-
-    var body: some View {
-        HStack(alignment: .bottom, spacing: 3) {
-            ForEach(Array(heights.enumerated()), id: \.offset) { index, height in
-                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                    .fill(
-                        index == heights.count - 1
-                            ? AnyShapeStyle(
-                                LinearGradient(
-                                    colors: [DS.accentBlue, DS.accent],
-                                    startPoint: .bottom, endPoint: .top))
-                            : AnyShapeStyle(tint.opacity(0.18 + Double(index) * 0.10))
-                    )
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 24 * height)
-                    .frame(maxHeight: .infinity, alignment: .bottom)
-            }
-        }
-        .frame(height: 24)
-    }
-}
-
-/// 首字延迟的横向进度：满格按 500ms 算，极速区间用绿色。
-struct OverviewLatencyBar: View {
-    var milliseconds: Double
-
-    private var fraction: Double {
-        min(1, max(0, milliseconds / 500))
-    }
-
-    private var label: String {
-        milliseconds > 0 ? "<\(Int(max(250, milliseconds.rounded())))ms" : "—"
-    }
-
-    var body: some View {
-        HStack(spacing: 6) {
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(DS.line2)
-                    Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [DS.ok.opacity(0.65), DS.ok],
-                                startPoint: .leading, endPoint: .trailing)
-                        )
-                        .frame(width: max(3, proxy.size.width * fraction))
-                }
-            }
-            .frame(height: 5)
-
-            Text(verbatim: label)
-                .font(DS.Font.mono(9.5))
-                .foregroundStyle(DS.text4)
-                .fixedSize()
-        }
-        .frame(height: 24)
-    }
-}
-
-/// 着色状态胶囊：在线 / 离线 / 运行中 / 已停止。
 struct OverviewTintPill: View {
     var text: String
     var tint: Color
@@ -257,7 +129,6 @@ struct OverviewTintPill: View {
     }
 }
 
-/// 1.5pt 细进度条：缓存命中率 / 内存压力。
 struct OverviewMiniBar: View {
     var value: Double
     var tint: Color
@@ -282,7 +153,6 @@ struct OverviewMiniBar: View {
     }
 }
 
-/// 页头的着色动作按钮：启动引擎是绿色玻璃，停止引擎是红色玻璃。
 struct OverviewTintActionStyle: ButtonStyle {
     var tint: Color
 
@@ -318,9 +188,6 @@ private struct OverviewTintActionBody: View {
     }
 }
 
-// MARK: - Status pill
-
-/// 页头的现场胶囊：引擎名 · 端口 · 真实阶段。
 struct OverviewStatusPill: View {
     var engine: String
     var port: Int?

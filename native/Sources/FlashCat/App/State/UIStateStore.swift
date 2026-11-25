@@ -8,36 +8,8 @@ import Foundation
 import SwiftUI
 
 // MARK: - Sidebar presentation
-
-/// 侧边栏形态。与 `showsSidebar` 分工：收起窄栏仍看得见导航，隐藏边栏则
-/// 整列退出画面。悬浮与贴边是同一份内容的两种外壳，窄栏是 68pt 图标栏。
-enum SidebarStyle: Int, CaseIterable, Identifiable, Hashable {
-    case floating = 0
-    case edge = 1
-    case compact = 2
-
-    var id: Int { rawValue }
-
-    var label: String {
-        switch self {
-        case .floating: return "悬浮琉璃"
-        case .edge: return "贴边毛玻璃"
-        case .compact: return "折叠窄栏"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .floating: return "rectangle.inset.filled"
-        case .edge: return "sidebar.left"
-        case .compact: return "rectangle.compress.vertical"
-        }
-    }
-}
-
-extension Notification.Name {
-    static let flashCatSidebarLayoutChanged = Notification.Name("flashCat.sidebarLayoutChanged")
-}
+//
+// 侧栏交由原生 NavigationSplitView 驱动：只维护可见性 `showsSidebar`。
 
 /// 界面上「现在在哪一页、要不要响一声」的状态：当前页、启动页、侧栏折叠与通知流。
 ///
@@ -72,35 +44,20 @@ final class UIStateStore: ObservableObject {
     @Published private(set) var islandNotices: [IslandNotice] = []
     /// 尚未查看过的通知数量。
     @Published private(set) var islandUnread = 0
-    /// 悬浮导航列是否显示。隐藏后主视口铺满窗口，重新显示时恢复玻璃列；
+    /// 侧栏是否显示（交由原生 `NavigationSplitView` 驱动展开与收起）。
     /// 状态落盘到 UserDefaults 的 `sidebarVisible`，重启后沿用上次的样子。
     @Published var showsSidebar: Bool
-    /// 侧栏形态：悬浮玻璃卡 / 贴边 / 64pt 窄栏。落盘到 `sidebarStyle`。
-    @Published var sidebarStyle: SidebarStyle
-    /// 窄栏展开时回到哪一副形态。窄栏自己不参与「上一次展开」，
-    /// 否则会从窄栏永远回不到悬浮 / 贴边。
-    private var lastExpandedSidebarStyle: SidebarStyle
     /// 会话搜索框的聚焦请求。每加一次，侧栏就把焦点送进搜索框；
     /// 计数而不是 Bool，连续按 ⌘F 也能再次聚焦。
     @Published private(set) var chatSearchFocusTick = 0
 
-    /// 侧栏折叠/展开动画的截止时刻。动画每帧都在重排与合成，期间任何整表刷新
-    /// （模型目录扫描、日志重排）都要推迟到收口之后，否则会吃掉 CA 提交的帧。
-    /// 不进 objectWillChange：它只是调度信息。
+    /// 侧栏折叠/展开动画的截止时刻。不进 objectWillChange：它只是调度信息。
     var sidebarAnimUntil = Date.distantPast
 
     private var toastWork: DispatchWorkItem?
 
-    init() {
-        // 侧栏的落盘状态在这里读出来：构造点就是「应用刚起来」那一刻，
-        // 与当初放在 AppState.init 里读是同一时机、同一默认值。
-        let defaults = UserDefaults.standard
+    init(defaults: UserDefaults = .standard) {
         showsSidebar = defaults.object(forKey: "sidebarVisible") as? Bool ?? true
-        let storedStyle =
-            (defaults.object(forKey: "sidebarStyle") as? Int)
-            .flatMap(SidebarStyle.init(rawValue:)) ?? .floating
-        sidebarStyle = storedStyle
-        lastExpandedSidebarStyle = storedStyle == .compact ? .floating : storedStyle
     }
 
     // MARK: toasts
@@ -166,55 +123,21 @@ final class UIStateStore: ObservableObject {
 
     // MARK: sidebar
 
-    func toggleSidebar() {
-        // 侧栏列宽、收起按钮的横向位置和图标栏的裁切共用这一个动画事务，
-        // 从菜单栏、命令面板或标题栏按钮触发时表现一致。
-        withAnimation(.smooth(duration: 0.25)) {
-            showsSidebar.toggle()
-        }
+    func setShowsSidebar(_ visible: Bool) {
+        guard showsSidebar != visible else { return }
+        showsSidebar = visible
         sidebarAnimUntil = Date().addingTimeInterval(0.35)
-        UserDefaults.standard.set(showsSidebar, forKey: "sidebarVisible")
-        NotificationCenter.default.post(name: .flashCatSidebarLayoutChanged, object: nil)
+        UserDefaults.standard.set(visible, forKey: "sidebarVisible")
     }
 
-    /// 换一副侧栏形态。宽度、圆角与内边距都跟着这一个动画事务走，
-    /// 和手动拖拽时的观感一致。
-    func setSidebarStyle(_ style: SidebarStyle) {
-        guard style != sidebarStyle else { return }
-        if sidebarStyle != .compact {
-            lastExpandedSidebarStyle = sidebarStyle
-        }
-        if style != .compact {
-            lastExpandedSidebarStyle = style
-        }
-        withAnimation(.smooth(duration: 0.28)) {
-            sidebarStyle = style
-        }
-        sidebarAnimUntil = Date().addingTimeInterval(0.4)
-        UserDefaults.standard.set(style.rawValue, forKey: "sidebarStyle")
-        NotificationCenter.default.post(name: .flashCatSidebarLayoutChanged, object: nil)
+    func toggleSidebar() {
+        setShowsSidebar(!showsSidebar)
     }
 
-    /// 头部那枚按钮：展开时收成窄栏，窄栏时回到上一次的展开形态。
-    func toggleSidebarCompact() {
-        if sidebarStyle == .compact {
-            setSidebarStyle(lastExpandedSidebarStyle)
-        } else {
-            setSidebarStyle(.compact)
-        }
-    }
-
-    /// 把焦点送进「最近对话」搜索框。窄栏会先展开，侧栏被隐藏时也会重新出现——
+    /// 把焦点送进「最近对话」搜索框。侧栏被隐藏时也会重新出现——
     /// 这个动作只服务一个目的：立刻能搜。
     func focusChatSearch() {
-        if !showsSidebar {
-            showsSidebar = true
-            UserDefaults.standard.set(true, forKey: "sidebarVisible")
-            NotificationCenter.default.post(name: .flashCatSidebarLayoutChanged, object: nil)
-        }
-        if sidebarStyle == .compact {
-            setSidebarStyle(lastExpandedSidebarStyle)
-        }
+        setShowsSidebar(true)
         chatSearchFocusTick += 1
     }
 

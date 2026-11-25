@@ -30,7 +30,8 @@ struct FlashCatApp: App {
             height: MainWindowGeometry.defaultSize.height
         )
         .windowResizability(.contentMinSize)
-        .windowStyle(.hiddenTitleBar)
+        .windowStyle(.titleBar)
+        .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("关于 flashCat") { delegate.showAbout() }
@@ -66,14 +67,10 @@ struct FlashCatApp: App {
                 }
                 .keyboardShortcut("s", modifiers: [.command, .control])
                 Button("切换浅色 / 深色") {
-                    state.theme.set(state.theme.isDark ? .light : .dark)
+                    state.theme.toggleLightDark()
                 }
             }
             CommandMenu("页面") {
-                Button("命令面板") {
-                    NotificationCenter.default.post(name: .flashCatOpenCommandPalette, object: nil)
-                }
-                .keyboardShortcut("k", modifiers: .command)
                 Button("搜索对话") { state.focusChatSearch() }
                     .keyboardShortcut("f", modifiers: .command)
                 Divider()
@@ -104,9 +101,6 @@ struct FlashCatApp: App {
                 minHeight: MainWindowGeometry.minimumSize.height
             )
             .overlay(MainWindow.bridge())
-            // 原生视图自己排标题栏那一行（红绿灯留白 + 侧栏折叠手柄），
-            // 因此要吃掉安全区，让内容从窗口最顶端开始画。
-            .ignoresSafeArea()
     }
 }
 
@@ -114,8 +108,6 @@ struct FlashCatApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 常驻菜单栏项。必须由 AppDelegate 强引用持有，否则状态栏项会被回收。
     private var statusBar: StatusBarController?
-    /// 红绿灯的默认位置，只记录一次；重复 configure 不会把按钮越推越远。
-    private var trafficLightOrigins: [Int: NSPoint] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Apply the stored skin before anything paints: `nil` appearance means
@@ -136,15 +128,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 for target in NSApp.windows { self.configure(target) }
             }
         }
-        // 缩放窗口时 AppKit 会重新排红绿灯，重新套一次偏移。
-        NotificationCenter.default.addObserver(
-            forName: NSWindow.didResizeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] note in
-            guard let window = note.object as? NSWindow else { return }
-            MainActor.assumeIsolated { self?.offsetTrafficLights(in: window) }
-        }
         // 持久化的深色外观如果只在这里应用一次，窗口晚于 delegate 创建时会被
         // SwiftUI 的默认外观覆盖：图标显示深色、页面却是浅色。窗口每次成为
         // key window 时再套一次，成本可以忽略。
@@ -156,37 +139,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let window = note.object as? NSWindow else { return }
             MainActor.assumeIsolated { self?.configure(window) }
         }
-        NotificationCenter.default.addObserver(
-            forName: .flashCatSidebarLayoutChanged,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                for target in NSApp.windows { self?.offsetTrafficLights(in: target) }
-            }
-        }
-        NotificationCenter.default.addObserver(
-            forName: NSWindow.didExitFullScreenNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] note in
-            guard let window = note.object as? NSWindow else { return }
-            MainActor.assumeIsolated {
-                DispatchQueue.main.async { [weak self, weak window] in
-                    guard let window else { return }
-                    self?.offsetTrafficLights(in: window)
-                }
-            }
-        }
     }
 
     private func configure(_ target: NSWindow) {
         // 只处理主窗口。状态栏项的按钮也活在一个内部窗口里（层级更高的 panel），
         // 给它套主窗口的外观和标题栏设置，会让系统给菜单栏图标补一块浅色底板。
         guard target.canBecomeMain, target is NSPanel == false else {
-            // sheet / 提示框是挂在主窗口上的独立窗口：皮肤铺在主窗口的
-            // contentView 上，它们既继承不到，也扫不到换肤那一路。窗口一露头
-            // （成为 key）就把当前皮肤套上去，免得深色皮肤下弹出浅色表单。
             if target.sheetParent != nil {
                 AppState.shared.theme.apply(to: target)
             }
@@ -194,21 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         target.title = "flashCat"
         target.titleVisibility = .hidden
-        target.titlebarAppearsTransparent = true
-        target.styleMask.insert(.fullSizeContentView)
-        // The window paints its own chrome: the system toolbar's translucent
-        // titlebar strip would otherwise sit above the sidebar artwork and pick
-        // up the desktop tint, breaking the seamless dark sidebar.
-        target.toolbar = nil
-        target.titlebarSeparatorStyle = .none
-        target.isMovableByWindowBackground = false
-        // Both the canvas colour and the appearance follow the selected skin so
-        // the strip above the sidebar matches instead of flashing dark.
         AppState.shared.theme.apply(to: target)
-        // The console has a compact layout down to this point. Below it the
-        // navigation rail and one-column content no longer have a stable
-        // readable width, so stop the window instead of letting it collapse
-        // into a stack of clipped cards.
         let minimumWindowSize = MainWindowGeometry.minimumSize
         target.minSize = minimumWindowSize
         target.contentMinSize = minimumWindowSize
@@ -219,8 +163,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if target.frame.width < minimumWindowSize.width
             || target.frame.height < minimumWindowSize.height
         {
-            // Older builds allowed the window to be shrunk below the layout's
-            // floor. Recover to a usable size the next time the app launches.
             target.setContentSize(
                 NSSize(
                     width: max(target.contentLayoutRect.width, MainWindowGeometry.defaultSize.width),
@@ -234,7 +176,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let target else { return }
             Self.clampToVisibleScreen(target)
         }
-        offsetTrafficLights(in: target)
     }
 
     /// autosave 的窗口坐标可能属于一块已经拔掉的副屏：恢复出来的 frame 整体在
@@ -253,81 +194,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             height: min(max(frame.height, MainWindowGeometry.minimumSize.height), visible.height))
         let origin = NSPoint(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2)
         window.setFrame(NSRect(origin: origin, size: size), display: true)
-    }
-
-    /// 按侧栏形态动态定位红绿灯：
-    /// - 悬浮宽栏：与顶部玻璃卡同区对齐
-    /// - 贴边宽栏：贴近左缘并与顶栏中线对齐
-    /// - 折叠窄栏：水平居中悬于窄栏正上方，避免与窄栏圆角或右侧页面碰撞
-    /// - 隐藏边栏 / 启动页：回落标准左缘位置，右侧展开按钮与之对齐
-    private func offsetTrafficLights(in window: NSWindow) {
-        guard window.canBecomeMain,
-            window is NSPanel == false,
-            !window.styleMask.contains(.fullScreen)
-        else { return }
-        let types: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
-        for (index, type) in types.enumerated() {
-            guard let button = window.standardWindowButton(type) else { continue }
-            if trafficLightOrigins[index] == nil {
-                trafficLightOrigins[index] = button.frame.origin
-            }
-        }
-        guard let closeOrigin = trafficLightOrigins[0] else { return }
-
-        let zoomButton = window.standardWindowButton(.zoomButton)
-        let span: CGFloat
-        if let zoomOrigin = trafficLightOrigins[2], let zoomButton {
-            span = (zoomOrigin.x - closeOrigin.x) + zoomButton.frame.width
-        } else {
-            span = 52
-        }
-
-        let state = AppState.shared
-        let isOnboarding = state.isPresentingLaunchPage || state.showsRecommendationPage
-        let targetCloseX: CGFloat
-        let titlebarCenterFromTop: CGFloat
-
-        if isOnboarding || !state.showsSidebar {
-            targetCloseX = 16
-            titlebarCenterFromTop = 24
-        } else {
-            switch state.sidebarStyle {
-            case .floating:
-                targetCloseX = 22
-                titlebarCenterFromTop = 26
-            case .edge:
-                targetCloseX = 16
-                titlebarCenterFromTop = 26
-            case .compact:
-                let railCenter = DS.Layout.sidebarInset + DS.Layout.sidebarCompactWidth / 2
-                targetCloseX = max(12, (railCenter - span / 2).rounded())
-                titlebarCenterFromTop = 24
-            }
-        }
-
-        for (index, type) in types.enumerated() {
-            guard let button = window.standardWindowButton(type),
-                let origin = trafficLightOrigins[index]
-            else { continue }
-            let dx = origin.x - closeOrigin.x
-            let targetX = targetCloseX + dx
-            let targetY: CGFloat
-            if let superview = button.superview,
-                let content = window.contentView,
-                content.bounds.height > 0
-            {
-                let yInContent =
-                    content.isFlipped
-                    ? titlebarCenterFromTop
-                    : content.bounds.maxY - titlebarCenterFromTop
-                let centerInSuperview = superview.convert(NSPoint(x: 0, y: yInContent), from: content).y
-                targetY = centerInSuperview - button.frame.height / 2
-            } else {
-                let dy: CGFloat = button.superview?.isFlipped == true ? 9 : -9
-                targetY = origin.y + dy
-            }
-            button.setFrameOrigin(NSPoint(x: targetX, y: targetY))
-        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

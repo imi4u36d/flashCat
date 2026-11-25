@@ -45,8 +45,13 @@ public struct GatewayRequestTimings: Equatable, Sendable {
     /// 命中前缀缓存后往往只剩几十个 token 要算，耗时被缓存恢复的固定开销主导
     /// （实测 2195 个 token 里缓存 2164，31 个前向摊 92 ms → 334 tok/s）。
     /// 那个数字既不是这台机器算提示词的速度，也不是缓存的速度，报出来只是
-    /// 让人怀疑整块指标。低于这个量就当这一路没有可读的预填充。
+    /// 让人怀疑整块指标。低于这个量就当这一路没有高置信度预填充样本。
     public static let prefillSampleTokens = 128
+
+    /// 短提示词兜底预填充的最小前向 token 数：当代尚无 ≥ 128 token 的请求时，
+    /// 允许未受前缀缓存恢复主导的冷请求（或新增前向不少于缓存命中的请求）
+    /// 给出预填充读数，避免日常短对话场景下预填充卡片一直空白。
+    public static let shortPrefillMinimumTokens = 8
 
     /// 单机 Apple Silicon 预填充吞吐的合理物理上限（tok/s）。
     /// 超出该值说明缓存扣减缺失或耗时极短被计时误差放大，直接丢弃而不污染读数。
@@ -55,13 +60,26 @@ public struct GatewayRequestTimings: Equatable, Sendable {
     /// 真正前向过的提示词 token。命中缓存的那部分只是被搬回来，没有算。
     public var forwardedTokens: Int { max(0, promptTokens - cachedTokens) }
 
-    /// 逐请求预填充吞吐。
+    /// 逐请求预填充吞吐（高置信度样本：前向 ≥ 128 token）。
     ///
     /// 样本太小就不报：命中缓存后只剩几十个 token 的前向，耗时由缓存恢复
     /// 的固定开销主导（实测 2195 个 token 里缓存 2164，31 个前向摊 92 ms =
     /// 334 tok/s），那既不是这台机器算提示词的速度，也不是缓存的速度。
     public var prefillRate: Double? {
         guard forwardedTokens >= GatewayRequestTimings.prefillSampleTokens,
+            promptMilliseconds >= 25
+        else { return nil }
+        let rate = Double(forwardedTokens) / (promptMilliseconds / 1000)
+        guard rate.isFinite, rate > 0, rate <= Self.maxPlausiblePrefillRate else { return nil }
+        return rate
+    }
+
+    /// 短提示词兜底预填充吞吐：要求至少 `shortPrefillMinimumTokens` 个真正前向
+    /// token，且未被前缀缓存恢复主导（`forwardedTokens >= cachedTokens`）。
+    /// 当代只要出现过 ≥ 128 token 的样本，聚合层仍优先 `prefillRate`。
+    public var shortPrefillRate: Double? {
+        guard forwardedTokens >= Self.shortPrefillMinimumTokens,
+            forwardedTokens >= cachedTokens,
             promptMilliseconds >= 25
         else { return nil }
         let rate = Double(forwardedTokens) / (promptMilliseconds / 1000)
@@ -106,6 +124,21 @@ public struct GatewayCacheHitSample: Equatable, Sendable {
     init(rate: Double, requests: Int) {
         self.rate = rate
         self.requests = requests
+    }
+}
+
+/// 已收尾流式会话的解码摘要，供 1 Hz 曲线补记落在两个采样拍之间的短流式请求。
+public struct GatewayCompletedStreamDecode: Equatable, Sendable {
+    public let sessionID: Int
+    public let startedAt: Date
+    public let finishedAt: Date
+    public let rate: Double
+
+    init(sessionID: Int, startedAt: Date, finishedAt: Date, rate: Double) {
+        self.sessionID = sessionID
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.rate = rate
     }
 }
 

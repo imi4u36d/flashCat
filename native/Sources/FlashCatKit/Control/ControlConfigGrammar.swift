@@ -53,7 +53,7 @@ public enum ControlConfigGrammar {
     /// `none` 与 `off`、`automatic` 与 `auto` 是同义写法：旧文档和社区脚本两种
     /// 都用过，写入口只认一种就会让「本来能用的命令」突然失败。
     public static let thinkingModeTokens = ["auto", "automatic", "none", "off", "on"]
-    public static let appearanceTokens = ["system", "light", "dark", "studio", "studioDark"]
+    public static let appearanceTokens = ["system", "light", "dark"]
     public static let reasoningEffortTokens = ["low", "medium", "high", "xhigh"]
 
     // MARK: 解析
@@ -81,11 +81,14 @@ public enum ControlConfigGrammar {
     }
 
     /// 返回落盘用的原始值（0 / 1 / 2），不是文档 token；读方向见 `appearanceToken`。
+    /// 同时兼容旧版 studio / studioDark / studioSystem 别名。
     public static func appearance(_ raw: String) throws -> Int {
-        guard let index = appearanceTokens.firstIndex(where: { normalized($0) == normalized(raw) }) else {
-            throw ControlConfigError("appearance 只能是 \(appearanceTokens.joined(separator: " / "))")
+        switch normalized(raw) {
+        case "system", "studiosystem": return 0
+        case "light", "studio": return 1
+        case "dark", "studiodark": return 2
+        default: throw ControlConfigError("appearance 只能是 \(appearanceTokens.joined(separator: " / "))")
         }
-        return index
     }
 
     public static func thinkingMode(_ raw: String) throws -> Int {
@@ -126,8 +129,11 @@ public enum ControlConfigGrammar {
     /// 落盘值 → 文档 token。读方向也只有这一份映射：在线与离线文档不会对同一个
     /// 整数解释出两个字符串；未知值沿用历史口径回落到默认项。
     public static func appearanceToken(_ raw: Int) -> String {
-        guard appearanceTokens.indices.contains(raw) else { return appearanceTokens[0] }
-        return appearanceTokens[raw]
+        switch raw {
+        case 1, 3: return "light"
+        case 2, 4: return "dark"
+        default: return "system"
+        }
     }
 
     public static func thinkingModeToken(_ raw: Int) -> String {

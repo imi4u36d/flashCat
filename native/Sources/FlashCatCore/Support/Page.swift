@@ -35,8 +35,8 @@ package enum Page: String, CaseIterable, Identifiable {
     /// 日常操作，但也不能只藏在 ⌘, 和菜单里（侧栏曾经漏掉过它）。
     package static let consolePages: [Page] = [.overview, .models, .engines, .logs, .settings]
 
-    /// 与 `App.swift` 菜单栏快捷键完全一致的命令面板排序。
-    package static let orderedForCommandPalette: [Page] = [.chat, .lab, .overview, .models, .engines, .logs, .settings]
+    /// 与 `App.swift` 菜单栏快捷键完全一致的页面排序。
+    package static let ordered: [Page] = [.chat, .lab, .overview, .models, .engines, .logs, .settings]
 
     /// 与 `App.swift` `.keyboardShortcut` 对应的快捷键展示文案。
     package var shortcutDisplay: String {

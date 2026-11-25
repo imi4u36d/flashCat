@@ -126,4 +126,16 @@ final class AppSettingsTests: XCTestCase {
         let reloaded = AppSettings(defaults: defaults)
         XCTAssertEqual(reloaded.maxTokens, 4096, "迁移只应发生一次")
     }
+
+    @MainActor
+    func testAppearanceNormalizedMigratesLegacyValues() {
+        XCTAssertEqual(AppAppearance.normalized(rawValue: 0), .system)
+        XCTAssertEqual(AppAppearance.normalized(rawValue: 1), .light)
+        XCTAssertEqual(AppAppearance.normalized(rawValue: 2), .dark)
+        XCTAssertEqual(AppAppearance.normalized(rawValue: 3), .light)
+        XCTAssertEqual(AppAppearance.normalized(rawValue: 4), .dark)
+        XCTAssertEqual(AppAppearance.normalized(rawValue: 5), .system)
+        XCTAssertEqual(AppAppearance.normalized(rawValue: 99), .system)
+        XCTAssertEqual(AppAppearance.system.resolvedIsDark, AppAppearance.systemIsDark)
+    }
 }

@@ -34,7 +34,7 @@ package enum SpeedOrigin: Equatable {
 /// 缓存命中率）统一只认网关按请求打点（`GatewaySessionMeter`），不再读引擎
 /// 自报速率或对引擎计数器做差分。
 package enum MetricOrigin: Equatable {
-    /// 没有任何可用读数（网关尚无样本、或值 ≤ 0）。
+    /// 没有任何可用读数（尚无样本、或值 ≤ 0）。
     case none
     /// 网关按请求打点的实时读数（重采样窗口）。
     case gatewayLive
@@ -42,6 +42,12 @@ package enum MetricOrigin: Equatable {
     case gatewayLast
     /// 网关按会话累计的「模型启动以来平均」——hero 的解码均值与缓存命中率共用。
     case gatewayMean
+    /// 引擎每秒上报的实时预填充读数（预填充进行中，网关此时尚未收到首 token）。
+    case engineLive
+    /// 引擎刚刚完成的预填充批次实测值（请求仍在解码、网关末帧 usage 尚未到达时立即显示）。
+    case engineLast
+    /// 引擎进程累计预填充均值（无逐请求读数时的兜底）。
+    case engineMean
 }
 
 /// 一格指标的 owner 表输出：数值 + 它回答的是哪个问题。
@@ -124,6 +130,10 @@ package final class MetricsStore: ObservableObject {
     /// 时以逐请求 `timings` 为准，否则用 `(promptTokens - cachedTokens) / TTFT`。
     /// 0 = 还没有可用的实测值。
     @Published package private(set) var gatewayPrefillRate: Double = 0
+    /// 引擎 1 Hz 轮询上报的预填充速率与粒度：预填充进行中为 `.live`（每秒刷新），
+    /// 预填充刚结束而解码尚未收尾时为 `.lastRequest`，让预填充卡不用等整轮回答结束。
+    @Published package private(set) var enginePrefillRate: Double = 0
+    @Published package private(set) var enginePrefillKind: EngineRateKind = .none
     /// 网关自己量出来的最近一次首字耗时（毫秒）。0 = 还没有可用的实测值。
     @Published package private(set) var gatewayTTFTMilliseconds: Double = 0
     /// 网关按代累计的缓存命中率（0…1）。分子是 usage 里的前缀缓存命中量，
@@ -143,10 +153,15 @@ package final class MetricsStore: ObservableObject {
     /// 与横轴都以它为右缘——曲线停住，不再随挂钟把终点挤出窗口。
     /// 新请求开始时清空，曲线恢复滚动。
     @Published package private(set) var throughputFrozenAt: Date?
+    /// 当代已完成会话是否全是非流式：概览曲线为空时仅在这种情形下显示
+    /// 「非流式请求无逐秒曲线」，避免把短流式或失败请求误标成非流式。
+    @Published package private(set) var chartEmptyIsNonStreamed = false
 
     // MARK: 私有状态
     /// 上一次采样时是否还有请求在跑，用来识别「1 → 0」这次收尾。
     private var chartWasLive = false
+    /// 已核对过短流式补点的最大会话 id，避免重复扫描历史会话。
+    private var lastBackfilledSessionID = 0
     /// 累计均值的身份（引擎 + 进程 + 模型）。换代时清空 `GatewayMeter`
     /// 的累计量，避免把上一台模型的成绩算进这一台。
     private var lifetimeIdentity: String?
@@ -217,16 +232,51 @@ package final class MetricsStore: ObservableObject {
         return averageDecodeReading(isRunning: isRunning)
     }
 
-    /// 预填充格的 owner 表输出：仅认网关按请求测得的最近一次实测值。
+    /// 预填充格的 owner 表输出：
+    /// 1. 正在预填充（引擎 `.live`）→ 每秒实时刷新（此时网关连首 token 都还没收到）；
+    /// 2. 请求仍在解码（`gatewayRateIsLive`）且引擎已报出本轮完成的 `.lastRequest`
+    ///    → 立即显示本轮预填充，无需等到整段回答结束才看到末帧 `usage` / `timings`；
+    /// 3. 请求收尾后优先网关逐请求实测（`.gatewayLast`）；
+    /// 4. 网关无样本时兜底引擎的 `.lastRequest` / `.lifetimeMean`。
     package func prefillReading(isRunning: Bool) -> MetricReading {
         guard isRunning else { return .none }
-        return Self.prefillReading(gateway: gatewayPrefillRate)
+        return Self.prefillReading(
+            gateway: gatewayPrefillRate,
+            engine: enginePrefillRate > 0 ? enginePrefillRate : nil,
+            engineKind: enginePrefillKind,
+            isLive: gatewayRateIsLive)
     }
 
-    /// 预填充格的纯函数口径，便于测试直接验证。
-    package nonisolated static func prefillReading(gateway: Double) -> MetricReading {
-        guard gateway > 0 else { return .none }
-        return MetricReading(value: gateway, origin: .gatewayLast)
+    /// 预填充格的纯函数口径，便于测试直接验证优先级。
+    package nonisolated static func prefillReading(
+        gateway: Double,
+        engine: Double? = nil,
+        engineKind: EngineRateKind = .none,
+        isLive: Bool = false
+    ) -> MetricReading {
+        let engineValue = (engine ?? 0) > 0 ? engine : nil
+        if engineKind == .live, let engineValue {
+            return MetricReading(value: engineValue, origin: .engineLive)
+        }
+        if isLive, engineKind == .lastRequest, let engineValue {
+            return MetricReading(value: engineValue, origin: .engineLast)
+        }
+        if gateway > 0 {
+            return MetricReading(value: gateway, origin: .gatewayLast)
+        }
+        if let engineValue {
+            switch engineKind {
+            case .lastRequest:
+                return MetricReading(value: engineValue, origin: .engineLast)
+            case .lifetimeMean:
+                return MetricReading(value: engineValue, origin: .engineMean)
+            case .live:
+                return MetricReading(value: engineValue, origin: .engineLive)
+            case .none:
+                break
+            }
+        }
+        return .none
     }
 
     /// 首字延迟格的 owner 表输出：仅认网关逐请求实测的最近一次首字。
@@ -372,23 +422,30 @@ package final class MetricsStore: ObservableObject {
         isRunning: Bool,
         activeEngine: EngineID
     ) {
+        // 累计均值的身份先对齐，且不受 0.95 秒节拍闸门延迟：
+        // 引擎刚就绪（或重启 / 换模型）时必须立刻完成换代，否则紧随其后发出的
+        // 首条请求会在开始吐字后才被迟到的 `resetLifetime` 误划到旧代。
+        let identityChanged = syncLifetimeIdentity(stats: stats, activeEngine: activeEngine)
         // 一秒一拍：同一拍里 `syncController` 可能被多个状态变化叫醒，
         // 但概览的数字只该在整秒上变。0.95 留一点定时器抖动余量。
-        if let last = lastSpeedPublishAt, now.timeIntervalSince(last) < 0.95 { return }
+        if !identityChanged, let last = lastSpeedPublishAt, now.timeIntervalSince(last) < 0.95 { return }
         lastSpeedPublishAt = now
-        // 累计均值的身份先对齐：引擎 / 进程 / 模型换代时清空上一台的成绩。
-        syncLifetimeIdentity(stats: stats, activeEngine: activeEngine)
         let overview = meter.overview(now: now)
         publishGatewayOverview(overview, at: now)
         publishGatewayPrefill()
+        publishEnginePrefill(stats: stats, isRunning: isRunning)
         publishGatewayTTFT()
         publishGatewayCacheHit(isRunning: isRunning)
         publishGatewayContext(isRunning: isRunning)
         publishAverageDecodeRate(isRunning: isRunning)
         // 曲线落点与冻结完全由网关会话驱动。
         let live = overview.isLive
+        let backfilledLatestAt = backfillCompletedStreamSamples(
+            at: now, isRunning: isRunning, isLive: live, liveDecodeRate: overview.decodeRate)
         sampleSpeed(at: now, isRunning: isRunning, isLive: live)
-        updateChartFreeze(isLive: live, at: now)
+        updateChartFreeze(isLive: live, at: now, backfilledLatestAt: backfilledLatestAt)
+        let nonStreamed = isRunning && meter.hasOnlyNonStreamedCompletedSessions()
+        if chartEmptyIsNonStreamed != nonStreamed { chartEmptyIsNonStreamed = nonStreamed }
     }
 
     /// 把网关的聚合读数发布成当前速度的两个 `@Published` 值，并盖上时间戳。
@@ -413,6 +470,25 @@ package final class MetricsStore: ObservableObject {
         let next = meter.recentPrefill() ?? 0
         guard abs(gatewayPrefillRate - next) > 0.5 else { return }
         gatewayPrefillRate = next
+    }
+
+    /// 发布引擎 1 Hz 上报的预填充速率（预填充进行中为 `.live`，刚做完批次为 `.lastRequest`）。
+    /// 让预填充卡片在预填充阶段就能像解码一样每秒刷新，且进入解码后立即可见。
+    private func publishEnginePrefill(stats: ServerStats?, isRunning: Bool) {
+        let rate: Double
+        let kind: EngineRateKind
+        if isRunning, let reported = stats?.prefillTokensPerSecond, reported > 0,
+            let reportedKind = stats?.prefillRateKind, reportedKind != .none
+        {
+            rate = reported
+            kind = reportedKind
+        } else {
+            rate = 0
+            kind = .none
+        }
+        guard abs(enginePrefillRate - rate) > 0.5 || enginePrefillKind != kind else { return }
+        enginePrefillRate = rate
+        enginePrefillKind = kind
     }
 
     /// 发布网关实测的最近一次首字。与预填充同样是「做完就固定」的观测，
@@ -453,6 +529,59 @@ package final class MetricsStore: ObservableObject {
         let isLive = next?.isLive ?? false
         if gatewayContextTokens != tokens { gatewayContextTokens = tokens }
         if gatewayContextIsLive != isLive { gatewayContextIsLive = isLive }
+    }
+
+    /// 补记落在两个 1 Hz 采样拍之间的短流式请求。
+    ///
+    /// 高速本机模型下，一次简短的流式回复往往不足 1 秒：可能完整落在两拍之间，
+    /// 也可能第一拍刚好撞上预填充（速率 0）、下一拍已经收尾。只要该流式请求在
+    /// 解码区间内尚未被实时拍命中，就按它的收尾时刻与实测解码速率补落一个点；
+    /// 长流式请求已由 1 Hz 实时拍覆盖，不重复补点。
+    private func backfillCompletedStreamSamples(
+        at now: Date,
+        isRunning: Bool,
+        isLive: Bool,
+        liveDecodeRate: Double
+    ) -> Date? {
+        guard isRunning else { return nil }
+        let completed = meter.completedStreamedDecodes(afterSessionID: lastBackfilledSessionID)
+        guard !completed.isEmpty else { return nil }
+        var latestAppended: Date?
+        var appended = false
+        for item in completed {
+            if item.sessionID > lastBackfilledSessionID {
+                lastBackfilledSessionID = item.sessionID
+            }
+            // 解码区间内已有实时拍就不重复补点；并发长请求正在稳定吐字时，
+            // 若紧邻前 1.1 秒内已有实时合并点，也不插入单路速率以免拉出假深谷。
+            let windowStart =
+                (isLive && liveDecodeRate > 0)
+                ? item.startedAt.addingTimeInterval(-1.1)
+                : item.startedAt
+            let alreadySampled = throughput.contains {
+                $0.at >= windowStart && $0.at <= item.finishedAt
+            }
+            guard !alreadySampled else { continue }
+            var stamp = min(item.finishedAt, now)
+            while throughput.contains(where: { $0.at == stamp }) {
+                stamp = stamp.addingTimeInterval(0.001)
+            }
+            let sample = ThroughputSample(at: stamp, value: item.rate)
+            if let last = throughput.last, stamp < last.at {
+                let index = throughput.firstIndex(where: { $0.at > stamp }) ?? throughput.count
+                throughput.insert(sample, at: index)
+            } else {
+                throughput.append(sample)
+            }
+            appended = true
+            if latestAppended.map({ stamp > $0 }) ?? true {
+                latestAppended = stamp
+            }
+        }
+        if appended {
+            throughput = Self.trimmed(throughput, at: now)
+        }
+        return latestAppended
     }
 
     /// 把一次读数落到 60 秒曲线上。只有「在跑」且读数 > 0 时落点：
@@ -511,12 +640,21 @@ package final class MetricsStore: ObservableObject {
     /// 请求全部收尾时把 60 秒曲线冻在收尾时刻；新请求一开始就解冻。
     /// 冻结的是**右缘**（`overviewChartEnd`），不是样本数组：窗口不再随
     /// 挂钟向前滑，曲线也就不会在空闲几分钟后被裁空。
-    private func updateChartFreeze(isLive: Bool, at now: Date) {
-        let next = Self.chartFrozenAt(
-            previous: throughputFrozenAt,
-            wasLive: chartWasLive,
-            isLive: isLive,
-            now: now)
+    private func updateChartFreeze(isLive: Bool, at now: Date, backfilledLatestAt: Date? = nil) {
+        let next: Date?
+        if isLive {
+            next = nil
+        } else if let backfilledLatestAt {
+            // 刚补记了落在两拍之间的短流式请求：把冻结右缘推进到当前拍，
+            // 确保新样本留在冻结窗口内，且空闲后不会被挂钟滚出 60 秒窗口。
+            next = max(now, backfilledLatestAt)
+        } else {
+            next = Self.chartFrozenAt(
+                previous: throughputFrozenAt,
+                wasLive: chartWasLive,
+                isLive: false,
+                now: now)
+        }
         if throughputFrozenAt != next { throughputFrozenAt = next }
         chartWasLive = isLive
     }
@@ -537,8 +675,12 @@ package final class MetricsStore: ObservableObject {
 
     /// 累计均值的身份 = 引擎 + 进程 + 进程启动时刻 + 模型。任一变化都说明
     /// 换了一台「模型启动以来」，上一台的累计量不该再算进来。
-    private func syncLifetimeIdentity(stats: ServerStats?, activeEngine: EngineID) {
-        guard let stats else { return }
+    ///
+    /// 首次拿到有效身份（`lifetimeIdentity == nil`）时只登记不翻代：此前没有
+    /// 上一台引擎/模型，翻代反而会把随引擎冷启动同时发起的首轮请求划进旧代。
+    @discardableResult
+    private func syncLifetimeIdentity(stats: ServerStats?, activeEngine: EngineID) -> Bool {
+        guard let stats else { return false }
         let uptimeRestarted: Bool
         if let prev = previousUptimeSeconds, let current = stats.uptimeSeconds, current + 1.0 < prev {
             uptimeRestarted = true
@@ -553,15 +695,23 @@ package final class MetricsStore: ObservableObject {
             stats.startedAt.map { String(format: "%.3f", $0) } ?? "-",
             stats.model ?? "-",
         ].joined(separator: "|")
-        guard uptimeRestarted || key != lifetimeIdentity else { return }
+        if lifetimeIdentity == nil {
+            lifetimeIdentity = key
+            return false
+        }
+        guard uptimeRestarted || key != lifetimeIdentity else { return false }
         lifetimeIdentity = key
         meter.resetLifetime()
         if averageDecodeRate != 0 { averageDecodeRate = 0 }
         if gatewayPrefillRate != 0 { gatewayPrefillRate = 0 }
+        if enginePrefillRate != 0 { enginePrefillRate = 0 }
+        if enginePrefillKind != .none { enginePrefillKind = .none }
         if gatewayTTFTMilliseconds != 0 { gatewayTTFTMilliseconds = 0 }
         if gatewayCacheHitRate != 0 { gatewayCacheHitRate = 0 }
         if gatewayCacheHitRequests != 0 { gatewayCacheHitRequests = 0 }
         if gatewayContextTokens != 0 { gatewayContextTokens = 0 }
         if gatewayContextIsLive { gatewayContextIsLive = false }
+        if chartEmptyIsNonStreamed { chartEmptyIsNonStreamed = false }
+        return true
     }
 }

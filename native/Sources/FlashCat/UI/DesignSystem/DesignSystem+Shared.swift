@@ -64,9 +64,6 @@ struct ArcadeIcon: View {
             }
         }
         .frame(width: size, height: size)
-        .overlay(
-            shape.strokeBorder(primaryColor.opacity(0.22), lineWidth: 1)
-        )
     }
 }
 
@@ -199,16 +196,6 @@ enum TagTone {
         case .danger: return DS.err.opacity(0.12)
         }
     }
-
-    var stroke: Color {
-        switch self {
-        case .neutral: return DS.line
-        case .accent: return DS.accent.opacity(0.25)
-        case .success: return DS.ok.opacity(0.25)
-        case .warning: return DS.warn.opacity(0.25)
-        case .danger: return DS.err.opacity(0.25)
-        }
-    }
 }
 
 struct Tag: View {
@@ -229,10 +216,6 @@ struct Tag: View {
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
         .background(tone.background, in: DS.rect(DS.Radius.sm))
-        .overlay(
-            DS.rect(DS.Radius.sm)
-                .strokeBorder(tone.stroke, lineWidth: 1)
-        )
         .fixedSize()
     }
 }
@@ -339,7 +322,6 @@ struct EmptyHint: View {
                 .font(.system(size: 20, weight: .regular))
                 .foregroundStyle(DS.text3)
                 .frame(width: 44, height: 44)
-                .dsSurface(radius: DS.Radius.lg)
             Text(L10n.t(title))
                 .font(DS.Font.md.weight(.medium))
                 .foregroundStyle(DS.text2)
@@ -417,7 +399,7 @@ func statusColor(_ state: ServerState) -> Color {
 func levelColor(_ level: LogLevel) -> Color {
     switch level {
     case .error: return DS.err
-    case .warning: return Color.adaptive(dark: 0xFB923C, light: 0xEA580C)
+        case .warning: return DS.warn
     case .success: return DS.ok
     case .system: return DS.info
     case .info: return DS.text2

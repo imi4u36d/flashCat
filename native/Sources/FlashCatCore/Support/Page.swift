@@ -28,12 +28,9 @@ package enum Page: String, CaseIterable, Identifiable {
         }
     }
 
-    /// 侧栏主工作区入口。
-    package static let primaryPages: [Page] = [.chat, .lab]
-
-    /// 侧栏控制台分区入口。设置是系统级的一页，放在控制台列表末尾——它不参与
-    /// 日常操作，但也不能只藏在 ⌘, 和菜单里（侧栏曾经漏掉过它）。
-    package static let consolePages: [Page] = [.overview, .models, .engines, .logs, .settings]
+    /// 侧栏导航入口：顺序与菜单栏「页面」一致，不再另立分组。设置是系统级的
+    /// 一页，固定在底栏——它不参与日常操作，但也不能只藏在 ⌘, 和菜单里。
+    package static let sidebarPages: [Page] = [.chat, .lab, .overview, .models, .engines, .logs]
 
     /// 与 `App.swift` 菜单栏快捷键完全一致的页面排序。
     package static let ordered: [Page] = [.chat, .lab, .overview, .models, .engines, .logs, .settings]

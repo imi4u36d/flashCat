@@ -16,6 +16,14 @@ import Foundation
 /// 因为壳层要弹删除 / 改名确认。
 @MainActor
 final class ChatSessionStore: ObservableObject {
+    /// 当前打开的会话 id。以前它只存在 `UserDefaults` 里、读的时候现取，
+    /// 切会话本身不发布任何东西——界面能换过去，靠的是 `showChat()` 顺手写
+    /// 一次 `section` 带出来的全局重绘。现在它是正经的发布值：侧栏高亮、
+    /// 草稿键、转录区与顶栏标题都订阅这一个来源。
+    @Published var currentThreadID = ""
+    /// 后台生成完成、读者还没点回去的会话。侧栏与「最近对话」在该行的时间
+    /// 槽里点一颗强调色圆点，替掉原来的浮层提示；点开会话即清除。
+    @Published var unreadThreadIDs: Set<String> = []
     /// 侧栏与「最近对话」弹层共用的待删线程：删除会重写整份历史文件，删掉就
     /// 找不回来，所以两个入口都只挂起这一条，等壳层弹完确认再落盘。
     @Published var pendingThreadDelete: ChatThread?

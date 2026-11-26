@@ -168,21 +168,14 @@ final class EngineCoordinator {
         installLifecycleClock()
 
         let service = ModelCatalogService()
-        let migration = service.migrateLegacyDirectories()
-        if !migration.isEmpty {
-            let moved = migration.moved + migration.archived
-            host.toast(L10n.format("已把 %lld 项旧模型数据迁入 Application Support/flashCat", moved))
-        }
+        // 旧目录迁移是启动时的静默整理：模型列表会直接显示结果，不弹回执。
+        _ = service.migrateLegacyDirectories()
         Paths.ensureDirectory(Paths.modelsDirectory)
 
         // 旧版本用软链接把 ~/.omlx、~/.mtplx 的权重挂进模型目录；现在模型必须
         // 真正待在自己的目录里，启动时把链接换成权重本身，并清掉失效链接。
-        var adopted = 0
         for engine in EngineCatalog.allIDs {
-            adopted += EngineModelStore.adoptExistingWeights(engine).adopted.count
-        }
-        if adopted > 0 {
-            host.toast(L10n.format("已把 %lld 个模型搬进 flashCat 的模型目录，不再依赖外部目录", adopted))
+            _ = EngineModelStore.adoptExistingWeights(engine)
         }
 
         // 授权表是公共目录的真相：启动时按它把各引擎目录里的链接对齐。
@@ -308,7 +301,8 @@ final class EngineCoordinator {
             self.syncController()
             host.notifyObjectChanged()
         })
-        // 引擎安装/构建的成功与失败通过全局气泡弹出。
+        // 安装/构建失败仍走阻塞浮层；成功由卡片上的「已安装」与进度环表示，
+        // `toast` 层的成功过滤会把它丢掉。
         installs.onToast = { [weak self] message in
             self?.host?.toast(message)
         }
@@ -457,7 +451,7 @@ final class EngineCoordinator {
         host.adoptSavedModel(for: id)
         syncController()
         if start, !host.selectedModel.isEmpty { host.startService() }
-        host.toast(L10n.format("已切换到 %@", id.displayName), transient: true)
+        // 侧栏 / 引擎卡的当前引擎标记已经换过去，不再补一过性提示。
         return true
     }
 
@@ -805,14 +799,9 @@ final class EngineCoordinator {
     /// 一半的权重。
     func abortModelSwitch() {
         guard let host, host.switchingModel != nil else { return }
-        let engine = activeEngine
         queuedSwitchModel = nil
         retireModelSwitch()
-        // 退路回执，不是需要回头再看的状态：加载仍在后台推进，阶段行会说。
-        host.toast(
-            L10n.format("已取消等待 · %@ 仍在后台加载", engine.displayName),
-            kind: .warning,
-            transient: true)
+        // 退路回执由阶段行承担：加载仍在后台推进，不再弹浮层。
     }
 
     /// Keep the stage line honest if the engine moves on its own between stages.
@@ -827,12 +816,8 @@ final class EngineCoordinator {
         host.switchStage = ""
         switch outcome {
         case .ready:
-            // 换模型是读者自己点的那一下的结果，看到「运行中」就够了：
-            // 这条只闪一下，不写进通知历史。
-            host.toast(
-                L10n.format("模型已就绪 · %@", shortModelName(host.selectedModel)),
-                kind: .success,
-                transient: true)
+            // 换模型是读者自己点的那一下的结果，看到「运行中」就够了。
+            break
         case .failed(let reason):
             host.notice = reason.isEmpty ? "模型切换失败，请查看日志" : reason
         }

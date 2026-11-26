@@ -57,7 +57,9 @@ struct HubSheet: View {
                 detailPane.frame(maxWidth: .infinity)
             }
             DSDivider()
-            if !hub.repoProbeRepo.isEmpty {
+            if !hub.repoProbeRepo.isEmpty,
+                hub.repoProbeLoading || !(hub.repoProbeError ?? "").isEmpty
+            {
                 probeRow
                 DSDivider()
             }
@@ -114,14 +116,9 @@ struct HubSheet: View {
     private var header: some View {
         HStack(spacing: 12) {
             IconTile(symbol: "sparkle.magnifyingglass", color: DS.accent, size: 30)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("模型广场")
-                    .font(DS.Font.lg.weight(.semibold))
-                    .foregroundStyle(DS.text)
-                Text(source.subtitle)
-                    .font(DS.Font.xs)
-                    .foregroundStyle(DS.text3)
-            }
+            Text("模型广场")
+                .font(DS.Font.lg.weight(.semibold))
+                .foregroundStyle(DS.text)
             Spacer(minLength: 8)
             DSMenu {
                 DSMenuTriggerLabel(
@@ -419,18 +416,6 @@ struct HubSheet: View {
                             .textSelection(.enabled)
                     }
                     Spacer(minLength: 8)
-                    VStack(alignment: .trailing, spacing: 4) {
-                        if let size = detail.sizeBytes, size > 0 {
-                            Text(Format.size(Int(clamping: size)))
-                                .font(DS.Font.mono(15, weight: .semibold))
-                                .foregroundStyle(DS.text)
-                                .monospacedDigit()
-                        }
-                        Text(downloadsText(detail.downloads))
-                            .font(DS.Font.xs)
-                            .foregroundStyle(DS.text3)
-                            .monospacedDigit()
-                    }
                 }
 
                 let tags = detailTagTexts(detail)
@@ -451,9 +436,11 @@ struct HubSheet: View {
                             .foregroundStyle(DS.text2)
                         MarkdownView(text: ModelCardText.normalized(card))
                     }
-                    .padding(12)
+                    .padding(.vertical, 10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .dsSurface(radius: DS.Radius.md)
+                    .overlay(alignment: .top) {
+                        Rectangle().fill(DS.line).frame(height: 1)
+                    }
                 }
 
                 if !detail.files.isEmpty {
@@ -489,8 +476,10 @@ struct HubSheet: View {
                                 .padding(.top, 4)
                         }
                     }
-                    .padding(12)
-                    .dsSurface(radius: DS.Radius.md)
+                    .padding(.vertical, 10)
+                    .overlay(alignment: .top) {
+                        Rectangle().fill(DS.line).frame(height: 1)
+                    }
                 }
 
             }
@@ -499,12 +488,10 @@ struct HubSheet: View {
         .scrollIndicators(.never)
     }
 
-    /// 详情页的标签行：量化、内存下限、许可与 Hub 标签。落盘引擎由下载时的
-    /// 目录选择决定，标签行不再替用户预设一个运行引擎。
+    /// 详情页的标签行：许可与 Hub 标签。量化与内存下限只在下拉菜单里出现，
+    /// 避免同一组数值在左右两栏重复。
     private func detailTagTexts(_ detail: HubModel) -> [String] {
         var values: [String] = []
-        if let quantization = detail.quantization { values.append(quantization) }
-        if let memory = detail.memoryRange { values.append(memoryRangeText(memory)) }
         if let license = detail.license { values.append(license) }
         values.append(contentsOf: detail.tags.filter { !$0.hasPrefix("license:") }.prefix(6))
         return values
@@ -520,16 +507,11 @@ struct HubSheet: View {
                 Text(L10n.t(local ? "已在本机" : "下载模型"))
                     .font(DS.Font.sm.weight(.semibold))
                     .foregroundStyle(DS.text)
-                Text(
-                    local
-                        ? "本机已有这份权重，可直接在模型库使用"
-                        : variant.map {
-                            L10n.format("只下 %@，其余量化不占盘；下载时选择存放的引擎目录", variantLabel($0))
-                        }
-                            ?? L10n.t("下载时选择存放到哪个引擎的模型目录")
-                )
-                .font(DS.Font.xs)
-                .foregroundStyle(DS.text3)
+                if local {
+                    Text("本机已有这份权重，可直接在模型库使用")
+                        .font(DS.Font.xs)
+                        .foregroundStyle(DS.text3)
+                }
             }
             Spacer(minLength: 8)
             if local {
@@ -572,7 +554,7 @@ struct HubSheet: View {
             }
         }
         .padding(12)
-        .dsSurface(radius: DS.Radius.md, tint: DS.accent.opacity(0.14), stroke: DS.accent.opacity(0.30))
+        .background(DS.rect(DS.Radius.md).fill(DS.accentSoft))
     }
 
     /// 多量化仓库默认选体积最小的那档；用户从菜单里挑了就用那档。
@@ -622,7 +604,7 @@ struct HubSheet: View {
             }
             .overlay {
                 DS.rect(DS.Radius.md)
-                    .strokeBorder(directRepoFocused ? DS.line3 : DS.line2, lineWidth: 1)
+                    .strokeBorder(directRepoFocused ? DS.line2 : DS.line2, lineWidth: 1)
             }
             .frame(maxWidth: 360)
 
@@ -665,19 +647,6 @@ struct HubSheet: View {
                     .font(DS.Font.xs)
                     .foregroundStyle(DS.warn)
                     .lineLimit(1)
-            } else if let probe = hub.repoProbe {
-                Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 10))
-                    .foregroundStyle(DS.ok)
-                Text(probe.id)
-                    .font(DS.Font.mono(10.5))
-                    .foregroundStyle(DS.text2)
-                if let size = probe.sizeBytes, size > 0 {
-                    Tag(text: Format.size(Int(clamping: size)), tone: .neutral)
-                }
-                if state.repoIsLocal(probe.id) {
-                    Tag(text: "已在本机", tone: .success)
-                }
             }
             Spacer(minLength: 0)
         }

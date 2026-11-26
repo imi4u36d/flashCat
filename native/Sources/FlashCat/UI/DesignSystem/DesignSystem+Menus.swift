@@ -6,7 +6,7 @@ import FlashCatCore
 import SwiftUI
 
 struct DSMenuTriggerLabel: View {
-    enum Kind { case primary, secondary, ghost, icon }
+    enum Kind { case primary, secondary, ghost, icon, toolbarIcon }
 
     var title: String? = nil
     var systemImage: String? = nil
@@ -36,7 +36,7 @@ struct DSMenuTriggerLabel: View {
                     .lineLimit(1)
                     .fixedSize()
             }
-            if trailingChevron && kind != .icon {
+            if trailingChevron && kind != .icon && kind != .toolbarIcon {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(kind == .primary ? DS.inkText.opacity(0.75) : DS.text3)
@@ -53,6 +53,8 @@ struct DSMenu<Label: View, Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
 
     private var height: CGFloat {
         switch size {
@@ -63,12 +65,13 @@ struct DSMenu<Label: View, Content: View>: View {
     }
 
     private var horizontalPadding: CGFloat {
-        if kind == .icon { return 0 }
+        if kind == .icon || kind == .toolbarIcon { return 0 }
         return size == .small ? 9 : 11
     }
 
     private var radius: CGFloat {
-        size == .small ? DS.Radius.sm : DS.Radius.md
+        if kind == .toolbarIcon { return DS.Radius.sm }
+        return size == .small ? DS.Radius.sm : DS.Radius.md
     }
 
     private var shape: RoundedRectangle { DS.rect(radius) }
@@ -77,13 +80,13 @@ struct DSMenu<Label: View, Content: View>: View {
         switch kind {
         case .primary: return DS.ink
         case .secondary, .icon: return DS.surface
-        case .ghost: return .clear
+        case .ghost, .toolbarIcon: return .clear
         }
     }
 
     private var borderColor: Color {
         switch kind {
-        case .primary, .ghost: return .clear
+        case .primary, .ghost, .toolbarIcon: return .clear
         case .secondary, .icon: return DS.line2
         }
     }
@@ -94,8 +97,11 @@ struct DSMenu<Label: View, Content: View>: View {
         } label: {
             label()
                 .padding(.horizontal, horizontalPadding)
-                .frame(width: kind == .icon ? height : nil, height: height)
-                .background(shape.fill(backgroundColor))
+                .frame(
+                    width: (kind == .icon || kind == .toolbarIcon) ? height : nil,
+                    height: height
+                )
+                .background(shape.fill(kind == .toolbarIcon && hovering ? DS.hover : backgroundColor))
                 .overlay(shape.strokeBorder(borderColor, lineWidth: 1))
                 .contentShape(shape)
         }
@@ -104,6 +110,14 @@ struct DSMenu<Label: View, Content: View>: View {
         .buttonStyle(.plain)
         .fixedSize()
         .opacity(isEnabled ? 1 : 0.42)
+        .onHover { value in
+            guard kind == .toolbarIcon else { return }
+            if reduceMotion {
+                hovering = value
+            } else {
+                withAnimation(DS.Motion.snappy) { hovering = value }
+            }
+        }
     }
 }
 

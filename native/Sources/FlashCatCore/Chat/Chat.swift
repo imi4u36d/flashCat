@@ -150,6 +150,15 @@ package struct ChatMessage: Identifiable, Equatable {
     /// 视频生成进度（「去噪 3/8」「封装 MP4」），只在流式期间有值，不落盘。
     package var videoProgress: String?
 
+    /// 用户随这条消息附上的文件 / 图片名字。气泡里只展示这行，
+    /// 不把抽取出来的文件正文混进可见文本。
+    package var attachmentNames: [String] = []
+    /// 真正发给引擎的正文。文件内容抽取后可能比气泡里显示的长得多；
+    /// nil 表示和 `content` 一致。
+    package var engineContent: String?
+    /// 用户附上的图片路径。视觉模型在后续追问里要把像素重新挂上。
+    package var userImagePaths: [String] = []
+
     package init(
         role: String,
         content: String,
@@ -179,7 +188,10 @@ package struct ChatMessage: Identifiable, Equatable {
         videoLastFramePath: String? = nil,
         videoReferenceImagePaths: [String]? = nil,
         videoReferenceClipPaths: [String]? = nil,
-        videoProgress: String? = nil
+        videoProgress: String? = nil,
+        attachmentNames: [String] = [],
+        engineContent: String? = nil,
+        userImagePaths: [String] = []
     ) {
         self.role = role
         self.content = content
@@ -210,7 +222,13 @@ package struct ChatMessage: Identifiable, Equatable {
         self.videoReferenceImagePaths = videoReferenceImagePaths
         self.videoReferenceClipPaths = videoReferenceClipPaths
         self.videoProgress = videoProgress
+        self.attachmentNames = attachmentNames
+        self.engineContent = engineContent
+        self.userImagePaths = userImagePaths
     }
+
+    /// 回放给引擎的正文：有文件上下文时用抽取后的版本，否则就是气泡里那句。
+    package var turnContent: String { engineContent ?? content }
 
     package var tokenCount: Int { usage?.completionTokens ?? 0 }
 

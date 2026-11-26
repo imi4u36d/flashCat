@@ -29,6 +29,8 @@ struct ChatComposerField: NSViewRepresentable {
     var onDropImage: ((URL) -> Bool)?
     /// 剪贴板里的图片（截图 / 复制图像）粘贴进输入框：返回 true 表示已接手。
     var onPasteImage: ((NSImage) -> Bool)?
+    /// 剪贴板里是本地文件（Finder 复制 / 截图文件）时：返回 true 表示已接手。
+    var onPasteFiles: (([URL]) -> Bool)?
     /// 拖拽悬停状态，交给外层画投放高亮。
     var onDragTargetChange: ((Bool) -> Void)?
     /// 当前模型能不能收图；不能时把文件拖放原样还给 NSTextView。
@@ -89,6 +91,9 @@ struct ChatComposerField: NSViewRepresentable {
         textView.onPasteImage = { [weak coordinator = context.coordinator] image in
             coordinator?.parent.onPasteImage?(image) ?? false
         }
+        textView.onPasteFiles = { [weak coordinator = context.coordinator] urls in
+            coordinator?.parent.onPasteFiles?(urls) ?? false
+        }
         textView.onDragTargetChange = { [weak coordinator = context.coordinator] targeted in
             coordinator?.parent.onDragTargetChange?(targeted)
         }
@@ -119,6 +124,7 @@ struct ChatComposerField: NSViewRepresentable {
 
         let textView = nsView.textView
         textView.isEditable = isEnabled
+        textView.insertionPointColor = .consoleAccent
         textView.acceptsImageDrop = acceptsImageDrop
         textView.acceptsVideoDrop = acceptsVideoDrop
         let switched = conversation != coordinator.conversation
@@ -284,6 +290,7 @@ final class ComposerTextView: NSTextView {
     var onFocusChange: ((Bool) -> Void)?
     var onDropImage: ((URL) -> Bool)?
     var onPasteImage: ((NSImage) -> Bool)?
+    var onPasteFiles: (([URL]) -> Bool)?
     var onDragTargetChange: ((Bool) -> Void)?
     var acceptsImageDrop = false
     var acceptsVideoDrop = false
@@ -345,26 +352,86 @@ final class ComposerTextView: NSTextView {
     /// Return（主键盘）与 Enter（小键盘）。
     private static let returnKeyCodes: Set<UInt16> = [36, 76]
 
-    /// 截图 / 复制图像后 ⌘V：剪贴板里没有文本、只有位图时，当成附件而不是
-    /// 让 NSTextView 插一张不可见的 NSTextAttachment。有文本时仍按文本粘贴。
+    /// 截图 / 复制图像后 ⌘V：剪贴板里没有正文、只有位图时，当成附件而不是
+    /// 让 NSTextView 插一张不可见的 NSTextAttachment。Finder 里复制的文件
+    /// 优先交给 `onPasteFiles`，由外层判断当前模型收不收。
+    ///
+    /// 有些截图工具会顺便在剪贴板里留一段文件名 / 文件路径；这段文字不该
+    /// 抢在图片前面被插进输入框，看起来就像「粘贴没反应」。
     override func paste(_ sender: Any?) {
-        let text = NSPasteboard.general.string(forType: .string)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if acceptsImageDrop, text?.isEmpty != false, let image = Self.clipboardImage(),
-            onPasteImage?(image) == true
-        {
+        let pasteboard = NSPasteboard.general
+        let fileURLs = Self.clipboardFileURLs(from: pasteboard)
+        if !fileURLs.isEmpty, onPasteFiles?(fileURLs) == true {
             return
+        }
+
+        let text = pasteboard.string(forType: .string)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let image = Self.clipboardImage()
+        let types = pasteboard.types?.map(\.rawValue).joined(separator: ",") ?? "-"
+        AppLog.info(
+            .chat,
+            "composer paste: types=\(types) text=\(text?.count ?? 0) "
+                + "image=\(image != nil) files=\(fileURLs.count)")
+        if let image, text?.isEmpty != false || Self.looksLikeImageReference(text) {
+            if onPasteImage?(image) == true { return }
         }
         super.paste(sender)
     }
 
+    /// 剪贴板里只有位图时，AppKit 的默认校验会把「粘贴」判成不可用：
+    /// `NSTextView` 只按自己能读的文本类型验证，而微信 / QQ 截图写进剪贴板的是
+    /// `public.png` / `public.tiff`。菜单项一灰，⌘V 的按键等价物就不会派发到
+    /// `paste(_:)`，看起来就是「截图粘不进去」。这里把附件分支也算进可粘贴，
+    /// 事件才进得来；文字仍由 `NSTextView` 自己判断。
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(NSText.paste(_:)), hasPasteableAttachment() {
+            return true
+        }
+        return super.validateUserInterfaceItem(item)
+    }
+
+    /// 剪贴板里有没有能接手的附件：本地文件交给外层，位图当图片附件。
+    private func hasPasteableAttachment() -> Bool {
+        let pasteboard = NSPasteboard.general
+        if !Self.clipboardFileURLs(from: pasteboard).isEmpty, onPasteFiles != nil {
+            return true
+        }
+        return onPasteImage != nil && Self.clipboardImage() != nil
+    }
+
+    private static func clipboardFileURLs(from pasteboard: NSPasteboard) -> [URL] {
+        (pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+    }
+
+    /// 剪贴板里的文字像不像一张图片的路径 / 文件名。只在同时存在位图时才用，
+    /// 普通整句文本仍然走原生粘贴。
+    private static func looksLikeImageReference(_ text: String?) -> Bool {
+        guard let text, !text.isEmpty, !text.contains("\n"), text.count < 260 else {
+            return false
+        }
+        if text.lowercased().hasPrefix("file://") { return true }
+        let ext = (text as NSString).pathExtension.lowercased()
+        return imageExtensions.contains(ext)
+    }
+
     private static func clipboardImage() -> NSImage? {
         let pasteboard = NSPasteboard.general
-        if let data = pasteboard.data(forType: .png), let image = NSImage(data: data) {
-            return image
-        }
-        if let data = pasteboard.data(forType: .tiff), let image = NSImage(data: data) {
-            return image
+        // 微信 / QQ 这类截图工具常用自己的 UTI，但通常仍暴露一个 NSImage。
+        if let image = NSImage(pasteboard: pasteboard) { return image }
+        let types: [NSPasteboard.PasteboardType] = [
+            .png,
+            .tiff,
+            NSPasteboard.PasteboardType("public.jpeg"),
+            NSPasteboard.PasteboardType("public.heic"),
+            NSPasteboard.PasteboardType("public.heif"),
+        ]
+        for type in types {
+            if let data = pasteboard.data(forType: type), let image = NSImage(data: data) {
+                return image
+            }
         }
         return pasteboard.readObjects(forClasses: [NSImage.self])?.first as? NSImage
     }

@@ -46,12 +46,49 @@ final class ChatComposerControlsTests: XCTestCase {
         XCTAssertEqual(ChatThinkingLevel.text(mode: .on, effort: .xhigh), "XHigh")
     }
 
+    func testComposerThinkingChoiceRoundTripsEffort() {
+        for effort in ReasoningEffort.allCases {
+            let choice = ChatThinkingChoice(effort: effort)
+            XCTAssertEqual(choice.effort, effort)
+        }
+        XCTAssertNil(ChatThinkingChoice.automatic.effort)
+        XCTAssertNil(ChatThinkingChoice.off.effort)
+    }
+
+    func testQueuedMessagesKeepDraftNonEmpty() {
+        var draft = ChatDraft()
+        XCTAssertTrue(draft.isEmpty)
+        draft.queuedTexts = ["接着说下一段"]
+        XCTAssertFalse(draft.isEmpty)
+    }
+
     @MainActor
-    func testModelPickerPopoverReportsIntrinsicHeightForPopoverSizing() {
-        let host = NSHostingController(rootView: ModelPickerPopover(state: AppState.shared) {})
-        let size = host.view.fittingSize
-        XCTAssertEqual(size.width, 300, accuracy: 1)
-        XCTAssertGreaterThanOrEqual(size.height, 44)
-        XCTAssertLessThanOrEqual(size.height, 380)
+    func testModelPickerCapsItsHeightInsteadOfGrowingWithTheList() {
+        let models = (0..<12).map {
+            EngineModel(id: "test/model-\($0)", engine: .splash)
+        }
+        let dense = [ModelPickerGroup(engine: .splash, models: models)]
+        XCTAssertEqual(ModelPickerMetrics.width, 480)
+        XCTAssertEqual(
+            ModelPickerCatalog.panelHeight(groups: dense),
+            ModelPickerMetrics.maxHeight)
+        XCTAssertEqual(
+            ModelPickerCatalog.panelHeight(groups: []),
+            ModelPickerMetrics.emptyHeight)
+
+        // 少量模型时贴合内容：上下内边距 + 组头 + 两行。
+        let short = [ModelPickerGroup(engine: .splash, models: Array(models.prefix(2)))]
+        XCTAssertEqual(
+            ModelPickerCatalog.panelHeight(groups: short),
+            ModelPickerMetrics.topPadding + ModelPickerMetrics.groupHeaderHeight
+                + 2 * ModelPickerMetrics.rowHeight + ModelPickerMetrics.bottomPadding,
+            accuracy: 0.5)
+
+        XCTAssertTrue(
+            ModelPickerScrollMetrics(offset: 0, contentHeight: 400, viewportHeight: 320)
+                .isScrollable)
+        XCTAssertFalse(
+            ModelPickerScrollMetrics(offset: 0, contentHeight: 300, viewportHeight: 320)
+                .isScrollable)
     }
 }

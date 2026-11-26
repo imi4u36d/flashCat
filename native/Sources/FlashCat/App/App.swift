@@ -19,6 +19,9 @@ struct FlashCatApp: App {
     // Scene 层的 `if state.isPresentingLaunchPage` 依赖这里的状态订阅：
     // 普通 let 不会让 SwiftUI 重新求值 body，点击「开始使用」就永远切不进控制台。
     @ObservedObject private var state = AppState.shared
+    /// 外观模式只在设置页与窗口 chrome 之间共享；单独观察控制器，
+    /// 让 `preferredColorScheme` 在切换时立刻重算。
+    @ObservedObject private var theme = AppState.shared.theme
 
     var body: some Scene {
         Window("flashCat", id: "main") {
@@ -56,7 +59,7 @@ struct FlashCatApp: App {
                 Button("重启服务") { state.restartService() }
                     .disabled(!state.isRunning)
                 Divider()
-                Button("复制接口地址") { state.copy(state.endpointURL, label: "接口地址已复制") }
+                Button("复制接口地址") { state.copy(state.endpointURL) }
                 Button("打开日志文件") {
                     NSWorkspace.shared.open(URL(fileURLWithPath: Paths.logFile))
                 }
@@ -100,7 +103,21 @@ struct FlashCatApp: App {
                 minWidth: MainWindowGeometry.minimumSize.width,
                 minHeight: MainWindowGeometry.minimumSize.height
             )
+            // 系统控件（分段、开关、Picker、菜单）统一跟随主题色；
+            // 显式 `.tint` 的控件仍以局部设置为准。
+            .tint(DS.accent)
+            // SwiftUI 内容也显式跟随外观模式：只靠 window.appearance 时，
+            // 冷启动会先按系统浅色解析一遍，窗口内容要等用户重新激活才刷新。
+            .preferredColorScheme(preferredColorScheme)
             .overlay(MainWindow.bridge())
+    }
+
+    private var preferredColorScheme: ColorScheme? {
+        switch theme.mode {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
     }
 }
 
@@ -153,6 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         target.title = "flashCat"
         target.titleVisibility = .hidden
         AppState.shared.theme.apply(to: target)
+        SidebarToggleChrome.restyle(in: target)
         let minimumWindowSize = MainWindowGeometry.minimumSize
         target.minSize = minimumWindowSize
         target.contentMinSize = minimumWindowSize

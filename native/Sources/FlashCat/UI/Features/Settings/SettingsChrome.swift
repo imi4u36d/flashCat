@@ -45,8 +45,8 @@ struct SettingsCard<Content: View>: View {
 
     var body: some View {
         VStack(spacing: 0) { content() }
-            .dsSurface(radius: DS.Radius.card)
             .clipShape(DS.rect(DS.Radius.card))
+            .dsSurface(radius: DS.Radius.card)
     }
 }
 
@@ -110,6 +110,7 @@ struct AppearanceSegmentedControl<Option: Identifiable & Hashable>: View {
         }
         .pickerStyle(.segmented)
         .labelsHidden()
+        .tint(DS.accent)
         .fixedSize()
         .help(L10n.t(detail(selection)))
     }

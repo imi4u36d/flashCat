@@ -385,7 +385,7 @@ final class StatusBarController: NSObject, NSWindowDelegate {
     @objc private func menuStartService() { state.startService() }
     @objc private func menuStopService() { state.stopService() }
     @objc private func menuRestartService() { state.restartService() }
-    @objc private func menuCopyEndpoint() { state.copy(state.endpointURL, label: "接口地址已复制") }
+    @objc private func menuCopyEndpoint() { state.copy(state.endpointURL) }
     @objc private func menuOpenMainWindow() { MainWindow.show() }
     @objc private func menuQuitApp() { NSApp.terminate(nil) }
 }

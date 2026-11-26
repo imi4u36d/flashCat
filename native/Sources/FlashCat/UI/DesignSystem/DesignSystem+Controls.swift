@@ -11,9 +11,11 @@ struct DSButtonStyle: ButtonStyle {
 
     var kind: Kind = .secondary
     var size: Size = .regular
+    /// 展开态的入口：保持同一颗按钮，只把底与边换成强调色的软底。
+    var isActive: Bool = false
 
     func makeBody(configuration: Configuration) -> some View {
-        DSButtonBody(configuration: configuration, kind: kind, size: size)
+        DSButtonBody(configuration: configuration, kind: kind, size: size, isActive: isActive)
     }
 }
 
@@ -21,6 +23,7 @@ private struct DSButtonBody: View {
     let configuration: ButtonStyleConfiguration
     let kind: DSButtonStyle.Kind
     let size: DSButtonStyle.Size
+    let isActive: Bool
 
     @Environment(\.isEnabled) private var isEnabled
 
@@ -55,6 +58,7 @@ private struct DSButtonBody: View {
     private var shape: RoundedRectangle { DS.rect(radius) }
 
     private var foreground: Color {
+        if isActive, kind == .secondary { return DS.accent }
         switch kind {
         case .primary: return DS.inkText
         case .secondary: return DS.text
@@ -64,6 +68,7 @@ private struct DSButtonBody: View {
     }
 
     private var background: Color {
+        if isActive, kind == .secondary { return DS.accentSoft }
         switch kind {
         case .primary: return DS.ink
         case .secondary: return DS.surface
@@ -73,6 +78,7 @@ private struct DSButtonBody: View {
     }
 
     private var borderColor: Color {
+        if isActive, kind == .secondary { return DS.accent.opacity(0.45) }
         switch kind {
         case .primary, .ghost: return .clear
         case .secondary: return DS.line2
@@ -99,8 +105,12 @@ extension ButtonStyle where Self == DSButtonStyle {
     static var dsSecondary: DSButtonStyle { DSButtonStyle(kind: .secondary) }
     static var dsGhost: DSButtonStyle { DSButtonStyle(kind: .ghost) }
     static var dsDanger: DSButtonStyle { DSButtonStyle(kind: .danger) }
-    static func ds(_ kind: DSButtonStyle.Kind, size: DSButtonStyle.Size = .regular) -> DSButtonStyle {
-        DSButtonStyle(kind: kind, size: size)
+    static func ds(
+        _ kind: DSButtonStyle.Kind,
+        size: DSButtonStyle.Size = .regular,
+        active: Bool = false
+    ) -> DSButtonStyle {
+        DSButtonStyle(kind: kind, size: size, isActive: active)
     }
 }
 
@@ -114,9 +124,12 @@ struct DSIconButton: View {
     var style: Style = .ghost
     var active: Bool = false
     var tint: Color? = nil
+    /// 动作结果的原位回执：短暂把图标换成对勾 / 感叹号，再自动还原。
+    var flash: ActionFlash? = nil
     var action: () -> Void
 
     @Environment(\.isEnabled) private var isEnabled
+    @State private var hovering = false
 
     private var shape: RoundedRectangle {
         DS.rect(size <= 24 ? DS.Radius.sm : DS.Radius.md)
@@ -128,24 +141,26 @@ struct DSIconButton: View {
             return tint != nil ? .white : DS.inkText
         case .outlined:
             if active { return tint != nil ? .white : DS.inkText }
-            return tint ?? DS.text2
+            return tint ?? (hovering ? DS.text : DS.text2)
         case .ghost:
-            return tint ?? (active ? DS.accent : DS.text2)
+            return tint ?? (active ? DS.accent : (hovering ? DS.text : DS.text2))
         }
     }
 
     private var background: Color {
+        if let flash { return flash.tint.opacity(hovering ? 0.20 : 0.13) }
         switch style {
         case .primary:
             return tint ?? DS.ink
         case .outlined:
             return active ? (tint ?? DS.ink) : DS.surface
         case .ghost:
-            return active ? DS.accentSoft : .clear
+            return active ? DS.accentSoft : (hovering ? DS.hover : .clear)
         }
     }
 
     private var border: Color {
+        if let flash { return flash.tint.opacity(0.34) }
         switch style {
         case .primary, .ghost: return .clear
         case .outlined: return active ? .clear : DS.line2
@@ -154,15 +169,18 @@ struct DSIconButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: size * 0.43, weight: .medium))
-                .foregroundStyle(foreground)
+            ActionFlashIcon(
+                systemName: systemName,
+                flash: flash,
+                size: size * 0.43,
+                baseColor: foreground)
                 .frame(width: size, height: size)
                 .background(shape.fill(background))
                 .overlay(shape.strokeBorder(border, lineWidth: 1))
                 .contentShape(shape)
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
         .opacity(isEnabled ? 1 : 0.4)
         .help(L10n.t(help))
         .accessibilityLabel(L10n.t(help))
@@ -182,14 +200,16 @@ struct DSPressStyle: ButtonStyle {
 }
 
 /// 计数角标：全应用唯一的胶囊数字徽标（下载数量、未读通知）。
+/// 默认用填充橙 + 可可前景；错误角标由调用方传白字。
 struct DSBadge: View {
     var count: Int
-    var tint: Color = DS.accent
+    var tint: Color = DS.accentFill
+    var foreground: Color = DS.onAccent
 
     var body: some View {
         Text(verbatim: "\(count)")
             .font(DS.Font.mono(9.5, weight: .bold))
-            .foregroundStyle(.white)
+            .foregroundStyle(foreground)
             .padding(.horizontal, 5)
             .frame(minWidth: 15)
             .frame(height: 15)
@@ -270,7 +290,6 @@ struct DSChip: View {
         .padding(.horizontal, 8)
         .frame(height: 22)
         .background(Capsule().fill(tint?.opacity(0.12) ?? DS.pillFill))
-        .overlay(Capsule().strokeBorder(tint?.opacity(0.26) ?? DS.pillBorder, lineWidth: 1))
         .fixedSize()
     }
 }

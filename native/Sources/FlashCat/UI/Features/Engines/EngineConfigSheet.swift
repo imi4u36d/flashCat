@@ -25,6 +25,8 @@ struct EngineConfigSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var tuning = EngineTuning()
     @State private var loaded = false
+    @State private var restartNote: String?
+    @StateObject private var saveFlash = ActionFlashState()
     @FocusState private var focusedField: ConfigField?
 
     private var controller: EngineController? { state.engines?.controller(engine) }
@@ -252,11 +254,23 @@ struct EngineConfigSheet: View {
             }
             .buttonStyle(.ds(.secondary, size: .regular))
             Spacer(minLength: 0)
+            if let restartNote, saveFlash.value != nil {
+                Text(restartNote)
+                    .font(DS.Font.xs)
+                    .foregroundStyle(DS.text3)
+                    .lineLimit(1)
+                    .transition(.opacity)
+            }
             HStack(spacing: 8) {
                 Button("取消") { dismiss() }
                     .buttonStyle(.ds(.secondary, size: .regular))
-                Button("保存") { save() }
-                    .buttonStyle(.ds(.primary, size: .regular))
+                Button {
+                    save()
+                } label: {
+                    ActionFlashLabel(title: "保存", flash: saveFlash.value)
+                }
+                .buttonStyle(.ds(.primary, size: .regular))
+                .disabled(saveFlash.value != nil)
             }
         }
         .padding(.horizontal, 18)
@@ -373,11 +387,16 @@ struct EngineConfigSheet: View {
     private func save() {
         EngineStore.shared.setTuning(tuning.sanitized(), for: engine)
         Task { await state.engines?.controller(engine)?.reapplyTuning() }
+        // 保存按钮自己变对勾，停一下再关面板；需要重启的提示留在按钮左边。
         if isActive && state.isRunning && engine.adapter != .omlx {
-            state.toast(L10n.format("%@ 的配置已保存，重启引擎后生效", engine.displayName))
+            restartNote = L10n.t("已保存，重启引擎后生效")
         } else {
-            state.toast(L10n.format("%@ 的配置已保存", engine.displayName))
+            restartNote = nil
         }
-        dismiss()
+        saveFlash.succeed()
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.85))
+            dismiss()
+        }
     }
 }

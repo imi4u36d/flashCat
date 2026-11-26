@@ -263,12 +263,6 @@ struct VideoOptionsPopover: View {
                 DS.rect(DS.Radius.md)
                     .fill(selected ? DS.accentSoft : DS.bg)
             }
-            .overlay {
-                DS.rect(DS.Radius.md)
-                    .strokeBorder(
-                        selected ? DS.accent.opacity(0.55) : DS.line,
-                        lineWidth: 1)
-            }
             .contentShape(DS.rect(DS.Radius.md))
         }
         .buttonStyle(.plainHit)
@@ -291,12 +285,6 @@ struct VideoOptionsPopover: View {
             .background {
                 DS.rect(DS.Radius.md)
                     .fill(selected ? DS.accentSoft : DS.bg)
-            }
-            .overlay {
-                DS.rect(DS.Radius.md)
-                    .strokeBorder(
-                        selected ? DS.accent.opacity(0.55) : DS.line,
-                        lineWidth: 1)
             }
             .contentShape(DS.rect(DS.Radius.md))
         }
@@ -500,7 +488,6 @@ struct ImageOptionsPopover: View {
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(DS.rect(DS.Radius.sm).fill(DS.accentSoft))
-                    .overlay(DS.rect(DS.Radius.sm).strokeBorder(DS.accent.opacity(0.25), lineWidth: 1))
             }
             Button(L10n.t("应用")) { commitCustomCanvas() }
                 .buttonStyle(.plain)
@@ -578,12 +565,6 @@ struct ImageOptionsPopover: View {
             .background {
                 DS.rect(DS.Radius.md)
                     .fill(selected ? DS.accentSoft : DS.bg)
-            }
-            .overlay {
-                DS.rect(DS.Radius.md)
-                    .strokeBorder(
-                        selected ? DS.accent.opacity(0.55) : DS.line,
-                        lineWidth: 1)
             }
             .contentShape(DS.rect(DS.Radius.md))
         }

@@ -106,7 +106,6 @@ final class ServiceCoordinator {
             return
         }
         guard engineCoordinator.engineModels(for: engine).contains(where: { $0.id == id }) else {
-            ui.toast(L10n.format("%@ 没有模型 %@", engine.displayName, engineCoordinator.shortModelName(id)))
             return
         }
         guard engine != engineCoordinator.activeEngine else {
@@ -129,7 +128,6 @@ final class ServiceCoordinator {
             return
         }
         guard engineCoordinator.engineModels(for: engine).contains(where: { $0.id == id }) else {
-            ui.toast(L10n.format("%@ 没有模型 %@", engine.displayName, engineCoordinator.shortModelName(id)))
             return
         }
         EngineStore.shared.setDefaultEngine(engine)
@@ -141,12 +139,7 @@ final class ServiceCoordinator {
             applyModelFromAnyEngine(id, engine: engine)
             return
         }
-        ui.toast(
-            L10n.format(
-                "已把 %@ 设为 %@ 的默认模型，下次启动生效；当前运行的 %@ 不受影响",
-                engineCoordinator.shortModelName(id), engine.displayName,
-                engineCoordinator.activeEngine.displayName),
-            transient: true)
+        // 设置页菜单已经打勾，行尾也写明「下次启动」；不再补一过性提示。
     }
 
     /// Make `engine` the running one and load `model` on it in one motion.
@@ -236,10 +229,7 @@ final class ServiceCoordinator {
             // 排到这次切换之后；队列只留最后一次，读者连点三下就是最后一下生效。
             if target != session.switchingModel {
                 engineCoordinator.queuedSwitchModel = target
-                // 排队只是「你的点击没丢」的一过性回执：不留在通知历史里。
-                ui.toast(
-                    L10n.format("正在切换模型，完成后自动切到 %@", engineCoordinator.shortModelName(target)),
-                    transient: true)
+                // 选择器里的阶段行会显示「排队」；不再补一过性提示。
             }
             return
         }
@@ -249,10 +239,6 @@ final class ServiceCoordinator {
         // 404 and keep retrying it.
         let models = engineCoordinator.engineModels()
         if !EngineModelSelection.isServable(target, available: models.map(\.id)) {
-            ui.toast(
-                L10n.format(
-                    "%@ 没有模型 %@", engineCoordinator.activeEngine.displayName,
-                    engineCoordinator.shortModelName(target)))
             return
         }
 

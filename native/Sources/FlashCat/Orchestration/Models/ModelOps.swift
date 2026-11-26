@@ -296,15 +296,7 @@ final class ModelOps {
     /// takes effect without touching the launch page.
     func setDraftAssignment(_ draft: String?, engine: EngineID, model: String) {
         EngineStore.shared.setDraftAssignment(draft, engine: engine, model: model)
-        if let draft, !draft.isEmpty {
-            toast(
-                L10n.format("已为 %@ 指定辅助模型 %@", shortModelName(model), shortModelName(draft)),
-                transient: true)
-        } else {
-            toast(
-                L10n.format("已清除 %@ 的辅助模型，跟随引擎设置", shortModelName(model)),
-                transient: true)
-        }
+        // 辅助模型的选择在卡片菜单里已经打勾，不再补一条成功提示。
         if engine == activeEngine, controller?.isRunning == true {
             Task { [weak self] in
                 await self?.controller?.reapplyTuning()
@@ -381,7 +373,7 @@ final class ModelOps {
                 selectedModel = catalog.machine.first?.id ?? ""
                 settings.setModel(selectedModel)
             }
-            toast(L10n.format("已删除 %@", model.id))
+            // 模型行已经从列表里移除，结果自己会说。
         } catch {
             notice = "删除失败：\((error as? ModelCatalogService.CatalogError)?.message ?? error.localizedDescription)"
         }
@@ -424,7 +416,6 @@ final class ModelOps {
         }
         EngineModelStore.invalidateMetaCache()
         reloadModels()
-        toast(L10n.format("已删除 %@ 及其权重文件", id))
     }
 
     /// Fetch weights for the engine the model page is showing.
@@ -455,10 +446,8 @@ final class ModelOps {
         _ id: String, engine: EngineID, family: String? = nil,
         source: HubSource? = nil, include: [String] = [], activate: Bool = true
     ) -> Bool {
-        guard downloadingModel == nil else {
-            toast("正在下载另一个模型，先等它结束")
-            return false
-        }
+        // 下载按钮在下载期间本身是禁用的；这里只防 CLI / 竞态，不弹浮层。
+        guard downloadingModel == nil else { return false }
         reloadModels()
         guard !repoIsLocal(id) else {
             notice = "「\(id)」已经在本机了，不用重复下载"
@@ -504,10 +493,8 @@ final class ModelOps {
         source: HubSource = HubSource.downloadSource,
         include: [String] = []
     ) -> Bool {
-        guard downloadingModel == nil else {
-            toast("正在下载另一个模型，先等它结束")
-            return false
-        }
+        // 下载按钮在下载期间本身是禁用的；这里只防 CLI / 竞态，不弹浮层。
+        guard downloadingModel == nil else { return false }
         let target = ModelSharing.canonical(repo.trimmingCharacters(in: .whitespaces))
         guard target.contains("/") else {
             notice = "仓库 id 要写成 owner/repo"
@@ -578,10 +565,7 @@ final class ModelOps {
         ModelSharing.setEngines(Set(engines), for: repo)
         EngineModelStore.invalidateMetaCache()
         reloadModels()
-        toast(
-            engines.isEmpty
-                ? "已收回 \(repo) 的引擎授权"
-                : "\(repo) 现在可用于 \(engines.map(\.displayName).joined(separator: "、"))")
+        // 授权变化直接反映在各引擎模型页的可见性上。
     }
 
     /// 删除公共目录里的权重：先收回授权（各引擎的链接随之删掉），再删文件。
@@ -596,7 +580,6 @@ final class ModelOps {
         }
         EngineModelStore.invalidateMetaCache()
         reloadModels()
-        toast(L10n.format("已删除 %@ 及其权重文件", repo))
     }
 
     /// 真正拉起下载器的那一步：两条入口（引擎自己的目录 / 公共目录）只有落地
@@ -607,11 +590,7 @@ final class ModelOps {
         EngineModelStore.invalidateMetaCache()
         reloadModels()
         guard !engines.isEmpty else { return }
-        if Set(engines) == Set(EngineCatalog.allIDs) {
-            toast("已下载 " + repo + "，所有引擎的模型页都能看到")
-        } else {
-            toast("已下载 " + repo + "，可用于 " + engines.map(\.displayName).joined(separator: "、"))
-        }
+        // 下载完成时模型卡已经切成「已下载」，各引擎的可见性也立刻更新。
     }
 
     /// Run a download and wait for it to end.
@@ -724,20 +703,13 @@ final class ModelOps {
     /// 的接线，得在类外可达。
     func handle(_ event: DownloadEvent) {
         switch event {
-        case .modelReady(let engine, let model, let installed, let activate):
+        case .modelReady(let engine, _, let installed, let activate):
             // 启动前补件之后紧跟的是启动本身：没有提示要回答，选中模型也不能
             // 在启动底下被换掉。
             guard !supplementInFlight else { return }
-            guard engine == activeEngine else {
-                toast(L10n.format("已下载 %@，切到 %@ 就能用", model, engine.displayName))
-                return
-            }
-            guard activate else {
-                toast(L10n.format("已下载 %@，已在模型库", model))
-                return
-            }
+            guard engine == activeEngine else { return }
+            guard activate else { return }
             applyModel(installed)
-            toast(L10n.format("已下载 %@", model))
         case .shareRequested(let repo, let engines):
             publishShared(repo: repo, engines: engines)
         }

@@ -17,6 +17,17 @@ struct SettingsPage: View {
     }
 
     @ObservedObject var state: AppState
+    /// 主题控制器单独观察：外观模式 / accent 家族变化时，设置页的分段与色板
+    /// 要立刻跟上，但不把 mode 桥回 AppState（那会把窗口外观重置成系统浅色）。
+    @ObservedObject var theme: ThemeController
+    /// 壳层在布局这一拍量到的详情区尺寸；宽 / 窄版式直接由它决定。
+    let pageSize: CGSize
+
+    init(state: AppState, pageSize: CGSize) {
+        _state = ObservedObject(wrappedValue: state)
+        _theme = ObservedObject(wrappedValue: state.theme)
+        self.pageSize = pageSize
+    }
     @State var gatewayPort = ""
     @State var controlPort = ""
     @State var cachePath = ""
@@ -45,7 +56,23 @@ struct SettingsPage: View {
     }
 
     @State var appUpdate: AppUpdateState = .idle
-    @State private var isWide = true
+
+    private var isWide: Bool {
+        pageSize.width >= Console.compactContentWidth
+    }
+
+    // 设置行的原位回执：保存落到字段上，不再弹「已保存」浮层。
+    @StateObject var cacheFlash = ActionFlashState()
+    @StateObject var gatewayPortFlash = ActionFlashState()
+    @StateObject var controlPortFlash = ActionFlashState()
+    @StateObject var endpointFlash = ActionFlashState()
+    @StateObject var tokenFlash = ActionFlashState()
+    @StateObject var cliCopyFlash = ActionFlashState()
+    @StateObject var resetFlash = ActionFlashState()
+    /// 输入不合法时的原因，挂在「应用」按钮的悬停提示上。
+    @State var gatewayPortNote: String?
+    @State var controlPortNote: String?
+    @State var endpointNote: String?
 
     var hubSource: HubSource {
         HubSource(rawValue: storedHubSource) ?? .huggingFace
@@ -61,45 +88,49 @@ struct SettingsPage: View {
 
     var body: some View {
         let horizontal = Console.pageHorizontalPadding(compact: !isWide)
-        VStack(alignment: .leading, spacing: 0) {
-            DSPageHeader(
-                title: "设置",
-                subtitle: "flashCat v\(appVersion) · \(device.chipName)"
-            )
-            .padding(.horizontal, horizontal)
-            .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
-            .padding(.bottom, Console.pageSectionGap)
-            .background(WindowDragArea())
+        ScrollView {
+            if isWide {
+                HStack(alignment: .top, spacing: Console.pageSectionGap) {
+                    settingsNav
+                        .padding(8)
+                        .frame(width: 164)
+                        .dsSurface(radius: DS.Radius.card)
 
-            ScrollView {
-                if isWide {
-                    HStack(alignment: .top, spacing: Console.pageSectionGap) {
-                        settingsNav
-                            .padding(8)
-                            .frame(width: 164)
-                            .dsSurface(radius: DS.Radius.card)
-
-                        sectionContent(wide: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .padding(.horizontal, horizontal)
-                    .padding(.bottom, Console.contentBottomInset)
-                } else {
-                    VStack(alignment: .leading, spacing: Console.pageSectionGap) {
-                        settingsMenu
-                        sectionContent(wide: false)
-                    }
-                    .padding(.horizontal, horizontal)
-                    .padding(.bottom, Console.contentBottomInset)
+                    sectionContent(wide: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.horizontal, horizontal)
+                .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
+                .padding(.bottom, Console.contentBottomInset)
+            } else {
+                VStack(alignment: .leading, spacing: Console.pageSectionGap) {
+                    settingsMenu
+                    sectionContent(wide: false)
+                }
+                .padding(.horizontal, horizontal)
+                .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
+                .padding(.bottom, Console.contentBottomInset)
+            }
+        }
+        .scrollIndicators(.never)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .toolbar {
+            ToolbarItem(id: DSToolbarSlot.title, placement: .navigation) {
+                DSToolbarPageTitle(
+                    title: "设置")
+                    .padding(.leading, 15)
+            }
+            .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(id: DSToolbarSlot.anchor, placement: .principal) {
+                DSToolbarAnchor()
+            }
+            .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(id: DSToolbarSlot.actions, placement: .primaryAction) {
+                DSToolbarActionRow(state: state, compact: !isWide) {
+                    settingsUpdateAction
                 }
             }
-            .scrollIndicators(.never)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onGeometryChange(for: Bool.self) { proxy in
-            proxy.size.width >= Console.compactContentWidth
-        } action: { wide in
-            isWide = wide
+            .sharedBackgroundVisibility(.hidden)
         }
         .dsPageColumn()
         .onAppear(perform: load)
@@ -113,6 +144,72 @@ struct SettingsPage: View {
             Button(L10n.t("取消"), role: .cancel) {}
         } message: {
             Text(L10n.t("将恢复外观、随应用启动、端口及默认对话参数，自定义系统提示也会清空。"))
+        }
+    }
+
+    @ViewBuilder
+    private var settingsUpdateAction: some View {
+        if isWide {
+            Button {
+                checkForAppUpdate()
+            } label: {
+                HStack(spacing: 5) {
+                    if appUpdateIsChecking {
+                        ProgressView().controlSize(.small)
+                    } else if appUpdateIsAvailable {
+                        Circle().fill(DS.accent).frame(width: 5, height: 5)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(DS.text2)
+                    }
+                    Text(L10n.t(appUpdateLabel))
+                }
+            }
+            .buttonStyle(.ds(.secondary, size: .regular))
+            .disabled(appUpdateIsChecking)
+            .help(L10n.t(appUpdateLabel))
+        } else {
+            Button {
+                checkForAppUpdate()
+            } label: {
+                Group {
+                    if appUpdateIsChecking {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(appUpdateIsAvailable ? DS.accent : DS.text2)
+                    }
+                }
+                .frame(width: 28, height: 28)
+                .background(DS.rect(DS.Radius.md).fill(DS.surface))
+                .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line2, lineWidth: 1))
+                .contentShape(DS.rect(DS.Radius.md))
+            }
+            .buttonStyle(.plain)
+            .disabled(appUpdateIsChecking)
+            .help(L10n.t(appUpdateLabel))
+        }
+    }
+
+    private var appUpdateIsChecking: Bool {
+        if case .checking = appUpdate { return true }
+        return false
+    }
+
+    private var appUpdateIsAvailable: Bool {
+        if case .available = appUpdate { return true }
+        return false
+    }
+
+    private var appUpdateLabel: String {
+        switch appUpdate {
+        case .idle: return "检查更新"
+        case .checking: return "检查中…"
+        case .upToDate: return "已是最新"
+        case .available: return "有新版"
+        case .failed: return "重试"
         }
     }
 
@@ -178,6 +275,7 @@ struct SettingsPage: View {
             switch section {
             case .general:
                 appearanceCard(wide: wide)
+                ThemeColorCard(theme: state.theme)
                 launchCard
                 maintenanceCard
             case .models:

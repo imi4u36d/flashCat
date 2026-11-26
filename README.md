@@ -1,159 +1,77 @@
-<img src="native/Sources/FlashCat/Resources/app-icon.png" width="96" align="right" alt="flashCat" />
+<img src="native/Sources/FlashCat/Resources/app-icon.png" width="88" align="right" alt="flashCat" />
 
 # flashCat
 
-**Mac 上的本地大模型控制台。** 在同一个窗口里装引擎、下模型、聊天，并把它变成
-一个可以给自己任何 AI 客户端用的本地接口。
+**Mac 上的本地大模型控制台。** 在一个窗口里安装推理引擎、下载模型、对话，并把整台机器
+变成一个任何 AI 客户端都能接入的本机接口。
 
 **优雅 · 流畅 · 高能**
 
-**简体中文** | [English](README.en.md)
+简体中文 | [English](README.en.md)
 
-[![flashCat 介绍视频（无旁白版）](https://github.com/imi4u36d/flashCat/releases/download/v1.5.1/flashCat-1.5.1-poster.png)](https://github.com/imi4u36d/flashCat/releases/download/v1.5.1/flashCat-1.5.1-intro.mp4)
+[![Release](https://img.shields.io/github/v/release/imi4u36d/flashCat?display_name=tag&style=flat-square)](https://github.com/imi4u36d/flashCat/releases/latest)
+[![macOS 26+](https://img.shields.io/badge/macOS-26.0%2B-black?style=flat-square)](https://github.com/imi4u36d/flashCat/releases/latest)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 
-<sub>▶ 50 秒介绍片 · 无旁白，建议开声音听垫乐 · 画面来自真实运行的 flashCat</sub>
+![flashCat 概览](https://flashxlab.com/assets/overview.webp)
 
-不需要为每个引擎记一套参数；打开就能用，需要接别的工具时它就是一个
-`http://127.0.0.1:9000/v1` 这样的地址。习惯终端的人也可以只装一次
-`flashcat` 命令，把状态、启停、模型和对话都写进脚本。
+## 功能
 
----
-
-## 亮点
-
-**1. 收起侧栏也看得到现场。** 侧栏收起后，窗口左下角留下一枚紧凑胶囊：引擎与真实阶段
-（启动 / 加载权重 / 预热）、当前模型、实时 tok/s、网关在线与未读通知。点开就地展开引擎
-详情、启停、复制接口和通知历史；复制地址、保存设置这类动作的回执也浮在同一角，3 秒
-后消失。侧栏展开时最近对话直接铺到底，不再挂一条常驻状态。
-
-**2. 多引擎聚合，模型无感切换。** Splash、oMLX、MTPLX、MLX-Serve 平级共存，
-各有运行时、日志与模型目录；端口默认各占一段，被占用时自动改用空闲端口。热切换引擎不停进程；
-重启类引擎也会显示阶段与「已等待 m:ss」。对客户端更是无感——网关地址固定，换引擎、
-换端口都不用改 Base URL。
-
-**3. 可定制的引擎设置。** 十三项旋钮按引擎翻译成它自己的启动参数——MTP / DFlash2、
-`--max-memory`、`--max-context`、PLE 缓存与 SSD offload、思考预算、额外参数。
-留空即交给引擎，默认值按引擎推荐给，新 pack 加旋钮也不用迁移配置；引擎端口无需设置。
-
-**4. 模型下载。** 精选档位按本机内存配好，卡片直接标体积与内存下限；模型广场可以搜
-Hugging Face、按下载量排序、筛 MLX / GGUF、翻页看模型卡（README 清洗后渲染、家族徽标）。
-下载支持暂停与续传；权重落公共目录只存一份，默认所有引擎都能看到。
-
-**5. 直观的运行数据。** 解码速度、首字延迟、预填充、DFlash2 草稿接受率、缓存命中率、
-当前上下文占用（如 `18K / 262K`）一屏读完；总解码是 60 秒实时曲线，最近请求逐条标出状态、
-解码速度与上下文，请求结束后保留最后一条，不会整页归零。概览的读数统一按 1 秒一拍：
-曲线画「此刻多快」，请求收尾即冻结；「平均解码」只显示「模型启动以来平均」。每个指标
-只认一个数据源：速度类指标由网关按请求打点（墙钟窗口计量，成批到达也不闪），预填充优先
-用引擎在响应里自报的逐请求耗时（`timings`，流式与非流式都带），没有才退回网关的 TTFT
-口径；显存、接受率这些只有引擎量得到的走引擎。读数随来源自证粒度（LIVE / LAST / AVG），
-量不出来的那一格画「—」，不拿到达间隔的下限编一个速度。
-
-**6. 内置对话。** 流式输出、思考块、Markdown、温度 / top-p / 最大输出 / 思考等级；
-回车发送、⌘回车换行；每条回复标 tok/s 与首字延迟；历史存本地，可随时新建与回看。
-装完引擎第一件事就是验证它。
-
-**7. 在对话里画图、出片。** 输入卡上有一个「画」开关：引擎声明了 `tool-use` 时，
-对话模型会自己写分镜，一次给出多段提示词，客户端按同一组 seed 逐张调用图像模型，
-画一张挂一张，再把成品交回对话模型接着写——支持视觉的模型还会先看图，再决定要不要补画。
-图像 / 视频模型有自己的输入卡：尺寸、步数、种子、首尾帧；REF2VA 模型还能挂参考图与参考视频。
-生成结果进「画廊」，提示词、模型与 seed 都在，重启不丢。
+- **四引擎统一管理。** Splash、oMLX、MTPLX、MLX-Serve 平级共存，各有运行时、模型目录与
+  日志。端口自动分配，被占用时顺延；oMLX 与 MLX-Serve 换模型不停进程。
+- **一个本机接口。** 固定的 `http://127.0.0.1:9000/v1`，同时支持 OpenAI 与 Claude 两种
+  格式。网关按请求里的模型名自动切换或拉起对应引擎，客户端不用改 Base URL。
+- **模型库与广场。** 从 Hugging Face、HF-Mirror 或 ModelScope 搜索、查看模型卡并下载；
+  GGUF 可按量化选择，下载支持暂停与续传。权重默认落在公共目录，所有引擎共享一份。
+- **可用的对话。** 流式输出、思考块、Markdown、编辑重发、分支与重新生成；生成中回车
+  排队发送。支持文本 / 源码 / PDF / RTF 附件与图片、视频输入，⌘V 可直接粘贴截图。
+  会话存在本地，可搜索、置顶、重命名。
+- **真实运行数据。** 解码速度、首字延迟、预填充、缓存命中率与上下文占用；60 秒实时曲线
+  与逐条请求记录。指标由网关按请求打点，量不出来的读数明确标 `—`。
+- **按自己习惯用。** 跟随系统 / 日间 / 夜间三档外观，六种主题色加系统取色器；原生标题栏
+  与侧栏；菜单栏面板可在不切回主窗口时切模型、看遥测。
+- **完整的命令行。** 内置 `flashcat`，与图形界面共用同一份引擎、模型、设置与日志，
+  所有结果型命令支持 `--json`，便于脚本集成。
 
 ## 系统要求
 
 | | |
 | --- | --- |
 | 芯片 | Apple Silicon（M 系列） |
-| 系统 | macOS **26.0** 或更高 |
-| 磁盘 | 应用约 15 MB（含 `flashcat` 命令行）；每个引擎约 50 MB ~ 600 MB；模型另算（每档 2 ~ 250 GB） |
+| 系统 | macOS 26.0 或更高 |
+| 磁盘 | 应用约 15 MB；每个引擎运行时约 50–600 MB；模型按档位 2–250 GB |
 
-界面跟随系统语言：**简体中文** 或 **English**。两种文案都随应用打包，切换系统语言后重开即可生效。
+界面随系统语言显示简体中文或 English，两种文案都随应用打包。
 
 ## 安装
 
-从 [Releases](https://github.com/imi4u36d/flashCat/releases) 下载最新版本：
+从 [Releases](https://github.com/imi4u36d/flashCat/releases/latest) 下载：
 
-- `flashCat-<版本>.dmg` —— 打开后把 flashCat 拖进「应用程序」
-- `flashCat-<版本>.pkg` —— 双击一路安装
+- `flashCat-2.0.0.dmg`：打开后把 flashCat 拖进「应用程序」。
+- `flashCat-2.0.0.pkg`：双击按提示安装，可将 `flashcat` 链接到 `/usr/local/bin`。
 
-应用没有做公证签名，第一次打开系统会拦一下：在 Finder 里**右键点 flashCat → 打开**，
-之后就不会再问。第一次打开需要联网下载引擎运行时（80 MB ~ 600 MB，取决于选哪个引擎）。
+应用使用 ad-hoc 签名，未经过 Apple 公证。首次打开若被 Gatekeeper 拦截，在 Finder 中
+右键 flashCat →「打开」，或到「系统设置 → 隐私与安全性」点「仍要打开」。
 
-## 第一次打开
+## 快速开始
 
-1. 启动页会列出所有受支持引擎，选一个点下载，等它装好。
-2. 装好后它就是默认引擎，窗口自动进入控制台。
-3. 之后可以随时在「引擎」页安装其他引擎、切换默认引擎，或在「模型」页下载模型。
+1. 启动后在引导页选择一个引擎下载并安装。
+2. 在「模型库」下载一个模型，或在「模型广场」搜索任意 Hugging Face / ModelScope 仓库。
+3. 回到「概览」启动引擎，进入「对话」验证；其他客户端接 `http://127.0.0.1:9000/v1`。
 
-引擎都是平级 peer：
+引擎运行时按需下载，不随应用打包。已装引擎可随时在「引擎」页更新、查看日志或卸载。
 
-| 引擎 | 默认端口 | 适合 | 换模型 |
-| --- | --- | --- | --- |
-| **Splash** | 8000 | 单模型、最省事，带草稿加速 | 重启引擎 |
-| **oMLX** | 8100 | 想同时常驻多个模型，换模型不停进程 | 热切换 |
-| **MTPLX** | 8200 | 长上下文、多 token 预测 | 重启引擎 |
-| **MLX-Serve** | 8300 | 通用 MLX / GGUF、多模型热加载、工具调用 | 热切换 |
+## 本机接口
 
-所有引擎都支持对话与流式输出；视觉、思考、工具调用和多模型能力由引擎 descriptor
-逐项声明，界面不会假设某个引擎必然具备。默认端口各占一段，冲突时自动改用空闲端口。
-
-## 界面速览
-
-**概览** —— 页头是「概览」与引擎现场（名称、端口、真实阶段、启停与切换模型），下面一条
-当前模型条带上下文占用（例如 `18K / 262K`），再往下是平均解码 / 首字延迟 / 预填充三格
-读数与 60 秒曲线；停引擎时曲线位置换成「上次运行」卡。右侧是接口地址（OpenAI 与 Claude 各一行，都能一键复制），
-每个端点旁的下拉可以复制 curl / Python 调用片段，标题旁的闪电按钮还能直接发一条测试请求；
-下面的「最近客户端」按 `User-Agent` 列出谁连过、走了哪种协议、请求了几次。再往下是引擎事实表。
-
-**对话** —— 内置聊天窗口，版式对齐 Splash：单列转录、可折叠思考、代码高亮与行号、
-悬停复制 / 编辑重发 / 分支；⌘V 可以把截图直接贴成附件，上下文快满时输入卡上方会提示。
-输入卡上切模型；生成参数弹窗里调温度 / top-p / 最大输出与思考等级；每条回复下方标着模型、
-tok/s 与首字延迟。对话记录存在本地，可以搜索、置顶、重命名和翻看历史。
-
-**模型库** —— 左侧是固定的引擎目录栏（窄窗口折到顶部），每台引擎列出安装状态和模型数；
-选中的目录不会因为后台换引擎而跳走。右侧固定分「已安装」和「推荐」两段：已安装行给
-「使用 / 使用中」，推荐行给「下载」；两段都标量化、体积与内存下限。推荐档位来自已装引擎
-自带的目录（Splash 与 MTPLX 各一份，oMLX / MLX-Serve 不提供），段落说明会写明来源。
-搜索、排序（默认顺序 / 体积 / 内存下限 / 名称）和「能跑」过滤留在同一行，排序与筛选
-跨页面保留。右上角「模型广场」打开搜索窗口：默认按热度列出 Hugging Face 上的仓库，右上角可以切到
-HF-Mirror（hf-mirror.com 国内镜像）或 ModelScope；也可以搜关键词、按下载量排序，按「全部 / MLX / GGUF」筛权重格式，翻页继续往下看
-（HF 那边一页 30 条），点一行打开模型卡（README / 文件清单 / 标签），看完再决定要不要下。
-GGUF 仓库有多个量化时，下载条里可以只挑一档，分片与 `mmproj` 会一起带上；点「下载」再弹窗
-选一个已安装引擎，权重落进它自己的模型目录，只有这台引擎看得见；模型广场不预设该用哪台引擎。
-
-**引擎** —— 每个引擎一张卡片：状态、端口、启动参数、上游版本比对，
-可以一键更新、打开安装目录、查看日志、卸载某个版本。
-
-**日志** —— 默认把全部引擎的实时输出按时间并成一份（行首标着来源）。
-来源、级别（全部 / 提示 / 警告 / 错误）与搜索同在一行，命中处会高亮；可以暂停滚动、复制筛选结果、清空。
-
-**设置** —— 左侧分区（通用 / 模型来源 / 接口 / 对话 / 关于），右侧只显示当前分区：
-外观、开机自启、下载缓存目录、镜像与 token、接口端口、思考模式与默认对话参数等，
-行内即改即生效；关于页还能检查 flashCat 自身的更新。
-
-**画廊** —— 生成结果的作品库。页头下在「图片 / 视频」之间切换，缩略图按窗口宽度铺成网格、
-随滚动加载；视频封面标着时长。进入选择模式可以全选、批量导出或删除；点开看大图或播视频，
-提示词、模型与 seed 都在，可以复制回输入卡再画一次。
-只收对话里生成的成品，用户拖进输入卡的底图与首帧图不会混进来。
-
-页面跳转与常用动作都收在 **「页面 → 命令面板」**：七个页面、启停引擎、新对话、下载中心、
-模型广场、切换外观、折叠边栏，输入关键词后点一行直达。应用内不注册键盘快捷键；
-所有动作都可以用鼠标完成，键盘用户请使用下面介绍的 `flashcat` 命令行。
-
-## 用自己的客户端连它
-
-应用自带一个 **接口**（API 网关），随应用启动、无需手动开启，推荐所有客户端都接它：
-地址固定，OpenAI 和 Claude 两种格式都能用。请求里的 `model` 会决定实际加载哪份权重：
-模型属于别的引擎就自动切引擎，引擎没启动会自动拉起，加载完成后再转发。
+应用启动后接口自动可用，无需手动开启。OpenAI 与 Claude 两种格式共用同一个端口，
+API Key 不校验，填任意字符串即可。
 
 | | |
 | --- | --- |
-| 地址 | `http://127.0.0.1:9000/v1`（端口可改） |
-| OpenAI 格式 | `POST /v1/chat/completions`（支持流式） |
-| Claude 格式 | `POST /v1/messages`、`POST /v1/messages/count_tokens`（支持流式） |
+| 地址 | `http://127.0.0.1:9000/v1`（端口可在设置中修改） |
+| OpenAI | `POST /v1/chat/completions`（流式） |
+| Claude | `POST /v1/messages`、`POST /v1/messages/count_tokens`（流式） |
 | 模型列表 | `GET /v1/models` |
-| API Key | 本地服务不校验，填任意字符串即可 |
-
-OpenAI 格式：
 
 ```bash
 curl http://127.0.0.1:9000/v1/chat/completions \
@@ -165,213 +83,84 @@ curl http://127.0.0.1:9000/v1/chat/completions \
   }'
 ```
 
-Claude 格式（SDK 里 Base URL 填 `http://127.0.0.1:9000`）：
+Claude SDK 把 Base URL 填 `http://127.0.0.1:9000` 即可。模型名取自 `/v1/models`；
+网关会确保对应权重已加载。接口只监听本机回环地址，不对外暴露。
+
+## 命令行
+
+`flashcat` 与图形界面共用状态，应用运行时通过本机控制接口驱动，应用未运行时仍可查看和
+安装引擎、读写配置、读取日志。
 
 ```bash
-curl http://127.0.0.1:9000/v1/messages \
-  -H "Content-Type: application/json" \
-  -H "anthropic-version: 2023-06-01" \
-  -d '{
-    "model": "你的模型名",
-    "max_tokens": 1024,
-    "messages": [{"role": "user", "content": "你好"}]
-  }'
-```
-
-- 模型名填 `/v1/models` 里返回的名字；网关会按它确保对应模型已加载，概览页也能看到当前加载的是哪个
-- Claude 格式会完整翻译给引擎：system 提示、图片、工具调用、stop 序列、
-  思考块、以及 `end_turn` / `max_tokens` / `tool_use` 等停止原因都支持
-- 也可以直连引擎自己的端口，但地址会随引擎切换变化，
-  所以一般还是接网关
-
-## 命令行 `flashcat`
-
-应用自带一个完整的命令行客户端，和图形界面共用同一份引擎、模型、设置与日志。
-`.pkg` 会在 `/usr/local/bin` 可写时把 `/usr/local/bin/flashcat` 指向应用内的
-可执行文件；用 `.dmg` 安装或想手动放进 PATH 时：
-
-```bash
-/Applications/flashCat.app/Contents/Helpers/flashcat cli install
-# 默认装到 ~/.local/bin/flashcat；加到 PATH：
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-`flashcat` 有两种工作方式：
-
-- **应用在运行**：通过本机回环控制接口（默认 `127.0.0.1:9100`，每次启动随机令牌，
-  只允许当前用户读取）执行启停、切模型、下载、改设置等动作。
-- **应用没运行**：仍能查看磁盘上的引擎与模型、安装/卸载引擎、读写不需要副作用的
-  配置、读日志；需要应用的动作会以退出码 `3` 明确失败，而不是假装成功。
-
-```bash
-flashcat                            # 状态：应用、引擎、网关、下载
+flashcat                            # 应用、引擎、网关与下载状态
 flashcat engines list               # 四个引擎的安装版本与运行状态
-flashcat engines install omlx       # 不需要图形界面，直接下载并安装运行时
-flashcat engines start omlx         # 切换并等到权重真的加载完
-flashcat models list --all          # 本机权重 + 推荐档位
+flashcat engines start omlx         # 切换引擎并等待权重加载完成
+flashcat models list --all          # 本机权重与推荐档位
 flashcat models download mlx-community/Qwen3-8B-4bit --wait
-flashcat models use <模型 id>       # 加载并等待就绪（必要时自动换引擎）
 flashcat chat "用一句话解释 MoE"    # 走本地网关，流式输出
-printf '总结这段日志\n' | flashcat chat - --model <模型 id> --json
-flashcat logs --engine omlx -f      # 跟踪日志；--gateway / --control
-flashcat config set appearance dark
-flashcat gateway status             # OpenAI / Claude 网关
-flashcat app open                   # 启动应用并等待控制接口就绪
-flashcat doctor                     # 安装、权限、运行时、磁盘与 PATH 自检
+flashcat logs --engine omlx -f      # 跟踪引擎日志
+flashcat doctor                     # 安装、权限、运行时与 PATH 自检
 ```
 
-离线安装引擎时，如果随应用分发的索引只带文件名、没有带归档，用
-`--index <pack-index.json 或 URL>` 指向可下载的索引（或用
-`FLASHCAT_PACK_INDEX_URL` 环境变量）；否则命令会以「索引里的归档不在本机」
-明确失败，而不是启动一个注定失败的下载。
+`.pkg` 安装时会把 `/usr/local/bin/flashcat` 指向应用内可执行文件；用 `.dmg` 或想手动
+放到 PATH 时执行 `flashcat cli install`。完整命令见 `flashcat --help`。
 
-| 命令 | 用途 |
-| --- | --- |
-| `status` | 应用 / 引擎 / 网关 / 下载状态；`--watch` 持续刷新 |
-| `engines` | `list`、`start`、`stop`、`restart`、`use`、`install`、`uninstall`、`port`、`logs` |
-| `models` | `list`、`use`、`download`、`delete`、`path` |
-| `chat` | 通过网关对话；支持 stdin、流式、思考过程与 JSON |
-| `gateway` | `status`、`start`、`stop` |
-| `logs` | 引擎 / 网关 / 控制接口日志，支持级别过滤与跟踪 |
-| `config` | `list`、`get`、`set`、`unset`、`path` |
-| `app` | `status`、`open`、`quit`、`restart`、`path` |
-| `doctor` | 环境自检；有 `fail` 项时退出码为 1 |
-| `completion` | 输出 zsh / bash / fish 补全脚本 |
-| `cli` | 把 `flashcat` 链接到 PATH，或打印当前位置 |
+退出码固定为 `0` 成功、`1` 失败、`2` 用法错误、`3` 应用未运行、`4` 找不到、`5` 超时、
+`6` 状态冲突、`7` 控制令牌错误；错误信息也支持 `--json`。
 
-**给脚本用。** 结果型命令都支持 `--json`（错误也是 JSON，写 stderr）；进度与提示
-写 stderr，正文写 stdout，所以 `flashcat models list --json | jq` 不会混入日志。
-退出码固定为：`0` 成功、`1` 失败、`2` 用法错误、`3` 应用未运行、`4` 找不到、
-`5` 超时、`6` 状态冲突、`7` 控制令牌错误。`--timeout` 控制等待上限，`--quiet`
-关掉提示，`--no-color` 或 `NO_COLOR` 关掉 ANSI 颜色。
-
-命令行接口随应用启动、始终启用；端口默认 9100，改端口后实际端口会写进
-`control.json`，命令行自动跟随，不需要重新安装。接口只监听 `127.0.0.1`，
-每次启动换一次随机令牌，`control.json` 以 `0600` 权限保存，因此同一台机器上的
-其他用户不能驱动应用。
-
-## 模型
-
-模型都在应用里下载，来源可以是 Hugging Face 或 ModelScope（在设置里切）。模型库默认只列本机已下载的权重，
-把已安装引擎自带、当前 Mac 内存能承载且尚未下载的档位放在「推荐」：
-
-| 档位 | 体积参考 | 说明 |
-| --- | --- | --- |
-| Qwen 3.6 35B-A3B | 约 16 ~ 20 GB | 每天用最稳的一档 |
-| Qwen 3.8 27B | 约 16 ~ 21 GB | 新一代，质量和速度更均衡 |
-| Qwen 3.8 Flash-Next | 约 99 GB | 最重的一档，需要 128 GB 内存 |
-
-推荐不再由 flashCat 手写，而是读引擎包里的目录：Splash 的 `install/suggested-models.tsv`
-（每个家族给内存上限内最高的一档）和 MTPLX 与它 macOS App 同源的 `model_catalog.py`
-（按芯片档与峰值内存）。oMLX 与 MLX-Serve 不提供推荐；没安装的引擎也还没有目录可读。
-想跑别的模型，点模型库右上角「＋ 下载模型」打开模型广场，搜或浏览 Hugging Face 仓库，
-点开看模型卡再下：下载时弹窗选一个已安装引擎，权重落进它自己的模型目录，只有这台引擎看得见。
-能不能被某个引擎加载由引擎自己判断，模型库会把已下载权重与尚未下载的推荐分开，
-本机权重再标出来源是「推荐」还是「个人下载」。推荐只来自引擎包；用户自己从广场下的权重标「个人下载」。
-走镜像时把「设置 → 模型来源」切到 HF-Mirror 即可，广场浏览、模型卡和引擎目录里的下载都会经
-hf-mirror.com；自定义镜像和 gated 仓库的 token 仍在同一张卡片里填，浏览与下载一起生效
-（镜像地址留空就是 huggingface.co，token 留空就是匿名访问）。同样的两个值也可以从命令行写：
-
-```bash
-defaults write com.zhuo.flashCat hfEndpoint https://hf-mirror.com   # 镜像站
-defaults write com.zhuo.flashCat hfToken hf_xxx                    # 有权限的 token
-```
-
-下载器（python）不读 macOS 的系统代理设置，所以启动下载时会把系统代理原样传给它；
-挂着代理软件也不需要额外配置。
-
-模型归属使用引擎标签：Splash 只出 GGUF，oMLX 主推 Jundot
-`oQ4e` 包，MTPLX 主推 Qwen 并在低内存机器上兜底 MiMo 9B、Qwen3.5 4B。
-
-磁盘上的位置（清理时用得上）：
+## 模型与数据
 
 | 内容 | 位置 |
 | --- | --- |
 | 应用配置、对话记录 | `~/Library/Application Support/flashCat` |
-| 所有引擎的运行时 pack | `~/Library/Application Support/flashCat/engines/<引擎>/<版本>` |
-| 所有引擎的模型 | `~/Library/Application Support/flashCat/models/<引擎>` |
-| 公共目录（自己下载的模型） | `~/Library/Application Support/flashCat/shared-models` |
-| 下载缓存 | 默认沿用 Hugging Face 的缓存目录，可在设置里改 |
-| 控制接口 | `~/Library/Application Support/flashCat/control.json`（仅本机、权限 0600） |
+| 引擎运行时 | `~/Library/Application Support/flashCat/engines/<引擎>/<版本>` |
+| 模型权重 | `~/Library/Application Support/flashCat/models/<引擎>` |
+| 公共模型目录 | `~/Library/Application Support/flashCat/shared-models` |
+| 控制接口凭据 | `~/Library/Application Support/flashCat/control.json`（权限 0600） |
 | 日志 | `~/Library/Logs/flashCat` |
 
-## 设置项
+推荐档位来自已安装引擎自带的目录；Splash 与 MTPLX 提供推荐，oMLX 与 MLX-Serve 不提供。
+自己从模型广场下载的权重标记为「个人下载」。删除应用不会删除模型与引擎，需要一并清理时
+手动删除上述目录。
 
-| 设置 | 说明 |
-| --- | --- |
-| 外观 | 跟随系统 / 浅色 / 深色，选中立即生效 |
-| 随 flashCat 启动 | 打开应用时自动把引擎拉起来 |
-| 登录时启动 | 把 flashCat 加进 macOS 登录项 |
-| 思考模式 | 自动 / 关闭 / 开启，控制思考模型是否先输出推理过程 |
-| 推理等级 | 思考模式为「开启」时生效，档位由引擎决定 |
-| 默认模型 | 引擎启动时自动加载哪个模型 |
-| 模型来源 | 模型广场查 Hugging Face、HF-Mirror 还是 ModelScope |
-| 镜像地址 | Hugging Face 端点，留空用官方；选 HF-Mirror 时固定走 hf-mirror.com |
-| 访问令牌 | 私有 / gated 仓库的 Hugging Face token |
-| 下载缓存目录 | 模型下载缓存放哪里 |
-| 接口 | 双格式统一接口始终启用；端口默认 9000，改动会重启接口 |
-| 命令行接口 | 本机 `flashcat` 命令接口始终启用；端口默认 9100 |
-| 恢复默认设置 | 把上面各项恢复成出厂值 |
+## 设置
 
-引擎端口不是设置项：默认按引擎各占一段，被占用时自动改用空闲端口。
+通用（外观、开机自启、下载缓存、主题色）、模型来源（Hugging Face / HF-Mirror /
+ModelScope、镜像地址与 token）、接口（网关与控制端口）、对话（默认参数、系统提示）、
+关于（版本与更新检查）。两个本机接口始终启用；引擎端口不是设置项，由应用自动分配。
 
 ## 常见问题
 
-**引擎起不来，或者一直转圈？**
-去「日志」页看最后几行，多半是模型太大放不进内存，或者模型文件不完整；
-换更小的一档模型，或在「引擎」页重新检查安装。
+**引擎起不来或一直转圈？** 查看「日志」页最后几行，通常是模型超出内存或文件不完整。
+换更小的量化，或在「引擎」页重新安装运行时。
 
-**下载很慢？**
-oMLX 的运行时约 590 MB，Splash / MTPLX 在 80 ~ 130 MB 之间；模型从十几 GB 到 99 GB，
-主要看网速。
+**模型库看不到某个引擎的模型？** 顶部可切换引擎；推荐档位依赖引擎包，未安装的引擎
+没有目录可读。
 
-**换模型后内存没释放？**
-oMLX 可以在模型之间热切；Splash / MTPLX 换模型会重启进程，
-等状态变回「运行中」再发请求。
-
-**想让别的机器访问？**
-应用只监听本机 `127.0.0.1`。需要对外提供时请自己加一层反向代理，
+**想让其他机器访问？** 应用只监听 `127.0.0.1`。需要对外提供时请自行加反向代理，
 不要把端口直接暴露到公网。
 
-**应用打不开，提示损坏或来自未知开发者？**
-右键 → 打开；或者到「系统设置 → 隐私与安全性」里点「仍要打开」。
+**`flashcat` 提示应用未运行？** 先执行 `flashcat app open`；`flashcat doctor`
+会指出卡在哪一步。
 
-**模型库看不到某个引擎的模型？**
-顶部可以切换引擎；推荐档位来自引擎包，没安装的引擎还没有目录可读。oMLX 与 MLX-Serve 本来就不提供推荐。
-
-**为什么应用里没有快捷键？**
-这一版刻意不注册任何应用级快捷键：所有动作都有可点击的菜单项或按钮，需要键盘
-效率时用 `flashcat` 命令行（支持补全、JSON 与脚本）。macOS 自己提供的文本编辑、
-剪贴板、关闭窗口与退出等系统级按键不受影响。
-
-**`flashcat` 提示应用未运行？**
-先 `flashcat app open`。如果应用明明开着，检查 `control.json` 是否被清理；
-`flashcat doctor` 会指出卡在哪一步。
-
-**命令行端口被占用？**
-控制接口在 9100 起、最多向后顺延 20 个端口，实际端口写在
-`~/Library/Application Support/flashCat/control.json`，`flashcat` 会自动读取。
-
-## 卸载
-
-1. 退出 flashCat。
-2. 把 `/Applications/flashCat.app` 拖进废纸篓。
-3. 如果安装过命令行，删掉链接：`rm -f /usr/local/bin/flashcat ~/.local/bin/flashcat`
-4. 想连配置和模型一起清掉，再删除：
+## 开发
 
 ```bash
-rm -rf ~/Library/Application\ Support/flashCat ~/Library/Logs/flashCat
+make app      # 构建并安装到 /Applications
+make test     # Swift 单元测试（778 条，5 条依赖本机环境自动跳过）
+make verify   # 构建、安装、启动并验证进程与内置 CLI
 ```
 
-注意模型就存在这些目录里，删除等于把下载的权重一起删掉，执行前确认没有还想留着的模型。
+源码在 `native/`，界面使用 SwiftUI / AppKit，无 WebView。开发环境、架构约束与提交流程
+见 [CONTRIBUTING.md](CONTRIBUTING.md)，界面规范见 [UI-SPEC.md](native/Sources/FlashCat/UI-SPEC.md)。
 
 ## 许可
 
 [MIT](LICENSE) © 2026 wangzhuo
 
-各推理引擎是各自上游项目的成果，本项目负责运行时的下载、安装与调度：
+推理引擎是各自上游项目的成果，本项目负责运行时的下载、安装与调度：
 [Splash](https://github.com/incoai/splash)、
 [oMLX](https://github.com/jundot/omlx)、
 [MTPLX](https://github.com/youssofal/mtplx)、
 [MLX-Serve](https://github.com/ddalcu/mlx-serve)。
-模型版权归各自的发布者所有。
+模型版权归各自发布者所有。

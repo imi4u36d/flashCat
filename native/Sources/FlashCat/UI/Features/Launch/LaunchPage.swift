@@ -326,10 +326,8 @@ struct LaunchPage: View {
     }
 
     private func startInstall(_ id: EngineID, recommended: HardwareRecommendation.Pick?) {
-        guard installs.building == nil else {
-            state.toast(L10n.format("正在构建 %@，完成后再试", installs.building?.displayName ?? L10n.t("引擎")))
-            return
-        }
+        // 其他引擎正在构建时按钮本身是禁用的，这里只防御其他入口。
+        guard installs.building == nil else { return }
         if recommended != nil {
             state.armRecommendedDownload(for: id)
         }
@@ -399,7 +397,6 @@ private struct InstalledBadge: View {
         .background {
             DS.rect(DS.Radius.md).fill(DS.ok.opacity(0.12))
         }
-        .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.ok.opacity(0.25), lineWidth: 1))
         .fixedSize()
         .accessibilityLabel("已安装")
     }
@@ -441,9 +438,6 @@ private struct LaunchProgressBadge: View {
         .frame(height: 28)
         .background {
             DS.rect(DS.Radius.md).fill(DS.raised)
-        }
-        .overlay {
-            DS.rect(DS.Radius.md).strokeBorder(DS.line, lineWidth: 1)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(label)

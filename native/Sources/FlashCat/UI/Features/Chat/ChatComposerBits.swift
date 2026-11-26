@@ -160,7 +160,8 @@ struct ChatTitleMenu: View {
         } label: {
             HStack(spacing: 5) {
                 Text(thread.title.isEmpty ? L10n.t("新对话") : thread.title)
-                    .font(DS.Font.prose(14.5, weight: .semibold))
+                    .font(DS.Font.prose(15, weight: .semibold))
+                    .tracking(-0.2)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Image(systemName: "chevron.down")
@@ -168,7 +169,7 @@ struct ChatTitleMenu: View {
                     .foregroundStyle(DS.text3)
             }
             .foregroundStyle(DS.text)
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 4)
             .padding(.vertical, 5)
             .background(DS.rect(9).fill(hovering ? DS.surface : .clear))
             .overlay(DS.rect(9).strokeBorder(hovering ? DS.line : .clear, lineWidth: 1))
@@ -231,6 +232,167 @@ struct ComposerIconButton: View {
         }
         .help(L10n.t(help))
         .accessibilityLabel(L10n.t(help))
+    }
+}
+
+// MARK: - Attachments
+
+/// 左下角附件加号：按当前模型能力列出可挂的附件类型。
+struct ComposerAttachMenu: View {
+    struct Item: Identifiable {
+        let title: String
+        let systemImage: String
+        let action: () -> Void
+
+        var id: String { title }
+    }
+
+    let items: [Item]
+
+    @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Menu {
+            ForEach(items) { item in
+                Button {
+                    item.action()
+                } label: {
+                    Label(L10n.t(item.title), systemImage: item.systemImage)
+                }
+            }
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(hovering ? DS.text : DS.text2)
+                .frame(width: 28, height: 28)
+                .background(DS.rect(8).fill(hovering ? DS.hover : .clear))
+                .contentShape(DS.rect(8))
+        }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .fixedSize()
+        .onHover { value in
+            if reduceMotion {
+                hovering = value
+            } else {
+                withAnimation(DS.Motion.snappy) { hovering = value }
+            }
+        }
+        .help(L10n.t("添加附件"))
+        .accessibilityLabel(L10n.t("添加附件"))
+    }
+}
+
+/// 输入卡上方的附件 chip：缩略图 + 文件名 + 角色 / 尺寸 + 移除键。
+struct ComposerAttachmentChip<Thumb: View>: View {
+    let title: String
+    let meta: String
+    let remove: () -> Void
+    @ViewBuilder let thumb: () -> Thumb
+
+    var body: some View {
+        HStack(spacing: 7) {
+            thumb()
+                .frame(width: 28, height: 28)
+                .background(DS.bg)
+                .clipShape(DS.rect(7))
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(DS.text)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(meta)
+                    .font(.system(size: 9))
+                    .foregroundStyle(DS.text3)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: 118, alignment: .leading)
+
+            Button(action: remove) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(DS.text3)
+                    .frame(width: 16, height: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plainHit)
+            .help(L10n.t("移除附件"))
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 40)
+        .background(DS.rect(10).fill(DS.bg))
+        .help(title)
+    }
+}
+
+// MARK: - Send / stop
+
+/// 输入卡右下角的发送圆钮：常态是填充橙实心圆 + 可可棕箭头，停写时原地变红；
+/// 草稿为空时也只把投影收掉，不再退成一枚浅灰按钮。
+struct ComposerSendButton: View {
+    let streaming: Bool
+    let enabled: Bool
+    let action: () -> Void
+
+    @State private var hovering = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var stopFill: Color {
+        Color.adaptive(dark: 0xEF4444, light: 0xDC2626)
+    }
+
+    private var fill: Color {
+        streaming ? stopFill : DS.accentFill
+    }
+
+    private var iconColor: Color {
+        streaming ? .white : DS.onAccent
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: streaming ? "stop.fill" : "arrow.up")
+                .font(
+                    .system(
+                        size: streaming ? 9.5 : 12.5,
+                        weight: .semibold)
+                )
+                .foregroundStyle(iconColor)
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(fill))
+                .overlay {
+                    if enabled && hovering {
+                        Circle().fill(Color.white.opacity(0.10))
+                    }
+                }
+                .shadow(
+                    color: enabled && !streaming
+                        ? DS.accentFill.opacity(hovering ? 0.38 : 0.26)
+                        : (streaming ? stopFill.opacity(0.28) : .clear),
+                    radius: hovering ? 7 : 5,
+                    x: 0,
+                    y: 2
+                )
+                .scaleEffect(hovering && enabled ? 1.03 : 1)
+                .contentShape(Circle())
+        }
+        .buttonStyle(DSPressStyle(scale: 0.94))
+        .disabled(!enabled)
+        .onHover { value in
+            if reduceMotion {
+                hovering = value
+            } else {
+                withAnimation(DS.Motion.snappy) { hovering = value }
+            }
+        }
+        .animation(reduceMotion ? nil : DS.Motion.snappy, value: enabled)
+        .animation(reduceMotion ? nil : DS.Motion.snappy, value: streaming)
+        .help(streaming ? L10n.t("停止生成 (Esc)") : L10n.t("发送（回车）· ⇧回车换行"))
+        .accessibilityLabel(streaming ? L10n.t("停止生成") : L10n.t("发送"))
     }
 }
 

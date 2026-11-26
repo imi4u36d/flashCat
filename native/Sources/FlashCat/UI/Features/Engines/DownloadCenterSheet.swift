@@ -148,7 +148,7 @@ struct DownloadCenterSheet: View {
             }
         }
         .padding(12)
-        .dsSurface(radius: DS.Radius.md, tint: DS.accent.opacity(0.12), stroke: DS.accent.opacity(0.35))
+        .background(DS.rect(DS.Radius.md).fill(DS.accentSoft))
     }
 
     private func taskRow(_ task: ModelDownloadTask) -> some View {
@@ -186,8 +186,10 @@ struct DownloadCenterSheet: View {
             .help(L10n.t("移除任务并清理半成品"))
             .accessibilityLabel(L10n.t("移除任务并清理半成品"))
         }
-        .padding(12)
-        .dsSurface(radius: DS.Radius.md)
+        .padding(.vertical, 10)
+        .overlay(alignment: .top) {
+            Rectangle().fill(DS.line).frame(height: 1)
+        }
     }
 
     private func statusLabel(_ task: ModelDownloadTask) -> String {

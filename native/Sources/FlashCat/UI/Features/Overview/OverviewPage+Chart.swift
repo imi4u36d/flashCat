@@ -26,9 +26,6 @@ extension OverviewPage {
                                 .multilineTextAlignment(.center)
                                 .frame(maxWidth: 320)
                         }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .dsSubcard(radius: 8)
                     }
                 } else {
                     Chart {
@@ -52,7 +49,7 @@ extension OverviewPage {
                         }
                         if let hovered = hoveredSample {
                             RuleMark(x: .value("时间", hovered.at))
-                                .foregroundStyle(DS.line3)
+                                .foregroundStyle(DS.line2)
                                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                             PointMark(x: .value("时间", hovered.at), y: .value("tok/s", hovered.value))
                                 .foregroundStyle(engineTint)
@@ -119,14 +116,14 @@ extension OverviewPage {
             Text(L10n.t("总解码 · 最近 60 秒"))
                 .font(.system(size: 13.5, weight: .semibold))
                 .foregroundStyle(DS.text)
-            Text(L10n.t("悬停查看精确采样"))
-                .font(.system(size: 11))
-                .foregroundStyle(DS.text4)
-                .lineLimit(1)
-                .layoutPriority(-1)
             Spacer(minLength: 6)
+            if chartFrozen {
+                Text(L10n.t("已冻结"))
+                    .font(.system(size: 11))
+                    .foregroundStyle(DS.text3)
+            }
             HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(rateText(hoveredSample?.value ?? chartRate))
+                Text(rateText(chartRate))
                     .font(DS.Font.number(16, weight: .bold))
                     .tracking(-0.3)
                     .foregroundStyle(DS.text)
@@ -135,20 +132,7 @@ extension OverviewPage {
                     .font(.system(size: 11))
                     .foregroundStyle(DS.text3)
             }
-            speedPill
         }
-    }
-
-    var speedPill: some View {
-        HStack(spacing: 5) {
-            DSStatusDot(color: speedChip.color, live: speedChip.live, size: 5)
-            Text(L10n.t(speedChip.text))
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(speedChip.live ? speedChip.color : DS.text2)
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 22)
-        .dsGlassPill()
     }
 
     func chartTooltipOverlay(
@@ -211,21 +195,10 @@ extension OverviewPage {
         return end.addingTimeInterval(-60)...end
     }
 
-    var speedChip: (text: String, color: Color, live: Bool) {
-        if chartFrozen {
-            return samples.isEmpty ? ("无样本", DS.text4, false) : ("已冻结", DS.text4, false)
-        }
-        switch speedOrigin {
-        case .gatewayLive: return ("网关", DS.info, true)
-        case .none: return (state.isRunning ? "等待" : "空闲", DS.text4, false)
-        }
-    }
-
     var chartEmptyText: String {
         if state.isSwitchingModel {
             return state.switchStage.isEmpty ? "正在加载模型…" : state.switchStage
         }
-        guard state.isRunning else { return "引擎未运行" }
         if metrics.chartEmptyIsNonStreamed { return "非流式请求无逐秒曲线" }
         return "等待样本"
     }

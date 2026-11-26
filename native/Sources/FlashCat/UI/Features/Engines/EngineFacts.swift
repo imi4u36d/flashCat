@@ -75,25 +75,4 @@ extension EngineID {
     var supportsVision: Bool { capabilities.contains(.vision) }
 
     var visionText: String { supportsVision ? L10n.t("支持") : L10n.t("不支持") }
-
-    /// 目录卡上的微型标签，最多四枚，优先放格式与最有辨识度的能力。
-    var tagTexts: [String] {
-        var tags = modelFormats.map(\.label)
-        switch self {
-        case .omlx:
-            tags += ["多模型热切换", "MTP", "DFlash2"]
-        case .splash:
-            tags += [switchModeText, "DFlash2"]
-            if supportsVision { tags.append("视觉") }
-        case .mtplx:
-            tags += [switchModeText, "Qwen MTP"]
-            if supportsVision { tags.append("视觉") }
-        case .mlxServe:
-            tags += [switchModeText, "无 Python"]
-        default:
-            tags.append(switchModeText)
-            if speculationLabel != L10n.t("不支持") { tags.append(speculationLabel) }
-        }
-        return Array(tags.prefix(4))
-    }
 }

@@ -12,6 +12,8 @@ import SwiftUI
 /// 采用连续滚动的自适应网格呈现全部作品；卡片封面依旧异步解码并缓存。
 struct LabPage: View {
     @ObservedObject var state: AppState
+    /// 壳层在布局这一拍量到的详情区尺寸；宽 / 窄版式直接由它决定。
+    let pageSize: CGSize
 
     private enum LabTab: Hashable {
         case images
@@ -34,40 +36,29 @@ struct LabPage: View {
     @State private var selecting = false
     @State private var selectedPaths: Set<String> = []
     @State private var confirmingBulkDelete = false
-    @State private var isWide = true
+    @StateObject private var reloadFlash = ActionFlashState()
+
+    private var isWide: Bool {
+        pageSize.width >= Console.compactContentWidth
+    }
+
+    init(state: AppState, pageSize: CGSize) {
+        self.state = state
+        self.pageSize = pageSize
+        // 页面每次切回来都是新实例：直接从当前会话列表装好作品，别先画一帧
+        // 空态、等 `onAppear` 再把网格换进来——那一拍整页会上下跳。
+        _images = State(initialValue: ImageGalleryStore.shared.merge(threads: state.threads))
+        _videos = State(initialValue: VideoGalleryStore.shared.merge(threads: state.threads))
+    }
 
     private static let gridSpacing: CGFloat = 16
 
     var body: some View {
         let horizontal = Console.pageHorizontalPadding(compact: !isWide)
         VStack(alignment: .leading, spacing: 0) {
-            DSPageHeader(
-                title: "画廊",
-                subtitle:
-                    "\(L10n.format("图片 %lld", Int64(images.count))) · \(L10n.format("视频 %lld", Int64(videos.count)))"
-            ) {
-                DSIconButton(
-                    systemName: selecting ? "xmark.circle" : "checkmark.circle",
-                    help: selecting ? "取消选择" : "选择作品",
-                    style: .outlined
-                ) {
-                    toggleSelecting()
-                }
-                DSIconButton(systemName: "arrow.clockwise", help: "刷新", style: .outlined) { reload() }
-                Button(L10n.t("打开文件夹")) {
-                    let folder = tab == .images ? ImageStore.directory : VideoStore.directory
-                    Paths.ensureDirectory(folder)
-                    NSWorkspace.shared.open(URL(fileURLWithPath: folder))
-                }
-                .buttonStyle(.ds(.secondary, size: .regular))
-            }
-            .padding(.horizontal, horizontal)
-            .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
-            .padding(.bottom, Console.pageSectionGap)
-            .background(WindowDragArea())
-
             header
                 .padding(.horizontal, horizontal)
+                .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
                 .padding(.bottom, Console.pageSectionGap)
 
             if itemCount == 0 {
@@ -105,10 +96,47 @@ struct LabPage: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onGeometryChange(for: Bool.self) { proxy in
-            proxy.size.width >= Console.compactContentWidth
-        } action: { wide in
-            isWide = wide
+        .toolbar {
+            ToolbarItem(id: DSToolbarSlot.title, placement: .navigation) {
+                DSToolbarPageTitle(
+                    title: "画廊")
+                    .padding(.leading, 15)
+            }
+            .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(id: DSToolbarSlot.anchor, placement: .principal) {
+                DSToolbarAnchor()
+            }
+            .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(id: DSToolbarSlot.actions, placement: .primaryAction) {
+                DSToolbarActionRow(state: state, compact: !isWide) {
+                    DSIconButton(
+                        systemName: "folder",
+                        help: "打开文件夹",
+                        size: 28,
+                        style: .ghost
+                    ) {
+                        let folder = tab == .images ? ImageStore.directory : VideoStore.directory
+                        Paths.ensureDirectory(folder)
+                        NSWorkspace.shared.open(URL(fileURLWithPath: folder))
+                    }
+
+                    DSMenu(kind: .toolbarIcon, size: .regular) {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(DS.text2)
+                    } content: {
+                        Button(L10n.t(selecting ? "取消选择" : "选择作品")) {
+                            toggleSelecting()
+                        }
+                        Divider()
+                        Button(L10n.t("刷新")) {
+                            reload()
+                            reloadFlash.succeed()
+                        }
+                    }
+                }
+            }
+            .sharedBackgroundVisibility(.hidden)
         }
         .dsPageColumn()
         .dsTrackColumns(
@@ -284,7 +312,7 @@ struct LabPage: View {
                     selected: selectedPaths.contains(image.path),
                     toggleSelect: { toggleSelection(image.path) },
                     openDetail: { detail = .image(image) },
-                    copyPrompt: { state.copy(image.prompt, label: L10n.t("已复制提示词")) })
+                    copyPrompt: { state.copy(image.prompt) })
             }
         case .videos:
             ForEach(filteredVideos) { video in
@@ -296,7 +324,7 @@ struct LabPage: View {
                     selected: selectedPaths.contains(video.path),
                     toggleSelect: { toggleSelection(video.path) },
                     openDetail: { detail = .video(video) },
-                    copyPrompt: { state.copy(video.prompt, label: L10n.t("已复制提示词")) })
+                    copyPrompt: { state.copy(video.prompt) })
             }
         }
     }
@@ -357,8 +385,8 @@ struct LabPage: View {
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let directory = panel.url else { return }
 
-        let exported = MediaFiles.export(selectedPaths.sorted(), to: directory)
-        state.toast(L10n.format("已导出 %lld 项", Int64(exported)))
+        // 导出结果落在访达里：选中的作品已经被复制过去，选择模式随之收起。
+        _ = MediaFiles.export(selectedPaths.sorted(), to: directory)
         selecting = false
         selectedPaths.removeAll()
     }
@@ -368,12 +396,11 @@ struct LabPage: View {
     private func deleteSelected() {
         guard !selectedPaths.isEmpty else { return }
         let paths = selectedPaths
-        let images = ImageGalleryStore.shared.delete(paths: paths)
-        let videos = VideoGalleryStore.shared.delete(paths: paths)
+        _ = ImageGalleryStore.shared.delete(paths: paths)
+        _ = VideoGalleryStore.shared.delete(paths: paths)
         selecting = false
         selectedPaths.removeAll()
         reload()
-        state.toast(L10n.format("已删除 %lld 项", Int64(images + videos)))
     }
 }
 
@@ -423,6 +450,7 @@ struct LabGridLayout: Equatable {
     /// 封面之外的部分：内边距 7×2、两处 5pt 间距、一行提示词、一行信息。
     static let chrome: CGFloat = 50
     static let cardInset: CGFloat = 7
+    static let coverRadius: CGFloat = DS.Radius.card - cardInset
     static let maxRows = 4
     static let minCoverHeight: CGFloat = 96
 
@@ -487,7 +515,6 @@ private struct LabEmptyState: View {
                 .font(.system(size: 20, weight: .regular))
                 .foregroundStyle(DS.text3)
                 .frame(width: 48, height: 48)
-                .dsSurface(radius: DS.Radius.lg)
             Text(L10n.t(title))
                 .font(DS.Font.md.weight(.medium))
                 .foregroundStyle(DS.text2)
@@ -526,13 +553,7 @@ private struct GalleryImageTile: View {
                     .frame(maxWidth: .infinity)
                     .aspectRatio(1, contentMode: .fit)
                     .clipped()
-                    .clipShape(DS.rect(DS.Radius.md))
-                    .overlay {
-                        DS.rect(DS.Radius.md)
-                            .strokeBorder(
-                                selected ? DS.accent.opacity(0.8) : DS.line,
-                                lineWidth: selected ? 2 : 1)
-                    }
+                    .clipShape(DS.rect(LabGridLayout.coverRadius))
                     .overlay(alignment: .topTrailing) {
                         if selecting {
                             Image(systemName: selected ? "checkmark.circle.fill" : "circle")
@@ -573,6 +594,12 @@ private struct GalleryImageTile: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .dsSurface(radius: DS.Radius.card, hoverable: true)
+        .overlay {
+            if selected {
+                DS.rect(DS.Radius.card)
+                    .strokeBorder(DS.accent.opacity(0.8), lineWidth: 2)
+            }
+        }
         .help(image.prompt.isEmpty ? L10n.t("查看详情") : image.prompt)
         .contextMenu {
             Button(L10n.t("查看详情"), action: openDetail)
@@ -711,13 +738,7 @@ private struct GalleryVideoTile: View {
                         }
                     }
                     .clipped()
-                    .clipShape(DS.rect(DS.Radius.md))
-                    .overlay {
-                        DS.rect(DS.Radius.md)
-                            .strokeBorder(
-                                selected ? DS.accent.opacity(0.8) : DS.line,
-                                lineWidth: selected ? 2 : 1)
-                    }
+                    .clipShape(DS.rect(LabGridLayout.coverRadius))
                     .overlay(alignment: .bottomTrailing) {
                         if let duration {
                             Text(verbatim: duration)
@@ -746,7 +767,6 @@ private struct GalleryVideoTile: View {
                                 .foregroundStyle(.white)
                                 .frame(width: 34, height: 34)
                                 .background(Circle().fill(Color.black.opacity(0.62)))
-                                .overlay(Circle().strokeBorder(Color.white.opacity(0.24), lineWidth: 1))
                         }
                     }
                     .animation(reduceMotion ? nil : DS.Motion.snappy, value: cover == nil)
@@ -810,6 +830,12 @@ private struct GalleryVideoTile: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .dsSurface(radius: DS.Radius.card, hoverable: true)
+        .overlay {
+            if selected {
+                DS.rect(DS.Radius.card)
+                    .strokeBorder(DS.accent.opacity(0.8), lineWidth: 2)
+            }
+        }
         .help(video.prompt.isEmpty ? L10n.t("查看详情") : video.prompt)
         .contextMenu {
             Button(L10n.t("查看详情"), action: openDetail)

@@ -16,6 +16,7 @@ struct GatewayTestButton: View {
     @State private var running = false
     @State private var showing = false
     @State private var result: GatewayTestResult?
+    @StateObject private var copyFlash = ActionFlashState()
 
     var body: some View {
         DSIconButton(
@@ -78,8 +79,11 @@ struct GatewayTestButton: View {
                         .font(DS.Font.mono(10))
                         .foregroundStyle(DS.text3)
                     Spacer(minLength: 0)
-                    Button(L10n.t("复制结果")) {
-                        state.copy(result.reply, label: L10n.t("已复制响应"))
+                    Button {
+                        state.copy(result.reply)
+                        copyFlash.succeed()
+                    } label: {
+                        ActionFlashLabel(title: "复制结果", flash: copyFlash.value)
                     }
                     .buttonStyle(.ds(.secondary, size: .small))
                     .disabled(result.reply.isEmpty)

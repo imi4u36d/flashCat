@@ -38,12 +38,16 @@ final class UIStateStore: ObservableObject {
             toast(message, kind: .error, transient: false)
         }
     }
-    /// 最近一条通知。灵动岛移除后暂时没有常驻展示面，数据仍留给后续出口。
+    /// 最近一条阻塞通知（错误 / 非一过性警告）。成功回执不经过这里，
+    /// 由动作控件自己的 `ActionFlashState` 承担。
     @Published private(set) var islandNotice: IslandNotice?
     /// 本次会话的通知历史，按时间倒序。
     @Published private(set) var islandNotices: [IslandNotice] = []
     /// 尚未查看过的通知数量。
     @Published private(set) var islandUnread = 0
+    /// 下载中心弹层。原来由 `ConsoleView` 的局部 `@State` 持有；顶栏全局状态簇
+    /// 也要能打开它，所以收进这里，壳层只负责把 sheet 绑上。
+    @Published var showsDownloadCenter = false
     /// 侧栏是否显示（交由原生 `NavigationSplitView` 驱动展开与收起）。
     /// 状态落盘到 UserDefaults 的 `sidebarVisible`，重启后沿用上次的样子。
     @Published var showsSidebar: Bool
@@ -62,11 +66,13 @@ final class UIStateStore: ObservableObject {
 
     // MARK: toasts
 
-    /// - Parameter transient: 一过性提示：模型加载、切换这类过程，以及复制和各
-    ///   种入口的成功回执。结果在界面上立刻看得见（阶段行、选择器里的进度、
-    ///   粘贴板、已经改好的设置），留在历史里只是噪音，所以只闪几秒，不占通知
-    ///   历史与未读数。失败、阻塞、后台任务完成和破坏性操作仍然留存——那是读
-    ///   者回头要看的。
+    /// 只有真正的失败和「现在不能做」的阻塞还走浮层；成功、信息、过程回执
+    /// 一律由动作控件的图标承担（`ActionFlashState` + `ActionFlashIcon`），
+    /// 不再弹卡片。
+    ///
+    /// 留在这一层兜底而不是逐个删调用点：编排层（下载、模型装载、引擎切换）
+    /// 的 `toast` 调用和视图不在同一文件，漏掉一处就会在读者刚点完按钮时又
+    /// 冒出一张成功卡片。错误与阻塞仍然需要文字，浮层是它们唯一的出口。
     func toast(
         _ message: String,
         title: String? = nil,
@@ -79,6 +85,7 @@ final class UIStateStore: ObservableObject {
         // model-ready notice reads as success and a still-loading notice stays
         // warning, regardless of how the message happens to be worded.
         let kind = kind ?? IslandNotice.Kind(message: message)
+        guard kind == .error || (kind == .warning && !transient) else { return }
         let notice = IslandNotice(
             title: L10n.t(title ?? kind.defaultTitle),
             message: L10n.t(message),
@@ -134,8 +141,8 @@ final class UIStateStore: ObservableObject {
         setShowsSidebar(!showsSidebar)
     }
 
-    /// 把焦点送进「最近对话」搜索框。侧栏被隐藏时也会重新出现——
-    /// 这个动作只服务一个目的：立刻能搜。
+    /// 把焦点送进侧栏「工作区」的搜索框，搜索框收着时会先展开。
+    /// 侧栏被隐藏时也会重新出现——这个动作只服务一个目的：立刻能搜。
     func focusChatSearch() {
         setShowsSidebar(true)
         chatSearchFocusTick += 1
@@ -143,12 +150,12 @@ final class UIStateStore: ObservableObject {
 
     // MARK: clipboard
 
-    /// 复制一段文字并给出一过性回执。放在这里是因为它只有界面意义：粘贴板
-    /// 加一句 toast，不牵动任何引擎/下载状态。
-    func copy(_ text: String, label: String = "已复制") {
+    /// 只换粘贴板内容，不弹回执。
+    ///
+    /// 复制的结果在粘贴那一刻就会显现；控件自己的图标（代码块、接口行、消息
+    /// 操作行）在这一下短暂变成对勾，比一张浮层卡片更近、更不打断连续复制。
+    func copy(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-        // 回执：粘贴的时候就能看见结果，不必占一行历史。
-        toast(label, transient: true)
     }
 }

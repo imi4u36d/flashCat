@@ -94,6 +94,11 @@ package final class ChatHistory {
         /// REF2VA 的参考素材。旧历史没有这两个键，解码为 nil。
         var videoReferenceImagePaths: [String]?
         var videoReferenceClipPaths: [String]?
+        /// 用户聊天附件：气泡里显示的附件名、带文件上下文的引擎正文、
+        /// 以及视觉模型追问时要重新挂上的图片路径。旧历史缺这三个键照常解码。
+        var attachmentNames: [String]?
+        var engineContent: String?
+        var userImagePaths: [String]?
     }
 
     /// 磁盘上线程列表的进程内副本。`load()` 以前每轮回答结束都会重读并
@@ -120,7 +125,10 @@ package final class ChatHistory {
     private func pruned(_ threads: [ChatThread]) -> (kept: [ChatThread], dropped: Bool) {
         func contains(_ short: [ChatMessage], _ long: [ChatMessage]) -> Bool {
             guard short.count <= long.count else { return false }
-            return zip(short, long).allSatisfy { $0.role == $1.role && $0.content == $1.content }
+            return zip(short, long).allSatisfy {
+                $0.role == $1.role && $0.content == $1.content
+                    && $0.engineContent == $1.engineContent
+            }
         }
         var kept: [ChatThread] = []
         var dropped = false
@@ -176,7 +184,10 @@ package final class ChatHistory {
                             videoSourcePath: message.videoSourcePath,
                             videoLastFramePath: message.videoLastFramePath,
                             videoReferenceImagePaths: message.videoReferenceImagePaths,
-                            videoReferenceClipPaths: message.videoReferenceClipPaths)
+                            videoReferenceClipPaths: message.videoReferenceClipPaths,
+                            attachmentNames: message.attachmentNames ?? [],
+                            engineContent: message.engineContent,
+                            userImagePaths: message.userImagePaths ?? [])
                     })
             }
         }
@@ -245,7 +256,10 @@ package final class ChatHistory {
             videoSourcePath: message.videoSourcePath,
             videoLastFramePath: message.videoLastFramePath,
             videoReferenceImagePaths: message.videoReferenceImagePaths,
-            videoReferenceClipPaths: message.videoReferenceClipPaths)
+            videoReferenceClipPaths: message.videoReferenceClipPaths,
+            attachmentNames: message.attachmentNames.isEmpty ? nil : message.attachmentNames,
+            engineContent: message.engineContent,
+            userImagePaths: message.userImagePaths.isEmpty ? nil : message.userImagePaths)
     }
 
     package static func parseLegacyDate(_ raw: String?) -> Date? {
@@ -321,6 +335,7 @@ package final class ChatHistory {
         messages.filter {
             !$0.streaming
                 && (!$0.content.isEmpty || $0.interrupted
+                    || !$0.attachmentNames.isEmpty
                     || $0.imagePath != nil || !$0.imagePaths.isEmpty
                     || !$0.toolCalls.isEmpty
                     || $0.videoPath != nil
@@ -410,6 +425,9 @@ package final class ConversationStore {
         let videoLastFramePath: String?
         let videoReferenceImagePaths: [String]?
         let videoReferenceClipPaths: [String]?
+        let attachmentNames: [String]?
+        let engineContent: String?
+        let userImagePaths: [String]?
     }
 
     package func load() -> [ChatMessage] {
@@ -447,7 +465,10 @@ package final class ConversationStore {
                 videoSourcePath: item.videoSourcePath,
                 videoLastFramePath: item.videoLastFramePath,
                 videoReferenceImagePaths: item.videoReferenceImagePaths,
-                videoReferenceClipPaths: item.videoReferenceClipPaths)
+                videoReferenceClipPaths: item.videoReferenceClipPaths,
+                attachmentNames: item.attachmentNames ?? [],
+                engineContent: item.engineContent,
+                userImagePaths: item.userImagePaths ?? [])
         }
     }
 
@@ -505,7 +526,10 @@ package final class ConversationStore {
                 videoSourcePath: message.videoSourcePath,
                 videoLastFramePath: message.videoLastFramePath,
                 videoReferenceImagePaths: message.videoReferenceImagePaths,
-                videoReferenceClipPaths: message.videoReferenceClipPaths)
+                videoReferenceClipPaths: message.videoReferenceClipPaths,
+                attachmentNames: message.attachmentNames.isEmpty ? nil : message.attachmentNames,
+                engineContent: message.engineContent,
+                userImagePaths: message.userImagePaths.isEmpty ? nil : message.userImagePaths)
         }
         guard !stored.isEmpty else { return }
         let sink = onWriteFailure

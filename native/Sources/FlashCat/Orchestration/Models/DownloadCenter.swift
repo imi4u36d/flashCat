@@ -348,7 +348,7 @@ final class DownloadCenter: ObservableObject {
         } else {
             removeTask(engine: task.engine, model: task.model)
             discardPartialDownload(task)
-            host?.toast("已从下载中心移除", false)
+            // 行已经从下载中心消失，不再补一张「已移除」回执。
         }
     }
 
@@ -483,7 +483,7 @@ final class DownloadCenter: ObservableObject {
             pauseRequested = false
             upsertTask(engine: engine, model: model) { $0.status = .paused }
             append("==> 已暂停 \(model)，可从下载中心继续", engine: engine)
-            host?.toast("已暂停下载，进度已保留", true)
+            // 行变「已暂停」、进度环留在原位，按钮也会切成继续；无需浮层。
             outcome = .cancelled
             return
         }
@@ -498,7 +498,6 @@ final class DownloadCenter: ObservableObject {
                 removeTask(engine: engine, model: model)
                 discardPartialDownload(stale)
                 append("==> 已删除下载任务 \(model)，半成品已清理", engine: engine)
-                host?.toast("已从下载中心移除", false)
                 outcome = .cancelled
                 return
             }
@@ -508,7 +507,6 @@ final class DownloadCenter: ObservableObject {
             // is a second, explicit step in the download center.
             upsertTask(engine: engine, model: model) { $0.status = .paused }
             append("==> 已停止下载 \(model)，进度已保留", engine: engine)
-            host?.toast("已停止下载，可在下载中心继续或移除", true)
             outcome = .cancelled
             return
         }

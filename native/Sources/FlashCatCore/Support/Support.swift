@@ -170,6 +170,34 @@ package enum Format {
         if seconds < 86400 { return "\(seconds / 3600) 小时前" }
         return relativeFormatter.string(from: date)
     }
+
+    /// 侧栏行尾的紧凑时间：今天给相对量（`12m` / `3h`），昨天给时刻
+    /// （`14:20`），更早给日期（`11-18`）。分组标题已经说明了「昨天」，
+    /// 行尾再写一遍只是重复；时刻和日期才能把同名会话区分开。
+    ///
+    /// 全部按传入的日历取数，不经过 `DateFormatter`：结果和
+    /// `ChatThreadSections` 的分组口径一致，也不受 12 小时制影响。
+    package static func sidebarTime(
+        _ date: Date,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> String {
+        let startOfToday = calendar.startOfDay(for: now)
+        let startOfDate = calendar.startOfDay(for: date)
+        let days =
+            calendar.dateComponents([.day], from: startOfDate, to: startOfToday).day ?? 0
+        if days <= 0 {
+            let seconds = max(0, Int(now.timeIntervalSince(date)))
+            if seconds < 60 { return "刚刚" }
+            if seconds < 3600 { return "\(seconds / 60)m" }
+            if seconds < 86_400 { return "\(seconds / 3600)h" }
+        }
+        let parts = calendar.dateComponents([.hour, .minute, .month, .day], from: date)
+        if days == 1 {
+            return String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
+        }
+        return String(format: "%02d-%02d", parts.month ?? 0, parts.day ?? 0)
+    }
 }
 
 /// TCP connect probe against 127.0.0.1. A local connect resolves instantly:

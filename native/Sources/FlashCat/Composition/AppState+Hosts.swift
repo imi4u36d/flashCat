@@ -43,7 +43,10 @@ extension AppState: ChatHost {
     }
 
     func showChat() {
-        section = .chat
+        // 切会话本身由 `ChatSessionStore.currentThreadID` 发布，这里只负责
+        // 「如果人还在别的页，跳到对话页」。以前无条件写 `section`，等于每次
+        // 点会话都让整个控制台壳层白重绘一次。
+        if section != .chat { section = .chat }
     }
 }
 

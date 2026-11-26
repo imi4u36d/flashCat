@@ -6,6 +6,19 @@ import FlashCatCore
 import Foundation
 import SwiftUI
 
+extension View {
+    /// 按 Bool 开关文本选择。`.textSelection` 是泛型修饰符，`.enabled` 与
+    /// `.disabled` 是两个不同的类型，三元表达式拼不到一起；这里统一成一个入口。
+    @ViewBuilder
+    func textSelectable(_ enabled: Bool) -> some View {
+        if enabled {
+            textSelection(.enabled)
+        } else {
+            textSelection(.disabled)
+        }
+    }
+}
+
 /// Markdown 的两套排版尺度：资料卡沿用原来的紧凑版，对话正文对齐 Splash 的
 /// 15pt / 24pt 阅读节奏（标题、段落间距、代码块与表格也一起换）。
 struct MarkdownStyle: Equatable, Hashable {
@@ -56,6 +69,9 @@ struct MarkdownView: View, Equatable {
     /// 流式吐字时末尾 1~2 个字符的渐显透明度，nil 表示完全不透明。
     var tailFadeAlpha: Double? = nil
     var style: MarkdownStyle = .standard
+    /// 是否允许选中文本。可选文本在 macOS 上是一份独立的可选择实现，每段
+    /// 正文一份；历史消息默认关掉，悬停过（或就是最后一条）再打开。
+    var allowsSelection: Bool = true
 
     var body: some View {
         // 连续的文字块（标题、段落）仍然合并成一个 `Text`，保持跨段落拖选与
@@ -72,22 +88,26 @@ struct MarkdownView: View, Equatable {
                             ? MarkdownComposer.withTailFade(composed, alpha: tailFadeAlpha)
                             : composed
                     )
-                    .textSelection(.enabled)
+                    .textSelectable(allowsSelection)
                     .lineSpacing(style.lineSpacing)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: fillsWidth ? .infinity : nil, alignment: .leading)
 
                 case .list(let items):
-                    MarkdownListView(items: items, style: style)
+                    MarkdownListView(items: items, allowsSelection: allowsSelection, style: style)
 
                 case .code(let language, let code):
-                    CodeBlockView(language: language, code: code, caching: caching, style: style)
+                    CodeBlockView(
+                        language: language, code: code,
+                        allowsSelection: allowsSelection, style: style)
 
                 case .quote(let composed):
-                    QuoteBlockView(composed: composed, style: style)
+                    QuoteBlockView(
+                        composed: composed, allowsSelection: allowsSelection, style: style)
 
                 case .table(let rows):
-                    MarkdownTableView(rows: rows, style: style)
+                    MarkdownTableView(
+                        rows: rows, allowsSelection: allowsSelection, style: style)
 
                 case .rule:
                     Rectangle()
@@ -111,6 +131,7 @@ struct StreamingMarkdownView: View {
     var isActive: Bool = true
     var fillsWidth: Bool = false
     var style: MarkdownStyle = .standard
+    var allowsSelection: Bool = true
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var shown: Int
@@ -126,13 +147,15 @@ struct StreamingMarkdownView: View {
         streaming: Bool,
         isActive: Bool = true,
         fillsWidth: Bool = false,
-        style: MarkdownStyle = .standard
+        style: MarkdownStyle = .standard,
+        allowsSelection: Bool = true
     ) {
         self.text = text
         self.streaming = streaming
         self.isActive = isActive
         self.fillsWidth = fillsWidth
         self.style = style
+        self.allowsSelection = allowsSelection
         // 页面打开时已经存在的正文整段显示（Splash 的 `shown[key] ??= text`），
         // 只有之后到达的增量才走逐字节奏。
         _shown = State(initialValue: text.count)
@@ -150,7 +173,8 @@ struct StreamingMarkdownView: View {
             caching: !streaming,
             fillsWidth: fillsWidth,
             tailFadeAlpha: nil,
-            style: style
+            style: style,
+            allowsSelection: allowsSelection
         )
         .equatable()
         .onAppear { sync() }
@@ -300,6 +324,7 @@ struct PacedText: View {
 /// 列表：标记在一列里右对齐，内容在第二列左对齐；缩进项整体右移。
 private struct MarkdownListView: View {
     let items: [MarkdownListItem]
+    var allowsSelection: Bool = true
     var style: MarkdownStyle = .standard
 
     var body: some View {
@@ -318,7 +343,7 @@ private struct MarkdownListView: View {
 
                     Text(item.content)
                         .lineSpacing(style.lineSpacing)
-                        .textSelection(.enabled)
+                        .textSelectable(allowsSelection)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.leading, CGFloat(item.indent) * 16)
@@ -332,7 +357,7 @@ private struct MarkdownListView: View {
 private struct CodeBlockView: View {
     let language: String?
     let code: String
-    var caching: Bool = true
+    var allowsSelection: Bool = true
     var style: MarkdownStyle = .standard
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -393,7 +418,10 @@ private struct CodeBlockView: View {
                 .fill(DS.line)
                 .frame(height: 1)
 
-            HighlightedCode(code: code, language: language, caching: caching, style: style)
+            CodeLinesView(
+                code: code,
+                allowsSelection: allowsSelection,
+                style: style)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
@@ -432,26 +460,40 @@ private struct CodeBlockView: View {
     }
 }
 
-/// 带语言高亮与行号的代码正文。行号栏固定不横滚，代码列单独横滚；
-/// 整段行号与代码各用单个 `Text` 配合精确行高排版，避免 2N 个子视图带来的布局开销。
-private struct HighlightedCode: View {
+/// 代码正文：等宽纯文本 + 行号栏。行号栏固定不横滚，代码列单独横滚；
+/// 整段行号与代码各用单个 `Text` 配合精确行高排版，避免 2N 个子视图的布局开销。
+///
+/// 这里刻意不做语法高亮：高亮会把每行切成几十个属性片段，`Text` 的排版成本
+/// 随片段数增长——一段 400 行的回答切换会话要多花上百毫秒（实测 660 行高亮
+/// 128ms、同样内容纯文本 26ms）。等宽字体 + 行号已经够读，复制按钮也还在。
+private struct CodeLinesView: View {
     let code: String
-    let language: String?
-    var caching: Bool
-    var style: MarkdownStyle
+    var allowsSelection: Bool = true
+    var style: MarkdownStyle = .standard
 
     private var fontSize: CGFloat { style.chat ? 13 : 12 }
     private var lineHeight: CGFloat { (fontSize * 1.55).rounded() }
     private var verticalPadding: CGFloat { style.chat ? 10 : 8 }
 
-    var body: some View {
-        let doc = CodeHighlighter.document(code, language: language, caching: caching)
-        let showsGutter = doc.lineCount > 1
-        let gutterWidth = CGFloat(max(2, String(doc.lineCount).count)) * 7 + 8
+    /// 行数按换行符个数算（UTF-8 逐字节累加，不数 grapheme）。
+    private var lineCount: Int {
+        max(1, code.utf8.reduce(1) { $0 + ($1 == 0x0A ? 1 : 0) })
+    }
 
-        return HStack(alignment: .top, spacing: 0) {
+    /// 结尾是换行时补零宽空格：SwiftUI `Text` 才会把最后的空行算进高度，
+    /// 与行号栏对齐。
+    private var displayText: String {
+        code.hasSuffix("\n") ? code + "\u{200B}" : code
+    }
+
+    var body: some View {
+        let lines = lineCount
+        let showsGutter = lines > 1
+        let gutterWidth = CGFloat(max(2, String(lines).count)) * 7 + 8
+
+        HStack(alignment: .top, spacing: 0) {
             if showsGutter {
-                Text(verbatim: CodeHighlighter.gutterText(lineCount: doc.lineCount))
+                Text(verbatim: CodeGutter.text(lineCount: lines))
                     .font(DS.Font.mono(fontSize - 1.5))
                     .lineHeight(.exact(points: lineHeight))
                     .multilineTextAlignment(.trailing)
@@ -468,22 +510,59 @@ private struct HighlightedCode: View {
             }
 
             ScrollView(.horizontal, showsIndicators: true) {
-                Text(doc.attributed)
+                Text(verbatim: displayText)
                     .font(DS.Font.mono(fontSize))
                     .lineHeight(.exact(points: lineHeight))
                     .foregroundStyle(DS.text)
                     .fixedSize(horizontal: true, vertical: true)
                     .padding(.horizontal, style.chat ? 12 : 10)
                     .padding(.vertical, verticalPadding)
-                    .textSelection(.enabled)
+                    .textSelectable(allowsSelection)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
+/// 行号栏文本（`"1\n2\n…"`）。按行数缓存最后几十份：每次 body 求值都重拼
+/// 一遍几百行的字符串没有必要，缓存不设上限又会一直攥着这些长字符串。
+private enum CodeGutter {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var cache: [Int: String] = [:]
+    nonisolated(unsafe) private static var order: [Int] = []
+    private static let limit = 32
+
+    static func text(lineCount: Int) -> String {
+        let clamped = max(1, lineCount)
+        lock.lock()
+        if let hit = cache[clamped] {
+            if let index = order.firstIndex(of: clamped) {
+                order.remove(at: index)
+                order.append(clamped)
+            }
+            lock.unlock()
+            return hit
+        }
+        lock.unlock()
+
+        let text = (1...clamped).map(String.init).joined(separator: "\n")
+
+        lock.lock()
+        if cache[clamped] == nil {
+            cache[clamped] = text
+            order.append(clamped)
+            if order.count > limit {
+                cache.removeValue(forKey: order.removeFirst())
+            }
+        }
+        lock.unlock()
+        return text
+    }
+}
+
 private struct QuoteBlockView: View {
     let composed: AttributedString
+    var allowsSelection: Bool = true
     var style: MarkdownStyle = .standard
 
     var body: some View {
@@ -494,7 +573,7 @@ private struct QuoteBlockView: View {
 
             Text(composed)
                 .lineSpacing(style.lineSpacing)
-                .textSelection(.enabled)
+                .textSelectable(allowsSelection)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -510,6 +589,7 @@ private struct QuoteBlockView: View {
 
 private struct MarkdownTableView: View {
     let rows: [[AttributedString]]
+    var allowsSelection: Bool = true
     var style: MarkdownStyle = .standard
 
     private var columnCount: Int {
@@ -542,7 +622,7 @@ private struct MarkdownTableView: View {
                             let cell = col < row.count ? row[col] : AttributedString()
                             Text(cell)
                                 .lineSpacing(style.lineSpacing)
-                                .textSelection(.enabled)
+                                .textSelectable(allowsSelection)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .padding(.vertical, rowIndex == 0 ? 0 : 8)
                                 .frame(maxWidth: 320, alignment: .leading)
@@ -570,7 +650,7 @@ private struct MarkdownTableView: View {
                             let cell = col < row.count ? row[col] : AttributedString()
                             Text(cell)
                                 .lineSpacing(3)
-                                .textSelection(.enabled)
+                                .textSelectable(allowsSelection)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 7)

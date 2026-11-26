@@ -11,7 +11,6 @@ import SwiftUI
 struct ConsoleView: View {
     @ObservedObject var state: AppState
 
-    @State private var showDownloads = false
     @State private var showHub = false
     /// 重命名弹窗里的输入。线程本身挂在 `pendingThreadRename` 上，壳层只负责
     /// 把输入框和落点接起来。
@@ -32,9 +31,20 @@ struct ConsoleView: View {
             ConsoleNavigationPanel(state: state, chat: state.chat)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 224, max: 280)
         } detail: {
-            detailContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .background(Color(nsColor: .windowBackgroundColor))
+            // 尺寸在布局这一拍就拿到，页面按它决定宽 / 窄版式。以前每页自己
+            // 用 `onGeometryChange` 先猜一遍再纠正：切页时页面会被重建，那一次
+            // 纠正就表现为内容整体上下弹一下。
+            GeometryReader { proxy in
+                detailContent(pageSize: proxy.size)
+            }
+            // 标题栏与内容之间只画一条发丝线；七个页面共用，不再各写一套。
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(DS.line)
+                    .frame(height: 1)
+                    .accessibilityHidden(true)
+            }
+            .background(Color(nsColor: .windowBackgroundColor))
         }
         .overlay {
             if isShowingOnboarding {
@@ -49,7 +59,7 @@ struct ConsoleView: View {
             }
         }
         .animation(reduceMotion ? nil : DS.Motion.smooth, value: state.islandNotice?.id)
-        .sheet(isPresented: $showDownloads) { DownloadCenterSheet(state: state) }
+        .sheet(isPresented: downloadsShown) { DownloadCenterSheet(state: state) }
         .sheet(isPresented: $showHub) {
             HubSheet(state: state, hub: state.hub, engine: state.libraryEngine)
         }
@@ -102,24 +112,34 @@ struct ConsoleView: View {
         state.isPresentingLaunchPage || state.showsRecommendationPage
     }
 
-    @ViewBuilder private var detailContent: some View {
+    @ViewBuilder
+    private func detailContent(pageSize: CGSize) -> some View {
         switch state.section {
-        case .overview: OverviewPage(state: state, metrics: state.metrics)
+        case .overview: OverviewPage(state: state, metrics: state.metrics, pageSize: pageSize)
         case .chat:
             ChatPage(
                 state: state,
                 chat: state.chat,
+                pageSize: pageSize,
                 isActive: !isShowingOnboarding)
         case .models:
             ModelsPage(
                 state: state,
                 showingHub: $showHub,
-                showingDownloads: $showDownloads)
-        case .engines: EnginesPage(state: state, installs: state.installs)
-        case .logs: LogsPage(state: state, logFeed: state.logFeed)
-        case .settings: SettingsPage(state: state)
-        case .lab: LabPage(state: state)
+                showingDownloads: downloadsShown,
+                pageSize: pageSize)
+        case .engines: EnginesPage(state: state, installs: state.installs, pageSize: pageSize)
+        case .logs: LogsPage(state: state, logFeed: state.logFeed, pageSize: pageSize)
+        case .settings: SettingsPage(state: state, pageSize: pageSize)
+        case .lab: LabPage(state: state, pageSize: pageSize)
         }
+    }
+
+    /// 下载中心由 `AppState` 持有：模型页和顶栏状态簇都能把它叫出来。
+    private var downloadsShown: Binding<Bool> {
+        Binding(
+            get: { state.showsDownloadCenter },
+            set: { state.showsDownloadCenter = $0 })
     }
 
     private var modelSwitchShown: Binding<Bool> {

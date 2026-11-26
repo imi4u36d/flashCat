@@ -14,6 +14,8 @@ import SwiftUI
 struct LogsPage: View {
     @ObservedObject var state: AppState
     @ObservedObject var logFeed: LogFeedService
+    /// 壳层在布局这一拍量到的详情区尺寸；宽 / 窄版式直接由它决定。
+    let pageSize: CGSize
     @State private var source: LogFeedSource = .all
     @State private var level: LogsFilter = .all
     @State private var query = ""
@@ -24,7 +26,14 @@ struct LogsPage: View {
     @State private var expanded: Set<String> = []
     @State private var confirmingClear = false
     @State private var cachedDigest: LogsDigest?
-    @State private var isWide = true
+    @StateObject private var copyFlash = ActionFlashState()
+    @StateObject private var openFlash = ActionFlashState()
+    /// 打开日志位置失败时的原因，挂在按钮的悬停提示上。
+    @State private var openNote: String?
+
+    private var isWide: Bool {
+        pageSize.width >= Console.compactContentWidth
+    }
 
     private struct DigestTrigger: Equatable {
         let lastID: Int?
@@ -64,31 +73,31 @@ struct LogsPage: View {
         let data = cachedDigest ?? display()
         let horizontal = Console.pageHorizontalPadding(compact: !isWide)
         VStack(alignment: .leading, spacing: Console.pageSectionGap) {
-            DSPageHeader(
-                title: "日志",
-                subtitle: L10n.t(effectiveSource.title),
-                status: DSPageStatus(
-                    paused ? "PAUSED" : "LIVE",
-                    color: paused ? DS.warn : DS.ok,
-                    live: !paused)
-            ) {
-                actionButtons(data)
-            }
-            .padding(.horizontal, horizontal)
-            .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
-            .background(WindowDragArea())
-
             filterRow(data)
                 .padding(.horizontal, horizontal)
+                .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
 
             console(data)
                 .padding(.horizontal, horizontal)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onGeometryChange(for: Bool.self) { proxy in
-            proxy.size.width >= Console.compactContentWidth
-        } action: { wide in
-            isWide = wide
+        .toolbar {
+            ToolbarItem(id: DSToolbarSlot.title, placement: .navigation) {
+                DSToolbarPageTitle(
+                    title: "日志")
+                    .padding(.leading, 15)
+            }
+            .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(id: DSToolbarSlot.anchor, placement: .principal) {
+                DSToolbarAnchor()
+            }
+            .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(id: DSToolbarSlot.actions, placement: .primaryAction) {
+                DSToolbarActionRow(state: state, compact: !isWide) {
+                    toolbarActions(data)
+                }
+            }
+            .sharedBackgroundVisibility(.hidden)
         }
         .dsPageColumn()
         .padding(.bottom, Console.contentBottomInset)
@@ -146,39 +155,65 @@ struct LogsPage: View {
     }
 
     @ViewBuilder
-    private func actionButtons(_ data: LogsDigest) -> some View {
-        HStack(spacing: 8) {
-            DSIconButton(systemName: "doc.on.doc", help: "复制筛选后的日志", size: 28, style: .outlined) {
+    private func toolbarActions(_ data: LogsDigest) -> some View {
+        if isWide {
+            Button {
+                togglePause()
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: paused ? "play.fill" : "pause.fill")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(DS.text2)
+                    Text(L10n.t(paused ? "继续" : "暂停"))
+                }
+            }
+            .buttonStyle(.ds(.secondary, size: .regular))
+        } else {
+            DSIconButton(
+                systemName: paused ? "play.fill" : "pause.fill",
+                help: L10n.t(paused ? "继续" : "暂停"),
+                size: 28,
+                style: .outlined
+            ) {
+                togglePause()
+            }
+        }
+
+        DSMenu(kind: .toolbarIcon, size: .regular) {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(DS.text2)
+        } content: {
+            Button(L10n.t("复制筛选后的日志")) {
                 let text = LogFeed.clipboardText(data.lines, tagged: effectiveSource == .all)
-                state.copy(text, label: L10n.t("已复制筛选后的日志"))
+                state.copy(text)
+                copyFlash.succeed()
             }
             .disabled(data.lines.isEmpty)
 
-            DSIconButton(
-                systemName: effectiveSource == .all ? "folder" : "doc.text",
-                help: effectiveSource == .all ? "打开日志目录" : "打开日志文件",
-                size: 28, style: .outlined
+            Button(
+                openNote
+                    ?? (effectiveSource == .all ? L10n.t("打开日志目录") : L10n.t("打开日志文件"))
             ) {
                 openLogsLocation()
             }
 
-            Button {
-                if paused {
-                    paused = false
-                    frozen = []
-                } else {
-                    frozen = logFeed.logEntries(for: effectiveSource)
-                    paused = true
-                }
-            } label: {
-                Label(L10n.t(paused ? "继续" : "暂停"), systemImage: paused ? "play.fill" : "pause.fill")
-            }
-            .buttonStyle(.ds(.secondary, size: .regular))
+            Divider()
 
-            DSIconButton(systemName: "trash", help: "清空日志", size: 28, style: .outlined) {
+            Button(L10n.t("清空当前日志…")) {
                 confirmingClear = true
             }
             .disabled((data.counts[.all] ?? 0) == 0)
+        }
+    }
+
+    private func togglePause() {
+        if paused {
+            paused = false
+            frozen = []
+        } else {
+            frozen = logFeed.logEntries(for: effectiveSource)
+            paused = true
         }
     }
 
@@ -186,18 +221,25 @@ struct LogsPage: View {
     private func openLogsLocation() {
         if let path = effectiveSource.filePath {
             guard Paths.fileExists(path) else {
-                state.toast(L10n.t("日志文件尚未创建"))
+                // 文件还没落盘：按钮图标变感叹号，原因留在悬停提示里。
+                openNote = L10n.t("日志文件尚未创建")
+                openFlash.warn()
                 return
             }
+            openNote = nil
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+            openFlash.succeed()
             return
         }
         let directory = Paths.logsDirectory
         guard Paths.fileExists(directory) else {
-            state.toast(L10n.t("日志目录尚未创建"))
+            openNote = L10n.t("日志目录尚未创建")
+            openFlash.warn()
             return
         }
+        openNote = nil
         NSWorkspace.shared.open(URL(fileURLWithPath: directory, isDirectory: true))
+        openFlash.succeed()
     }
 
     private var logSourceMenu: some View {
@@ -312,12 +354,12 @@ struct LogsPage: View {
                                         }
                                     },
                                     onCopyLine: {
-                                        state.copy(line.text, label: L10n.t("已复制该行日志"))
+                                        state.copy(line.text)
                                     },
                                     onCopyFormatted: {
                                         let prefix = line.tag.map { "[\($0)] " } ?? ""
                                         let formatted = "\(line.clockText) \(prefix)[\(line.level.label)] \(line.text)"
-                                        state.copy(formatted, label: L10n.t("已复制该行日志"))
+                                        state.copy(formatted)
                                     }
                                 )
                                 .id(line.id)
@@ -333,8 +375,8 @@ struct LogsPage: View {
                     }
                 }
             }
-            .dsSurface(radius: DS.Radius.card)
             .clipShape(DS.rect(DS.Radius.card))
+            .dsSurface(radius: DS.Radius.card)
             .frame(maxHeight: .infinity)
         }
     }
@@ -393,9 +435,6 @@ private struct LogRowView: View {
                     .frame(width: 62, height: 18, alignment: .leading)
                     .background {
                         DS.rect(4).fill(tone.opacity(0.12))
-                    }
-                    .overlay {
-                        DS.rect(4).strokeBorder(tone.opacity(0.25), lineWidth: 1)
                     }
 
                     Text(highlighted(entry.text))
@@ -504,11 +543,11 @@ private struct LogRowView: View {
         }
         .padding(10)
         .background {
-            DS.rect(DS.Radius.md)
+            DS.rect(DS.Radius.xs)
                 .fill(DS.bg)
         }
         .overlay {
-            DS.rect(DS.Radius.md)
+            DS.rect(DS.Radius.xs)
                 .strokeBorder(DS.line, lineWidth: 1)
         }
     }

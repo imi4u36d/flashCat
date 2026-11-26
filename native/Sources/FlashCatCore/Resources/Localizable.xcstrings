@@ -10970,6 +10970,756 @@
           }
         }
       }
+    },
+    "工作区": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Workspace"
+          }
+        }
+      }
+    },
+    "还没有对话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No conversations yet"
+          }
+        }
+      }
+    },
+    "输入一句话就可以开始。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Type a message to get started."
+          }
+        }
+      }
+    },
+    "开始第一段对话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start your first chat"
+          }
+        }
+      }
+    },
+    "问问 FlashCat": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ask FlashCat"
+          }
+        }
+      }
+    },
+    "思考级别": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thinking level"
+          }
+        }
+      }
+    },
+    "排队中": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Queued"
+          }
+        }
+      }
+    },
+    "添加附件": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add attachment"
+          }
+        }
+      }
+    },
+    "移除附件": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove attachment"
+          }
+        }
+      }
+    },
+    "取消这条排队消息": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel this queued message"
+          }
+        }
+      }
+    },
+    "底图": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Source image"
+          }
+        }
+      }
+    },
+    "%lld 个模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld models"
+          }
+        }
+      }
+    },
+    "引擎读数": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Engine readings"
+          }
+        }
+      }
+    },
+    "%@ 个模型 · 按 Token 排序": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ models · sorted by tokens"
+          }
+        }
+      }
+    },
+    "%@ 月 %@ 日 · %@ 段对话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@/%@ · %@ conversations"
+          }
+        }
+      }
+    },
+    "30 天": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "30 days"
+          }
+        }
+      }
+    },
+    "7 天": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "7 days"
+          }
+        }
+      }
+    },
+    "OpenAI 兼容": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI compatible"
+          }
+        }
+      }
+    },
+    "Token 总量": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Total tokens"
+          }
+        }
+      }
+    },
+    "一个会话只算一次：归给它消息最多的模型。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Each session counts once, attributed to its most-used model."
+          }
+        }
+      }
+    },
+    "一个会话只算一次：归给它消息最多的模型。点一行切到该模型。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Each session counts once, attributed to its most-used model. Click a row to switch to it."
+          }
+        }
+      }
+    },
+    "下次启动": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Next launch"
+          }
+        }
+      }
+    },
+    "从第一段对话开始累计": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Starts counting from your first conversation"
+          }
+        }
+      }
+    },
+    "会话与 Token 都来自本机消息记录，删掉的会话不计入。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sessions and tokens come from local message history; deleted sessions are excluded."
+          }
+        }
+      }
+    },
+    "先在模型库下载一个模型；启动引擎后，这里会按消息落盘的 Token 用量、模型与时间聚合出整页统计。全部在本机计算，不上传任何内容。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download a model from the library first. Once the engine starts, this page aggregates token usage, models and time from saved messages — all computed locally, nothing is uploaded."
+          }
+        }
+      }
+    },
+    "其他 %@ 个模型": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ other models"
+          }
+        }
+      }
+    },
+    "切到 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switch to %@"
+          }
+        }
+      }
+    },
+    "去模型库": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Model Library"
+          }
+        }
+      }
+    },
+    "合计": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Total"
+          }
+        }
+      }
+    },
+    "启动后统计": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Will be tracked"
+          }
+        }
+      }
+    },
+    "启动引擎后可用于任何兼容客户端": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Available to any compatible client once the engine starts"
+          }
+        }
+      }
+    },
+    "启动引擎后，这里会按消息落盘的 Token 用量、模型与时间聚合出整页统计。全部在本机计算，不上传任何内容。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Once the engine starts, this page aggregates token usage, models and time from saved messages — all computed locally, nothing is uploaded."
+          }
+        }
+      }
+    },
+    "多": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "More"
+          }
+        }
+      }
+    },
+    "少": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Less"
+          }
+        }
+      }
+    },
+    "未启动": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stopped"
+          }
+        }
+      }
+    },
+    "本机接口": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local API"
+          }
+        }
+      }
+    },
+    "本机用量": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local Usage"
+          }
+        }
+      }
+    },
+    "模型用量": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model usage"
+          }
+        }
+      }
+    },
+    "活跃天数": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Active days"
+          }
+        }
+      }
+    },
+    "活跃日历": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activity"
+          }
+        }
+      }
+    },
+    "消息": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Messages"
+          }
+        }
+      }
+    },
+    "网关打点 · 按 token 加权": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gateway metrics · token-weighted"
+          }
+        }
+      }
+    },
+    "自 %@ 起累计": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Since %@"
+          }
+        }
+      }
+    },
+    "近 20 周": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last 20 weeks"
+          }
+        }
+      }
+    },
+    "近 20 周活跃日历，%@ 天有记录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activity over the last 20 weeks, %@ days with records"
+          }
+        }
+      }
+    },
+    "近 30 天": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last 30 days"
+          }
+        }
+      }
+    },
+    "近 7 天": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last 7 days"
+          }
+        }
+      }
+    },
+    "还没有记录": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No records yet"
+          }
+        }
+      }
+    },
+    "这段会话里还没有落盘的 token 用量。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No token usage has been recorded for these sessions yet."
+          }
+        }
+      }
+    },
+    "累计 TOKEN · 本机 %@ 段会话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Total tokens · %@ local sessions"
+          }
+        }
+      }
+    },
+    "TOKEN · 近 7 天 %@ 段会话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tokens · %@ sessions in the last 7 days"
+          }
+        }
+      }
+    },
+    "TOKEN · 近 30 天 %@ 段会话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tokens · %@ sessions in the last 30 days"
+          }
+        }
+      }
+    },
+    "提示 %@ · 生成 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompt %@ · Generated %@"
+          }
+        }
+      }
+    },
+    "近 30 天 %@ 段": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ sessions in the last 30 days"
+          }
+        }
+      }
+    },
+    "你 %@ · 模型 %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You %@ · Model %@"
+          }
+        }
+      }
+    },
+    "最长连续 %@ 天": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Longest streak: %@ days"
+          }
+        }
+      }
+    },
+    "%@ 段": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ sessions"
+          }
+        }
+      }
+    },
+    "仅统计本机已保存会话 · 保留最近 %@ 段": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local saved sessions only · %@ retained"
+          }
+        }
+      }
+    },
+    "%@ 段会话 · %@ 条消息": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ sessions · %@ messages"
+          }
+        }
+      }
+    },
+    "%@ 本《爱丽丝漫游奇境》": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ copies of Alice's Adventures in Wonderland"
+          }
+        }
+      }
+    },
+    "按 37.3k tokens/本折算": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "At 37.3k tokens per copy"
+          }
+        }
+      }
+    },
+    "近 20 周 · %@ 天": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Last 20 weeks · %@ days"
+          }
+        }
+      }
+    },
+    "这个时间窗里还没有对话": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No conversations in this window"
+          }
+        }
+      }
+    },
+    "把范围切回「全部」，就能看到更早的本机用量。": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switch the range back to All to see earlier local usage."
+          }
+        }
+      }
+    },
+    "查看全部": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "View all"
+          }
+        }
+      }
+    },
+    "主题色": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Theme color"
+          }
+        }
+      }
+    },
+    "默认图标橙；只影响强调色，状态色与引擎色不跟随": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Icon orange by default; affects accent colors only, not status or engine colors"
+          }
+        }
+      }
+    },
+    "图标橙": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Icon orange"
+          }
+        }
+      }
+    },
+    "杏桃": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apricot"
+          }
+        }
+      }
+    },
+    "玫瑰": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rose"
+          }
+        }
+      }
+    },
+    "青瓷": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Celadon"
+          }
+        }
+      }
+    },
+    "靛蓝": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Indigo"
+          }
+        }
+      }
+    },
+    "紫罗兰": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Violet"
+          }
+        }
+      }
+    },
+    "自定义主题色": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Custom theme color"
+          }
+        }
+      }
+    },
+    "主题色预览": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Theme color preview"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

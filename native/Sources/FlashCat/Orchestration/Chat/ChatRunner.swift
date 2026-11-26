@@ -62,6 +62,8 @@ final class ChatRunner {
         self.chatClient = chatClient
         self.imageClient = imageClient
         self.videoClient = videoClient
+        // 发布值从启动那一刻起就得是真的：侧栏高亮、草稿键与转录区都读它。
+        session.currentThreadID = Self.restoredThreadID()
     }
 
     // MARK: - store 转发
@@ -123,22 +125,32 @@ final class ChatRunner {
     /// 当前会话在「最近对话」里的 id。以前每轮生成结束都新建一条线程，同一段
     /// 对话会在侧栏堆成好几份（概览读到的上下文也可能来自旧副本）；现在这个 id
     /// 跟着 `conversation.json` 一起用，`history.save` 原地覆盖而不是 insert。
-    /// 落在 UserDefaults，重启后续着同一条。
+    /// 落在 `ChatSessionStore`（同时写 UserDefaults）：切会话要发布，侧栏高亮、
+    /// 草稿键与转录区才能跟着换，不再依赖 `showChat()` 顺手写 `section` 带出来的重绘。
     var threadID: String {
-        get {
-            let defaults = UserDefaults.standard
-            if let existing = defaults.string(forKey: "chat.threadID"), !existing.isEmpty {
-                return existing
-            }
-            let fresh = Self.newThreadID()
-            defaults.set(fresh, forKey: "chat.threadID")
-            return fresh
+        get { session.currentThreadID }
+        set {
+            guard session.currentThreadID != newValue else { return }
+            session.currentThreadID = newValue
+            UserDefaults.standard.set(newValue, forKey: "chat.threadID")
         }
-        set { UserDefaults.standard.set(newValue, forKey: "chat.threadID") }
     }
 
     /// 侧栏「最近对话」用它高亮当前线程；threadID 本身只用于落盘。
     var currentThreadID: String { threadID }
+
+    /// 后台生成完成但还没被点开的会话：视图在行尾画圆点，不再弹通知。
+    var unreadThreadIDs: Set<String> { session.unreadThreadIDs }
+
+    private static func restoredThreadID() -> String {
+        let defaults = UserDefaults.standard
+        if let existing = defaults.string(forKey: "chat.threadID"), !existing.isEmpty {
+            return existing
+        }
+        let fresh = newThreadID()
+        defaults.set(fresh, forKey: "chat.threadID")
+        return fresh
+    }
 
     /// 正在生成的是哪一段对话——可能是读者已经切走、在后台继续跑的那一段。
     /// 侧栏据此把那一行标成「生成中」：不然切走后只剩下一个点不动的输入框，
@@ -181,10 +193,6 @@ final class ChatRunner {
     var livePromptTokens = 0
 
     // MARK: - 回到 AppState 的动作
-
-    func toast(_ message: String, kind: IslandNotice.Kind? = nil, transient: Bool = false) {
-        host?.toast(message, kind: kind, transient: transient)
-    }
 
     /// 阻塞式错误横幅。`host.notice` 的写入路径只有这一处，方便以后换成更明确的
     /// 通知类型而不必再改十几个调用点。
@@ -284,7 +292,10 @@ final class ChatRunner {
         referenceImages: [ChatImageAttachment] = [],
         referenceClips: [VideoReferenceClip] = [],
         image: ImageOptions = ImageOptions(),
-        video: VideoOptions = VideoOptions()
+        video: VideoOptions = VideoOptions(),
+        transcriptText: String? = nil,
+        attachmentNames: [String] = [],
+        userImagePaths: [String] = []
     ) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty || generating { return }
@@ -312,27 +323,50 @@ final class ChatRunner {
         // 文本模型 + 开了「画」+ 引擎里有图像模型：这一轮把画图当工具交给它，
         // 由模型自己决定画几张、写什么分镜。
         if imageToolActive, let imageModel = imageToolModel {
-            sendWithImageTool(trimmed, imageModel: imageModel)
+            sendWithImageTool(
+                trimmed, imageModel: imageModel,
+                transcriptText: transcriptText,
+                attachmentNames: attachmentNames,
+                userImagePaths: userImagePaths)
             return
         }
         // 引擎没就绪也允许发送：先把这句话摆进对话，回复气泡里显示启动状态，
         // 等引擎真的能用之后 `prepareChatSession` 再继续跑这次生成。
         let needsStartup = !canChat
 
+        let visibleText = {
+            let visible = transcriptText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return visible.isEmpty ? trimmed : visible
+        }()
+        // 最近一条带图用户消息：视觉模型追问时把它的像素重新挂上。
+        let lastUserImagesID =
+            messages.last { $0.role == "user" && !$0.userImagePaths.isEmpty }?.id
+
         // 被「停止」的空回答留在界面上，但不该当成一轮空 assistant 发给引擎。
-        var turns: [ChatTurn] =
-            messages
-            .filter { !$0.streaming && !$0.content.isEmpty }
-            .map { ChatTurn(role: $0.role, content: $0.content) }
+        var turns: [ChatTurn] = []
+        for message in messages where !message.streaming {
+            guard !message.turnContent.isEmpty || !message.attachmentNames.isEmpty else { continue }
+            var turn = ChatTurn(role: message.role, content: message.turnContent)
+            if activeModelSupportsVision, message.id == lastUserImagesID {
+                turn.imageURLs = imageURLs(for: message.userImagePaths)
+            }
+            turns.append(turn)
+        }
         var openingTurn = ChatTurn(role: "user", content: trimmed)
         if activeModelSupportsVision {
             // 工具结果里只有路径，历史回放拿不到像素。视觉模型提问时把最近
-            // 一组成品重新挂上，它才能接着回答「这张图哪里不对」。
-            openingTurn.imageURLs = imageURLs(for: recentGeneratedImagePaths())
+            // 一组成品与这一问附上的图片一起挂上。
+            openingTurn.imageURLs =
+                imageURLs(for: recentGeneratedImagePaths()) + imageURLs(for: userImagePaths)
         }
         turns.append(openingTurn)
 
-        messages.append(ChatMessage(role: "user", content: trimmed, model: selectedModel, createdAt: Date()))
+        messages.append(
+            ChatMessage(
+                role: "user", content: visibleText, model: selectedModel, createdAt: Date(),
+                attachmentNames: attachmentNames,
+                engineContent: trimmed == visibleText ? nil : trimmed,
+                userImagePaths: userImagePaths))
         messages.append(
             ChatMessage(role: "assistant", content: "", model: selectedModel, createdAt: Date(), streaming: true))
         streamMessageID = messages[messages.count - 1].id.uuidString
@@ -533,13 +567,12 @@ final class ChatRunner {
             // 自己负责把这一轮存盘。
             guard self.sendGeneration == generation else { return }
             generating = false
-            // 读者早就切走了：回答落回它自己的会话，再冒一条通知告诉他落在哪。
+            // 读者早就切走了：回答落回它自己的会话，行尾点一颗未读圆点。
+            // 不再弹「已在后台生成完成」——会话列表就在旁边，圆点更安静。
             if let finished = self.persistStreamingConversation(),
-                let thread = self.threads.first(where: { $0.id == finished })
+                finished != self.session.currentThreadID
             {
-                self.toast(
-                    L10n.format("「%@」已在后台生成完成", thread.title),
-                    kind: .success)
+                self.session.unreadThreadIDs.insert(finished)
             }
         }
     }
@@ -560,7 +593,35 @@ final class ChatRunner {
 
     /// 当前选中的模型能不能读图（图进文出）。它决定画完的成品要不要以
     /// 像素形式回传给模型；纯文本模型只能拿到路径，硬塞 image_url 会 400。
-    var activeModelSupportsVision: Bool { activeModel?.supportsVision ?? false }
+    ///
+    /// 引擎模型列表还没扫出来时（刚启动、刚换引擎），`activeModel` 是 nil；
+    /// 这时不能直接判成纯文本，否则截图附件会被误拒。按本机模型目录里的
+    /// `vision_config` / mmproj 再补一次，结果按引擎 + 模型缓存。
+    var activeModelSupportsVision: Bool {
+        if let model = activeModel {
+            if model.supportsVision { return true }
+            if let path = model.path, !path.isEmpty {
+                return cachedVision(path)
+            }
+        }
+        let key = "scan|\(activeEngine.rawValue)|\(selectedModel)"
+        if let cached = visionCache[key] { return cached }
+        let scanned = LocalEngineModels.scan(
+            engine: activeEngine,
+            directory: FlashCatPaths.modelsDirectory(activeEngine))
+        let vision = scanned.first { $0.id == selectedModel }?.supportsVision ?? false
+        visionCache[key] = vision
+        return vision
+    }
+
+    private var visionCache: [String: Bool] = [:]
+
+    private func cachedVision(_ path: String) -> Bool {
+        if let cached = visionCache[path] { return cached }
+        let vision = LocalEngineModels.capabilities(at: path).contains("vision")
+        visionCache[path] = vision
+        return vision
+    }
 
     /// 还在前台的就照旧写当前会话。
     /// - Returns: 写回的是后台那一段时返回它的 `threadID`，前台返回 nil。
@@ -627,7 +688,12 @@ final class ChatRunner {
                 name: (path as NSString).lastPathComponent,
                 pixelSize: ImageStore.pixelSize(atPath: path))
         }
-        send(lastUser.content, attachment: attachment)
+        send(
+            lastUser.engineContent ?? lastUser.content,
+            attachment: attachment,
+            transcriptText: lastUser.content,
+            attachmentNames: lastUser.attachmentNames,
+            userImagePaths: lastUser.userImagePaths)
     }
 
     /// 切走会话：把正在生成的那一段连人带消息搬到后台，别中断、也别写串。
@@ -675,6 +741,7 @@ final class ChatRunner {
     }
 
     func openThread(_ thread: ChatThread) {
+        session.unreadThreadIDs.remove(thread.id)
         // 点回正在生成的那一段：把后台那份接回前台，后面的分片继续往这里写。
         if let running = background, running.threadID == thread.id {
             background = nil
@@ -712,7 +779,10 @@ final class ChatRunner {
                 videoSourcePath: $0.videoSourcePath,
                 videoLastFramePath: $0.videoLastFramePath,
                 videoReferenceImagePaths: $0.videoReferenceImagePaths,
-                videoReferenceClipPaths: $0.videoReferenceClipPaths)
+                videoReferenceClipPaths: $0.videoReferenceClipPaths,
+                attachmentNames: $0.attachmentNames,
+                engineContent: $0.engineContent,
+                userImagePaths: $0.userImagePaths)
         }
         threadID = thread.id
         // 打开的这段对话就是「当前对话」：不写回 `conversation.json` 的话，
@@ -764,6 +834,7 @@ final class ChatRunner {
     func deleteThread(_ thread: ChatThread) {
         // 删掉的正是在生成的那段（前台或后台）：先停掉，别让它跑完再把这条写回来。
         if generating, thread.id == generatingThreadID { cancelGeneration() }
+        session.unreadThreadIDs.remove(thread.id)
         history.delete(id: thread.id)
         drafts.forget(thread.id)
         threads = history.load()
@@ -774,11 +845,12 @@ final class ChatRunner {
             conversation.clear()
             threadID = Self.newThreadID()
         }
-        toast(L10n.format("已删除对话「%@」", thread.title))
+        // 会话行已经从列表里消失，这本身就是回执；不再补一张浮层卡片。
     }
 
     func clearThreads() {
         if generating { cancelGeneration() }
+        session.unreadThreadIDs.removeAll()
         for thread in threads {
             history.delete(id: thread.id)
             drafts.forget(thread.id)
@@ -797,6 +869,6 @@ final class ChatRunner {
         settings.setMaxTokens(0)
         settings.setSystemPrompt("")
         settings.setThinkingMode(.automatic)
-        toast("已恢复默认对话参数", transient: true)
+        // 回执由面板上的「恢复默认」按钮自己变对勾，不再弹 toast。
     }
 }

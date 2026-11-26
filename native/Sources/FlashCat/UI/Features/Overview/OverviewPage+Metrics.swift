@@ -30,52 +30,28 @@ extension OverviewPage {
         kpiCard(
             title: "平均解码",
             value: rateText(averageRate),
-            unit: averageRate > 0 ? "tok/s" : nil
-        ) {
-            if let averageBadge {
-                OverviewBadge(text: averageBadge, tint: DS.accent)
-            }
-        }
+            unit: averageRate > 0 ? "tok/s" : nil)
     }
 
     var ttftMetricCard: some View {
         kpiCard(
             title: "首字延迟",
             value: ttftText,
-            unit: ttftText == "—" ? nil : "ms"
-        ) {
-            if ttftText != "—" {
-                OverviewBadge(
-                    text: (ttftReading.milliseconds ?? 0) <= 250 ? "极速" : "正常",
-                    tint: DS.ok,
-                    dot: true)
-            }
-        }
+            unit: ttftText == "—" ? nil : "ms")
     }
 
     var prefillMetricCard: some View {
         let hasValue = prefillText != "—"
-        let isLivePrefill = prefillReading.origin == .engineLive
         return kpiCard(
             title: "预填充",
             value: prefillText,
-            unit: hasValue ? "tok/s" : nil
-        ) {
-            if hasValue {
-                OverviewBadge(
-                    text: isLivePrefill ? "LIVE" : "稳定",
-                    tint: isLivePrefill ? DS.ok : DS.accentBlue,
-                    dot: isLivePrefill,
-                    icon: isLivePrefill ? nil : "arrow.up.right")
-            }
-        }
+            unit: hasValue ? "tok/s" : nil)
     }
 
-    func kpiCard<Badge: View>(
+    func kpiCard(
         title: String,
         value: String,
-        unit: String?,
-        @ViewBuilder badge: () -> Badge
+        unit: String?
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 6) {
@@ -84,7 +60,6 @@ extension OverviewPage {
                     .foregroundStyle(DS.text3)
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                badge()
             }
 
             Spacer(minLength: 0)
@@ -117,25 +92,19 @@ extension OverviewPage {
             compactMetricRow(
                 title: "平均解码",
                 value: rateText(averageRate),
-                unit: averageRate > 0 ? "tok/s" : nil,
-                badge: averageBadge,
-                badgeTint: DS.accent
+                unit: averageRate > 0 ? "tok/s" : nil
             )
             DSDivider()
             compactMetricRow(
                 title: "首字延迟",
                 value: ttftText,
-                unit: ttftText == "—" ? nil : "ms",
-                badge: ttftText == "—" ? nil : ((ttftReading.milliseconds ?? 0) <= 250 ? "极速" : "正常"),
-                badgeTint: DS.ok
+                unit: ttftText == "—" ? nil : "ms"
             )
             DSDivider()
             compactMetricRow(
                 title: "预填充",
                 value: prefillText,
-                unit: prefillText == "—" ? nil : "tok/s",
-                badge: prefillText == "—" ? nil : (prefillReading.origin == .engineLive ? "LIVE" : "稳定"),
-                badgeTint: prefillReading.origin == .engineLive ? DS.ok : DS.accentBlue
+                unit: prefillText == "—" ? nil : "tok/s"
             )
         }
         .overviewCard(padding: 0)
@@ -144,9 +113,7 @@ extension OverviewPage {
     func compactMetricRow(
         title: String,
         value: String,
-        unit: String?,
-        badge: String?,
-        badgeTint: Color
+        unit: String?
     ) -> some View {
         HStack(spacing: 12) {
             Text(L10n.t(title))
@@ -154,10 +121,6 @@ extension OverviewPage {
                 .foregroundStyle(DS.text3)
             Spacer(minLength: 8)
             HStack(alignment: .firstTextBaseline, spacing: 4) {
-                if let badge {
-                    OverviewBadge(text: badge, tint: badgeTint)
-                        .padding(.trailing, 4)
-                }
                 Text(value)
                     .font(DS.Font.number(22, weight: .bold))
                     .foregroundStyle(value == "—" ? DS.text4 : DS.text)

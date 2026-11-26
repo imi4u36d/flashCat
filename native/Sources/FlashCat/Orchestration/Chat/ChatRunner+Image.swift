@@ -189,24 +189,40 @@ extension ChatRunner {
     ///
     /// 整轮共用一条占位消息：正文由最后一轮聊天写，图片按张追加，阶段行显示
     /// 「正在画第 2/3 张 · 去噪 8/20」。引擎换模型的几十秒里，用户看得见在做什么。
-    func sendWithImageTool(_ text: String, imageModel: EngineModel) {
+    func sendWithImageTool(
+        _ text: String,
+        imageModel: EngineModel,
+        transcriptText: String? = nil,
+        attachmentNames: [String] = [],
+        userImagePaths: [String] = []
+    ) {
         let chatModel = selectedModel
         let needsStartup = !canChat
         let turnStarted = Date()
         // 能力在发车前定死：画图过程中 activeModel 会跟着换到图像模型，
         // 回来后再查就变成「图像模型能不能读图」了。
         let seesImages = activeModelSupportsVision
+        let visibleText = {
+            let visible = transcriptText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return visible.isEmpty ? text : visible
+        }()
 
         var sent = conversationTurns()
         var openingTurn = ChatTurn(role: "user", content: text)
         if seesImages {
             // 历史里的工具结果只有路径，补上最近一组成品的像素，模型才能
-            // 接住「把刚才那张改一下」这类追问。
-            openingTurn.imageURLs = imageURLs(for: recentGeneratedImagePaths())
+            // 接住「把刚才那张改一下」这类追问；这一问附的图片也一起挂上。
+            openingTurn.imageURLs =
+                imageURLs(for: recentGeneratedImagePaths()) + imageURLs(for: userImagePaths)
         }
         sent.append(openingTurn)
 
-        messages.append(ChatMessage(role: "user", content: text, model: chatModel, createdAt: Date()))
+        messages.append(
+            ChatMessage(
+                role: "user", content: visibleText, model: chatModel, createdAt: Date(),
+                attachmentNames: attachmentNames,
+                engineContent: text == visibleText ? nil : text,
+                userImagePaths: userImagePaths))
         messages.append(
             ChatMessage(role: "assistant", content: "", model: chatModel, createdAt: Date(), streaming: true))
         streamMessageID = messages[messages.count - 1].id.uuidString
@@ -636,6 +652,8 @@ extension ChatRunner {
     /// 什么，用户追问「第二张换个光线」时它接不上。
     func conversationTurns() -> [ChatTurn] {
         var turns: [ChatTurn] = []
+        let lastUserImagesID =
+            messages.last { $0.role == "user" && !$0.userImagePaths.isEmpty }?.id
         for message in messages where !message.streaming {
             if !message.toolCalls.isEmpty {
                 let answered = Set(message.toolResults.map(\.callID))
@@ -653,8 +671,12 @@ extension ChatRunner {
                     continue
                 }
             }
-            guard !message.content.isEmpty else { continue }
-            turns.append(ChatTurn(role: message.role, content: message.content))
+            guard !message.turnContent.isEmpty || !message.attachmentNames.isEmpty else { continue }
+            var turn = ChatTurn(role: message.role, content: message.turnContent)
+            if activeModelSupportsVision, message.id == lastUserImagesID {
+                turn.imageURLs = imageURLs(for: message.userImagePaths)
+            }
+            turns.append(turn)
         }
         return turns
     }

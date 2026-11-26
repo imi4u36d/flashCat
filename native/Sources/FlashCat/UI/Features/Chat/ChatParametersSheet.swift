@@ -20,6 +20,7 @@ struct ChatParametersSheet: View {
     @AppStorage("chat.system") private var storedSystemPrompt = ""
     @AppStorage("thinkingMode") private var storedThinkingMode = ThinkingMode.automatic.rawValue
     @AppStorage("reasoningEffort") private var storedReasoningEffort = ReasoningEffort.medium.rawValue
+    @StateObject private var resetFlash = ActionFlashState()
 
     private var thinkingMode: ThinkingMode {
         ThinkingMode(rawValue: storedThinkingMode) ?? .automatic
@@ -70,8 +71,8 @@ struct ChatParametersSheet: View {
         .padding(.vertical, 14)
     }
 
-    /// 思考设置从输入卡底排收进这里：底排只留模型、上下文与发送，
-    /// 思考模式与等级是「偶尔调一次」的参数，不该和每轮都要点的发送键抢位置。
+    /// 思考设置在这里和输入卡底排共用同一组 UserDefaults：底排给的是
+    /// 每轮顺手切档的快捷入口，这里保留完整的模式 + 等级说明。
     private var thinkingCard: some View {
         Card("思考", subtitle: "回答前是否输出推理过程") {
             VStack(spacing: 12) {
@@ -190,8 +191,13 @@ struct ChatParametersSheet: View {
 
     private var footer: some View {
         HStack(spacing: 10) {
-            Button("恢复默认") { state.resetChatParameters() }
-                .buttonStyle(.ds(.secondary, size: .regular))
+            Button {
+                state.resetChatParameters()
+                resetFlash.succeed()
+            } label: {
+                ActionFlashLabel(title: "恢复默认", flash: resetFlash.value)
+            }
+            .buttonStyle(.ds(.secondary, size: .regular))
             Spacer(minLength: 0)
             Button("完成") { dismiss() }
                 .buttonStyle(.ds(.primary, size: .regular))

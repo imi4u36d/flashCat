@@ -15,29 +15,26 @@ import SwiftUI
 struct EnginesPage: View {
     @ObservedObject var state: AppState
     @ObservedObject var installs: EngineInstallCenter
+    /// 壳层在布局这一拍量到的详情区尺寸；宽 / 窄版式直接由它决定。
+    let pageSize: CGSize
 
     @State private var configuring: EngineID?
     @State private var pendingRemoval: EngineID?
     @State private var gridColumns = 0
     @State private var refreshing = false
+    @State private var refreshHovering = false
+    @StateObject private var refreshFlash = ActionFlashState()
+    @StateObject private var endpointFlash = ActionFlashState()
+    /// 刷新失败时的原因，挂在刷新钮的悬停提示上；成功时清空。
+    @State private var refreshNote: String?
     @State private var hoveringEngine: EngineID?
-    @State private var isWide = true
+
+    private var isWide: Bool {
+        pageSize.width >= Console.compactContentWidth
+    }
 
     private static let cardMinWidth: CGFloat = 400
     private static let cardSpacing: CGFloat = 14
-
-    private var installedCount: Int {
-        EngineCatalog.allIDs.filter { state.engineIsInstalled($0) }.count
-    }
-
-    private var runningCount: Int {
-        state.isRunning ? 1 : 0
-    }
-
-    private var activeBusy: Bool {
-        let phase = installs.phases[state.activeEngine] ?? .idle
-        return phase.isBusy || installs.building == state.activeEngine
-    }
 
     private var loadedModelID: String {
         if !state.selectedModel.isEmpty { return state.selectedModel }
@@ -46,32 +43,41 @@ struct EnginesPage: View {
 
     var body: some View {
         let horizontal = Console.pageHorizontalPadding(compact: !isWide)
-        VStack(alignment: .leading, spacing: 0) {
-            header(horizontal: horizontal)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: Console.pageSectionGap) {
-                    if state.isRunning {
-                        runtimeSection
-                    }
-                    catalogSection
+        ScrollView {
+            VStack(alignment: .leading, spacing: Console.pageSectionGap) {
+                if state.isRunning {
+                    runtimeSection
                 }
-                .padding(.horizontal, horizontal)
-                .padding(.top, 4)
-                .padding(.bottom, Console.contentBottomInset)
+                catalogSection
             }
-            .scrollIndicators(.never)
-            .dsTrackColumns(
-                $gridColumns,
-                minWidth: Self.cardMinWidth,
-                spacing: Self.cardSpacing,
-                maxColumns: 2)
+            .padding(.horizontal, horizontal)
+            .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
+            .padding(.bottom, Console.contentBottomInset)
         }
+        .scrollIndicators(.never)
+        .dsTrackColumns(
+            $gridColumns,
+            minWidth: Self.cardMinWidth,
+            spacing: Self.cardSpacing,
+            maxColumns: 2)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onGeometryChange(for: Bool.self) { proxy in
-            proxy.size.width >= Console.compactContentWidth
-        } action: { wide in
-            isWide = wide
+        .toolbar {
+            ToolbarItem(id: DSToolbarSlot.title, placement: .navigation) {
+                DSToolbarPageTitle(
+                    title: "引擎")
+                    .padding(.leading, 15)
+            }
+            .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(id: DSToolbarSlot.anchor, placement: .principal) {
+                DSToolbarAnchor()
+            }
+            .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(id: DSToolbarSlot.actions, placement: .primaryAction) {
+                DSToolbarActionRow(state: state, compact: !isWide) {
+                    enginesToolbarAction
+                }
+            }
+            .sharedBackgroundVisibility(.hidden)
         }
         .dsPageColumn()
         .task {
@@ -91,12 +97,9 @@ struct EnginesPage: View {
             Button(L10n.t("删除"), role: .destructive) {
                 guard let id = pendingRemoval else { return }
                 pendingRemoval = nil
+                // 删除结果直接反映在引擎卡的版本与安装态上，不再补一张回执卡。
                 Task { @MainActor in
-                    if await installs.removeRuntime(id) {
-                        state.toast(L10n.format("%@ 运行时已删除", id.displayName))
-                    } else {
-                        state.toast(L10n.format("%@ 没有可删除的运行时", id.displayName))
-                    }
+                    _ = await installs.removeRuntime(id)
                 }
             }
             Button(L10n.t("取消"), role: .cancel) { pendingRemoval = nil }
@@ -110,103 +113,74 @@ struct EnginesPage: View {
         }
     }
 
-    // MARK: - Header
+    /// 工具栏上的「检查更新」。刷新完成用图标短暂变成对勾 / 感叹号收口，
+    /// 有上游新版时在文字后补一枚计数角标。
+    @ViewBuilder
+    private var enginesToolbarAction: some View {
+        let updates = availableUpdateCount
 
-    private func header(horizontal: CGFloat) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) {
-                headerIdentity
-                Spacer(minLength: 12)
-                headerControls
-            }
-            .frame(height: Console.pageHeaderHeight)
-
-            VStack(alignment: .leading, spacing: 9) {
-                HStack(spacing: 8) {
-                    headerIdentity
-                    Spacer(minLength: 0)
-                }
-                .frame(minHeight: Console.pageHeaderHeight)
-                HStack(spacing: 8) {
-                    Spacer(minLength: 0)
-                    headerControls
-                }
-            }
-        }
-        .padding(.horizontal, horizontal)
-        .padding(.top, Console.scrollTopInset(sidebarShown: state.showsSidebar))
-        .padding(.bottom, 10)
-        .background(WindowDragArea())
-    }
-
-    private var headerIdentity: some View {
-        HStack(spacing: 9) {
-            Text(L10n.t("引擎"))
-                .font(DS.Font.prose(20, weight: .bold))
-                .tracking(-0.3)
-                .foregroundStyle(DS.text)
-                .fixedSize()
-
-            summaryPill
-        }
-        .fixedSize()
-    }
-
-    private var summaryPill: some View {
-        let live = runningCount > 0
-        return HStack(spacing: 7) {
-            DSStatusDot(color: live ? DS.ok : DS.text4, live: live, size: 6)
-            Text(
-                L10n.format(
-                    "%lld / %lld 已安装",
-                    Int64(installedCount), Int64(EngineCatalog.allIDs.count))
-            )
-            .font(.system(size: 11.5, weight: .medium))
-            .foregroundStyle(DS.text2)
-            .monospacedDigit()
-
-            Text(verbatim: "·")
-                .font(DS.Font.prose(11))
-                .foregroundStyle(DS.text4)
-
-            Text(L10n.format("%lld 运行中", Int64(runningCount)))
-                .font(.system(size: 11.5, weight: live ? .semibold : .medium))
-                .foregroundStyle(live ? DS.ok : DS.text3)
-                .monospacedDigit()
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 24)
-        .dsGlassPill()
-        .fixedSize()
-    }
-
-    private var headerControls: some View {
-        refreshButton
-    }
-
-    private var refreshButton: some View {
-        Button(action: refreshEngines) {
-            Group {
-                if refreshing {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(DS.text2)
+        if isWide {
+            Button(action: refreshEngines) {
+                HStack(spacing: 5) {
+                    if refreshing {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        ActionFlashIcon(
+                            systemName: "arrow.clockwise",
+                            flash: refreshFlash.value,
+                            size: 12,
+                            baseColor: DS.text2)
+                    }
+                    Text(L10n.t("检查更新"))
+                    if updates > 0 {
+                        DSBadge(count: updates)
+                    }
                 }
             }
-            .frame(width: 28, height: 28)
-            .background(DS.rect(DS.Radius.md).fill(DS.surface))
-            .overlay(
-                DS.rect(DS.Radius.md)
-                    .strokeBorder(refreshing ? DS.accent.opacity(0.4) : DS.line2, lineWidth: 1))
-            .contentShape(DS.rect(DS.Radius.md))
+            .buttonStyle(.ds(.secondary, size: .regular))
+            .disabled(refreshing)
+            .help(refreshHelp)
+        } else {
+            Button(action: refreshEngines) {
+                Group {
+                    if refreshing {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        ActionFlashIcon(
+                            systemName: "arrow.clockwise",
+                            flash: refreshFlash.value,
+                            size: 12,
+                            baseColor: updates > 0 ? DS.accent : DS.text2)
+                    }
+                }
+                .frame(width: 28, height: 28)
+                .background(DS.rect(DS.Radius.md).fill(DS.surface))
+                .overlay(DS.rect(DS.Radius.md).strokeBorder(DS.line2, lineWidth: 1))
+                .overlay(alignment: .topTrailing) {
+                    if updates > 0 {
+                        Circle().fill(DS.accent)
+                            .frame(width: 6, height: 6)
+                            .padding(4)
+                    }
+                }
+                .contentShape(DS.rect(DS.Radius.md))
+            }
+            .buttonStyle(.plain)
+            .disabled(refreshing)
+            .help(refreshHelp)
         }
-        .buttonStyle(DSPressStyle())
-        .disabled(refreshing)
-        .help(L10n.t(refreshing ? "正在检查更新…" : "刷新并检查引擎更新"))
-        .accessibilityLabel(L10n.t("刷新并检查引擎更新"))
+    }
+
+    private var availableUpdateCount: Int {
+        EngineCatalog.allIDs.filter { id in
+            state.engineIsInstalled(id) && installs.upstream[id]?.newerRelease != nil
+        }.count
+    }
+
+    private var refreshHelp: String {
+        if refreshing { return L10n.t("正在检查更新…") }
+        if let refreshNote { return refreshNote }
+        return L10n.t("刷新并检查引擎更新")
     }
 
     // MARK: - Runtime hero
@@ -214,20 +188,14 @@ struct EnginesPage: View {
     private var runtimeSection: some View {
         EngineRuntimeStrip(
             engine: state.activeEngine,
-            version: installedVersion(state.activeEngine).map(versionText),
-            status: state.serverState,
             port: state.port,
             modelName: loadedModelID.isEmpty ? "" : state.shortModelName(loadedModelID),
-            busy: activeBusy,
+            copyFlash: endpointFlash.value,
             actions: EngineRuntimeStrip.Actions(
-                configure: { configuring = state.activeEngine },
                 logs: { state.section = .logs },
-                restart: { state.restartService() },
-                stop: { state.toggleService() },
                 copyEndpoint: {
-                    state.copy(
-                        "127.0.0.1:\(state.port)",
-                        label: L10n.format("%@ 监听端点已复制", state.activeEngine.displayName))
+                    state.copy("127.0.0.1:\(state.port)")
+                    endpointFlash.succeed()
                 }
             )
         )
@@ -337,12 +305,6 @@ struct EnginesPage: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .help(L10n.t(id.descriptor.summary))
 
-            FlowLayout(spacing: 6, lineSpacing: 6) {
-                ForEach(id.tagTexts, id: \.self) { text in
-                    EngineTag(text: text)
-                }
-            }
-
             if let failureMessage, !busy {
                 HStack(alignment: .top, spacing: 4) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -416,9 +378,9 @@ struct EnginesPage: View {
             return "\(versionText(version)) · \(license)"
         }
         if let version = knownUpstreamVersion(id) {
-            return L10n.format("最新 %@ · 未安装", versionText(version))
+            return L10n.format("最新 %@", versionText(version))
         }
-        return L10n.t("未安装")
+        return license
     }
 
     @ViewBuilder
@@ -454,7 +416,7 @@ struct EnginesPage: View {
                     systemName: "slider.horizontal.3",
                     help: "配置与调优",
                     size: 28,
-                    style: .outlined
+                    style: .ghost
                 ) {
                     configuring = id
                 }
@@ -465,7 +427,7 @@ struct EnginesPage: View {
                         systemName: "arrow.clockwise",
                         help: "重启引擎",
                         size: 28,
-                        style: .outlined
+                        style: .ghost
                     ) {
                         state.restartService()
                     }
@@ -526,20 +488,14 @@ struct EnginesPage: View {
             )
             .opacity(hoveringEngine == id ? 1 : 0.5)
         } content: {
-            Button(L10n.t("配置…")) {
-                configuring = id
-            }
-            .disabled(versions.isEmpty)
-
             if let repository = id.descriptor.upstreamRepository,
                 let url = URL(string: "https://github.com/\(repository)")
             {
                 Button(L10n.t("打开上游仓库")) {
                     NSWorkspace.shared.open(url)
                 }
+                Divider()
             }
-
-            Divider()
 
             Button(
                 active && state.isRunning
@@ -604,16 +560,18 @@ struct EnginesPage: View {
             await installs.checkUpstream(force: true)
             let failures = installs.upstreamErrors
             if failures.isEmpty {
-                state.toast(L10n.t("已刷新引擎目录，全部版本均与远端同步"))
+                refreshNote = nil
+                refreshFlash.succeed()
             } else {
                 let first =
                     EngineCatalog.allIDs.compactMap { id in
                         failures[id].map { "\(id.displayName)：\($0)" }
                     }.first ?? ""
-                state.toast(
-                    L10n.format(
-                        "已检查引擎更新，%lld 个引擎失败：%@",
-                        Int64(failures.count), first))
+                // 失败原因跟着按钮走：图标变感叹号，悬停就能读到第一个错误。
+                refreshNote = L10n.format(
+                    "已检查引擎更新，%lld 个引擎失败：%@",
+                    Int64(failures.count), first)
+                refreshFlash.warn()
             }
         }
     }
@@ -625,13 +583,8 @@ struct EnginesPage: View {
     }
 
     private func installEngine(_ id: EngineID) {
-        guard installs.building == nil else {
-            state.toast(
-                L10n.format(
-                    "正在构建 %@，完成后再试",
-                    installs.building?.displayName ?? L10n.t("引擎")))
-            return
-        }
+        // 正在构建时按钮本身是禁用的，这里只防御其他入口；不再弹提示。
+        guard installs.building == nil else { return }
         // 从引擎的最新 GitHub Release 构建。随包索引不能分发引擎二进制，
         // 走 pack 索引只会解析到不存在的本地文件。
         Task { @MainActor in
@@ -664,22 +617,6 @@ struct EnginesPage: View {
 }
 
 // MARK: - Small parts
-
-/// 目录卡上的微标签：格式与能力，一行可换行。
-struct EngineTag: View {
-    var text: String
-
-    var body: some View {
-        Text(L10n.t(text))
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(DS.text2)
-            .padding(.horizontal, 7)
-            .frame(height: 20)
-            .background(DS.rect(DS.Radius.sm).fill(DS.bg))
-            .overlay(DS.rect(DS.Radius.sm).strokeBorder(DS.line, lineWidth: 1))
-            .fixedSize()
-    }
-}
 
 /// 安装进度条：3pt 高、蓝→靛→紫的短渐变，和目录卡的强调色一致。
 struct EngineProgressBar: View {
@@ -729,11 +666,6 @@ struct EngineGlyph: View {
             }
         }
         .frame(width: size, height: size)
-        // 官方图标本身的配色不动，用一圈引擎色描边把「这台是谁」带出来。
-        .overlay {
-            RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
-                .strokeBorder(color.opacity(0.28), lineWidth: 1)
-        }
         .accessibilityHidden(true)
     }
 }

@@ -5,9 +5,10 @@ import FlashCatCore
 import FlashCatKit
 import SwiftUI
 
-// MARK: - Floating toast
+// MARK: - Blocking notice
 
-/// 通知出口：`UIStateStore.toast` 发布的通知浮在窗口左下角。
+/// 阻塞通知出口：只有错误与「现在不能做」的警告会浮在窗口左下角。
+/// 成功 / 信息回执一律走控件原位图标（`ActionFlash`），不再占用这里。
 struct FloatingNoticeToast: View {
     let notice: IslandNotice
     var dismiss: () -> Void

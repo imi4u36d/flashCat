@@ -80,34 +80,6 @@ private struct SplitLayout: Layout {
 
 // MARK: - KPI & Status bits
 
-struct OverviewBadge: View {
-    var text: String
-    var tint: Color
-    var dot: Bool = false
-    var icon: String? = nil
-
-    var body: some View {
-        HStack(spacing: 3) {
-            if dot {
-                Circle().fill(tint).frame(width: 4, height: 4)
-            }
-            if let icon {
-                Image(systemName: icon)
-                    .font(.system(size: 8.5, weight: .bold))
-            }
-            Text(L10n.t(text))
-                .font(.system(size: 9.5, weight: .semibold))
-                .tracking(0.4)
-        }
-        .foregroundStyle(tint)
-        .padding(.horizontal, 5)
-        .frame(height: 16)
-        .background(DS.rect(5).fill(tint.opacity(0.10)))
-        .overlay(DS.rect(5).strokeBorder(tint.opacity(0.22), lineWidth: 1))
-        .fixedSize()
-    }
-}
-
 struct OverviewTintPill: View {
     var text: String
     var tint: Color
@@ -124,7 +96,6 @@ struct OverviewTintPill: View {
         .padding(.horizontal, 8)
         .frame(height: 22)
         .background(Capsule().fill(tint.opacity(0.10)))
-        .overlay(Capsule().strokeBorder(tint.opacity(0.22), lineWidth: 1))
         .fixedSize()
     }
 }
@@ -185,40 +156,5 @@ private struct OverviewTintActionBody: View {
             .animation(reduceMotion ? nil : DS.Motion.snappy, value: configuration.isPressed)
             .animation(reduceMotion ? nil : DS.Motion.snappy, value: active)
             .onHover { hovering = $0 }
-    }
-}
-
-struct OverviewStatusPill: View {
-    var engine: String
-    var port: Int?
-    var stage: String
-    var tint: Color
-    var live: Bool
-
-    var body: some View {
-        HStack(spacing: 6) {
-            DSStatusDot(color: tint, live: live, size: 6)
-            Text(engine)
-                .font(.system(size: 11.5, weight: .semibold))
-                .foregroundStyle(DS.text)
-            if let port {
-                Text(verbatim: "·")
-                    .font(DS.Font.prose(11))
-                    .foregroundStyle(DS.text4)
-                Text(verbatim: "127.0.0.1:\(port)")
-                    .font(DS.Font.mono(10.5))
-                    .foregroundStyle(DS.text2)
-            }
-            Text(verbatim: "·")
-                .font(DS.Font.prose(11))
-                .foregroundStyle(DS.text4)
-            Text(stage)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(tint)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 24)
-        .dsGlassPill()
     }
 }

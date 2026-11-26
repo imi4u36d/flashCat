@@ -160,9 +160,8 @@ final class NativeUITests: XCTestCase {
     }
 
     func testPageOrderAndShortcutsMatchApp() throws {
-        XCTAssertEqual(Page.primaryPages, [.chat, .lab])
-        XCTAssertEqual(Page.consolePages, [.overview, .models, .engines, .logs, .settings])
-        XCTAssertEqual(Page.ordered, Page.primaryPages + Page.consolePages)
+        XCTAssertEqual(Page.sidebarPages, [.chat, .lab, .overview, .models, .engines, .logs])
+        XCTAssertEqual(Page.ordered, Page.sidebarPages + [.settings])
         XCTAssertEqual(Set(Page.ordered), Set(Page.allCases))
         XCTAssertEqual(Page.ordered.count, Page.allCases.count)
 

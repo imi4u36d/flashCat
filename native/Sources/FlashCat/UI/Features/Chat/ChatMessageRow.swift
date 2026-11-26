@@ -12,8 +12,8 @@ import UniformTypeIdentifiers
 // MARK: - Message row
 
 /// 一条消息：用户消息是右侧淡色气泡，助手消息直接铺在画布上——上方是思考行，
-/// 中间是 Markdown / 图片 / 视频，下面悬停时浮出复制与重新生成。版式对齐
-/// Splash 的 `transcript.js`。
+/// 中间是 Markdown / 图片 / 视频，下面悬停时浮出操作行（用户侧复制 / 编辑重发，
+/// 助手侧复制 / 从这里分支 / 重新生成）。版式对齐 Splash 的 `transcript.js`。
 struct MessageRow: View, Equatable {
     let message: ChatMessage
     let modelName: String
@@ -22,6 +22,8 @@ struct MessageRow: View, Equatable {
     let maxBubbleWidth: CGFloat
     let isLast: Bool
     let canRegenerate: Bool
+    /// 生成期间不能分叉（新会话要复制到这条为止的历史，后台还在写会拿不准边界）。
+    let canBranch: Bool
     var animateStreaming: Bool = false
     let onEdit: () -> Void
     let onBranch: () -> Void
@@ -35,6 +37,10 @@ struct MessageRow: View, Equatable {
     @State private var hoveringToggle = false
     @State private var copied = false
     @State private var seedCopied = false
+    /// 悬停过一次就允许选中：可选文本在 macOS 上是一份独立的可选择实现，
+    /// 整页历史都开着会让切会话的首帧多花两成时间；读老消息的人悬停一下
+    /// 就能选，之后这一行（直到被懒加载回收）一直可选。
+    @State private var hasHovered = false
     /// 等待行在开始后 0.5 秒才出现，快速回答不会闪一下「读取提示词」。
     @State private var waitingLineVisible = false
     @State private var copyResetTask: Task<Void, Never>?
@@ -47,6 +53,7 @@ struct MessageRow: View, Equatable {
             && lhs.maxBubbleWidth == rhs.maxBubbleWidth
             && lhs.isLast == rhs.isLast
             && lhs.canRegenerate == rhs.canRegenerate
+            && lhs.canBranch == rhs.canBranch
             && lhs.animateStreaming == rhs.animateStreaming
     }
 
@@ -81,6 +88,9 @@ struct MessageRow: View, Equatable {
         hoveringRow || isLast
     }
 
+    /// 最后一条与悬停过的消息允许选中文本，其余历史消息不开选择实现。
+    private var allowsSelection: Bool { isLast || hasHovered }
+
     private var waitingKey: String {
         "\(message.streaming)-\(contentEmpty)-\(reasoning.isEmpty)-\(startupStage ?? "")"
     }
@@ -95,6 +105,7 @@ struct MessageRow: View, Equatable {
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         .onHover { value in
+            if value, !hasHovered { hasHovered = true }
             withAnimation(reduceMotion ? nil : Motion.quick) { hoveringRow = value }
         }
         .task(id: waitingKey) {
@@ -127,7 +138,7 @@ struct MessageRow: View, Equatable {
                     .font(DS.Font.prose(15))
                     .lineSpacing(3)
                     .foregroundStyle(DS.text)
-                    .textSelection(.enabled)
+                    .textSelectable(allowsSelection)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 9.5)
@@ -138,8 +149,8 @@ struct MessageRow: View, Equatable {
                                 bubbleShape.fill(
                                     LinearGradient(
                                         colors: [
-                                            DS.accent.opacity(colorScheme == .dark ? 0.22 : 0.14),
-                                            DS.accent.opacity(colorScheme == .dark ? 0.14 : 0.08),
+                                            DS.accentFill.opacity(colorScheme == .dark ? 0.22 : 0.14),
+                                            DS.accentFill.opacity(colorScheme == .dark ? 0.14 : 0.08),
                                         ],
                                         startPoint: .topLeading,
                                         endPoint: .bottomTrailing)
@@ -177,22 +188,38 @@ struct MessageRow: View, Equatable {
                 help: copied ? L10n.t("已复制") : L10n.t("复制问题"),
                 tint: copied ? DS.accent : DS.text2,
                 action: copyMessage)
-            MessageActionButton(
-                systemName: "pencil",
-                help: L10n.t("编辑并重发"),
-                action: onEdit)
-            MessageActionButton(
-                systemName: "arrow.triangle.branch",
-                help: L10n.t("从这里分支"),
-                action: onBranch)
+            // 带附件的消息编辑后拿不回文件 / 图片上下文，先不给重发入口。
+            if message.attachmentNames.isEmpty, message.userImagePaths.isEmpty {
+                MessageActionButton(
+                    systemName: "pencil",
+                    help: L10n.t("编辑并重发"),
+                    action: onEdit)
+            }
         }
         .padding(.horizontal, 4)
         .frame(height: 24)
         .background(Capsule().fill(DS.surface))
-        .overlay(Capsule().strokeBorder(DS.line, lineWidth: 1))
     }
 
     @ViewBuilder private var userAttachments: some View {
+        if !message.attachmentNames.isEmpty {
+            chatAttachmentStrip
+        }
+        if !message.userImagePaths.isEmpty {
+            HStack(alignment: .top, spacing: 8) {
+                ForEach(Array(message.userImagePaths.prefix(3)), id: \.self) { path in
+                    imageThumb(path: path, maxWidth: 96)
+                }
+                if message.userImagePaths.count > 3 {
+                    Text(verbatim: "+\(message.userImagePaths.count - 3)")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(DS.text3)
+                        .padding(.horizontal, 7)
+                        .frame(height: 24)
+                        .background(Capsule().fill(DS.surface))
+                }
+            }
+        }
         if hasReferences {
             referenceMessageStrip
         } else if let path = message.imagePath {
@@ -207,6 +234,40 @@ struct MessageRow: View, Equatable {
         } else if let last = message.videoLastFramePath {
             labeledThumb(path: last, label: L10n.t("尾帧"), maxWidth: 120)
         }
+    }
+
+    /// 用户随提问附上的文件 / 图片名。只占一行胶囊，不把文件正文摊进气泡。
+    private var chatAttachmentStrip: some View {
+        HStack(spacing: 6) {
+            ForEach(Array(message.attachmentNames.prefix(2)), id: \.self) { name in
+                chatAttachmentChip(name)
+            }
+            if message.attachmentNames.count > 2 {
+                Text(verbatim: "+\(message.attachmentNames.count - 2)")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(DS.text3)
+                    .padding(.horizontal, 7)
+                    .frame(height: 24)
+                    .background(Capsule().fill(DS.surface))
+            }
+        }
+    }
+
+    private func chatAttachmentChip(_ name: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "paperclip")
+                .font(.system(size: 9, weight: .medium))
+            Text(name)
+                .font(.system(size: 10.5))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: 160, alignment: .leading)
+        }
+        .foregroundStyle(DS.text2)
+        .padding(.horizontal, 8)
+        .frame(height: 24)
+        .background(Capsule().fill(DS.surface))
+        .help(name)
     }
 
     // MARK: Assistant
@@ -224,12 +285,20 @@ struct MessageRow: View, Equatable {
             if hasMediaNotes {
                 mediaNotes
             }
-
-            if !isUser, !message.streaming, showsActions || isLast {
-                actionsRow
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // 操作行不进布局：悬停时在行间空隙（28pt）里浮出，正文不位移。
+        // 以前它按条件插进 VStack，悬停一下整段下面的消息都会跟着跳。
+        .overlay(alignment: .bottomLeading) {
+            if !message.streaming {
+                actionsRow
+                    .offset(y: 26)
+                    .opacity(showsActions ? 1 : 0)
+                    .allowsHitTesting(showsActions)
+                    .accessibilityHidden(!showsActions)
+                    .animation(reduceMotion ? nil : Motion.quick, value: showsActions)
+            }
+        }
     }
 
     private var assistantHeader: some View {
@@ -279,7 +348,8 @@ struct MessageRow: View, Equatable {
                     streaming: message.streaming,
                     isActive: animateStreaming,
                     fillsWidth: true,
-                    style: .chat)
+                    style: .chat,
+                    allowsSelection: allowsSelection)
             }
         }
     }
@@ -333,8 +403,7 @@ struct MessageRow: View, Equatable {
                 DSDivider().opacity(0.7)
                 reasoningBlock
             }
-            .background(DS.rect(12).fill(DS.surface.opacity(0.65)))
-            .overlay(DS.rect(12).strokeBorder(DS.line, lineWidth: 1))
+            .background(DS.rect(12).fill(DS.bg))
             .clipShape(DS.rect(12))
             .animation(reduceMotion ? nil : Motion.settle, value: isThinkingOpen)
         } else {
@@ -343,7 +412,6 @@ struct MessageRow: View, Equatable {
                     Capsule().fill(
                         hoveringToggle && !reasoning.isEmpty ? DS.raised : DS.pillFill)
                 )
-                .overlay(Capsule().strokeBorder(DS.line, lineWidth: 1))
                 .animation(reduceMotion ? nil : Motion.settle, value: isThinkingOpen)
         }
     }
@@ -422,7 +490,7 @@ struct MessageRow: View, Equatable {
             .font(.system(size: 13))
             .lineSpacing(3)
             .foregroundStyle(DS.text2)
-            .textSelection(.enabled)
+            .textSelectable(allowsSelection)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(maxHeight: latest ? 96 : nil, alignment: .bottom)
@@ -445,13 +513,11 @@ struct MessageRow: View, Equatable {
 
     private var detailsText: String {
         var parts: [String] = []
-        if !modelName.isEmpty { parts.append(modelName) }
         if let rate = message.rateText { parts.append(rate) }
         if message.tokenCount > 0 { parts.append("\(message.tokenCount) tokens") }
         if let ttft = message.firstTokenSeconds, ttft > 0 {
             parts.append(L10n.format("首字 %.0f ms", ttft * 1000))
         }
-        if message.interrupted { parts.append(L10n.t("已停止")) }
         return parts.joined(separator: " · ")
     }
 
@@ -463,6 +529,13 @@ struct MessageRow: View, Equatable {
                     help: copied ? L10n.t("已复制") : L10n.t("复制回答"),
                     tint: copied ? DS.accent : DS.text2,
                     action: copyMessage)
+            }
+
+            if canBranch {
+                MessageActionButton(
+                    systemName: "arrow.triangle.branch",
+                    help: L10n.t("从这里分支"),
+                    action: onBranch)
             }
 
             if isLast, canRegenerate {
@@ -485,9 +558,6 @@ struct MessageRow: View, Equatable {
             Spacer(minLength: 0)
         }
         .frame(height: 24)
-        .opacity(showsActions ? 1 : 0)
-        .allowsHitTesting(showsActions)
-        .animation(reduceMotion ? nil : Motion.quick, value: showsActions)
     }
 
     // MARK: Media
@@ -564,10 +634,6 @@ struct MessageRow: View, Equatable {
             }
             .frame(maxWidth: maxWidth, maxHeight: maxHeight)
             .clipShape(DS.rect(DS.Radius.lg))
-            .overlay {
-                DS.rect(DS.Radius.lg)
-                    .strokeBorder(DS.line, lineWidth: 1)
-            }
             .onTapGesture { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
             .help(L10n.t("点击用「预览」打开"))
             .contextMenu {
@@ -601,10 +667,6 @@ struct MessageRow: View, Equatable {
             }
             .frame(width: maxWidth, height: maxWidth)
             .clipShape(DS.rect(DS.Radius.xl))
-            .overlay {
-                DS.rect(DS.Radius.xl)
-                    .strokeBorder(DS.line, lineWidth: 1)
-            }
         }
     }
 
@@ -645,10 +707,6 @@ struct MessageRow: View, Equatable {
                                 .foregroundStyle(DS.text3)
                         }
                         .frame(width: 120, height: 68)
-                        .overlay {
-                            DS.rect(DS.Radius.xl)
-                                .strokeBorder(DS.line, lineWidth: 1)
-                        }
                         Text(L10n.format("参考视频 %lld", Int64(item.offset + 1)))
                             .font(.system(size: 9))
                             .foregroundStyle(DS.text3)
@@ -685,8 +743,7 @@ struct MessageRow: View, Equatable {
                 .foregroundStyle(seedCopied ? DS.accent : DS.text2)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(DS.rect(DS.Radius.sm).fill(DS.raised))
-                .overlay(DS.rect(DS.Radius.sm).strokeBorder(DS.line, lineWidth: 1))
+                .background(DS.rect(DS.Radius.sm).fill(DS.bg))
                 .contentShape(DS.rect(DS.Radius.sm))
         }
         .buttonStyle(.plainHit)

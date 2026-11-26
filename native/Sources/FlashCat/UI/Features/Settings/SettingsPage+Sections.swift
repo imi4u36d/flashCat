@@ -18,24 +18,24 @@ extension SettingsPage {
                 if wide {
                     AppearanceSegmentedControl(
                         options: AppAppearance.allCases,
-                        selection: state.theme.mode,
+                        selection: theme.mode,
                         label: \.label,
                         detail: \.detail,
-                        onSelect: { state.theme.set($0) }
+                        onSelect: { theme.set($0) }
                     )
                 } else {
                     DSMenu(size: .regular) {
                         DSMenuTriggerLabel(
-                            title: state.theme.mode.label,
-                            systemImage: state.theme.mode.symbol,
+                            title: theme.mode.label,
+                            systemImage: theme.mode.symbol,
                             kind: .secondary,
                             size: .regular)
                     } content: {
                         ForEach(AppAppearance.allCases) { appearance in
                             Button {
-                                state.theme.set(appearance)
+                                theme.set(appearance)
                             } label: {
-                                if state.theme.mode == appearance {
+                                if theme.mode == appearance {
                                     Label(L10n.t(appearance.label), systemImage: "checkmark")
                                 } else {
                                     Text(L10n.t(appearance.label))
@@ -121,7 +121,7 @@ extension SettingsPage {
         let trimmed = cachePath.trimmingCharacters(in: .whitespaces)
         cachePath = trimmed
         state.settings.setHfCache(trimmed)
-        state.toast(L10n.t("缓存目录已保存"))
+        cacheFlash.succeed()
     }
 
     func pickCacheDirectory() {
@@ -143,23 +143,27 @@ extension SettingsPage {
     func applyGatewayPort() {
         guard let port = Int(gatewayPort), (1024...65535).contains(port) else {
             gatewayPort = String(state.settings.gatewayPort)
-            state.toast(L10n.t("端口需在 1024–65535 之间"))
+            gatewayPortNote = L10n.t("端口需在 1024–65535 之间")
+            gatewayPortFlash.warn()
             return
         }
+        gatewayPortNote = nil
         state.settings.setGatewayPort(port)
         state.applyGatewaySettings()
-        state.toast(L10n.format("API 网关端口已设为 %lld", Int64(port)))
+        gatewayPortFlash.succeed()
     }
 
     func applyControlPort() {
         guard let port = Int(controlPort), (1024...65535).contains(port) else {
             controlPort = String(state.settings.controlPort)
-            state.toast(L10n.t("端口需在 1024–65535 之间"))
+            controlPortNote = L10n.t("端口需在 1024–65535 之间")
+            controlPortFlash.warn()
             return
         }
+        controlPortNote = nil
         state.settings.setControlPort(port)
         state.applyControlSettings()
-        state.toast(L10n.format("控制端口已设为 %lld", Int64(port)))
+        controlPortFlash.succeed()
     }
 
     /// 模型广场的来源与网络设置。HF-Mirror 和 token 只影响 Hugging Face；
@@ -174,8 +178,8 @@ extension SettingsPage {
                     selection: Binding(
                         get: { hubSource },
                         set: { value in
+                            // 分段控件本身就是回执：选中态已经移到新来源。
                             storedHubSource = value.rawValue
-                            state.toast(L10n.format("模型广场改用 %@", value.displayName))
                         }),
                     options: HubSource.allCases.map { ($0, $0.displayName) }
                 )
@@ -198,10 +202,15 @@ extension SettingsPage {
                         .frame(height: 28)
                         .dsInputSurface(radius: DS.Radius.sm, focused: focusedField == .endpoint)
                         .onSubmit { applyEndpoint() }
-                    Button(L10n.t("应用")) { applyEndpoint() }
-                        .buttonStyle(.ds(endpointDirty ? .primary : .secondary, size: .small))
-                        .disabled(!endpointDirty)
-                        .fixedSize()
+                    Button {
+                        applyEndpoint()
+                    } label: {
+                        ActionFlashLabel(title: "应用", flash: endpointFlash.value)
+                    }
+                    .buttonStyle(.ds(endpointDirty ? .primary : .secondary, size: .small))
+                    .disabled(!endpointDirty)
+                    .help(endpointNote ?? L10n.t("保存镜像地址"))
+                    .fixedSize()
                 }
             }
 
@@ -218,10 +227,15 @@ extension SettingsPage {
                         .frame(height: 28)
                         .dsInputSurface(radius: DS.Radius.sm, focused: focusedField == .token)
                         .onSubmit { applyToken() }
-                    Button(L10n.t("应用")) { applyToken() }
-                        .buttonStyle(.ds(tokenDirty ? .primary : .secondary, size: .small))
-                        .disabled(!tokenDirty)
-                        .fixedSize()
+                    Button {
+                        applyToken()
+                    } label: {
+                        ActionFlashLabel(title: "应用", flash: tokenFlash.value)
+                    }
+                    .buttonStyle(.ds(tokenDirty ? .primary : .secondary, size: .small))
+                    .disabled(!tokenDirty)
+                    .help(L10n.t("保存 Hugging Face token"))
+                    .fixedSize()
                 }
             }
         }
@@ -229,18 +243,20 @@ extension SettingsPage {
 
     func applyEndpoint() {
         guard let value = HFEndpoint.normalized(endpoint) else {
-            state.toast(L10n.t("镜像地址要写成 host 或 http(s)://host"))
+            endpointNote = L10n.t("镜像地址要写成 host 或 http(s)://host")
+            endpointFlash.warn()
             return
         }
+        endpointNote = nil
         state.settings.setHfEndpoint(value)
         endpoint = value
-        state.toast(value.isEmpty ? L10n.t("已改用 Hugging Face 官方端点") : L10n.format("浏览与下载将走 %@", value))
+        endpointFlash.succeed()
     }
 
     func applyToken() {
         state.settings.setHfToken(token)
         token = state.settings.hfToken
-        state.toast(token.isEmpty ? L10n.t("已清除 Hugging Face token") : L10n.t("Hugging Face token 已保存"))
+        tokenFlash.succeed()
     }
 
     var cacheCard: some View {
@@ -259,10 +275,15 @@ extension SettingsPage {
                     DSIconButton(systemName: "folder", help: "选择目录", size: 28, style: .outlined) {
                         pickCacheDirectory()
                     }
-                    Button(L10n.t("应用")) { applyCachePath() }
-                        .buttonStyle(.ds(cachePathDirty ? .primary : .secondary, size: .small))
-                        .disabled(!cachePathDirty)
-                        .fixedSize()
+                    Button {
+                        applyCachePath()
+                    } label: {
+                        ActionFlashLabel(title: "应用", flash: cacheFlash.value)
+                    }
+                    .buttonStyle(.ds(cachePathDirty ? .primary : .secondary, size: .small))
+                    .disabled(!cachePathDirty)
+                    .help(L10n.t("保存缓存目录"))
+                    .fixedSize()
                 }
             }
         }
@@ -292,10 +313,15 @@ extension SettingsPage {
             SettingsRow(title: "网关端口", detail: "固定入口，客户端不用改") {
                 HStack(spacing: 8) {
                     portInput($gatewayPort, placeholder: "9000", focus: .gatewayPort, onSubmit: applyGatewayPort)
-                    Button(L10n.t("应用")) { applyGatewayPort() }
-                        .buttonStyle(.ds(gatewayPortDirty ? .primary : .secondary, size: .small))
-                        .disabled(!gatewayPortDirty)
-                        .fixedSize()
+                    Button {
+                        applyGatewayPort()
+                    } label: {
+                        ActionFlashLabel(title: "应用", flash: gatewayPortFlash.value)
+                    }
+                    .buttonStyle(.ds(gatewayPortDirty ? .primary : .secondary, size: .small))
+                    .disabled(!gatewayPortDirty)
+                    .help(gatewayPortNote ?? L10n.t("保存网关端口"))
+                    .fixedSize()
                 }
             }
         }
@@ -323,18 +349,26 @@ extension SettingsPage {
             SettingsRow(title: "控制端口", detail: "被占用时会自动顺延，实际端口写在 control.json") {
                 HStack(spacing: 8) {
                     portInput($controlPort, placeholder: "9100", focus: .controlPort, onSubmit: applyControlPort)
-                    Button(L10n.t("应用")) { applyControlPort() }
-                        .buttonStyle(.ds(controlPortDirty ? .primary : .secondary, size: .small))
-                        .disabled(!controlPortDirty)
-                        .fixedSize()
+                    Button {
+                        applyControlPort()
+                    } label: {
+                        ActionFlashLabel(title: "应用", flash: controlPortFlash.value)
+                    }
+                    .buttonStyle(.ds(controlPortDirty ? .primary : .secondary, size: .small))
+                    .disabled(!controlPortDirty)
+                    .help(controlPortNote ?? L10n.t("保存控制端口"))
+                    .fixedSize()
                 }
             }
 
             DSDivider()
 
             SettingsRow(title: "命令行工具", detail: "在终端运行 flashcat --help 查看全部命令") {
-                Button(L10n.t("复制")) {
-                    state.copy("flashcat --help", label: L10n.t("命令行用法已复制"))
+                Button {
+                    state.copy("flashcat --help")
+                    cliCopyFlash.succeed()
+                } label: {
+                    ActionFlashLabel(title: "复制", flash: cliCopyFlash.value)
                 }
                 .buttonStyle(.ds(.secondary, size: .small))
             }
@@ -392,6 +426,11 @@ extension SettingsPage {
                                             Text(state.shortModelName(model.id))
                                         }
                                     }
+                                    .disabled(state.generating)
+                                    .help(
+                                        state.generating
+                                            ? L10n.t("正在生成，先停止再切换模型")
+                                            : L10n.t("设为默认模型"))
                                 }
                             }
                         }
@@ -439,53 +478,11 @@ extension SettingsPage {
     /// 「关于」只回答版本与硬件；对话参数和维护动作各有自己的分区。
     var infoCard: some View {
         SettingsCard {
-            infoRow("flashCat", detail: L10n.format("本地推理控制台 · v%@", appVersion), trailing: device.chipName)
+            infoRow("flashCat", detail: L10n.format("本地推理控制台 · v%@", appVersion), trailing: "")
             DSDivider()
             infoRow(
                 "这台 Mac", detail: L10n.format("%@ · %lld GB 统一内存", device.chipName, device.memoryGB),
                 trailing: L10n.format("可用 %@", Format.size(Int(device.freeDiskBytes))))
-            DSDivider()
-            SettingsRow(title: "应用更新", detail: appUpdateDetail) {
-                updateAction
-            }
-        }
-    }
-
-    var appUpdateDetail: String {
-        switch appUpdate {
-        case .idle:
-            return L10n.format("当前 v%@ · 从 GitHub Releases 检查", appVersion)
-        case .checking:
-            return L10n.t("正在检查…")
-        case .upToDate:
-            return L10n.t("已是最新版本")
-        case .available(let release):
-            if let date = release.publishedAt {
-                return L10n.format("v%@ 可用 · %@", release.version, Format.relative(date))
-            }
-            return L10n.format("v%@ 可用", release.version)
-        case .failed(let message):
-            return L10n.format("检查失败：%@", message)
-        }
-    }
-
-    @ViewBuilder
-    var updateAction: some View {
-        switch appUpdate {
-        case .checking:
-            ProgressView()
-                .controlSize(.small)
-        case .available(let release):
-            Button(L10n.t("打开发布页")) {
-                NSWorkspace.shared.open(release.url)
-            }
-            .buttonStyle(.ds(.secondary, size: .small))
-        case .failed:
-            Button(L10n.t("重试")) { checkForAppUpdate() }
-                .buttonStyle(.ds(.secondary, size: .small))
-        case .idle, .upToDate:
-            Button(L10n.t("检查更新")) { checkForAppUpdate() }
-                .buttonStyle(.ds(.secondary, size: .small))
         }
     }
 
@@ -529,8 +526,10 @@ extension SettingsPage {
             }
             DSDivider()
             SettingsRow(title: "恢复默认", detail: "外观、启动、接口端口与默认对话参数") {
-                Button(L10n.t("恢复")) {
+                Button {
                     confirmingResetDefaults = true
+                } label: {
+                    ActionFlashLabel(title: "恢复", flash: resetFlash.value)
                 }
                 .buttonStyle(.ds(.secondary, size: .small))
             }
@@ -539,6 +538,7 @@ extension SettingsPage {
 
     func resetAllDefaults() {
         state.theme.set(.system)
+        state.theme.resetThemeColor()
         state.settings.setAutoStart(false)
         state.settings.setGatewayPort(9000)
         state.settings.setControlPort(9100)
@@ -546,7 +546,7 @@ extension SettingsPage {
         state.applyGatewaySettings()
         state.applyControlSettings()
         load()
-        state.toast(L10n.t("已恢复默认设置"))
+        resetFlash.succeed()
     }
 
     func infoRow(_ title: String, detail: String, trailing: String) -> some View {

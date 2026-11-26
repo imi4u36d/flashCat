@@ -7,72 +7,23 @@ import FlashCatKit
 import SwiftUI
 
 extension OverviewPage {
-    // MARK: Page header
-
-    @ViewBuilder
-    func pageHeader(compact: Bool) -> some View {
-        if compact {
-            VStack(alignment: .leading, spacing: 9) {
-                HStack(spacing: 8) {
-                    pageTitle
-                    OverviewStatusPill(
-                        engine: state.activeEngine.displayName,
-                        port: nil,
-                        stage: stageTitle,
-                        tint: statusColor,
-                        live: state.canChat)
-                    Spacer(minLength: 0)
-                }
-                HStack(spacing: 8) {
-                    Spacer(minLength: 0)
-                    headerActions
-                }
-            }
-        } else {
-            HStack(spacing: 10) {
-                pageTitle
-                OverviewStatusPill(
-                    engine: state.activeEngine.displayName,
-                    port: state.port,
-                    stage: stageTitle,
-                    tint: statusColor,
-                    live: state.canChat)
-                Spacer(minLength: 12)
-                headerActions
-            }
-            .frame(height: Console.pageHeaderHeight)
-        }
-    }
-
-    @ViewBuilder
-    var headerActions: some View {
-        modelPickerButton
-        engineButton
-    }
-
-    var pageTitle: some View {
-        Text(L10n.t("概览"))
-            .font(DS.Font.prose(20, weight: .bold))
-            .tracking(-0.3)
-            .foregroundStyle(DS.text)
-            .fixedSize()
-    }
-
     // MARK: Header actions
 
     var modelPickerButton: some View {
-        ModelPickerButton(state: state, kind: .secondary) {
+        ModelPickerButton(state: state, kind: .secondary) { isOpen in
             HStack(spacing: 6) {
                 Image(systemName: "square.stack.3d.up.fill")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(DS.accent)
                 Text(L10n.t("切换模型"))
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(DS.text)
+                    .foregroundStyle(isOpen ? DS.accent : DS.text)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8.5, weight: .bold))
-                    .foregroundStyle(DS.text3)
+                    .foregroundStyle(isOpen ? DS.accent : DS.text3)
+                    .rotationEffect(.degrees(isOpen ? 180 : 0))
             }
+            .animation(DS.Motion.snappy, value: isOpen)
         }
         .disabled(state.isSwitchingModel)
     }
@@ -99,19 +50,6 @@ extension OverviewPage {
         .help(engineToggleHelp)
     }
 
-    var stageTitle: String {
-        if state.serverState == .failed { return L10n.t("异常") }
-        let stage = state.engineStageText
-        return stage.isEmpty ? L10n.t(state.serverState.rawValue) : stage
-    }
-
-    var statusColor: Color {
-        if state.serverState == .failed { return DS.err }
-        if state.canChat { return DS.ok }
-        if state.isModelBusy || state.isRunning { return DS.warn }
-        return DS.text4
-    }
-
     // MARK: Current model card
 
     var modelHeroCard: some View {
@@ -120,12 +58,6 @@ extension OverviewPage {
                 EngineGlyph(id: state.activeEngine, color: engineTint, size: 40)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        engineBadge
-                        Text(L10n.t("当前加载模型"))
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(DS.text4)
-                    }
                     Text(modelTitle)
                         .font(DS.Font.prose(14.5, weight: .bold))
                         .tracking(-0.2)
@@ -152,7 +84,7 @@ extension OverviewPage {
         .overviewCard()
     }
 
-    private func failureBanner(_ message: String) -> some View {
+    func failureBanner(_ message: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 11))
@@ -165,24 +97,17 @@ extension OverviewPage {
             Button(L10n.t("查看日志")) {
                 state.section = .logs
             }
-            .buttonStyle(.ds(.secondary, size: .small))
+            .buttonStyle(.dsGhost)
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 8)
         .background(DS.rect(10).fill(DS.dangerFill))
-        .overlay(DS.rect(10).strokeBorder(DS.dangerStroke, lineWidth: 1))
-    }
-
-    var engineBadge: some View {
-        Text(state.activeEngine.displayName.uppercased())
-            .font(.system(size: 9.5, weight: .semibold))
-            .tracking(0.5)
-            .foregroundStyle(engineTint)
-            .padding(.horizontal, 5)
-            .frame(height: 16)
-            .background(DS.rect(5).fill(engineTint.opacity(0.11)))
-            .overlay(DS.rect(5).strokeBorder(engineTint.opacity(0.24), lineWidth: 1))
-            .fixedSize()
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(DS.err)
+                .frame(width: 2)
+        }
+        .clipShape(DS.rect(10))
     }
 
     var contextBlock: some View {
@@ -201,10 +126,6 @@ extension OverviewPage {
                 Text(verbatim: contextTotalText)
                     .font(DS.Font.number(11, weight: .medium))
                     .foregroundStyle(DS.text2)
-                Text(verbatim: "(\(contextPercentText))")
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(state.overviewContextUsedTokens > 0 ? engineTint : DS.text4)
-                    .fixedSize()
             }
 
             GeometryReader { proxy in
@@ -230,8 +151,14 @@ extension OverviewPage {
         state.libraryEntries(for: state.activeEngine).contains(where: \.installed)
     }
 
+    /// 三步清单只服务真正的新用户：一旦本机有过对话，它就不再占概览的
+    /// 顶部——那种情况下更应该先看到自己的用量，而不是当前引擎的安装引导。
+    var hasAnyChatHistory: Bool {
+        state.threads.contains { !$0.messages.isEmpty }
+    }
+
     var showsChecklist: Bool {
-        !checklistDismissed && !state.isRunning
+        !checklistDismissed && !state.isRunning && !hasAnyChatHistory
             && (state.runtimeMissing != nil || !activeEngineHasLocalModels)
     }
 
@@ -359,15 +286,5 @@ extension OverviewPage {
     var contextTotalText: String {
         guard let ceiling = state.contextWindowCeiling else { return "—" }
         return Format.tokensShort(ceiling)
-    }
-
-    var contextPercentText: String {
-        guard let ceiling = state.contextWindowCeiling, ceiling > 0,
-            state.overviewContextUsedTokens > 0
-        else { return "0%" }
-        let percent = min(100, Double(state.overviewContextUsedTokens) / Double(ceiling) * 100)
-        return percent < 1
-            ? String(format: "%.2f%%", percent)
-            : String(format: "%.1f%%", percent)
     }
 }

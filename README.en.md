@@ -1,211 +1,90 @@
-<img src="native/Sources/FlashCat/Resources/app-icon.png" width="96" align="right" alt="flashCat" />
+<img src="native/Sources/FlashCat/Resources/app-icon.png" width="88" align="right" alt="flashCat" />
 
 # flashCat
 
-**A local LLM console for the Mac.** Install engines, download models, chat, and
-turn the whole thing into a local endpoint any AI client can use — all in one window.
+**A local LLM console for the Mac.** Install inference engines, download models,
+chat, and turn the whole machine into a local endpoint any AI client can use —
+all in one window.
 
 **Elegant · Fluid · Powerful**
 
-**English** | [简体中文](README.md)
+English | [简体中文](README.md)
 
-[![flashCat intro video (no narration)](https://github.com/imi4u36d/flashCat/releases/download/v1.5.1/flashCat-1.5.1-poster.png)](https://github.com/imi4u36d/flashCat/releases/download/v1.5.1/flashCat-1.5.1-intro.mp4)
+[![Release](https://img.shields.io/github/v/release/imi4u36d/flashCat?display_name=tag&style=flat-square)](https://github.com/imi4u36d/flashCat/releases/latest)
+[![macOS 26+](https://img.shields.io/badge/macOS-26.0%2B-black?style=flat-square)](https://github.com/imi4u36d/flashCat/releases/latest)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 
-<sub>▶ A 50-second tour · no narration, sound on for the music · footage from a real flashCat session</sub>
+![flashCat overview](https://flashxlab.com/assets/overview.webp)
 
-No per-engine flag sheets to memorize; it works the moment you open it, and when
-another tool needs to plug in it is simply an address such as
-`http://127.0.0.1:9000/v1`. Terminal people can install the `flashcat` command
-once and script status, start/stop, models, and chat.
+## Features
 
----
-
-## Highlights
-
-**1. Status stays visible with the sidebar collapsed.** A compact pill in the bottom-left
-corner shows the engine and its real phase (starting / loading weights / warming up), the
-current model, live tok/s, the gateway's online state, and unread notices. Click it to
-expand engine details, start/stop, copy the endpoint, and read notification history;
-receipts for copying an address or saving a setting float in the same corner and fade
-after three seconds. With the sidebar open, recent chats run all the way to the bottom —
-no permanent status strip.
-
-**2. Multi-engine aggregation, transparent model switching.** Splash, oMLX, MTPLX,
-and MLX-Serve coexist as peers, each with its own runtime, logs, and model directory;
-ports default to separate blocks and fall back to any free port when taken. Hot-swap
-engines keep their process alive; restart-style engines still show their phase and an
-"elapsed m:ss" counter. Clients notice none of it — the gateway address is fixed, so
-switching engines or ports never means editing a Base URL.
-
-**3. Customizable engine settings.** Thirteen knobs are translated into that engine's
-own startup flags — MTP / DFlash2, `--max-memory`, `--max-context`, PLE cache and SSD
-offload, thinking budget, extra arguments. Leave one blank and the engine decides;
-defaults come from the engine's own recommendation, and a new pack can add knobs
-without migrating your config. Engine ports need no setup.
-
-**4. Model downloads.** Curated tiers are sized for this Mac's memory, with size and
-memory floor printed on the card; the Model Hub searches Hugging Face or ModelScope
-(switch it in Settings or from the hub header), sorts by downloads, filters MLX / GGUF,
-pages through results, and opens a model card (README cleaned up before rendering,
-family badges included). Downloads pause and resume; weights land in a shared folder
-as a single copy and are visible to every engine by default. GGUF repositories with
-several quantizations offer a per-quant download that includes the chosen shards and
-`mmproj` only.
-
-**5. Readable runtime numbers.** Decode speed, first-token latency, prefill, DFlash2
-draft acceptance, cache hit rate, and current context usage (e.g. `18K / 262K`) in one
-screen. Total decode is a 60-second live curve; recent requests are listed one by one
-with status, decode speed, and context, and the last row stays put after a request
-finishes instead of the page resetting to zero. Overview readings all tick at 1 Hz:
-the curve draws "how fast right now" and freezes when the request ends, while the
-"average decode" cell only shows the average since the model started. Every metric has exactly one
-source: speed metrics are timed by the gateway per request (measured over wall-clock
-windows, so a batch arriving at once does not flicker); prefill prefers the per-request
-timing the engine reports itself (`timings`, carried by streaming and non-streaming
-responses alike) and falls back to the gateway's TTFT only when that is absent; VRAM
-and acceptance rate come from the engine, because only it can measure them. Each
-reading declares its provenance (LIVE / LAST / AVG), a cell that cannot be measured
-draws "—", and nothing invents a speed from the lower bound of an inter-arrival gap.
-
-**6. Built-in chat.** Streaming output, thinking blocks, Markdown, temperature /
-top-p / max output / thinking level; Return sends, ⌘Return inserts a newline; every
-reply is stamped with tok/s and first-token latency; history is local, and new and
-past chats are always one click away. The first thing to do after installing an
-engine is to verify it here.
-
-**7. Draw pictures, make videos, inside a chat.** The composer has a Draw toggle:
-when the engine declares `tool-use`, the chat model writes its own storyboard and
-hands back several prompts at once; the client calls the image model shot by shot
-with one shared seed, hangs each image in the thread as it lands, then returns the
-results to the chat model to keep writing — vision-capable models look at the images
-first and decide whether to draw more. Image and video models get their own composer:
-size, steps, seed, first and last frame; REF2VA models can also take reference images
-and reference videos. Outputs go to the Gallery with their prompt, model, and seed
-attached, and survive a restart.
+- **Four engines, one console.** Splash, oMLX, MTPLX, and MLX-Serve coexist as
+  peers, each with its own runtime, model directory, and logs. Ports are assigned
+  automatically; oMLX and MLX-Serve switch models without restarting.
+- **One local endpoint.** A fixed `http://127.0.0.1:9000/v1` that speaks both
+  OpenAI and Claude formats. The gateway switches or starts the right engine
+  based on the model in the request, so clients never edit their Base URL.
+- **Model library and hub.** Search Hugging Face, HF-Mirror, or ModelScope, read
+  model cards, and download. Pick a single GGUF quantization, pause and resume
+  transfers. Weights land in a shared folder that every engine can see.
+- **A chat you can work in.** Streaming output, thinking blocks, Markdown,
+  edit-and-resend, branching, regeneration, and queued messages. Attach text,
+  source files, PDF, or RTF, plus images and video; ⌘V pastes screenshots
+  directly. Conversations stay local and can be searched, pinned, and renamed.
+- **Real measurements.** Decode speed, time to first token, prefill, cache hit
+  rate, and context usage, with a 60-second chart and a per-request list. Metrics
+  are sampled by the gateway, and anything that cannot be measured shows `—`.
+- **Made to fit.** System, light, and dark appearance; six accent presets plus a
+  system color picker; native title bar and sidebar; a menu bar panel for
+  switching models and reading telemetry without returning to the main window.
+- **A complete CLI.** The bundled `flashcat` shares the app's engines, models,
+  settings, and logs. Every result command supports `--json` for scripting.
 
 ## Requirements
 
 | | |
 | --- | --- |
-| Chip | Apple Silicon (M-series) |
-| OS | macOS **26.0** or later |
-| Disk | About 15 MB for the app (including the `flashcat` CLI); 50 MB – 600 MB per engine; models on top of that (2 – 250 GB per tier) |
+| Chip | Apple Silicon (M series) |
+| System | macOS 26.0 or later |
+| Disk | About 15 MB for the app; 50–600 MB per engine runtime; 2–250 GB per model |
 
-The interface follows the system language: **Simplified Chinese** or **English**. Both
-sets of copy ship inside the app; change the system language and reopen it.
+The interface follows the system language: Simplified Chinese or English. Both
+are bundled with the app.
 
 ## Install
 
-Download the latest build from [Releases](https://github.com/imi4u36d/flashCat/releases):
+Download from [Releases](https://github.com/imi4u36d/flashCat/releases/latest):
 
-- `flashCat-<version>.dmg` — open it and drag flashCat into Applications
-- `flashCat-<version>.pkg` — double-click and follow the installer
+- `flashCat-2.0.0.dmg` — open it and drag flashCat into Applications.
+- `flashCat-2.0.0.pkg` — double-click and follow the installer; it can link
+  `flashcat` into `/usr/local/bin`.
 
-The app is not notarized, so the first launch is blocked: in Finder, **right-click
-flashCat → Open**, and macOS stops asking. The first launch needs a network
-connection to download an engine runtime (80 MB – 600 MB, depending on the engine).
+The app is ad-hoc signed and not notarized by Apple. On first launch, if
+Gatekeeper blocks it, right-click flashCat in Finder and choose Open, or allow
+it under System Settings → Privacy & Security.
 
-## First launch
+## Quick start
 
-1. The launch page lists every supported engine. Pick one, click download, and wait
-   for it to finish installing.
-2. It becomes the default engine and the window moves into the console automatically.
-3. From then on you can install other engines on the **Engines** page, change the
-   default there, or download models on the **Model Library** page.
+1. On the launch page, pick an engine, download, and install it.
+2. Download a model from the Model Library, or search any Hugging Face /
+   ModelScope repository in the Model Hub.
+3. Start the engine from Overview, then verify in Chat. Point other clients at
+   `http://127.0.0.1:9000/v1`.
 
-Every engine is a peer:
+Engine runtimes are downloaded on demand and are not bundled with the app.
+Installed engines can be updated, inspected, or removed from the Engines page.
 
-| Engine | Default port | Best at | Changing models |
-| --- | --- | --- | --- |
-| **Splash** | 8000 | One model, least fuss, draft-model acceleration | Restarts the engine |
-| **oMLX** | 8100 | Keeping several models resident, switching without a restart | Hot swap |
-| **MTPLX** | 8200 | Long context, multi-token prediction | Restarts the engine |
-| **MLX-Serve** | 8300 | General MLX / GGUF, multi-model hot loading, tool calling | Hot swap |
+## Local API
 
-Every engine supports chat and streaming; vision, thinking, tool calling, and
-multi-model support are declared item by item in each engine descriptor, and the UI
-never assumes an engine has them. Default ports occupy separate blocks; a taken port
-falls back to any free one.
-
-## A tour of the interface
-
-**Overview** — the header names the page and the engine's live state (name, port, real
-phase, start/stop, switch model); below it a current-model strip carries context usage
-(e.g. `18K / 262K`), then three readings (average decode / first-token / prefill) and
-the 60-second curve; when the engine is stopped, a "Last run" card takes its place.
-On the right are the API gateway addresses (one line for OpenAI, one for Claude, each
-with a one-click copy); the chevron beside each endpoint copies a curl or Python call
-snippet, the bolt button sends a real test request, and "Recent clients" below groups
-requests by `User-Agent` — who connected, which dialect, how many requests. Below that
-is a table of engine facts.
-
-**Chat** — the built-in chat window, laid out like Splash: a single transcript column,
-collapsible thinking, syntax-highlighted code with line numbers, and copy / edit-resend /
-branch on hover; ⌘V pastes a screenshot as an attachment, and a warning appears above the
-composer as the context fills up. The composer switches models;
-the generation-parameters sheet adjusts temperature / top-p / max output and thinking
-level; every reply is labeled with its model, tok/s and first-token latency. Transcripts
-stay local and can be searched, pinned, renamed or browsed anytime.
-
-**Model Library** — a fixed engine-folder rail on the left (it folds to a top row in narrow
-windows) lists each engine with its install state and model count; the selected folder does
-not follow the running engine. The right side always has two sections, "Installed" and
-"Recommended": installed rows offer Use / In use, recommended rows offer Download, and both
-show quantization, size and memory floor. Recommended tiers come from the installed engine's
-own pack (Splash and MTPLX ship one each; oMLX and MLX-Serve do not), and the section caption
-names the source. Search, sort (default / size / memory / name) and the "Fits" filter share
-one row; sort and filter survive page changes.
-"Model Hub" in the top right opens search: Hugging Face, HF-Mirror or ModelScope
-repositories (switch from the header menu), keyword search, sort by downloads, filter by
-"All / MLX / GGUF", page through results (30 per page from HF, 24 from ModelScope),
-and click a row to open its model card (README / file list / tags) before deciding.
-When a GGUF repository has several quants, the download bar lets you pick one; only
-that quant's shards and `mmproj` are transferred. Download then asks which installed
-engine's model folder should hold the weights; the Hub never preselects an engine.
-
-**Engines** — one card per engine: status, port, launch arguments, comparison against
-the upstream version, plus one-click update, open install folder, view logs, and
-removal of a specific version.
-
-**Logs** — live output from all engines merged by time by default. Source, level
-("All / Info / Warning / Error"), and search share one row, with hits highlighted; pause
-scrolling, copy the filtered lines, or clear.
-
-**Settings** — a section rail on the left (General / Model Source / Endpoint /
-Chat / About) with only the current section on the right: appearance, launch at login,
-download cache folder, mirror and token, interface ports, thinking mode and default chat
-parameters; every row applies as you change it, and About can check for flashCat updates.
-
-**Gallery** — the library of generated results. Switch between "Images / Videos" below the
-page header; thumbnails fill a grid sized to the window and load as you scroll, and video
-covers show their duration. A selection mode can select all, then export or delete in bulk. Open one
-to view the full image or play the video, with prompt, model, and seed attached so you can
-copy it back into the composer and draw again. Only outputs generated in a chat land
-here — background and first-frame images you drag into the composer stay out.
-
-Navigation and common actions all live under **Page → Command Palette**: seven pages,
-start/stop an engine, new chat, Downloads, Model Hub, toggle appearance, collapse the
-sidebar — type a keyword and click a row to jump straight there. The app registers no
-keyboard shortcuts; everything can be done with the mouse, and keyboard users should
-use the `flashcat` command line described below.
-
-## Connecting your own client
-
-The app ships an **API gateway** that starts with the app and needs no switch, and it
-is what every client should talk to: the address is fixed, and both OpenAI and Claude
-formats work. The `model` in a request decides which weights actually load: if the
-model belongs to another engine, the gateway switches engines; if that engine is not
-running, it starts it and forwards once loading finishes.
+The API is available as soon as the app starts. OpenAI and Claude formats share
+one port; the API key is not checked, so any string works.
 
 | | |
 | --- | --- |
-| Address | `http://127.0.0.1:9000/v1` (port configurable) |
-| OpenAI format | `POST /v1/chat/completions` (streaming supported) |
-| Claude format | `POST /v1/messages`, `POST /v1/messages/count_tokens` (streaming supported) |
-| Model list | `GET /v1/models` |
-| API key | Not checked by the local service; any string works |
-
-OpenAI format:
+| Base URL | `http://127.0.0.1:9000/v1` (port configurable in Settings) |
+| OpenAI | `POST /v1/chat/completions` (streaming) |
+| Claude | `POST /v1/messages`, `POST /v1/messages/count_tokens` (streaming) |
+| Models | `GET /v1/models` |
 
 ```bash
 curl http://127.0.0.1:9000/v1/chat/completions \
@@ -217,244 +96,96 @@ curl http://127.0.0.1:9000/v1/chat/completions \
   }'
 ```
 
-Claude format (set the SDK's Base URL to `http://127.0.0.1:9000`):
+For the Claude SDK, use `http://127.0.0.1:9000` as the Base URL. Model names come
+from `/v1/models`; the gateway makes sure the matching weights are loaded. The
+server listens on the loopback interface only and is never exposed publicly.
+
+## CLI
+
+`flashcat` shares state with the app: while the app runs it drives the local
+control API; while the app is closed it can still inspect and install engines,
+read and write configuration, and read logs.
 
 ```bash
-curl http://127.0.0.1:9000/v1/messages \
-  -H "Content-Type: application/json" \
-  -H "anthropic-version: 2023-06-01" \
-  -d '{
-    "model": "your-model-name",
-    "max_tokens": 1024,
-    "messages": [{"role": "user", "content": "Hello"}]
-  }'
-```
-
-- Use a name returned by `/v1/models`; the gateway makes sure that model is loaded,
-  and Overview shows which one is loaded right now.
-- The Claude format is translated in full: system prompt, images, tool calls, stop
-  sequences, thinking blocks, and stop reasons such as `end_turn` / `max_tokens` /
-  `tool_use` are all supported.
-- You can also talk to an engine directly on its own port, but that address changes
-  whenever you switch engines — which is why the gateway is usually the better bet.
-
-## The `flashcat` command line
-
-The app ships a complete command-line client that shares the same engines, models,
-settings, and logs as the GUI. The `.pkg` points `/usr/local/bin/flashcat` at the
-executable inside the app when that directory is writable; with the `.dmg`, or to put
-it on your PATH yourself:
-
-```bash
-/Applications/flashCat.app/Contents/Helpers/flashcat cli install
-# Installs to ~/.local/bin/flashcat by default; add it to PATH:
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-`flashcat` works in two modes:
-
-- **App running**: it drives the app through a local loopback control interface
-  (`127.0.0.1:9100` by default, with a fresh random token on every launch, readable
-  only by the current user) to start and stop engines, switch models, download, and
-  change settings.
-- **App not running**: it can still inspect engines and models on disk, install or
-  remove engines, read and write configuration that needs no side effects, and read
-  logs. Actions that require the app fail with exit code `3` instead of pretending to
-  succeed.
-
-```bash
-flashcat                            # Status: app, engine, gateway, downloads
-flashcat engines list               # Installed version and state of all four engines
-flashcat engines install omlx       # Download and install a runtime without the GUI
-flashcat engines start omlx         # Switch to it and wait until weights really load
-flashcat models list --all          # Local weights plus recommended tiers
+flashcat                            # app, engine, gateway, and download status
+flashcat engines list               # installed versions and state
+flashcat engines start omlx         # switch engines and wait for the model
+flashcat models list --all          # local weights and recommended tiers
 flashcat models download mlx-community/Qwen3-8B-4bit --wait
-flashcat models use <model-id>      # Load and wait until ready (switching engines if needed)
-flashcat chat "Explain MoE in one sentence"   # Goes through the local gateway, streaming
-printf 'Summarize this log\n' | flashcat chat - --model <model-id> --json
-flashcat logs --engine omlx -f      # Follow logs; --gateway / --control
-flashcat config set appearance dark
-flashcat gateway status             # OpenAI / Claude gateway
-flashcat app open                   # Launch the app and wait for the control interface
-flashcat doctor                     # Check install, permissions, runtimes, disk, PATH
+flashcat chat "Explain MoE in one sentence"   # stream through the local API
+flashcat logs --engine omlx -f      # follow engine logs
+flashcat doctor                     # install, permission, runtime, and PATH check
 ```
 
-To install an engine offline, when the index shipped with the app carries only file
-names and not the archives, point at a downloadable index with `--index <pack-index.json
-or URL>` (or set `FLASHCAT_PACK_INDEX_URL`); otherwise the command fails clearly with
-"the archive named in the index is not on this machine" rather than starting a download
-that cannot succeed.
+The `.pkg` installer links `/usr/local/bin/flashcat` when possible; with `.dmg`,
+run `flashcat cli install` to link it into your PATH. See `flashcat --help` for
+the full command set.
 
-| Command | Purpose |
-| --- | --- |
-| `status` | App / engine / gateway / download status; `--watch` refreshes continuously |
-| `engines` | `list`, `start`, `stop`, `restart`, `use`, `install`, `uninstall`, `port`, `logs` |
-| `models` | `list`, `use`, `download`, `delete`, `path` |
-| `chat` | Talk through the gateway; stdin, streaming, thinking, and JSON supported |
-| `gateway` | `status`, `start`, `stop` |
-| `logs` | Engine / gateway / control-interface logs, with level filters and follow mode |
-| `config` | `list`, `get`, `set`, `unset`, `path` |
-| `app` | `status`, `open`, `quit`, `restart`, `path` |
-| `doctor` | Environment check; exits with code 1 if anything reports `fail` |
-| `completion` | Emit a zsh / bash / fish completion script |
-| `cli` | Link `flashcat` onto your PATH, or print where it currently lives |
+Exit codes are stable: `0` success, `1` failure, `2` usage, `3` app not running,
+`4` not found, `5` timeout, `6` state conflict, `7` control token error. Errors
+also support `--json`.
 
-**For scripts.** Result-producing commands support `--json` (errors are JSON too, on
-stderr); progress and hints go to stderr and the payload goes to stdout, so
-`flashcat models list --json | jq` never has log lines mixed in. Exit codes are fixed:
-`0` success, `1` failure, `2` usage error, `3` app not running, `4` not found,
-`5` timeout, `6` state conflict, `7` bad control token. `--timeout` caps how long a
-command waits, `--quiet` silences hints, and `--no-color` or `NO_COLOR` disables ANSI
-color.
-
-The control interface starts with the app and is always on; its port defaults to 9100.
-After you change the port, the effective one is written to `control.json` and the CLI
-follows it automatically — no reinstall needed. The interface listens only on
-`127.0.0.1`, rotates to a fresh random token on every launch, and keeps `control.json`
-at mode `0600`, so other users on the same machine cannot drive the app.
-
-## Model Library
-
-Models are downloaded inside the app, from Hugging Face, HF-Mirror or ModelScope
-(switch under Settings → Model Source). The Model Library page puts weights
-that can load right away under "Local", and tiers from the installed engine's own pack
-that this Mac's memory can hold but that have not been downloaded yet under "Recommended":
-
-| Tier | Approximate size | Notes |
-| --- | --- | --- |
-| Qwen 3.6 35B-A3B | About 16 – 20 GB | The most dependable everyday choice |
-| Qwen 3.8 27B | About 16 – 21 GB | Newer generation, better balance of quality and speed |
-| Qwen 3.8 Flash-Next | About 99 GB | The heaviest tier; needs 128 GB of memory |
-
-Recommendations are no longer hand-written by flashCat: they come from the engine packs.
-Splash ships `install/suggested-models.tsv` (one variant per family — the strongest that
-fits this Mac), and MTPLX ships the `model_catalog.py` its macOS app uses (filtered by
-chip tier and peak memory). oMLX and MLX-Serve ship no list, and an engine that is not
-installed has no pack to read. To run something else, open the Model Hub from
-"＋ Download Model" in the top right of the Model Library page, search or browse Hugging Face
-or ModelScope repositories, open the model card, and download from there: download asks
-which installed engine's model folder should hold the weights, and they live only in that
-folder. Whether a given engine can load a model is the engine's own call, and the Model
-Library page keeps downloaded weights separate from not-yet-downloaded recommendations,
-tagging each local weight as "catalog" or "personal download".
-
-For mirror access, switch Model Source to HF-Mirror: hub browsing, model cards and
-engine-folder downloads all go through hf-mirror.com. For a custom mirror or gated
-repositories, fill in the endpoint and token under Settings → Model Source; browsing
-and downloads share the same normalized endpoint.
-The same two values can still be written from the command line (leave them alone for
-huggingface.co and anonymous access):
-
-```bash
-defaults write com.zhuo.flashCat hfEndpoint https://hf-mirror.com   # mirror
-defaults write com.zhuo.flashCat hfToken hf_xxx                     # token with access
-```
-
-The downloader (Python) does not read macOS proxy settings, so the system proxy is
-passed to it verbatim when a download starts; running proxy software needs no extra
-configuration.
-
-Model ownership uses engine tags: Splash only ships GGUF, oMLX leads with Jundot's
-`oQ4e` packs, and MTPLX leads with Qwen while falling back to MiMo 9B and Qwen3.5 4B
-on low-memory machines.
-
-Where things live on disk (handy when cleaning up):
+## Models and data
 
 | Content | Location |
 | --- | --- |
 | App configuration, chat history | `~/Library/Application Support/flashCat` |
-| Runtime packs for every engine | `~/Library/Application Support/flashCat/engines/<engine>/<version>` |
-| Models for every engine | `~/Library/Application Support/flashCat/models/<engine>` |
-| Shared folder (your own downloads) | `~/Library/Application Support/flashCat/shared-models` |
-| Download cache | Hugging Face's cache directory by default; change it in Settings |
-| Control interface | `~/Library/Application Support/flashCat/control.json` (loopback only, mode 0600) |
+| Engine runtimes | `~/Library/Application Support/flashCat/engines/<engine>/<version>` |
+| Model weights | `~/Library/Application Support/flashCat/models/<engine>` |
+| Shared model folder | `~/Library/Application Support/flashCat/shared-models` |
+| Control API credentials | `~/Library/Application Support/flashCat/control.json` (mode 0600) |
 | Logs | `~/Library/Logs/flashCat` |
+
+Recommended tiers come from each installed engine's own catalog: Splash and
+MTPLX provide them; oMLX and MLX-Serve do not. Weights you download yourself are
+marked as personal downloads. Removing the app does not remove engines or
+models; delete the folders above to clean them up.
 
 ## Settings
 
-| Setting | What it does |
-| --- | --- |
-| Appearance | Follow system / light / dark; applies immediately |
-| Start with flashCat | Start the engine automatically when the app opens |
-| Launch at login | Add flashCat to your macOS login items |
-| Thinking mode | Auto / off / on; whether thinking models emit reasoning first |
-| Reasoning Effort | Applies when thinking mode is on; the levels come from the engine |
-| Default model | Which model to load when the engine starts |
-| Model Source | Whether the Model Hub searches Hugging Face, HF-Mirror or ModelScope |
-| Mirror URL | Hugging Face endpoint; leave empty for the official host. HF-Mirror always uses hf-mirror.com |
-| Access Token | Hugging Face token for private / gated repositories |
-| Download cache folder | Where model downloads are cached |
-| API Gateway | The unified dual-format endpoint is always on; port defaults to 9000 and changing it restarts the gateway |
-| Command-line Interface | The local `flashcat` interface is always on; port defaults to 9100 |
-| Restore Defaults | Reset everything above to factory values |
-
-Engine ports are not a setting: each engine gets its default block, and a taken port
-falls back to any free one.
+General (appearance, launch at login, download cache, accent color), Model
+Sources (Hugging Face / HF-Mirror / ModelScope, mirror, token), API (gateway and
+control ports), Chat (defaults and system prompt), and About (version and update
+check). Both local APIs are always on; engine ports are assigned automatically
+and are not a setting.
 
 ## FAQ
 
-**The engine will not start, or spins forever?**
-Check the last lines on the Logs page — usually a model too large for memory, or an
-incomplete model file. Pick a smaller model tier, or recheck the install on the
-Engines page.
+**An engine will not start, or keeps spinning.** Check the last lines on the Logs
+page; usually the model does not fit in memory or a file is incomplete. Try a
+smaller quantization or reinstall the runtime from Engines.
 
-**Downloads are slow?**
-The oMLX runtime is about 590 MB; Splash and MTPLX are 80 – 130 MB. Models range from
-a dozen GB to 99 GB, so network speed dominates.
+**A model is missing from the library.** Switch engines at the top of the page.
+Recommended tiers depend on the engine's catalog, which only exists after that
+engine is installed.
 
-**Memory was not released after switching models?**
-oMLX can hot-swap between models; Splash and MTPLX restart the process, so wait until
-the state reads "Running" again before sending requests.
+**Can other machines connect?** The app listens on `127.0.0.1` only. Put your own
+reverse proxy in front if you need remote access, and never expose the port
+directly to the internet.
 
-**Can another machine connect?**
-The app listens on `127.0.0.1` only. If you need to serve other machines, put your own
-reverse proxy in front of it; do not expose the port directly to the internet.
+**`flashcat` says the app is not running.** Run `flashcat app open` first;
+`flashcat doctor` will point at the step that failed.
 
-**The app will not open, saying it is damaged or from an unknown developer?**
-Right-click → Open, or go to System Settings → Privacy & Security and click "Open Anyway".
-
-**A model does not show up for an engine on the Model Library page?**
-Switch engines at the top; recommendation tiers come from the engine pack, so an engine
-you have not installed has no list to read. oMLX and MLX-Serve ship no recommendations.
-
-**Why are there no keyboard shortcuts in the app?**
-This release deliberately registers no app-level shortcuts: every action has a
-clickable menu item or button, and keyboard efficiency lives in the `flashcat` command
-line (completion, JSON, scripting). macOS's own text editing, clipboard, close-window,
-and quit keys are unaffected.
-
-**`flashcat` says the app is not running?**
-Run `flashcat app open` first. If the app is clearly running, check whether
-`control.json` was deleted; `flashcat doctor` will say which step fails.
-
-**The command-line port is taken?**
-The control interface starts at 9100 and walks forward up to 20 ports; the effective
-port is written to `~/Library/Application Support/flashCat/control.json`, and
-`flashcat` reads it automatically.
-
-## Uninstall
-
-1. Quit flashCat.
-2. Drag `/Applications/flashCat.app` to the Trash.
-3. If you installed the command line, remove the links:
-   `rm -f /usr/local/bin/flashcat ~/.local/bin/flashcat`
-4. To remove configuration and models as well, delete:
+## Development
 
 ```bash
-rm -rf ~/Library/Application\ Support/flashCat ~/Library/Logs/flashCat
+make app      # build and install into /Applications
+make test     # unit tests (778 total, 5 skipped when the local environment is absent)
+make verify   # build, install, launch, and verify the process and bundled CLI
 ```
 
-Note that models live in those folders, so deleting them deletes your downloaded
-weights too — confirm you have nothing worth keeping first.
+Sources live in `native/`; the UI is SwiftUI / AppKit with no WebView. See
+[CONTRIBUTING.en.md](CONTRIBUTING.en.md) for the environment and architecture
+rules, and [UI-SPEC.md](native/Sources/FlashCat/UI-SPEC.md) for the interface spec.
 
 ## License
 
 [MIT](LICENSE) © 2026 wangzhuo
 
-The inference engines are the work of their respective upstream projects; this project
-handles downloading, installing, and orchestrating their runtimes:
+The inference engines are the work of their upstream projects; this project
+handles downloading, installing, and scheduling their runtimes:
 [Splash](https://github.com/incoai/splash),
 [oMLX](https://github.com/jundot/omlx),
 [MTPLX](https://github.com/youssofal/mtplx),
 [MLX-Serve](https://github.com/ddalcu/mlx-serve).
-Model copyrights belong to their respective publishers.
+Model copyrights remain with their publishers.

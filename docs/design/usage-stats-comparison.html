@@ -1,0 +1,1237 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-zcode-design>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>flashCat · 概览 · 未启动模型时的用量盘点</title>
+<style>
+/* ============================================================
+   flashCat · 概览页（未启动模型）改版对比
+   画布：窗口 1360 × 856，侧栏 226，内容区 1134 × 808
+   三个方向共用同一份数据与同一套 DS token，只换信息架构。
+   ============================================================ */
+
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:#F4F5F9;color:#101321;
+  font:14px/1.7 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,p,figure{margin:0}
+b,strong{font-weight:600}
+::selection{background:rgba(79,70,229,.16)}
+.mono{font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+.num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+svg.ic{fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+:root{
+  /* 与 native/Sources/FlashCat/UI/DesignSystem/DesignSystem.swift 的 DS token 对齐 */
+  --canvas:#F2F4F8;
+  --surface:#FFFFFF;
+  --raised:#FCFDFF;
+  --well:#F4F6FA;
+  --line:rgba(15,23,42,.07);
+  --line2:rgba(15,23,42,.12);
+  --text:#0F172A;
+  --text2:#475569;
+  --text3:#64748B;
+  --text4:#94A3B8;
+  --accent:#4F46E5;
+  --accent-2:#2563EB;
+  --ok:#059669;
+  --warn:#D97706;
+  --err:#DC2626;
+  --h0:#EDF0F6;
+  --h1:#DCE3F9;
+  --h2:#B9C4F5;
+  --h3:#818CF8;
+  --h4:#4F46E5;
+  --r-card:16px;
+  --r-control:8px;
+  --pad-page:20px;
+  --gap:14px;
+  --scale:1;
+}
+
+/* ---------- 审阅页外壳 ---------- */
+.wrap{max-width:1214px;margin:0 auto;padding:0 40px}
+.masthead{padding:64px 0 8px}
+.kicker{
+  display:flex;align-items:center;gap:9px;
+  font-size:12px;line-height:1.4;font-family:"SF Mono",ui-monospace,monospace;letter-spacing:.12em;
+  text-transform:uppercase;color:#5A6578;
+}
+.kicker .dot{width:5px;height:5px;border-radius:50%;background:var(--accent)}
+h1{
+  margin:17px 0 0;font-size:40px;line-height:1.14;font-weight:620;letter-spacing:-.028em;
+  color:#0B1020;max-width:20em;
+}
+.lead{margin:16px 0 0;max-width:74ch;font-size:15px;line-height:1.75;color:#475569}
+.lead b{color:#0F172A;font-weight:600}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+.chip{
+  display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 9px;
+  border-radius:6px;background:#fff;box-shadow:inset 0 0 0 1px rgba(15,23,42,.10);
+  font-size:12px;line-height:1.4;font-family:"SF Mono",ui-monospace,monospace;letter-spacing:.03em;color:#475569;
+}
+.chip i{width:5px;height:5px;border-radius:50%;background:var(--text4);font-style:normal}
+.chip.warn i{background:var(--warn)}
+
+.boundary{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:40px 0 0}
+.bcol{background:#fff;border-radius:12px;box-shadow:inset 0 0 0 1px rgba(15,23,42,.07);padding:16px 17px 15px}
+.bcol .b-k{font:9.5px/1 "SF Mono",ui-monospace,monospace;letter-spacing:.12em;text-transform:uppercase;color:#64748B}
+.bcol h2{margin:8px 0 8px;font-size:12.5px;color:var(--text)}
+.bcol p{margin:0;font-size:12.5px;line-height:1.7;color:#64748B;max-width:36ch}
+.bcol .fine{margin-top:9px;padding-top:9px;border-top:1px solid rgba(15,23,42,.07);font-size:12px;line-height:1.6;color:#5F6B7E}
+.bcol code{font:11px/1 "SF Mono",ui-monospace,monospace;color:#334155;background:#F1F3F9;border-radius:4px;padding:2px 5px}
+
+
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.jump{display:flex;flex-wrap:wrap;gap:4px;margin-top:20px}
+.jump a{
+  display:inline-flex;align-items:center;height:27px;padding:0 9px;border-radius:6px;
+  font-size:12px;color:#475569;text-decoration:none;background:#fff;
+  box-shadow:inset 0 0 0 1px rgba(15,23,42,.08);
+}
+.jump a:hover{color:#0F172A;box-shadow:inset 0 0 0 1px rgba(15,23,42,.16)}
+.jump a .k{font-size:12px;line-height:1;font-family:"SF Mono",ui-monospace,monospace;letter-spacing:.08em;color:#64748B;margin-right:6px}
+
+/* ---------- 方向段 ---------- */
+.vsection{margin:56px 0 0;scroll-margin-top:24px}
+.vhead{display:flex;align-items:flex-start;gap:14px}
+.vnum{
+  flex:none;width:34px;height:34px;border-radius:9px;display:grid;place-items:center;
+  background:#0F172A;color:#fff;font:600 14px/1 "SF Mono",ui-monospace,monospace;
+}
+.vname-row{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.vname{font-size:20px;font-weight:600;letter-spacing:-.012em;color:#0B1020}
+.vsub{font-size:12px;color:#5F6B7E}
+.tag{
+  align-self:center;height:20px;padding:0 7px;border-radius:5px;display:inline-flex;align-items:center;
+  font:600 10px/1 "SF Mono",ui-monospace,monospace;letter-spacing:.08em;text-transform:uppercase;
+}
+.tag.rec{background:rgba(79,70,229,.10);color:#4338CA}
+.tag.alt{background:rgba(15,23,42,.05);color:#64748B}
+.vthesis{margin:8px 0 0;max-width:76ch;font-size:13.5px;line-height:1.7;color:#475569}
+.vthesis b{color:#0F172A}
+
+.canvas-label{
+  display:flex;align-items:center;gap:10px;margin:22px 0 10px;
+  font-size:12px;line-height:1.4;font-family:"SF Mono",ui-monospace,monospace;letter-spacing:.08em;text-transform:uppercase;color:#5F6B7E;
+}
+.canvas-label::after{content:"";flex:1;height:1px;background:rgba(15,23,42,.08)}
+
+/* ---------- 窗口 ---------- */
+.app{
+  width:1134px;margin:0 auto;background:var(--canvas);
+  border-radius:14px;overflow:hidden;position:relative;
+  box-shadow:
+    inset 0 0 0 1px rgba(15,23,42,.10),
+    0 26px 60px -18px rgba(16,19,33,.22),
+    0 3px 8px rgba(16,19,33,.06);
+}
+.appbar{
+  height:48px;display:flex;align-items:center;gap:14px;padding:0 var(--pad-page);
+  background:linear-gradient(180deg,#FAFBFD 0%,#F5F7FB 100%);
+  border-bottom:1px solid rgba(15,23,42,.07);
+}
+.page-title{display:flex;align-items:center;gap:7px;font-size:15px;font-weight:600;letter-spacing:-.2px;color:var(--text)}
+.page-title .caret{width:11px;height:11px;color:var(--text3)}
+.appbar .spacer{flex:1}
+.tgroup{display:flex;align-items:center;gap:8px}
+.tbtn{
+  height:28px;padding:0 11px;border-radius:var(--r-control);display:inline-flex;align-items:center;gap:6px;
+  background:#fff;box-shadow:inset 0 0 0 1px rgba(15,23,42,.12);
+  font-weight:600;font-size:12px;line-height:1;color:var(--text);white-space:nowrap;
+}
+.tbtn .ic{width:11px;height:11px;color:var(--accent)}
+.tbtn.chev .ic{width:9px;height:9px;color:var(--text3)}
+.tbtn.go{background:rgba(5,150,105,.11);box-shadow:inset 0 0 0 1px rgba(5,150,105,.24);color:var(--ok)}
+.tbtn.go .ic{color:var(--ok);width:9px;height:9px}
+.tbtn.ghost{background:transparent;box-shadow:none;color:var(--text3)}
+.tbtn.icon{padding:0;width:28px;justify-content:center}
+.tbtn.icon .ic{width:13px;height:13px;color:var(--text3)}
+
+.appbody{padding:16px var(--pad-page) 20px;display:flex;flex-direction:column;gap:var(--gap);min-height:808px}
+
+/* ---------- 页内通用 ---------- */
+.top-row{display:flex;align-items:center;gap:12px;min-height:28px}
+.top-row .left{display:flex;align-items:center;gap:8px;min-width:0}
+.top-row .right{display:flex;align-items:center;gap:10px;margin-left:auto}
+.top-title{font-size:13px;font-weight:600;color:var(--text);letter-spacing:-.01em;white-space:nowrap}
+.top-note{font-size:11px;color:var(--text3);white-space:nowrap}
+.seg{display:inline-flex;align-items:center;gap:2px;height:28px;padding:2px;border-radius:var(--r-control);background:#EEF1F6;box-shadow:inset 0 0 0 1px rgba(15,23,42,.06)}
+.seg span{
+  display:grid;place-items:center;height:24px;padding:0 9px;border-radius:6px;
+  font-weight:600;font-size:11.5px;line-height:1;color:var(--text3);white-space:nowrap;
+}
+.seg span.on{background:#fff;color:var(--text);box-shadow:0 1px 2px rgba(15,23,42,.10),inset 0 0 0 1px rgba(15,23,42,.07)}
+
+.card{background:var(--surface);border-radius:var(--r-card);box-shadow:inset 0 0 0 1px rgba(15,23,42,.07);padding:14px 16px;min-width:0}
+.card-head{display:flex;align-items:baseline;gap:10px;min-height:20px}
+.card-title{font-size:12.5px;font-weight:600;color:var(--text);letter-spacing:.005em}
+.card-meta{margin-left:auto;font-size:11px;color:var(--text3);white-space:nowrap}
+.card-kicker{font:9.5px/1 "SF Mono",ui-monospace,monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--text3)}
+
+.badge{
+  display:inline-flex;align-items:center;height:15px;padding:0 5px;border-radius:4px;
+  font:600 9px/1 "SF Mono",ui-monospace,monospace;letter-spacing:.05em;text-transform:uppercase;
+  background:rgba(37,99,235,.09);color:#1D4ED8;white-space:nowrap;
+}
+.badge.neutral{background:rgba(15,23,42,.05);color:var(--text3)}
+.dot-ok{width:5px;height:5px;border-radius:50%;background:var(--ok);display:inline-block}
+.dot-off{width:5px;height:5px;border-radius:50%;background:var(--text4);display:inline-block}
+
+/* KPI 网格（方向 A） */
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.kpi{
+  background:var(--surface);border-radius:var(--r-card);box-shadow:inset 0 0 0 1px rgba(15,23,42,.07);
+  padding:14px 16px;display:flex;flex-direction:column;gap:6px;min-height:128px;
+}
+.kpi .k-label{font-size:11.5px;color:var(--text3);letter-spacing:.01em}
+.kpi .k-value{font-size:27px;line-height:1.15;font-weight:600;letter-spacing:-.022em;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi .k-value.sm{font-size:19px;letter-spacing:-.012em;padding-top:5px}
+.kpi .k-sub{font-size:11px;color:var(--text3);line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi .k-sub b{color:var(--text2);font-weight:600}
+.kpi .k-sub .sep{color:var(--text4);padding:0 2px}
+
+/* 热力图 */
+.heat{--cell:19px;--gap:3px;display:flex;flex-direction:column;gap:0}
+.heat-months{position:relative;height:16px;margin-left:22px}
+.heat-months span{position:absolute;top:0;font-size:9.5px;color:var(--text3);white-space:nowrap;letter-spacing:.02em}
+.heat-body{display:flex;gap:8px}
+.heat-days{display:flex;flex-direction:column;gap:var(--gap);width:14px;padding-top:0}
+.heat-days span{height:var(--cell);font-size:9px;line-height:var(--cell);color:var(--text3);text-align:left}
+.heat-weeks{display:flex;gap:var(--gap);flex:1}
+.heat-week{display:flex;flex-direction:column;gap:var(--gap)}
+.hc{width:var(--cell);height:var(--cell);border-radius:3px;background:var(--h0)}
+.hc.l1{background:var(--h1)}
+.hc.l2{background:var(--h2)}
+.hc.l3{background:var(--h3)}
+.hc.l4{background:var(--h4)}
+.hc:hover{box-shadow:inset 0 0 0 1px rgba(15,23,42,.45)}
+.heat-legend{display:flex;align-items:center;gap:5px;margin-left:22px;margin-top:10px;font-size:10px;color:var(--text3)}
+.heat-legend .sw{width:9px;height:9px;border-radius:2px;display:inline-block}
+.heat-legend .sw + .sw{margin-left:0}
+.heat-legend .lbl{margin:0 2px}
+
+/* 模型账本 */
+.ledger{display:flex;flex-direction:column}
+.lrow{display:grid;grid-template-columns:minmax(0,1fr) 62px 76px;gap:12px;align-items:center;padding:11px 0;border-top:1px solid var(--line)}
+.lrow:first-of-type{border-top:0;padding-top:2px}
+.lmain{min-width:0}
+.lname{display:flex;align-items:center;gap:6px;min-width:0}
+.lname .nm{font-weight:600;font-size:12.5px;line-height:1.2;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.005em}
+.lbar{height:5px;border-radius:3px;background:var(--well);margin-top:7px;overflow:hidden}
+.lbar i{display:block;height:100%;border-radius:3px;background:var(--accent)}
+.lbar i.r2{background:rgba(79,70,229,.55)}
+.lbar i.r3{background:rgba(79,70,229,.34)}
+.lbar i.r4{background:rgba(79,70,229,.20)}
+.lses{font-size:11px;line-height:1.2;color:var(--text3);text-align:right;white-space:nowrap}
+.ltok{font-weight:600;font-size:12px;line-height:1.2;color:var(--text);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.ltok span{display:block;font-weight:400;font-size:10px;color:var(--text3);margin-top:2px}
+.lnote{font-size:10.5px;color:var(--text4);margin-top:2px}
+
+/* 页脚 */
+.foot{display:flex;flex-direction:column;gap:8px;padding-top:11px;border-top:1px solid var(--line);margin-top:2px}
+.foot-row{display:flex;align-items:center;gap:10px;min-height:20px}
+.foot-note{font-size:13px;color:var(--text2);letter-spacing:-.005em}
+.foot-note b{color:var(--text);font-weight:600}
+.foot .right{margin-left:auto;display:flex;align-items:center;gap:9px}
+.foot-fine{font-size:10.5px;color:var(--text3);white-space:nowrap}
+.iface{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--text3);min-width:0}
+.iface .lbl{font-size:11px;color:var(--text3)}
+.iface code{font:11px/1 "SF Mono",ui-monospace,monospace;color:var(--text2);background:#F1F3F9;border-radius:4px;padding:3px 6px}
+.iface .sep{color:var(--text4)}
+.status{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:5px;background:rgba(15,23,42,.045);font-size:10.5px;color:var(--text3);white-space:nowrap}
+.status.live{background:rgba(5,150,105,.10);color:#047857}
+.status.err{background:rgba(220,38,38,.07);color:#B91C1C}
+
+/* 方向 B：总账 */
+.hero-card{
+  display:grid;grid-template-columns:minmax(0,1.12fr) 1px minmax(0,1fr);gap:22px;
+  padding:20px 22px;align-items:stretch;
+}
+.hero-divider{background:var(--line);width:1px}
+.hero-main{display:flex;flex-direction:column;min-width:0}
+.hero-kicker{display:flex;align-items:center;gap:8px;font:9.5px/1 "SF Mono",ui-monospace,monospace;letter-spacing:.13em;text-transform:uppercase;color:var(--text4)}
+.hero-value{margin-top:10px;font-size:47px;line-height:1;font-weight:600;letter-spacing:-.03em;color:var(--text);font-variant-numeric:tabular-nums}
+.hero-value small{font-size:17px;font-weight:600;letter-spacing:-.01em;color:var(--text3);margin-left:8px}
+.hero-sub{margin-top:9px;font-size:11.5px;color:var(--text3)}
+.hero-sub b{color:var(--text2);font-weight:600}
+.hero-eq{margin-top:auto;padding-top:12px;font-size:12px;color:var(--text3);line-height:1.55;max-width:42ch}
+.hero-eq b{color:var(--text);font-weight:600}
+.readouts{display:grid;grid-template-columns:1fr 1fr;gap:0}
+.readout{padding:6px 0 10px;min-width:0}
+.readout + .readout{border-left:0}
+.readout:nth-child(2n){padding-left:20px;border-left:1px solid var(--line)}
+.readout:nth-child(n+3){border-top:1px solid var(--line);padding-top:15px}
+.readout .r-k{font:9.5px/1.2 "SF Mono",ui-monospace,monospace;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);white-space:nowrap}
+.readout .r-v{margin-top:7px;font-size:21px;line-height:1.1;font-weight:600;letter-spacing:-.018em;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap}
+.readout .r-s{margin-top:4px;font-size:10.5px;color:var(--text3);white-space:nowrap}
+.split{display:grid;grid-template-columns:minmax(0,1.62fr) minmax(0,1fr);gap:12px;align-items:stretch}
+.ledger-big{display:flex;flex-direction:column}
+.ledger-big .ledger{flex:none}
+.lrow.total{border-top:1px solid var(--line2);padding-top:12px;margin-top:2px}
+.lrow.total .nm{color:var(--text2);font-weight:600}
+.lrow.total .lses,.lrow.total .ltok,.lrow.total .speed b{color:var(--text)}
+.lrow.total .ltok span{color:var(--text3);font-weight:400}
+.lrow.total .speed span{color:var(--text4)}
+.rail{display:flex;flex-direction:column;gap:12px;min-width:0}
+.rail .card{flex:1}
+.ledger-big .lrow{grid-template-columns:minmax(0,1fr) 74px 78px 58px;padding:12px 0}
+.ledger-big .lname .nm{font-size:13px}
+.speed{font-size:11px;line-height:1.2;color:var(--text3);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.speed b{display:block;font-weight:600;font-size:12px;color:var(--text2)}
+.speed span{font-size:10px;color:var(--text3)}
+
+/* 方向 C：日历 */
+.calendar .card{padding:16px 18px 14px}
+.cal-head{display:flex;align-items:flex-end;gap:14px}
+.cal-head .big{font-size:15px;font-weight:600;letter-spacing:-.01em;color:var(--text)}
+.cal-head .side{font-size:11px;color:var(--text3);padding-bottom:2px}
+.cal-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.stat-list{display:flex;flex-direction:column}
+.stat-row{display:flex;align-items:baseline;gap:10px;padding:7px 0;border-top:1px solid var(--line)}
+.stat-row:first-child{border-top:0;padding-top:1px}
+.stat-row .lbl{font-size:11.5px;color:var(--text3);white-space:nowrap}
+.stat-row .val{margin-left:auto;font-size:13px;font-weight:600;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap}
+.hbars{display:flex;align-items:flex-end;gap:4px;flex:1;min-height:96px;margin-top:18px;border-bottom:1px solid var(--line)}
+.hbars .hb{flex:1;border-radius:2px 2px 1px 1px;background:var(--h2);min-height:2px}
+.hbars .hb.hi{background:var(--accent)}
+.haxis{display:flex;justify-content:space-between;margin-top:6px;font-size:9.5px;color:var(--text3);font-variant-numeric:tabular-nums}
+.stack{display:flex;height:10px;border-radius:5px;overflow:hidden;gap:0;margin-top:14px;background:transparent}
+.stack i{display:block;height:100%;border-right:2px solid #fff}
+.stack i:last-child{border-right:0}
+.stack i.s1{background:var(--accent);border-radius:5px 0 0 5px}
+.stack i.s2{background:rgba(79,70,229,.55)}
+.stack i.s3{background:rgba(79,70,229,.33)}
+.stack i.s4{background:rgba(79,70,229,.18);border-radius:0 5px 5px 0}
+.mix{display:flex;flex-direction:column;gap:0;margin-top:10px;flex:1;justify-content:space-evenly}
+.mix-row{display:flex;align-items:center;gap:7px;padding:7px 0;min-width:0}
+.mix-row .sw{width:7px;height:7px;border-radius:2px;flex:none}
+.mix-row .nm{font-size:11.5px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mix-row .pc{margin-left:auto;font-weight:600;font-size:11px;line-height:1;color:var(--text2);font-variant-numeric:tabular-nums;flex:none}
+.cal-grid .card{display:flex;flex-direction:column}
+.cal-note{margin-top:auto;padding-top:10px;font-size:10.5px;line-height:1.5;color:var(--text3)}
+
+/* ---------- 说明与标注 ---------- */
+.notes{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin:16px 0 0;padding:0 2px}
+.note-item{display:flex;gap:9px;font-size:12px;line-height:1.65;color:#5F6B7E}
+.note-item .n{
+  flex:none;width:17px;height:17px;border-radius:50%;display:grid;place-items:center;margin-top:1px;
+  box-shadow:inset 0 0 0 1px rgba(79,70,229,.42);color:#4338CA;
+  font:600 9.5px/1 "SF Mono",ui-monospace,monospace;background:#fff;
+}
+.note-item b{color:#0F172A;font-weight:600}
+
+.tradeoff{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:14px 0 0}
+.to{background:#fff;border-radius:10px;box-shadow:inset 0 0 0 1px rgba(15,23,42,.06);padding:12px 14px}
+.to .to-k{font:9.5px/1 "SF Mono",ui-monospace,monospace;letter-spacing:.1em;text-transform:uppercase;color:#64748B}
+.to p{margin:6px 0 0;font-size:12px;line-height:1.65;color:#64748B}
+.to p b{color:#0F172A}
+
+/* ---------- 对照表 ---------- */
+.table-wrap{margin-top:22px;overflow-x:auto;background:#fff;border-radius:14px;box-shadow:inset 0 0 0 1px rgba(15,23,42,.07);overflow:hidden}
+table.compare{width:100%;min-width:720px;border-collapse:collapse;font-size:12.5px}
+table.compare th,table.compare td{text-align:left;padding:12px 16px;vertical-align:top;border-bottom:1px solid rgba(15,23,42,.07)}
+table.compare thead th{
+  font:500 9.5px/1.3 "SF Mono",ui-monospace,monospace;letter-spacing:.1em;text-transform:uppercase;
+  color:#64748B;background:#FAFBFD;padding:11px 16px;border-bottom:1px solid rgba(15,23,42,.09);
+}
+table.compare tbody th{font-weight:500;color:#64748B;width:150px;white-space:nowrap;background:#FCFDFF}
+table.compare td{color:#475569;line-height:1.65}
+table.compare td b{color:#0F172A;font-weight:600}
+table.compare tr:last-child td,table.compare tr:last-child th{border-bottom:0}
+table.compare td.good{color:#065F46}
+table.compare td.mid{color:#92400E}
+
+/* ---------- 结论 / 待确认 ---------- */
+.callout{
+  margin-top:22px;background:#fff;border-radius:14px;box-shadow:inset 0 0 0 1px rgba(15,23,42,.08);
+  padding:22px 24px;display:grid;grid-template-columns:minmax(0,1.42fr) minmax(0,1fr);gap:30px;
+}
+.callout h2{font-size:17px;font-weight:600;letter-spacing:-.012em;color:#0B1020}
+.callout p{margin:9px 0 0;font-size:13px;line-height:1.75;color:#475569;max-width:62ch}
+.callout p b{color:#0F172A}
+.qs{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:10px}
+.qs li{font-size:12.5px;line-height:1.65;color:#475569;padding-left:22px;position:relative}
+.qs li b{color:#0F172A;display:block;font-weight:600;font-size:12.5px}
+.qs li::before{
+  content:attr(data-i);position:absolute;left:0;top:1px;width:16px;height:16px;border-radius:50%;
+  display:grid;place-items:center;background:rgba(15,23,42,.05);color:#64748B;
+  font:600 9px/1 "SF Mono",ui-monospace,monospace;
+}
+
+.foot-page{margin:48px 0 64px;padding-top:18px;border-top:1px solid rgba(15,23,42,.08);display:flex;gap:20px;font-size:12px;color:#5F6B7E}
+.foot-page .right{margin-left:auto;text-align:right}
+
+/* ---------- 空状态 ---------- */
+.empty-band{display:flex;align-items:center;gap:10px;background:#fff;border-radius:12px;box-shadow:inset 0 0 0 1px rgba(15,23,42,.07);padding:10px 14px}
+.empty-band .step{display:flex;align-items:center;gap:8px;min-width:0}
+.empty-band .idx{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font:600 10px/1 "SF Mono",ui-monospace,monospace;background:var(--well);color:var(--text2)}
+.empty-band .step.done .idx{background:rgba(5,150,105,.14);color:var(--ok)}
+.empty-band .st{font-size:12px;font-weight:500;color:var(--text);white-space:nowrap}
+.empty-band .sd{font-size:10.5px;color:var(--text3);white-space:nowrap}
+.empty-band .arrow{color:var(--text4);font-size:9px;margin:0 2px}
+.empty-main{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:22px;align-items:center;padding:26px 26px}
+.empty-copy h3{font-size:16px;font-weight:600;letter-spacing:-.012em;color:var(--text)}
+.empty-copy p{margin:7px 0 0;font-size:12.5px;line-height:1.7;color:var(--text3);max-width:52ch}
+.empty-actions{display:flex;align-items:center;gap:9px;margin-top:16px}
+.empty-side{background:var(--well);border-radius:12px;padding:14px 15px}
+.empty-side .row{display:flex;align-items:baseline;gap:8px;padding:6px 0;border-top:1px solid rgba(15,23,42,.06);font-size:11.5px;color:var(--text3)}
+.empty-side .row:first-child{border-top:0;padding-top:0}
+.empty-side .row .v{margin-left:auto;font-weight:600;font-size:12px;line-height:1;color:var(--text);font-variant-numeric:tabular-nums}
+.empty-side .cap{font:9.5px/1 "SF Mono",ui-monospace,monospace;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);margin-bottom:8px}
+
+.board{overflow-x:auto;overflow-y:hidden;padding:2px 0 10px}
+.board::-webkit-scrollbar{height:8px}
+.board::-webkit-scrollbar-thumb{background:rgba(15,23,42,.16);border-radius:4px}
+
+@media (max-width:1240px){
+  .wrap{padding:0 24px}
+  .jump a{font-size:12px}
+  .notes,.tradeoff,.boundary{grid-template-columns:1fr}
+  table.compare{font-size:11.5px}
+  .callout{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="kicker"><span class="dot"></span>FlashCat · 概览 · 引擎未启动</div>
+    <h1>引擎没跑的那一屏，改成一份本机用量盘点</h1>
+    <p class="lead">
+      参照你给的用量面板，把「未启动模型」时概览页的内容区从空状态换成统计：会话、消息、Token、活跃天数、
+      缓存命中与最常用模型。三个方向共用同一份数据和同一套 DS token，差别只在<b>谁当主角</b>：指标盘、模型账本，还是日历。
+    </p>
+    <div class="meta">
+      <span class="chip"><i></i>画布 1360 × 856 · 内容区 1134</span>
+      <span class="chip"><i></i>1:1 还原现有标题栏与卡片规格</span>
+      <span class="chip warn"><i></i>数字为示意数据，不是你的真实用量</span>
+      <span class="chip"><i></i>已按 B 实施 · 缓存格换成平均解码</span>
+    </div>
+    <nav class="jump" aria-label="页面目录">
+      <a href="#a"><span class="k">A</span>指标盘</a>
+      <a href="#b"><span class="k">B</span>模型账本</a>
+      <a href="#c"><span class="k">C</span>日历</a>
+      <a href="#empty"><span class="k">0</span>零数据</a>
+      <a href="#compare"><span class="k">VS</span>对照</a>
+      <a href="#decision"><span class="k">→</span>建议</a>
+      <a href="#data"><span class="k">i</span>口径</a>
+    </nav>
+  </header>
+
+  <section class="boundary" aria-label="改版边界">
+    <h2 class="sr-only">改版边界</h2>
+    <div class="bcol">
+      <div class="b-k">保留</div>
+      <h2>页头、模型选择、启动引擎</h2>
+      <p>标题栏的「概览」与右侧两个按钮不动；当前模型压成右侧「下次启动」一行，首启三步清单与本机接口的可复制路径都还在。</p>
+      <div class="fine">首启清单仅在缺运行时 / 缺模型时出现，压成一行。</div>
+    </div>
+    <div class="bcol">
+      <div class="b-k">换成</div>
+      <h2>内容区读用量，不读空状态</h2>
+      <p>当前模型卡、接口卡、最近请求不再占首屏。引擎运行时仍回到原来的实时仪表盘；<b>未运行时</b>才显示这份盘点。</p>
+      <div class="fine">时间窗：近 7 天 / 近 30 天 / 全部，只换统计窗口，不改版式。</div>
+    </div>
+    <div class="bcol">
+      <div class="b-k">口径</div>
+      <h2>只读本机已保存的会话</h2>
+      <p>按消息落盘的 <code>promptTokens</code> / <code>completionTokens</code> / <code>model</code> / <code>createdAt</code> 聚合，不含云端，也不含已删除的会话。</p>
+      <div class="fine">缓存命中率需要新增一个落盘字段；历史会话没有这个值，只统计上线后的新记录。</div>
+    </div>
+  </section>
+
+  <!-- ==================== 方向 A ==================== -->
+  <section class="vsection" id="a">
+    <div class="vhead">
+      <div class="vnum">A</div>
+      <div>
+        <div class="vname-row">
+          <h2 class="vname">指标盘 · 参考稿的直译</h2>
+          <span class="tag rec">推荐</span>
+          <span class="vsub">六格读数 + 半年热力图 + 按模型用量条</span>
+        </div>
+        <p class="vthesis">第一眼读完所有总量，最接近你给的参考。底部把「最常用模型」从一格读数展开成排行，避免六格平均用力、看完不知道谁在干活。</p>
+      </div>
+    </div>
+
+    <div class="canvas-label">窗口 1360 × 856 · 内容区 1134 × 808 · 侧栏 226 已省略</div>
+
+    <div class="board">
+    <div class="app" data-variant="指标盘">
+      <div class="appbar">
+        <div class="page-title">概览</div>
+        <div class="spacer"></div>
+        <div class="tgroup">
+          <button class="tbtn" type="button">
+            <svg class="ic" viewBox="0 0 16 16"><path d="M8 2.2 14 5.5 8 8.8 2 5.5 8 2.2Z"/><path d="M2 8.2 8 11.5 14 8.2"/><path d="M2 10.9 8 14.2 14 10.9"/></svg>
+            切换模型
+            <svg class="ic chev" viewBox="0 0 10 10"><path d="M2.2 3.8 5 6.6l2.8-2.8"/></svg>
+          </button>
+          <button class="tbtn go" type="button">
+            <svg class="ic" viewBox="0 0 10 10"><path d="M3 1.6v6.8L8.4 5 3 1.6Z" fill="currentColor" stroke="none"/></svg>
+            启动引擎
+          </button>
+        </div>
+      </div>
+
+      <div class="appbody">
+        <div class="top-row">
+          <div class="left">
+            <span class="top-title">本机用量</span>
+            <span class="badge neutral">oMLX</span>
+            <span class="top-note">自 2026-09-03 起累计</span>
+          </div>
+          <div class="right">
+            <span class="top-note">下次启动 <b style="color:var(--text2);font-weight:600">Qwen3.8-27B-4bit</b></span>
+            <div class="seg" role="group" aria-label="统计范围">
+              <span>7 天</span><span>30 天</span><span class="on">全部</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="kpis">
+          <div class="kpi">
+            <div class="k-label">会话数</div>
+            <div class="k-value num">35</div>
+            <div class="k-sub">近 30 天 <b>20</b> 段</div>
+          </div>
+          <div class="kpi">
+            <div class="k-label">消息数</div>
+            <div class="k-value num">2,115</div>
+            <div class="k-sub">你 <b>412</b><span class="sep">·</span>模型 <b>1,703</b></div>
+          </div>
+          <div class="kpi">
+            <div class="k-label">Token 总量</div>
+            <div class="k-value num">351.1M</div>
+            <div class="k-sub">提示 <b>342.8M</b><span class="sep">·</span>生成 <b>8.3M</b></div>
+          </div>
+          <div class="kpi">
+            <div class="k-label">活跃天数</div>
+            <div class="k-value num">23</div>
+            <div class="k-sub">最长连续 <b>3</b> 天</div>
+          </div>
+          <div class="kpi">
+            <div class="k-label">缓存命中率</div>
+            <div class="k-value num">93.4%</div>
+            <div class="k-sub">命中 <b>320.2M</b> tokens</div>
+          </div>
+          <div class="kpi">
+            <div class="k-label">最常用模型</div>
+            <div class="k-value sm" title="Qwen3.8-27B-4bit">Qwen3.8-27B-4bit</div>
+            <div class="k-sub">oMLX<span class="sep">·</span><b>18</b> 段会话</div>
+          </div>
+        </div>
+
+        <div class="split">
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">活跃日历</span>
+              <span class="card-meta">近 26 周 · 23 天有记录</span>
+            </div>
+            <div style="height:10px"></div>
+            <div class="heat" data-weeks="26" style="--cell:20px;--gap:3px" aria-label="近半年活跃日历"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">按模型</span>
+              <span class="card-meta">5 个模型 · 按 Token</span>
+            </div>
+            <div class="ledger" style="margin-top:4px">
+              <div class="lrow">
+                <div class="lmain">
+                  <div class="lname"><span class="nm">Qwen3.8-27B-4bit</span><span class="badge">oMLX</span></div>
+                  <div class="lbar"><i style="width:61%"></i></div>
+                </div>
+                <div class="lses">18 段</div>
+                <div class="ltok">214.6M<span>61.1%</span></div>
+              </div>
+              <div class="lrow">
+                <div class="lmain">
+                  <div class="lname"><span class="nm">Qwen3.6-35B-A3B-4bit</span><span class="badge">oMLX</span></div>
+                  <div class="lbar"><i class="r2" style="width:27%"></i></div>
+                </div>
+                <div class="lses">9 段</div>
+                <div class="ltok">96.2M<span>27.4%</span></div>
+              </div>
+              <div class="lrow">
+                <div class="lmain">
+                  <div class="lname"><span class="nm">Qwen3-8B-4bit</span><span class="badge neutral">MLX-Serve</span></div>
+                  <div class="lbar"><i class="r3" style="width:9%"></i></div>
+                </div>
+                <div class="lses">6 段</div>
+                <div class="ltok">32.8M<span>9.3%</span></div>
+              </div>
+              <div class="lrow">
+                <div class="lmain">
+                  <div class="lname"><span class="nm">其他 2 个模型</span></div>
+                  <div class="lbar"><i class="r4" style="width:2.5%"></i></div>
+                </div>
+                <div class="lses">2 段</div>
+                <div class="ltok">7.5M<span>2.1%</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="foot">
+          <div class="foot-row">
+            <div class="foot-note">351.1M tokens ≈ <b>9,426 本《爱丽丝漫游奇境》</b></div>
+            <div class="right"><span class="foot-fine">按 37.3k tokens/本折算 · 本机保留最近 200 段会话</span></div>
+          </div>
+          <div class="foot-row">
+            <div class="iface">
+              <span class="dot-off"></span>
+              <span class="lbl">本机接口</span>
+              <code>127.0.0.1:8100</code>
+              <span class="sep">·</span>
+              <span>OpenAI 兼容</span>
+            </div>
+            <div class="right">
+              <span class="status">未启动</span>
+              <button class="tbtn icon" type="button" aria-label="复制接口地址">
+                <svg class="ic" viewBox="0 0 16 16"><rect x="5" y="3" width="8" height="9" rx="1.6"/><path d="M3.4 10.5V5.1c0-.9.7-1.6 1.6-1.6h6"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    </div>
+
+    <div class="notes">
+      <div class="note-item"><span class="n">1</span><span><b>六格只放总量</b>，不做周环比：200 段保留上限会裁掉旧会话，基线不完整，硬算「+12%」就是编数据。</span></div>
+      <div class="note-item"><span class="n">2</span><span><b>热力图降到半年</b>，26 周刚好放进左栏；格子 20pt，悬停显示当天对话段数。</span></div>
+      <div class="note-item"><span class="n">3</span><span><b>接口行压成一条</b>，保留地址、兼容性与复制；「未启动」直接说明现在打不通。</span></div>
+    </div>
+
+    <div class="tradeoff">
+      <div class="to"><div class="to-k">强项</div><p><b>可扫读</b>。总量、模型、时间三个问题一屏答完，和你给的参考信息结构一致，迁移成本最低。</p></div>
+      <div class="to"><div class="to-k">代价</div><p>六格天然平均用力；「最常用模型」只有一格，模型排行的价值要滚到下方才看得到。</p></div>
+      <div class="to"><div class="to-k">实现</div><p>复用现有 <b>SplitRow</b> 与卡片规格；数据聚合一次算完，SwiftUI 侧只多一个 <b>UsageSummary</b>。</p></div>
+    </div>
+  </section>
+
+  <!-- ==================== 方向 B ==================== -->
+  <section class="vsection" id="b">
+    <div class="vhead">
+      <div class="vnum">B</div>
+      <div>
+        <div class="vname-row">
+          <h2 class="vname">模型账本 · 谁在替我干活</h2>
+          <span class="tag alt">备选</span>
+          <span class="vsub">一个总 Token 数 + 按模型排行 + 小日历</span>
+        </div>
+        <p class="vthesis">FlashCat 是跑模型的，用量就是模型。把 Token 总量放大成唯一的大数字，下面按模型列出会话、Token 与平均解码速度——<b>点一行就能切到那个模型</b>，统计直接变成操作入口。</p>
+      </div>
+    </div>
+
+    <div class="canvas-label">窗口 1360 × 856 · 内容区 1134 × 808 · 侧栏 226 已省略</div>
+
+    <div class="board">
+    <div class="app" data-variant="模型账本">
+      <div class="appbar">
+        <div class="page-title">概览</div>
+        <div class="spacer"></div>
+        <div class="tgroup">
+          <button class="tbtn" type="button">
+            <svg class="ic" viewBox="0 0 16 16"><path d="M8 2.2 14 5.5 8 8.8 2 5.5 8 2.2Z"/><path d="M2 8.2 8 11.5 14 8.2"/><path d="M2 10.9 8 14.2 14 10.9"/></svg>
+            切换模型
+            <svg class="ic chev" viewBox="0 0 10 10"><path d="M2.2 3.8 5 6.6l2.8-2.8"/></svg>
+          </button>
+          <button class="tbtn go" type="button">
+            <svg class="ic" viewBox="0 0 10 10"><path d="M3 1.6v6.8L8.4 5 3 1.6Z" fill="currentColor" stroke="none"/></svg>
+            启动引擎
+          </button>
+        </div>
+      </div>
+
+      <div class="appbody">
+        <div class="top-row">
+          <div class="left">
+            <span class="top-title">本机用量</span>
+            
+            <span class="top-note">自 2026-09-03 起累计</span>
+          </div>
+          <div class="right">
+            <div class="seg" role="group" aria-label="统计范围">
+              <span>7 天</span><span>30 天</span><span class="on">全部</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card hero-card">
+          <div class="hero-main">
+            
+            <div class="hero-value num">351.1M <small>tokens</small></div>
+            
+            
+          </div>
+          <div class="hero-divider"></div>
+          <div class="readouts">
+            <div class="readout">
+              <div class="r-k">会话</div>
+              <div class="r-v num">35</div>
+            </div>
+            <div class="readout">
+              <div class="r-k">消息</div>
+              <div class="r-v num">2,115</div>
+            </div>
+            <div class="readout">
+              <div class="r-k">活跃天数</div>
+              <div class="r-v num">23</div>
+            </div>
+            <div class="readout">
+              <div class="r-k">平均解码</div>
+              <div class="r-v num">47.2 <span style="font-size:11px;font-weight:500;color:var(--text3);letter-spacing:0">tok/s</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="split">
+          <div class="card ledger-big">
+            <div class="card-head">
+              <span class="card-title">模型用量</span>
+              <span class="card-meta">5 个模型 · 按 Token 排序</span>
+            </div>
+            <div class="ledger" style="margin-top:4px">
+              <div class="lrow">
+                <div class="lmain">
+                  <div class="lname"><span class="nm">Qwen3.8-27B-4bit</span></div>
+                  <div class="lbar"><i style="width:61%"></i></div>
+                </div>
+                <div class="lses">18 段</div>
+                <div class="ltok">214.6M<span>61.1%</span></div>
+                <div class="speed"><b>38.4</b><span>tok/s</span></div>
+              </div>
+              <div class="lrow">
+                <div class="lmain">
+                  <div class="lname"><span class="nm">Qwen3.6-35B-A3B-4bit</span></div>
+                  <div class="lbar"><i class="r2" style="width:27%"></i></div>
+                </div>
+                <div class="lses">9 段</div>
+                <div class="ltok">96.2M<span>27.4%</span></div>
+                <div class="speed"><b>52.1</b><span>tok/s</span></div>
+              </div>
+              <div class="lrow">
+                <div class="lmain">
+                  <div class="lname"><span class="nm">Qwen3-8B-4bit</span></div>
+                  <div class="lbar"><i class="r3" style="width:9%"></i></div>
+                </div>
+                <div class="lses">6 段</div>
+                <div class="ltok">32.8M<span>9.3%</span></div>
+                <div class="speed"><b>71.8</b><span>tok/s</span></div>
+              </div>
+              <div class="lrow">
+                <div class="lmain">
+                  <div class="lname"><span class="nm">其他 2 个模型</span></div>
+                  <div class="lbar"><i class="r4" style="width:2.5%"></i></div>
+                </div>
+                <div class="lses">2 段</div>
+                <div class="ltok">7.5M<span>2.1%</span></div>
+                <div class="speed"><b>—</b><span>tok/s</span></div>
+              </div>
+              <div class="lrow total">
+                <div class="lmain">
+                  <div class="lname"><span class="nm">合计</span></div>
+                </div>
+                <div class="lses">35 段</div>
+                <div class="ltok">351.1M<span>100%</span></div>
+                <div class="speed"><b>47.2</b><span>tok/s</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="rail">
+            <div class="card">
+              <div class="card-head">
+                <span class="card-title">活跃日历</span>
+                
+              </div>
+              <div style="height:8px"></div>
+              <div class="heat" data-weeks="20" style="--cell:12px;--gap:3px" aria-label="近 20 周活跃日历"></div>
+            </div>
+            <div class="card">
+              <div class="card-head">
+                <span class="card-title">本机接口</span>
+                
+              </div>
+              <div class="iface" style="margin-top:12px">
+                <code>127.0.0.1:8100</code>
+                <span class="sep">·</span>
+                <span>/v1</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:12px">
+                <span class="status">未启动</span>
+                <button class="tbtn" type="button" style="margin-left:auto;height:24px;font-size:11px;padding:0 9px">
+                  <svg class="ic" viewBox="0 0 16 16" style="width:11px;height:11px"><rect x="5" y="3" width="8" height="9" rx="1.6"/><path d="M3.4 10.5V5.1c0-.9.7-1.6 1.6-1.6h6"/></svg>
+                  复制地址
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+    </div>
+
+    <div class="notes">
+      <div class="note-item"><span class="n">1</span><span><b>只留一个大数字</b>：Token 总量。其余读数退成右侧四格，层级比六等分清楚。</span></div>
+      <div class="note-item"><span class="n">2</span><span><b>模型行就是操作行</b>：点一行切模型，复用现有 ModelPicker 的切换动作，统计页不只是看。</span></div>
+      <div class="note-item"><span class="n">3</span><span><b>速度按模型聚合</b>：用消息落盘的 <b>tokensPerSecond</b>，能看出哪个模型真的更快。</span></div>
+    </div>
+
+    <div class="tradeoff">
+      <div class="to"><div class="to-k">强项</div><p><b>最像 FlashCat</b>。模型排行是别家没有的信息，也直接把「切模型」这一步接回工作流。</p></div>
+      <div class="to"><div class="to-k">代价</div><p>总览感弱一些：会话、消息、活跃度都缩在右栏四格里，第一眼不如 A 好扫。</p></div>
+      <div class="to"><div class="to-k">实现</div><p>聚合按 <b>model</b> 分组即可；「会话归属」需要一条明确规则，否则 35 段会被重复计数。</p></div>
+    </div>
+  </section>
+
+  <!-- ==================== 方向 C ==================== -->
+  <section class="vsection" id="c">
+    <div class="vhead">
+      <div class="vnum">C</div>
+      <div>
+        <div class="vname-row">
+          <h2 class="vname">日历 · 本机使用的时间形状</h2>
+          <span class="tag alt">备选</span>
+          <span class="vsub">一整年热力图 + 时段分布 + 模型构成</span>
+        </div>
+        <p class="vthesis">把「什么时候在用」当主角：全年日历铺满一屏，用量总量退成一条读数，下面拆时段分布与模型构成。适合想看习惯而不是看数字的人。</p>
+      </div>
+    </div>
+
+    <div class="canvas-label">窗口 1360 × 856 · 内容区 1134 × 808 · 侧栏 226 已省略</div>
+
+    <div class="board">
+    <div class="app" data-variant="日历">
+      <div class="appbar">
+        <div class="page-title">概览</div>
+        <div class="spacer"></div>
+        <div class="tgroup">
+          <button class="tbtn" type="button">
+            <svg class="ic" viewBox="0 0 16 16"><path d="M8 2.2 14 5.5 8 8.8 2 5.5 8 2.2Z"/><path d="M2 8.2 8 11.5 14 8.2"/><path d="M2 10.9 8 14.2 14 10.9"/></svg>
+            切换模型
+            <svg class="ic chev" viewBox="0 0 10 10"><path d="M2.2 3.8 5 6.6l2.8-2.8"/></svg>
+          </button>
+          <button class="tbtn go" type="button">
+            <svg class="ic" viewBox="0 0 10 10"><path d="M3 1.6v6.8L8.4 5 3 1.6Z" fill="currentColor" stroke="none"/></svg>
+            启动引擎
+          </button>
+        </div>
+      </div>
+
+      <div class="appbody">
+        <div class="top-row">
+          <div class="left">
+            <span class="top-title">本机用量</span>
+            <span class="top-note">自 2026-09-03 起 · 35 段会话</span>
+          </div>
+          <div class="right">
+            <span class="top-note">下次启动 <b style="color:var(--text2);font-weight:600">Qwen3.8-27B-4bit</b></span>
+            <div class="seg" role="group" aria-label="统计范围">
+              <span>7 天</span><span>30 天</span><span class="on">全部</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card calendar" style="padding:16px 18px 14px">
+          <div class="cal-head">
+            <span class="big">活跃日历</span>
+            <span class="side">23 天有记录 · 最长连续 3 天 · 共 35 段会话</span>
+            <span class="card-meta" style="padding-bottom:2px">近 52 周</span>
+          </div>
+          <div style="height:12px"></div>
+          <div class="heat" data-weeks="52" style="--cell:16px;--gap:4px" aria-label="近一年活跃日历"></div>
+        </div>
+
+        <div class="cal-grid">
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">时段分布</span>
+              <span class="card-meta">20–24 时最常聊</span>
+            </div>
+            <div class="hbars" aria-label="按会话开始时间统计的 12 个时段">
+              <i class="hb" style="height:11%"></i>
+              <i class="hb" style="height:2%"></i>
+              <i class="hb" style="height:2%"></i>
+              <i class="hb" style="height:2%"></i>
+              <i class="hb" style="height:11%"></i>
+              <i class="hb" style="height:22%"></i>
+              <i class="hb" style="height:33%"></i>
+              <i class="hb" style="height:56%"></i>
+              <i class="hb" style="height:44%"></i>
+              <i class="hb" style="height:33%"></i>
+              <i class="hb hi" style="height:100%"></i>
+              <i class="hb" style="height:78%"></i>
+            </div>
+            <div class="haxis"><span>00</span><span>06</span><span>12</span><span>18</span><span>23</span></div>
+            <div class="cal-note">按会话开始时间统计，每格 2 小时。</div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">模型构成</span>
+              <span class="card-meta">按 Token</span>
+            </div>
+            <div class="stack" aria-label="模型 Token 构成">
+              <i class="s1" style="width:61.1%"></i>
+              <i class="s2" style="width:27.4%"></i>
+              <i class="s3" style="width:9.3%"></i>
+              <i class="s4" style="width:2.1%"></i>
+            </div>
+            <div class="mix">
+              <div class="mix-row"><span class="sw" style="background:var(--accent)"></span><span class="nm">Qwen3.8-27B-4bit</span><span class="pc">61.1%</span></div>
+              <div class="mix-row"><span class="sw" style="background:rgba(79,70,229,.55)"></span><span class="nm">Qwen3.6-35B-A3B-4bit</span><span class="pc">27.4%</span></div>
+              <div class="mix-row"><span class="sw" style="background:rgba(79,70,229,.33)"></span><span class="nm">Qwen3-8B-4bit</span><span class="pc">9.3%</span></div>
+              <div class="mix-row"><span class="sw" style="background:rgba(79,70,229,.18)"></span><span class="nm">其他 2 个</span><span class="pc">2.1%</span></div>
+            </div>
+            <div class="cal-note">一个会话只算一次，归给消息最多的模型。</div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <span class="card-title">读数</span>
+              <span class="card-meta">全部</span>
+            </div>
+            <div class="stat-list" style="margin-top:4px">
+              <div class="stat-row"><span class="lbl">会话</span><span class="val num">35</span></div>
+              <div class="stat-row"><span class="lbl">消息</span><span class="val num">2,115</span></div>
+              <div class="stat-row"><span class="lbl">Token 总量</span><span class="val num">351.1M</span></div>
+              <div class="stat-row"><span class="lbl">缓存命中率</span><span class="val num">93.4%</span></div>
+              <div class="stat-row"><span class="lbl">平均解码</span><span class="val num">47.2 tok/s</span></div>
+              <div class="stat-row"><span class="lbl">最常用模型</span><span class="val" style="font-size:11.5px">Qwen3.8-27B</span></div>
+            </div>
+            <div class="cal-note">「全部」= 本机保留的最近 200 段会话。</div>
+          </div>
+        </div>
+
+        <div class="foot">
+          <div class="foot-row">
+            <div class="foot-note">351.1M tokens ≈ <b>9,426 本《爱丽丝漫游奇境》</b></div>
+            <div class="right"><span class="foot-fine">按 37.3k tokens/本折算 · 本机保留最近 200 段会话</span></div>
+          </div>
+          <div class="foot-row">
+            <div class="iface">
+              <span class="dot-off"></span>
+              <span class="lbl">本机接口</span>
+              <code>127.0.0.1:8100</code>
+              <span class="sep">·</span>
+              <span>OpenAI 兼容</span>
+            </div>
+            <div class="right">
+              <span class="status">未启动</span>
+              <button class="tbtn icon" type="button" aria-label="复制接口地址">
+                <svg class="ic" viewBox="0 0 16 16"><rect x="5" y="3" width="8" height="9" rx="1.6"/><path d="M3.4 10.5V5.1c0-.9.7-1.6 1.6-1.6h6"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    </div>
+
+    <div class="notes">
+      <div class="note-item"><span class="n">1</span><span><b>日历是唯一主角</b>：52 周铺满整行，空月份也留着，能看出「从哪个月开始用」。</span></div>
+      <div class="note-item"><span class="n">2</span><span><b>时段只画有数据的桶</b>：12 个两小时桶，峰值柱用强调色，不做 24 根细柱。</span></div>
+      <div class="note-item"><span class="n">3</span><span><b>构成用堆叠条</b>，不画环形图：模型名长，环形图的图例反而更占地方。</span></div>
+    </div>
+
+    <div class="tradeoff">
+      <div class="to"><div class="to-k">强项</div><p><b>时间叙事最完整</b>。热力图放到最大，时段与模型构成是别处看不到的补充。</p></div>
+      <div class="to"><div class="to-k">代价</div><p>总量被拆散：Token 总数要看到右下角才有；首屏最抢眼的是「哪天聊过」。</p></div>
+      <div class="to"><div class="to-k">实现</div><p>日历按消息 <b>createdAt</b> 归日；注意力全在绘图层，SwiftUI 里需要自绘 52×7 格。</p></div>
+    </div>
+  </section>
+
+  <!-- ==================== 空状态 ==================== -->
+  <section class="vsection" id="empty">
+    <div class="vhead">
+      <div class="vnum">0</div>
+      <div>
+        <div class="vname-row">
+          <h2 class="vname">零数据时，不能只剩一片 0</h2>
+          <span class="vsub">首启清单仍在，统计面板退成一张解释卡</span>
+        </div>
+        <p class="vthesis">没有会话时六格全 0 既难看也解释不了任何事。这里沿用方向 A 的外壳：缺运行时 / 缺模型才出现三步清单；统计区改成一个「会统计什么」的说明卡。</p>
+      </div>
+    </div>
+
+    <div class="canvas-label">同一页的零数据状态 · 窗口高度按内容裁切</div>
+
+    <div class="board">
+    <div class="app" data-variant="零数据">
+      <div class="appbar">
+        <div class="page-title">概览</div>
+        <div class="spacer"></div>
+        <div class="tgroup">
+          <button class="tbtn" type="button">
+            <svg class="ic" viewBox="0 0 16 16"><path d="M8 2.2 14 5.5 8 8.8 2 5.5 8 2.2Z"/><path d="M2 8.2 8 11.5 14 8.2"/><path d="M2 10.9 8 14.2 14 10.9"/></svg>
+            切换模型
+            <svg class="ic chev" viewBox="0 0 10 10"><path d="M2.2 3.8 5 6.6l2.8-2.8"/></svg>
+          </button>
+          <button class="tbtn go" type="button" aria-disabled="true" style="opacity:.45">
+            <svg class="ic" viewBox="0 0 10 10"><path d="M3 1.6v6.8L8.4 5 3 1.6Z" fill="currentColor" stroke="none"/></svg>
+            启动引擎
+          </button>
+        </div>
+      </div>
+
+      <div class="appbody" style="min-height:0">
+        <div class="empty-band">
+          <div class="step done"><span class="idx">✓</span><span><span class="st">安装引擎</span> <span class="sd">oMLX 已就绪</span></span></div>
+          <span class="arrow">›</span>
+          <div class="step"><span class="idx">2</span><span><span class="st">下载模型</span> <span class="sd">模型库还没有可跑的权重</span></span></div>
+          <span class="arrow">›</span>
+          <div class="step"><span class="idx">3</span><span><span class="st">启动引擎</span> <span class="sd">点右上角的启动按钮</span></span></div>
+          <div style="margin-left:auto">
+            <button class="tbtn icon" type="button" aria-label="关闭三步清单" style="height:22px;width:22px">
+              <svg class="ic" viewBox="0 0 10 10" style="width:9px;height:9px"><path d="M2 2l6 6M8 2 2 8"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="top-row">
+          <div class="left">
+            <span class="top-title">本机用量</span>
+            <span class="badge neutral">oMLX</span>
+            <span class="top-note">还没有数据</span>
+          </div>
+          <div class="right">
+            <span class="top-note">仅本机会话</span>
+            <div class="seg" role="group" aria-label="统计范围" style="opacity:.5">
+              <span>7 天</span><span>30 天</span><span class="on">全部</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card empty-main">
+          <div class="empty-copy">
+            <div class="card-kicker" style="margin-bottom:8px">0 段会话 · 0 条消息</div>
+            <h3>从第一段对话开始累计</h3>
+            <p>先在模型库下载一个模型；启动引擎后，这里会按消息落盘的 Token 用量、模型与时间聚合出整页统计。全部在本机计算，不上传任何内容。</p>
+            <div class="empty-actions">
+              <button class="tbtn" type="button">
+                <svg class="ic" viewBox="0 0 16 16"><path d="M8 2.2 14 5.5 8 8.8 2 5.5 8 2.2Z"/><path d="M2 8.2 8 11.5 14 8.2"/><path d="M2 10.9 8 14.2 14 10.9"/></svg>
+                去模型库
+              </button>
+              <button class="tbtn go" type="button" aria-disabled="true" style="opacity:.45">
+                <svg class="ic" viewBox="0 0 10 10"><path d="M3 1.6v6.8L8.4 5 3 1.6Z" fill="currentColor" stroke="none"/></svg>
+                启动引擎
+              </button>
+            </div>
+          </div>
+          <div class="empty-side">
+            <div class="cap">启动后统计</div>
+            <div class="row"><span>会话</span><span class="v">—</span></div>
+            <div class="row"><span>消息</span><span class="v">—</span></div>
+            <div class="row"><span>Token 总量</span><span class="v">—</span></div>
+            <div class="row"><span>活跃天数</span><span class="v">—</span></div>
+            <div class="row"><span>缓存命中率</span><span class="v">—</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    </div>
+  </section>
+
+  <!-- ==================== 对照 ==================== -->
+  <section class="vsection" id="compare">
+    <div class="vhead">
+      <div class="vnum">vs</div>
+      <div>
+        <div class="vname-row"><h2 class="vname">三个方向放在一起</h2></div>
+        <p class="vthesis">同一批数据、同一套卡片规格，差别只在信息优先级。表中的「实现成本」按现有概览页的布局原语估算，不含聚合逻辑本身。</p>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="compare">
+        <thead>
+          <tr><th>维度</th><th>A · 指标盘</th><th>B · 模型账本</th><th>C · 日历</th></tr>
+        </thead>
+        <tbody>
+          <tr><th>第一眼读到</th><td><b>六个总量</b>，全部同级</td><td><b>Token 总量</b>，其次才是模型排行</td><td><b>哪天在用</b>，总量退到下面</td></tr>
+          <tr><th>模型视角</th><td>一格读数 + 卡内排行</td><td class="good">主角：会话、Token、速度按模型切</td><td>构成条 + 一行最常用</td></tr>
+          <tr><th>时间视角</th><td>半年日历</td><td>20 周日历</td><td class="good">全年日历 + 时段分布</td></tr>
+          <tr><th>首屏信息量</th><td class="good">高：6 读数 + 2 块</td><td>中：1 大数 + 4 读数 + 4 行</td><td>中：1 大日历 + 3 块</td></tr>
+          <tr><th>与参考稿距离</th><td class="good">最近，结构一一对应</td><td>中：换了主角</td><td>远：更像 GitHub 贡献图</td></tr>
+          <tr><th>实现成本</th><td class="good">低：复用 SplitRow / 卡片</td><td>中：要定「会话归哪个模型」</td><td>中高：自绘 52×7 与桶图</td></tr>
+          <tr><th>适合</th><td>想一屏看全的人</td><td>常换模型、关心速度的人</td><td>关心使用习惯的人</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ==================== 建议与确认 ==================== -->
+  <section class="vsection" id="decision">
+    <div class="callout">
+      <div>
+        <div class="card-kicker">建议</div>
+        <h2 style="margin-top:9px">先做 A，把 B 的排行留在同一个页面里</h2>
+        <p>
+          A 与你给的参考同构，迁移风险最小；而它的底部本来就有按模型排行，B 的核心价值（谁在干活、谁更快）已经覆盖了八成。
+          等真实用上几个月、模型分布稳定，再把排行提上来做 B，删掉六格里的重复项——那时数据也撑得起更大的版面。
+        </p>
+        <p>
+          C 的日历信息密度最低，但它回答了另外三个方向都没回答的问题：<b>什么时候在用</b>。如果这个问题的价值高于总量，就选 C。
+        </p>
+      </div>
+      <ul class="qs">
+        <li data-i="1"><b>方向</b>A（推荐）／ B ／ C，或「A 的六格 + B 的排行」。</li>
+        <li data-i="2"><b>缓存命中率</b>要：给消息补 <b>cachedPromptTokens</b> 落盘（值本来就在内存里）。不要：首屏换成平均解码 47.2 tok/s，指标零改动。</li>
+        <li data-i="3"><b>时间窗</b>保留 7 天 / 30 天 / 全部三档，还是只留 30 天 / 全部？「全部」实际是本机保留的最近 200 段会话。</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ==================== 数据口径 ==================== -->
+  <section class="vsection" id="data">
+    <div class="vhead">
+      <div class="vnum">i</div>
+      <div>
+        <div class="vname-row"><h2 class="vname">每个数从哪来</h2></div>
+        <p class="vthesis">除缓存命中率外，全部指标都能从现有落盘消息直接算出来，不需要联网、不需要新增存储。</p>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="compare">
+        <thead>
+          <tr><th>指标</th><th>口径</th><th>现状</th></tr>
+        </thead>
+        <tbody>
+          <tr><th>会话 / 消息</th><td>本机会话数与 user + assistant 消息数；<code>chat-history.json</code> 保留最近 200 段</td><td class="good">已有，重启保留</td></tr>
+          <tr><th>Token 总量</th><td>每条 assistant 消息的 <code>promptTokens</code> + <code>completionTokens</code> 求和</td><td class="good">已有；图片 / 视频轮可能为 0</td></tr>
+          <tr><th>活跃天数 / 日历</th><td>消息 <code>createdAt</code> 按本地时区归日；没有时间戳的旧导入消息不计</td><td class="good">已有</td></tr>
+          <tr><th>最常用模型</th><td>按 assistant 消息的 <code>model</code> 聚合；会话归属给它消息最多的模型</td><td class="good">已有；需要这条归属规则</td></tr>
+          <tr><th>平均解码</th><td>消息 <code>tokensPerSecond</code> 的 token 加权平均（网关打点口径）</td><td class="good">已有</td></tr>
+          <tr><th>缓存命中率</th><td><code>cachedPromptTokens</code> ÷ <code>promptTokens</code></td><td class="mid">缺落盘：值在内存里，<code>StoredMessage</code> 没写；只能统计上线后的新消息</td></tr>
+          <tr><th>时间窗筛选</th><td>按消息 <code>createdAt</code> 过滤后重算，纯函数，不改存储</td><td class="good">新增聚合函数即可</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin:12px 2px 0;font-size:11.5px;line-height:1.7;color:#64748B">
+      注意：会话保留上限是 200 段，更早的会话被裁掉后，「全部」的总量会跟着下降。页脚写「本机保留最近 200 段会话」就是为了说明这件事。
+    </p>
+  </section>
+
+  <footer class="foot-page">
+    <div>FlashCat · 概览未启动态改版 · 原型稿，未改 SwiftUI</div>
+    <div>依据：<span class="mono">OverviewPage.swift</span> · <span class="mono">ChatHistory.swift</span> · <span class="mono">DesignSystem.swift</span></div>
+    <div class="right">窗口 1360 × 856 / 侧栏 226 / 内容区 1134<br>数字为示意 · 深色模式按 DS token 自适应，不另出稿</div>
+  </footer>
+
+</div>
+<script>
+(function(){
+  var TODAY = new Date(2026, 10, 26); // 2026-11-26，与文案一致
+  var ACTIVE = {
+    '2026-09-03':1, '2026-09-09':2, '2026-09-14':1, '2026-09-21':1, '2026-09-27':2,
+    '2026-10-02':1, '2026-10-08':2, '2026-10-09':1, '2026-10-15':1, '2026-10-22':2,
+    '2026-10-26':1, '2026-10-29':1,
+    '2026-11-03':1, '2026-11-05':2, '2026-11-06':1, '2026-11-09':1, '2026-11-11':2,
+    '2026-11-14':4, '2026-11-18':1, '2026-11-19':2, '2026-11-22':3, '2026-11-23':1,
+    '2026-11-24':1
+  };
+  function pad(n){ return (n < 10 ? '0' : '') + n; }
+  function key(d){ return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()); }
+  function mondayOf(d){
+    var x = new Date(d.getTime()); x.setHours(12,0,0,0);
+    var off = (x.getDay() + 6) % 7;
+    x.setDate(x.getDate() - off);
+    return x;
+  }
+  function build(el){
+    if (el.dataset.built === '1') return;
+    el.dataset.built = '1';
+    var weeks = parseInt(el.getAttribute('data-weeks'), 10) || 26;
+    var cell = parseFloat(getComputedStyle(el).getPropertyValue('--cell')) || 16;
+    var gap = parseFloat(getComputedStyle(el).getPropertyValue('--gap')) || 3;
+    var start = mondayOf(TODAY);
+    start.setDate(start.getDate() - (weeks - 1) * 7);
+
+    var months = document.createElement('div');
+    months.className = 'heat-months';
+    var days = document.createElement('div');
+    days.className = 'heat-days';
+    ['一','','三','','五','',''].forEach(function(t){
+      var s = document.createElement('span');
+      s.textContent = t;
+      days.appendChild(s);
+    });
+    var wk = document.createElement('div');
+    wk.className = 'heat-weeks';
+
+    var lastMonth = -1;
+    var lastLabelWeek = -10;
+    for (var w = 0; w < weeks; w++) {
+      var col = document.createElement('div');
+      col.className = 'heat-week';
+      var monday = new Date(start.getTime());
+      monday.setDate(start.getDate() + w * 7);
+      if (monday.getMonth() !== lastMonth) {
+        lastMonth = monday.getMonth();
+        if (w === 0 || w - lastLabelWeek >= 3) {
+          lastLabelWeek = w;
+          var lab = document.createElement('span');
+          lab.textContent = (monday.getMonth() + 1) + ' 月';
+          lab.style.left = (w * (cell + gap)) + 'px';
+          months.appendChild(lab);
+        }
+      }
+      for (var d = 0; d < 7; d++) {
+        var date = new Date(start.getTime());
+        date.setDate(start.getDate() + w * 7 + d);
+        var c = document.createElement('span');
+        c.className = 'hc';
+        var n = ACTIVE[key(date)] || 0;
+        if (n >= 4) c.className += ' l4';
+        else if (n === 3) c.className += ' l3';
+        else if (n === 2) c.className += ' l2';
+        else if (n === 1) c.className += ' l1';
+        if (date > TODAY) c.style.visibility = 'hidden';
+        c.setAttribute('title', (date.getMonth()+1) + '月' + date.getDate() + '日 · ' + (n ? n + ' 段对话' : '无记录'));
+        col.appendChild(c);
+      }
+      wk.appendChild(col);
+    }
+
+    var body = document.createElement('div');
+    body.className = 'heat-body';
+    body.appendChild(days);
+    body.appendChild(wk);
+
+    var legend = document.createElement('div');
+    legend.className = 'heat-legend';
+    var lbl1 = document.createElement('span'); lbl1.className = 'lbl'; lbl1.textContent = '少';
+    legend.appendChild(lbl1);
+    ['h0','h1','h2','h3','h4'].forEach(function(level){
+      var sw = document.createElement('span');
+      sw.className = 'sw';
+      sw.style.background = getComputedStyle(document.documentElement).getPropertyValue('--' + level);
+      legend.appendChild(sw);
+    });
+    var lbl2 = document.createElement('span'); lbl2.className = 'lbl'; lbl2.textContent = '多';
+    legend.appendChild(lbl2);
+
+    el.appendChild(months);
+    el.appendChild(body);
+    el.appendChild(legend);
+  }
+  var nodes = document.querySelectorAll('.heat[data-weeks]');
+  for (var i = 0; i < nodes.length; i++) build(nodes[i]);
+})();
+</script>
+</body>
+</html>

@@ -12,30 +12,46 @@ import UniformTypeIdentifiers
 struct ChatPage: View {
     @ObservedObject var state: AppState
     let chat: ChatStore
+    /// 壳层在布局这一拍量到的详情区尺寸。对话列宽与宽 / 窄版式都由它直接
+    /// 算出，切页回来时第一帧就是最终版式，不会再缩一下。
+    let pageSize: CGSize
     var isActive: Bool = true
 
-    @State var showsParameters = false
-    @State var showsEmptyModelPicker = false
-    @State private var hasMessages = false
+    @State private var hasMessages: Bool
     @State private var firstMessageID: UUID?
-    @State private var threads: [ChatThread] = []
+    @State private var threads: [ChatThread]
     @State var composerFocused = false
     @State var editingMessageID: UUID?
     @State var pendingEditMessage: ChatMessage?
-    @State var columnWidth: CGFloat = ChatColumn.defaultWidth
+    @State private var showsModelPicker = false
 
     @Environment(\.accessibilityReduceMotion) var reduceMotion
     @Environment(\.colorScheme) var colorScheme
 
-    init(state: AppState, chat: ChatStore, isActive: Bool = true) {
+    init(state: AppState, chat: ChatStore, pageSize: CGSize, isActive: Bool = true) {
         self.state = state
         self.chat = chat
+        self.pageSize = pageSize
         self.isActive = isActive
+        // 切页会把页面重建一次；这些首帧状态必须从 store 直接取当前值。
+        // 否则进入已有对话时会先按「新会话」排一版，`onAppear` 再翻成转录
+        // 版式，输入卡和标题那一拍就会上下弹一下。
+        _hasMessages = State(initialValue: !chat.messages.isEmpty)
+        _firstMessageID = State(initialValue: chat.messages.first?.id)
+        _threads = State(initialValue: chat.threads)
+    }
+
+    private var isWide: Bool {
+        pageSize.width >= Console.compactContentWidth
+    }
+
+    /// 对话列宽：默认宽度按页面宽度夹一次。只夹、不回写。
+    private var columnWidth: CGFloat {
+        ChatColumn.width(stored: ChatColumn.defaultWidth, pageWidth: pageSize.width)
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            header
             ChatStageView(newChat: !hasMessages, column: columnWidth) {
                 ZStack {
                     if !hasMessages {
@@ -65,24 +81,29 @@ struct ChatPage: View {
                     isActive: isActive,
                     editingMessageID: $editingMessageID,
                     composerFocused: $composerFocused,
-                    showsParameters: $showsParameters
+                    showsModelPicker: $showsModelPicker
                 )
                 .padding(.horizontal, ChatColumn.contentInset)
             }
             .animation(reduceMotion ? nil : Motion.settle, value: !hasMessages)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .onGeometryChange(for: CGFloat.self) { proxy in
-            guard isActive else { return -1 }
-            return ChatColumn.width(
-                stored: ChatColumn.defaultWidth,
-                pageWidth: proxy.size.width
-            ).rounded()
-        } action: { clamped in
-            guard clamped > 0 else { return }
-            columnWidth = clamped
+        .toolbar {
+            ToolbarItem(id: DSToolbarSlot.title, placement: .navigation) {
+                chatToolbarTitle
+            }
+            .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(id: DSToolbarSlot.anchor, placement: .principal) {
+                DSToolbarAnchor()
+            }
+            .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(id: DSToolbarSlot.actions, placement: .primaryAction) {
+                DSToolbarActionRow(state: state, compact: !isWide) {
+                    chatToolbarActions
+                }
+            }
+            .sharedBackgroundVisibility(.hidden)
         }
-        .sheet(isPresented: $showsParameters) { ChatParametersSheet(state: state) }
         .alert("编辑并重发？", isPresented: editConfirmationShown, presenting: pendingEditMessage) {
             message in
             Button(L10n.t("重发")) {
@@ -110,8 +131,6 @@ struct ChatPage: View {
                 focusComposer()
             } else {
                 composerFocused = false
-                showsParameters = false
-                showsEmptyModelPicker = false
             }
         }
         .onReceive(chat.$messages) { messages in
@@ -155,25 +174,51 @@ struct ChatPage: View {
         return ChatHistory.autoTitle(messages: chat.messages)
     }
 
-    /// 侧栏展开时顶栏只保留当前会话标题；侧栏收起时补上历史与新对话捷径。
-    var header: some View {
-        HStack(spacing: 8) {
-            if !state.showsSidebar {
-                ChatHistoryButton(state: state, chat: chat)
-            }
-            if let thread = currentThread, hasMessages {
-                ChatTitleMenu(state: state, thread: thread)
-            } else if let title = restoredTitle {
-                Text(title)
-                    .font(DS.Font.prose(14.5, weight: .semibold))
-                    .foregroundStyle(DS.text)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .padding(.horizontal, 8)
-            }
-            Spacer(minLength: 0)
+    @ViewBuilder
+    private var chatToolbarTitle: some View {
+        if let thread = currentThread, hasMessages {
+            ChatTitleMenu(state: state, thread: thread)
+                .frame(maxWidth: isWide ? 360 : 220, alignment: .leading)
+                .padding(.leading, 11)
+        } else if let title = restoredTitle {
+            Text(title)
+                .font(DS.Font.prose(15, weight: .semibold))
+                .tracking(-0.2)
+                .foregroundStyle(DS.text)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: isWide ? 360 : 220, alignment: .leading)
+                .padding(.leading, 15)
+        } else {
+            Text(L10n.t("对话"))
+                .font(DS.Font.prose(15, weight: .semibold))
+                .tracking(-0.2)
+                .foregroundStyle(DS.text)
+                .frame(maxWidth: isWide ? 360 : 220, alignment: .leading)
+                .padding(.leading, 15)
+        }
+    }
 
-            if !state.showsSidebar {
+    @ViewBuilder
+    private var chatToolbarActions: some View {
+        if !state.showsSidebar {
+            ChatHistoryButton(state: state, chat: chat)
+
+            if isWide {
+                Button {
+                    state.newConversation()
+                    state.section = .chat
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(DS.accent)
+                        Text(L10n.t("新对话"))
+                    }
+                }
+                .buttonStyle(.ds(.secondary, size: .regular))
+                .help(L10n.t("新对话"))
+            } else {
                 DSIconButton(
                     systemName: "square.and.pencil",
                     help: "新对话",
@@ -183,18 +228,6 @@ struct ChatPage: View {
                     state.newConversation()
                     state.section = .chat
                 }
-            }
-        }
-        .padding(.leading, Console.topBarLeading(sidebarShown: state.showsSidebar, base: Console.contentPadding))
-        .padding(.trailing, Console.contentPadding)
-        .frame(height: DS.Layout.titlebarHeight)
-        .padding(.top, Console.pageTopPadding)
-        .background(WindowDragArea())
-        .overlay(alignment: .bottom) {
-            if hasMessages {
-                Rectangle()
-                    .fill(DS.line.opacity(0.55))
-                    .frame(height: 1)
             }
         }
     }
@@ -244,74 +277,6 @@ struct ChatPage: View {
                 .font(DS.Font.prose(22, weight: .semibold))
                 .tracking(-0.4)
                 .foregroundStyle(DS.text)
-
-            HStack(spacing: 8) {
-                Button {
-                    showsEmptyModelPicker = true
-                } label: {
-                    HStack(spacing: 7) {
-                        EngineMark(id: state.activeEngine, size: 15)
-                        DSStatusDot(color: emptyStatusTint, live: isActive && state.canChat, size: 6)
-                        Text(emptyStatusNote)
-                            .font(DS.Font.prose(12, weight: .medium))
-                            .foregroundStyle(DS.text2)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8.5, weight: .semibold))
-                            .foregroundStyle(DS.text3)
-                    }
-                    .padding(.horizontal, 11)
-                    .frame(height: 28)
-                    .dsGlassPill()
-                    .contentShape(Capsule())
-                }
-                .buttonStyle(DSPressStyle(scale: 0.98))
-                .disabled(chat.generating)
-                .popover(isPresented: $showsEmptyModelPicker, arrowEdge: .bottom) {
-                    ModelPickerPopover(state: state) { showsEmptyModelPicker = false }
-                }
-                .help(L10n.t("切换模型"))
-
-                if !state.isRunning && !state.isModelBusy && !state.selectedModel.isEmpty {
-                    Button {
-                        state.startService()
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: "play.fill")
-                                .font(.system(size: 9, weight: .semibold))
-                            Text(L10n.t("启动"))
-                                .font(DS.Font.prose(12, weight: .medium))
-                        }
-                        .foregroundStyle(DS.ok)
-                        .padding(.horizontal, 11)
-                        .frame(height: 28)
-                        .background(Capsule().fill(DS.successFill))
-                        .overlay(Capsule().strokeBorder(DS.successStroke, lineWidth: 1))
-                        .contentShape(Capsule())
-                    }
-                    .buttonStyle(DSPressStyle(scale: 0.97))
-                    .help(L10n.t("启动引擎"))
-                }
-            }
         }
-    }
-
-    var emptyStatusTint: Color {
-        if state.serverState == .failed { return DS.err }
-        if state.isModelBusy { return DS.warn }
-        return state.canChat ? DS.ok : DS.text4
-    }
-
-    var emptyStatusNote: String {
-        if state.selectedModel.isEmpty { return L10n.t("还没有选择模型") }
-        if state.isModelBusy {
-            if let stage = state.chatStartupStage, !stage.isEmpty { return stage }
-            return L10n.t("模型正在启动…")
-        }
-        if state.canChat {
-            return "\(state.activeEngine.displayName) · \(state.shortModelName(state.selectedModel))"
-        }
-        return L10n.t("模型未运行")
     }
 }

@@ -77,7 +77,7 @@ final class OrchestrationTests: XCTestCase {
         XCTAssertEqual(center.downloadTasks.first?.status, .paused)
     }
 
-    func testRemovingAnIdleTaskUpdatesRowsAndToast() throws {
+    func testRemovingAnIdleTaskUpdatesRowsWithoutToast() throws {
         let path = temporaryTasksFile()
         defer { try? FileManager.default.removeItem(atPath: path) }
         let task = ModelDownloadTask(
@@ -92,7 +92,8 @@ final class OrchestrationTests: XCTestCase {
         center.cancelDownload(task)
 
         XCTAssertTrue(center.downloadTasks.isEmpty)
-        XCTAssertEqual(host.toasts.count, 1)
+        // 行消失就是回执：不再额外弹「已从下载中心移除」。
+        XCTAssertTrue(host.toasts.isEmpty)
         XCTAssertTrue(try ModelDownloadStore.load(from: path).isEmpty)
     }
 

@@ -167,6 +167,8 @@ final class AppState: ObservableObject {
 
     /// 侧栏「最近对话」用它高亮当前线程；threadID 本身只用于落盘。
     var currentThreadID: String { runner.currentThreadID }
+    /// 后台生成完成、尚未点开的会话。
+    var unreadThreadIDs: Set<String> { runner.unreadThreadIDs }
 
     /// 正在生成的是哪一段对话——可能是读者已经切走、在后台继续跑的那一段。
     /// 侧栏据此把那一行标成「生成中」：不然切走后只剩下一个点不动的输入框，
@@ -197,6 +199,11 @@ final class AppState: ObservableObject {
     var islandNotices: [IslandNotice] { ui.islandNotices }
     /// 尚未查看过的通知数量。
     var islandUnread: Int { ui.islandUnread }
+    /// 下载中心弹层；顶栏状态簇与模型页共用同一个落点。
+    var showsDownloadCenter: Bool {
+        get { ui.showsDownloadCenter }
+        set { ui.showsDownloadCenter = newValue }
+    }
     /// 侧栏是否显示。视图读这里，改动走带持久化的方法，别直接写 `ui`。
     var showsSidebar: Bool {
         get { ui.showsSidebar }
@@ -322,6 +329,12 @@ final class AppState: ObservableObject {
         engineSessionBridge = makeBridge(engineSession)
         modelLibraryBridge = makeBridge(modelLibrary)
         uiBridge = makeBridge(ui)
+        // 只桥 accent 家族的变化：外观模式由 `ThemeController.apply()` 交给
+        // AppKit 窗口；把 mode / systemIsDark 也桥回 AppState 会让 SwiftUI 重算
+        // 整个 Window scene，反过来把窗口外观重置成系统浅色。
+        themeBridge = theme.$paletteRevision
+            .dropFirst()
+            .sink { [weak self] _ in self?.objectWillChange.send() }
         makeTuningObserver()
         // 编排层是装配链的最后一环：等 hook 和桥都接好再把 `self` 交过去，
         // 否则构造期间的回调会摸到一个还没装配完的 AppState。
@@ -444,6 +457,7 @@ final class AppState: ObservableObject {
     private var engineSessionBridge: AnyCancellable?
     private var chatSessionBridge: AnyCancellable?
     private var uiBridge: AnyCancellable?
+    private var themeBridge: AnyCancellable?
 
     var throughput: [ThroughputSample] { metrics.throughput }
     var acceptance: [ThroughputSample] { metrics.acceptance }
@@ -709,11 +723,16 @@ final class AppState: ObservableObject {
     func send(
         _ text: String, attachment: ChatImageAttachment? = nil, lastFrame: ChatImageAttachment? = nil,
         referenceImages: [ChatImageAttachment] = [], referenceClips: [VideoReferenceClip] = [],
-        image: ImageOptions = ImageOptions(), video: VideoOptions = VideoOptions()
+        image: ImageOptions = ImageOptions(), video: VideoOptions = VideoOptions(),
+        transcriptText: String? = nil,
+        attachmentNames: [String] = [],
+        userImagePaths: [String] = []
     ) {
         runner.send(
             text, attachment: attachment, lastFrame: lastFrame, referenceImages: referenceImages,
-            referenceClips: referenceClips, image: image, video: video)
+            referenceClips: referenceClips, image: image, video: video,
+            transcriptText: transcriptText, attachmentNames: attachmentNames,
+            userImagePaths: userImagePaths)
     }
 
     static func estimateTokens(_ text: String) -> Int { ChatRunner.estimateTokens(text) }
@@ -817,8 +836,8 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// 复制到剪贴板并顺带提示一次；提示本身走 `UIStateStore`，视图不必自己弹。
-    func copy(_ text: String, label: String = "已复制") { ui.copy(text, label: label) }
+    /// 复制到剪贴板。回执由控件自己的图标承担，不经过通知流。
+    func copy(_ text: String) { ui.copy(text) }
 
     // MARK: toasts
 

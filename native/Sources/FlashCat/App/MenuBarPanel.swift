@@ -194,6 +194,7 @@ struct MenuBarPanelContainer: View {
             value: presenter.isPresented
         )
         .padding(shadowInsets)
+        .tint(DS.accent)
         .onExitCommand { onDismiss() }
     }
 }
@@ -212,16 +213,20 @@ struct MenuBarPanel: View {
     @State private var modelPickerOpen = false
     @State private var pendingSwitch: String?
     @State private var copiedEndpoint = false
+    @State private var hoveringModelRow = false
+    @State private var hoveringEndpoint = false
     @State private var copyResetTask: Task<Void, Never>?
 
     private var running: Bool { state.isRunning }
     private var busy: Bool { state.serverState == .starting || state.serverState == .stopping }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             header
             modelSection
+            DSDivider()
             endpointRow
+            DSDivider()
 
             if running {
                 telemetryRow
@@ -319,10 +324,11 @@ struct MenuBarPanel: View {
                 }
                 .padding(.horizontal, 10)
                 .frame(height: 34)
-                .dsSubcard(radius: DS.Radius.md)
+                .background(DS.rect(DS.Radius.md).fill(hoveringModelRow ? DS.hover : .clear))
                 .contentShape(DS.rect(DS.Radius.md))
             }
             .buttonStyle(.plain)
+            .onHover { hoveringModelRow = $0 }
             .disabled(busy || state.isSwitchingModel)
 
             if modelPickerOpen {
@@ -362,13 +368,19 @@ struct MenuBarPanel: View {
                             .contentShape(DS.rect(6))
                         }
                         .buttonStyle(.plain)
+                        // 生成期间换模型会被拒；行直接灰掉，避免点完再弹提示。
+                        .disabled(state.generating && !current)
+                        .help(
+                            state.generating && !current
+                                ? L10n.t("正在生成，先停止再切换模型")
+                                : L10n.t("切换到这个模型"))
                     }
                 }
             }
             .padding(4)
         }
         .frame(maxHeight: 156)
-        .dsSubcard(radius: DS.Radius.md)
+        .dsWell(radius: DS.Radius.md)
     }
 
     private func selectModel(_ id: String) {
@@ -402,14 +414,14 @@ struct MenuBarPanel: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .dsSubcard(radius: DS.Radius.md)
+        .dsWell(radius: DS.Radius.md)
     }
 
     // MARK: Endpoint & telemetry
 
     private var endpointRow: some View {
         Button {
-            state.copy(state.gatewayURL, label: L10n.t("接口地址已复制"))
+            state.copy(state.gatewayURL)
             copiedEndpoint = true
             copyResetTask?.cancel()
             copyResetTask = Task {
@@ -432,12 +444,12 @@ struct MenuBarPanel: View {
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(copiedEndpoint ? DS.ok : DS.text3)
             }
-            .padding(.horizontal, 10)
             .frame(height: 28)
-            .dsSubcard(radius: DS.Radius.sm)
+            .background(DS.rect(DS.Radius.sm).fill(hoveringEndpoint ? DS.hover : .clear))
             .contentShape(DS.rect(DS.Radius.sm))
         }
         .buttonStyle(.plain)
+        .onHover { hoveringEndpoint = $0 }
         .help(L10n.t("复制接口地址"))
     }
 
@@ -446,8 +458,12 @@ struct MenuBarPanel: View {
         let ttft = state.ttftReading.milliseconds
         let decodeText = (decode ?? 0) > 0 ? "\(Format.compact(decode ?? 0)) tok/s" : "—"
         let ttftText = (ttft ?? 0) > 0 ? String(format: "%.0f ms", ttft ?? 0) : "—"
-        return HStack(spacing: 8) {
+        return HStack(spacing: 0) {
             telemetryChip(label: "解码", value: decodeText)
+            Rectangle()
+                .fill(DS.line)
+                .frame(width: 1)
+                .frame(maxHeight: 20)
             telemetryChip(label: "首字延迟", value: ttftText)
         }
     }
@@ -466,7 +482,6 @@ struct MenuBarPanel: View {
         .padding(.horizontal, 9)
         .frame(height: 28)
         .frame(maxWidth: .infinity)
-        .dsSubcard(radius: DS.Radius.sm)
     }
 
     // MARK: Failure
@@ -484,11 +499,16 @@ struct MenuBarPanel: View {
             Button(L10n.t("查看日志")) {
                 onOpenMainWindow(.logs)
             }
-            .buttonStyle(.ds(.secondary, size: .small))
+            .buttonStyle(.dsGhost)
         }
-        .padding(9)
+        .padding(.leading, 11)
+        .padding(.trailing, 9)
+        .padding(.vertical, 9)
         .background(DS.rect(DS.Radius.sm).fill(DS.dangerFill))
-        .overlay(DS.rect(DS.Radius.sm).strokeBorder(DS.dangerStroke, lineWidth: 1))
+        .overlay(alignment: .leading) {
+            Rectangle().fill(DS.err).frame(width: 2)
+        }
+        .clipShape(DS.rect(DS.Radius.sm))
     }
 
     // MARK: Actions & footer

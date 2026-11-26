@@ -17,6 +17,11 @@ struct ChatDraft: Equatable {
     var referenceClips: [VideoReferenceClip] = []
     /// 输入卡上方那句解释（附件读不出来、模型限制之类）。
     var notice: String?
+    /// 文本 / 视觉对话挂的图片与文件；与图像 / 视频生成的媒体槽位分开。
+    var chatImages: [ChatImageAttachment] = []
+    var chatFiles: [ChatFileAttachment] = []
+    /// 生成中按回车排进来、等这一轮结束再发的后续消息。
+    var queuedTexts: [String] = []
 
     var isEmpty: Bool {
         text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -24,6 +29,9 @@ struct ChatDraft: Equatable {
             && lastFrameAttachment == nil
             && referenceImages.isEmpty
             && referenceClips.isEmpty
+            && chatImages.isEmpty
+            && chatFiles.isEmpty
+            && queuedTexts.isEmpty
     }
 }
 

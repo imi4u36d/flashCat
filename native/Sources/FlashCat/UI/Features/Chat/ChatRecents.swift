@@ -5,59 +5,21 @@ import Combine
 import FlashCatCore
 import SwiftUI
 
-/// 侧栏与对话页共用的会话入口：新建对话按钮、会话行，以及边栏收起时
-/// 顶栏里的「最近对话」弹层。
+/// 对话页顶栏的历史入口与会话弹层：按日期分组的会话行与搜索。
 ///
-/// 会话行只留一份：置顶、重命名、删除、生成中小圆点与选中态在侧栏和
-/// 弹层里必须长得一样，也不该各自演一遍。
-
-// MARK: - New chat
-
-/// 「新对话」描边小按钮：侧栏列表标题右侧那一枚，弹层沿用同一颗。
-struct ChatNewConversationButton: View {
-    var action: () -> Void
-
-    @State private var hovering = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        let shape = DS.rect(DS.Radius.sm)
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: "plus")
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(DS.accent)
-                Text(L10n.t("新对话"))
-                    .font(DS.Font.prose(11.5, weight: .medium))
-                    .foregroundStyle(hovering ? DS.text : DS.text2)
-            }
-            .padding(.horizontal, 8)
-            .frame(height: 22)
-            .background(shape.fill(hovering ? DS.surface : DS.hover))
-            .overlay(shape.strokeBorder(hovering ? DS.line2 : DS.line, lineWidth: 1))
-            .contentShape(shape)
-        }
-        .buttonStyle(DSPressStyle(scale: 0.97))
-        .fixedSize()
-        .help(L10n.t("新对话"))
-        .onHover { value in
-            if reduceMotion {
-                hovering = value
-            } else {
-                withAnimation(DS.Motion.snappy) { hovering = value }
-            }
-        }
-    }
-}
+/// 会话行只留一份：置顶、重命名、删除、生成中小圆点与选中态都在这里实现，
+/// 弹层内不再另起一套。
 
 // MARK: - Thread row
 
-/// 一段历史会话：标题、生成中小圆点，悬停（或选中时）浮出置顶 / 删除
-/// 两枚微操作，右键提供同一组动作。侧栏和对话页弹层共用。
+/// 弹层里的一段历史会话：标题、生成中小圆点，悬停（或选中时）浮出置顶 /
+/// 删除两枚微操作，右键提供同一组动作。
 struct ChatThreadRow: View {
     let thread: ChatThread
     let active: Bool
     let generating: Bool
+    /// 后台生成完成、还没点开：标题前点一颗强调色圆点。
+    let unread: Bool
     let onOpen: () -> Void
     let onPin: () -> Void
     let onRename: () -> Void
@@ -76,6 +38,9 @@ struct ChatThreadRow: View {
                 HStack(spacing: 6) {
                     if generating {
                         DSStatusDot(color: DS.accent, live: true, size: 5)
+                    } else if unread {
+                        DSStatusDot(color: DS.accent, live: false, size: 5)
+                            .help(L10n.t("后台生成已完成"))
                     }
                     Text(thread.title.isEmpty ? L10n.t("新对话") : thread.title)
                         .font(DS.Font.prose(12.5, weight: active ? .medium : .regular))
@@ -180,8 +145,8 @@ struct ChatHistoryButton: View {
     }
 }
 
-/// 顶栏历史弹层：版式照搬侧栏的「最近对话」小节（标题 + 新对话、搜索、
-/// 按日期分组的列表），收进 300pt 宽的浮层里，不占正文宽度。
+/// 顶栏历史弹层：标题「工作区」+ 新对话、搜索、按日期分组的会话列表，
+/// 收进 300pt 宽的浮层里，不占正文宽度。
 struct ChatRecentsPopover: View {
     @ObservedObject var state: AppState
     @ObservedObject var chat: ChatStore
@@ -210,11 +175,7 @@ struct ChatRecentsPopover: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 DSSectionLabel(text: "最近对话")
-                ChatNewConversationButton {
-                    state.newConversation()
-                    state.section = .chat
-                    dismiss()
-                }
+                Spacer(minLength: 0)
             }
             .padding(.leading, 14)
             .padding(.trailing, 10)
@@ -267,10 +228,10 @@ struct ChatRecentsPopover: View {
                                 ChatThreadRow(
                                     thread: thread,
                                     active: state.currentThreadID == thread.id,
-                                    generating: state.generatingThreadID == thread.id
+                                    generating: state.generatingThreadID == thread.id,
+                                    unread: state.unreadThreadIDs.contains(thread.id)
                                 ) {
                                     state.openThread(thread)
-                                    state.section = .chat
                                     dismiss()
                                 } onPin: {
                                     state.setThreadPinned(thread, !thread.pinned)

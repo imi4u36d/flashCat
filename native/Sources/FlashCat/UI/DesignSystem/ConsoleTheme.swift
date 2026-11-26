@@ -9,7 +9,7 @@ import SwiftUI
 //
 // 控制台页面还在引用的旧 token 名。取值全部来自 `DS`
 // （UI/DesignSystem.swift）；旧版的粉强调与大圆角已经退役，当前是
-// Liquid Glass 的 slate / indigo 色阶。新代码直接用 `DS`。
+// 中性实色表面 + 图标橙强调色。新代码直接用 `DS`。
 
 extension Color {
     init(console hex: UInt32, opacity: Double = 1) {
@@ -39,9 +39,9 @@ enum Console {
     static let secondary = DS.text2
     static let tertiary = DS.text3
 
-    static let accent = DS.accent
-    static let accentDeep = Color.adaptive(dark: 0x2563EB, light: 0x0969DA)
-    static let accentSoft = DS.accentSoft
+    static var accent: Color { DS.accent }
+    static var accentDeep: Color { DS.accent }
+    static var accentSoft: Color { DS.accentSoft }
 
     static let userBubble = Color.adaptive(dark: 0x262626, light: 0xEFEFEF)
     static let userBubbleStroke = DS.line
@@ -77,14 +77,6 @@ enum Console {
     static let contentBottomInset: CGFloat = DS.Space.xl
     /// 页面主段之间的垂直间距，与概览页统一。
     static let pageSectionGap: CGFloat = 14
-    /// 标准控制台页头的单行高度，与概览页统一（`16pt` 顶部留白 + `34pt` 页头 = `50pt`，对齐悬浮侧栏标题区底缘）。
-    static let pageHeaderHeight: CGFloat = 34
-    /// 对话页顶栏顶部偏移（`2 + 48 = 50pt`，中线对齐固定红绿灯 `26pt`）。
-    static let pageTopPadding: CGFloat = 2
-    /// 原生标题栏已管理红绿灯与折叠按钮，页面顶栏保持统一水平留白。
-    static func topBarLeading(sidebarShown: Bool, base: CGFloat = contentPadding) -> CGFloat {
-        base
-    }
     /// 控制台页面的左右留白：宽版 `20pt`，窄版 `16pt`，七个页面共用同一口径。
     static func pageHorizontalPadding(compact: Bool) -> CGFloat {
         compact ? compactContentPadding : contentPadding
@@ -114,49 +106,6 @@ enum Console {
         case .system: return info
         case .info: return secondary
         }
-    }
-}
-
-// MARK: - Card surface
-
-/// 全应用兼容卡片表面：转发到原生 Liquid Glass `dsSurface`。
-private struct ConsoleCardSurfaceModifier: ViewModifier {
-    var radius: CGFloat
-    var tint: Color?
-    var interactive: Bool
-
-    func body(content: Content) -> some View {
-        content
-            .dsSurface(
-                radius: radius,
-                tint: tint,
-                hoverable: interactive)
-    }
-}
-
-extension View {
-    /// 套上模型页卡片那层表面。默认圆角与模型卡一致，内边距由调用方自己加。
-    func consoleCardSurface(
-        radius: CGFloat = Console.cardRadius,
-        tint: Color? = nil,
-        interactive: Bool = false
-    ) -> some View {
-        modifier(ConsoleCardSurfaceModifier(radius: radius, tint: tint, interactive: interactive))
-    }
-}
-
-struct GlassCard<Content: View>: View {
-    var radius: CGFloat = Console.cardRadius
-    var padding: CGFloat = 20
-    var tint: Color = .clear
-    @ViewBuilder var content: () -> Content
-
-    var body: some View {
-        content()
-            .padding(padding)
-            .consoleCardSurface(
-                radius: radius,
-                tint: tint == .clear ? nil : tint.opacity(0.16))
     }
 }
 
@@ -279,6 +228,7 @@ struct NativeSegmented<Value: Hashable>: View {
         .pickerStyle(.segmented)
         .labelsHidden()
         .controlSize(controlSize)
+        .tint(DS.accent)
         .frame(width: width)
         .opacity(isEnabled ? 1 : 0.45)
     }
@@ -295,7 +245,6 @@ struct IconTile: View {
         DS.rect(DS.Radius.md)
             .fill(color.opacity(0.12))
             .frame(width: size, height: size)
-            .overlay(DS.rect(DS.Radius.md).strokeBorder(color.opacity(0.22), lineWidth: 1))
             .overlay {
                 Image(systemName: symbol)
                     .font(.system(size: size * 0.44, weight: .medium))
@@ -313,7 +262,6 @@ struct LetterTile: View {
         DS.rect(DS.Radius.md)
             .fill(color.opacity(0.12))
             .frame(width: size, height: size)
-            .overlay(DS.rect(DS.Radius.md).strokeBorder(color.opacity(0.22), lineWidth: 1))
             .overlay {
                 Text(letter)
                     .font(.system(size: size * 0.38, weight: .semibold, design: .rounded))
@@ -334,7 +282,6 @@ struct ConsoleTag: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(DS.rect(DS.Radius.sm).fill(tone.background))
-            .overlay(DS.rect(DS.Radius.sm).strokeBorder(tone.stroke, lineWidth: 1))
             .fixedSize()
     }
 }

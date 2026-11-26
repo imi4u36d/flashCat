@@ -54,4 +54,33 @@ final class FormatTests: XCTestCase {
         XCTAssertEqual(Format.compact(12.34), "12.3")
         XCTAssertEqual(Format.compact(1.234), "1.23")
     }
+
+    /// 侧栏时间按分组换精度：今天给相对量、昨天给时刻、更早给日期。
+    /// 口径必须和 `ChatThreadSections` 的 `startOfDay` 一致，跨天但不足
+    /// 24 小时的会话不能被读成「20h」。
+    func testSidebarTimeUsesTheRightPrecisionForEachGroup() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(identifier: "Asia/Shanghai"))
+        let now = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2026, month: 11, day: 25, hour: 15, minute: 30)))
+        func ago(_ seconds: TimeInterval) -> Date { now.addingTimeInterval(-seconds) }
+
+        XCTAssertEqual(Format.sidebarTime(ago(20), now: now, calendar: calendar), "刚刚")
+        XCTAssertEqual(Format.sidebarTime(ago(12 * 60), now: now, calendar: calendar), "12m")
+        XCTAssertEqual(Format.sidebarTime(ago(3 * 3600), now: now, calendar: calendar), "3h")
+        // 跨过零点就是昨天：给时刻，不给「19h」。
+        XCTAssertEqual(Format.sidebarTime(ago(20 * 3600), now: now, calendar: calendar), "19:30")
+
+        let yesterday = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2026, month: 11, day: 24, hour: 14, minute: 20)))
+        XCTAssertEqual(
+            Format.sidebarTime(yesterday, now: now, calendar: calendar), "14:20")
+
+        let older = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2026, month: 11, day: 18, hour: 9, minute: 15)))
+        XCTAssertEqual(Format.sidebarTime(older, now: now, calendar: calendar), "11-18")
+
+        // 时钟回拨产生的未来时间不能读成负数，也不应该退到日期。
+        XCTAssertEqual(Format.sidebarTime(ago(-30), now: now, calendar: calendar), "刚刚")
+    }
 }

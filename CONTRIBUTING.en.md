@@ -4,7 +4,7 @@
 
 flashCat folds "install an engine, download models, chat, expose a local endpoint" into
 a single window. Its value is not the number of features but **collapsing the
-differences between five inference engines into one layer** — so the rules that matter
+differences between four inference engines into one layer** — so the rules that matter
 most here are all about not leaking those differences back into the business layer.
 
 ## Requirements
@@ -19,7 +19,7 @@ most here are all about not leaking those differences back into the business lay
 
 ```bash
 cd native && swift build          # 0 warnings; CI runs with -warnings-as-errors
-cd native && swift test           # Core + app + Kit + CLI cases (756 executed), about ten seconds
+cd native && swift test           # Core + app + Kit + CLI cases (773 pass, 5 skipped), about fifteen seconds
 bash scripts/coverage.sh          # coverage gates: FlashCatCore >= 60%, FlashCatKit >= 80%
 make app                          # assemble the .app in /Applications (or INSTALL=0 for dist only)
 make verify                       # one shot: build, install, launch, and check the process and bundled CLI
@@ -36,8 +36,8 @@ walked down to zero without going red on day one, and the ratchet keeps it there
 ## Architecture rules (the ones reviewers bounce)
 
 1. **`FlashCatKit` may not import UI.** Only `Foundation` / `Network` / `CryptoKit` are
-   allowed. This layer must run in a windowless test process — all 318 Kit cases live
-   here; the shell contributes 290 and the CLI another 98 pure-logic cases.
+   allowed. This layer must run in a windowless test process — all 304 Kit cases live
+   here; Core contributes 55, the shell 321, and the CLI another 98 pure-logic cases.
 2. **Dependencies point one way.** `FlashCat` → `FlashCatKit`. Any app-side symbol
    appearing inside the Kit is a break.
 3. **Engine differences may only live in a descriptor or an adapter.** Do not write
@@ -50,10 +50,10 @@ walked down to zero without going red on day one, and the ratchet keeps it there
    older app.
 6. **Only the user's own packs are removable.** Deleting one inside the app bundle
    breaks the signature; one in a checkout is a build artifact. Both are read-only.
-7. **No keyboard shortcuts inside the app.** Menus, the command palette, text fields,
-   and sheets carry no key equivalents; keyboard efficiency goes through `flashcat`.
-   `LocalizationTests.testNoInAppKeyboardShortcutsRemain` scans the source and blocks
-   `.keyboardShortcut` / `.onKeyPress` / `.onSubmit` / `NSEvent` monitors.
+7. **Keyboard shortcuts live in menus only.** Key equivalents are declared in the app
+   menus (⌘N new chat, ⌘F search, ⌘, settings, ⌘1–6 pages, ⌃⌘S sidebar); the command
+   palette, text fields, and sheets do not bind their own. No global event monitors —
+   `LocalizationTests.testNoInAppKeyboardShortcutsRemain` blocks `NSEvent` monitors.
 8. **Paths and the control protocol exist once.** The app and the CLI share
    `FlashCatPaths`, `EngineInstallations`, and `Control/*`; never write a second set of
    directories or JSON shapes inside one target.
@@ -100,8 +100,8 @@ The full procedure for adding an engine is in "Adding a new engine" in
   pages only read `AppState` and only call its methods; views never make network
   requests, read or write files, or mutate `EngineStore` behind `AppState`'s back. New
   pages reuse the `Native` tokens and components in `UI/DesignSystem/Design.swift`; do not introduce a
-  second palette or corner radius. Prefer a button or menu item for new actions over a
-  keyboard shortcut.
+  second palette or corner radius. Prefer a button or menu item for new actions; when a
+  key is needed, add it to a menu command only.
 - **Do not bring the web layer back.** No `WKWebView`, no embedded HTML/JS, no
   cross-language snapshot bridge. For rich text use `MarkdownView`; for charts use
   Swift Charts.

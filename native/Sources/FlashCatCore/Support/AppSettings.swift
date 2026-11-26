@@ -244,6 +244,25 @@ package final class AppSettings {
         set { defaults.set(newValue.rawValue, forKey: "appearance") }
     }
 
+    /// 主题色预设。默认是图标橙；自定义色另外存一个种子色。
+    package var themePreset: ThemePreset {
+        guard let raw = defaults.string(forKey: "themePreset"),
+            let value = ThemePreset(rawValue: raw)
+        else { return .iconOrange }
+        return value
+    }
+    package func setThemePreset(_ value: ThemePreset) {
+        defaults.set(value.rawValue, forKey: "themePreset")
+    }
+
+    /// 自定义主题色的种子。0 表示没有存过，`ThemeController` 会回退图标橙。
+    package var themeSeed: UInt32 {
+        UInt32(truncatingIfNeeded: defaults.integer(forKey: "themeSeed"))
+    }
+    package func setThemeSeed(_ value: UInt32) {
+        defaults.set(Int(value), forKey: "themeSeed")
+    }
+
     package var recentModels: [String] { defaults.stringArray(forKey: "recentModels") ?? [] }
 
     /// 0 是合法值（温度 0 = 贪心解码），不能用「读到 0 就当未设置」判断，

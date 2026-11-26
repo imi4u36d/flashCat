@@ -16,7 +16,7 @@ flashCat 把「装引擎、下模型、聊天、对外提供本地接口」收�
 
 ```bash
 cd native && swift build          # 0 warning，CI 以 -warnings-as-errors 跑
-cd native && swift test           # Core + 应用 + Kit + CLI 用例（756 条执行，5 条按环境跳过），约 10 秒
+cd native && swift test           # Core + 应用 + Kit + CLI 用例（773 条通过，5 条按环境跳过），约 15 秒
 bash scripts/coverage.sh          # 覆盖率门禁：FlashCatCore ≥ 60%，FlashCatKit ≥ 80%
 make app                          # 组装 /Applications 里的 .app（或 INSTALL=0 只出 dist）
 make verify                       # 一键：构建 + 装进 /Applications + 启动并确认进程与内置 CLI 都正常
@@ -29,13 +29,13 @@ make verify                       # 一键：构建 + 装进 /Applications + 启
 
 ## 架构规矩（评审会直接打回的那种）
 
-1. **`FlashCatKit` 不许引 UI。** 只允许 `import Foundation / Network / CryptoKit`。这一层必须能在无窗口的测试进程里跑——318 个 Kit 用例全打在这里；Core 50 个、壳层 290 个、CLI 另有 98 个纯逻辑用例。
+1. **`FlashCatKit` 不许引 UI。** 只允许 `import Foundation / Network / CryptoKit`。这一层必须能在无窗口的测试进程里跑——304 个 Kit 用例全打在这里；Core 55 个、壳层 321 个、CLI 另有 98 个纯逻辑用例。
 2. **依赖单向。** `FlashCat` → `FlashCatKit`。Kit 里出现任何应用侧符号都是破坏。
 3. **引擎差异只许存在于 descriptor 与 adapter。** 不要在 `EngineManager`、安装中心、页面里写 `if engine == .splash`。真需要按引擎分支，先问"这能不能变成 manifest 字段"。
 4. **清单契约是唯一接口。** 除了 `manifest.json` 声明的字段，应用不解释 pack 里的任何文件。
 5. **未知枚举值降级，不失败。** 新 pack 带来的未知 capability / modelArgument 必须让旧版应用仍然装得上、起得来。
 6. **只有用户自己的 pack 可删。** bundle 内的删了会破坏签名，checkout 里的是构建产物——两者只读。
-7. **应用内不注册快捷键。** 菜单、命令面板、输入框与弹窗都不带按键等价物；键盘效率走 `flashcat`。`LocalizationTests.testNoInAppKeyboardShortcutsRemain` 会扫源码拦下 `.keyboardShortcut` / `.onKeyPress` / `.onSubmit` / `NSEvent` 监听。
+7. **快捷键只写在菜单里。** 按键等价物集中声明在应用菜单（⌘N 新对话、⌘F 搜索、⌘, 设置、⌘1–6 切页、⌃⌘S 收侧栏），命令面板、输入框与弹窗不再各自绑定；不装全局事件监听，`LocalizationTests.testNoInAppKeyboardShortcutsRemain` 会拦下 `NSEvent` 监视器。
 8. **路径与控制协议只有一份。** 应用和 CLI 共用 `FlashCatPaths`、`EngineInstallations`、`Control/*`；不要在一个目标里另写一套目录或 JSON 形状。
 9. **`FlashCatCore` 不许依赖 UI。** `Sources/FlashCatCore` 是独立 target，只能 import `Foundation` / `Combine` / `CoreGraphics` / `OSLog` 与 `FlashCatKit`；不要出现 SwiftUI / AppKit / AVFoundation，也不要引用 `AppState`。跨到 App 的 API 用 `package` 声明。`scripts/check-architecture.sh` 会在 CI 里拦下新违规。
 
@@ -57,7 +57,7 @@ make verify                       # 一键：构建 + 装进 /Applications + 启
 - CLI 的解析、输出与 SSE 解码进 `FlashCatCLICoreTests`；控制协议路由/文档进 `FlashCatCLICoreTests`（依赖 Kit，不需要启动应用）。
 - 修 bug 请带一条能复现它的用例。解析类问题尤其如此——`StatusParserTests` 里每个用例都对应过一次线上错误。
 - 涉及真实归档的安装流程用 `PackInstallIntegrationTests` 的跳过机制，不要在 CI 里拉 GB 级文件。
-- **界面改动先读 `native/Sources/FlashCat/UI-SPEC.md`。** 七个页面只读 `AppState`、只调它的方法；视图里不直接发网络请求、不读写文件、不绕过 `AppState` 改 `EngineStore`。新增页面沿用 `UI/DesignSystem/Design.swift` 的 `Native` token 与组件，不引入第二套色板或圆角。新增动作优先做成按钮/菜单项，不要加键盘快捷键。
+- **界面改动先读 `native/Sources/FlashCat/UI-SPEC.md`。** 七个页面只读 `AppState`、只调它的方法；视图里不直接发网络请求、不读写文件、不绕过 `AppState` 改 `EngineStore`。新增页面沿用 `UI/DesignSystem/Design.swift` 的 `Native` token 与组件，不引入第二套色板或圆角。新增动作优先做成按钮/菜单项；需要按键时只加到菜单命令上。
 - **不许把网页层加回来。** 没有 `WKWebView`、没有内嵌 HTML/JS、没有跨语言快照桥。需要富文本就用 `MarkdownView`，需要图表就用 Swift Charts。
 
 ## 提交

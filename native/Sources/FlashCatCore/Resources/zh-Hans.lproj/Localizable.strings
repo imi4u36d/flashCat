@@ -47,6 +47,7 @@
 "%lld 条" = "%lld 条";
 "%lld 秒前" = "%lld 秒前";
 "%lld 行" = "%lld 行";
+"%lld 个模型" = "%lld 个模型";
 "%lld 运行中" = "%lld 运行中";
 "%lld%%" = "%lld%%";
 "--flag value" = "--flag value";

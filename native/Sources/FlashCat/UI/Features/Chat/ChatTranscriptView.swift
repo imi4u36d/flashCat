@@ -22,6 +22,8 @@ struct ChatTranscriptView: View {
     /// 用户正在主动滚动时，内容长高不再把视图拽回底部。
     @State private var userScrolling = false
     /// 「加载更早」按会话记：换一段会话各算各的，删掉会话也只是留个用不到的键。
+    /// 切到一段会话时清零：展开过的那几百行如果跟着带进下一次切换，每次都要
+    /// 重排一遍，越展开越慢；回到会话时重新按窗口显示，需要再点一次「加载更早」。
     @State private var earlierBatches: [String: Int] = [:]
     /// 合并同一帧内的多次滚动请求，避免高度变化与状态变更连续两次触发 `scrollTo("bottom")`。
     @State private var scrollScheduled = false
@@ -62,7 +64,10 @@ struct ChatTranscriptView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
+                // 懒加载：切会话时只实例化视口附近的行。用 `VStack` 时窗口内的
+                // 每一行（含几百行的代码块）都要在首帧完整排版，大对话切换实测
+                // 150ms 级；`LazyVStack` 把同一场景压到 30ms 以内。
+                LazyVStack(alignment: .leading, spacing: 28) {
                     if chat.messages.count > visibleMessages.count {
                         Button {
                             let anchor = visibleMessages.first?.id
@@ -147,9 +152,6 @@ struct ChatTranscriptView: View {
                     scheduleScroll(proxy)
                 }
             }
-            .onChange(of: threadID) { _, _ in
-                atBottom = true
-            }
             .onChange(of: isActive) { _, active in
                 if active, atBottom {
                     scheduleScroll(proxy, force: true)
@@ -179,6 +181,14 @@ struct ChatTranscriptView: View {
                 }
             }
         }
+        // 挂在 `id(threadID)` 外面：里面那层换会话时整个被替换，收不到变化。
+        // 切进来的会话从「只按字节窗口」开始，别把上次展开的几百行带进来；
+        // `atBottom` 也得跟着复位——在上一段里往上翻过的话，它还是 false，
+        // 新会话就会顶着一个「回到底部」按钮、也不跟随新内容。
+        .onChange(of: threadID) { _, newID in
+            earlierBatches.removeValue(forKey: newID)
+            atBottom = true
+        }
     }
 
     private func messageRow(_ message: ChatMessage) -> some View {
@@ -189,6 +199,7 @@ struct ChatTranscriptView: View {
             maxBubbleWidth: bubbleMaxWidth,
             isLast: message.id == chat.messages.last?.id,
             canRegenerate: !supportsVideo && !chat.generating,
+            canBranch: !chat.generating,
             animateStreaming: isActive && message.streaming,
             onEdit: { onEdit(message) },
             onBranch: { onBranch(message.id) },

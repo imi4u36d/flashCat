@@ -27,9 +27,8 @@ enum DS {
         dark: 0xFFFFFF, light: 0xF4F6FA, darkAlpha: 0.05, lightAlpha: 1)
     /// 主画布 / 表单底。
     static let canvas = Color.adaptive(dark: 0x0E111B, light: 0xF2F4F8)
-    /// 选中块、侧栏选中行、分段控件滑块。
-    static let selected = Color.adaptive(
-        dark: 0x6366F1, light: 0xFFFFFF, darkAlpha: 0.24, lightAlpha: 1)
+    /// 选中块、侧栏选中行、分段控件滑块。浅色是白色；夜间跟主题强调色走。
+    static var selected: Color { ThemeRuntime.palette.selected.color }
     /// 窗口级浮层（弹出卡、菜单栏面板）。
     static let floating = Color.adaptive(dark: 0x1A1F30, light: 0xFFFFFF)
     /// 菜单栏面板底色。
@@ -37,14 +36,16 @@ enum DS {
     /// 行悬停底。
     static let hover = Color.adaptive(
         dark: 0xFFFFFF, light: 0x0F172A, darkAlpha: 0.06, lightAlpha: 0.04)
+    /// 侧栏会话行选中底：中性色，和导航页的 `accentSoft` 分工，
+    /// 让「当前页面」和「当前会话」在扫视时是两种记号。
+    static let rowSelected = Color.adaptive(
+        dark: 0xFFFFFF, light: 0x0F172A, darkAlpha: 0.095, lightAlpha: 0.065)
 
-    /// 描边三档：分隔线 / 控件边 / 强调边。
+    /// 描边两档：分隔线 / 控件边。
     static let line = Color.adaptive(
         dark: 0xFFFFFF, light: 0x0F172A, darkAlpha: 0.09, lightAlpha: 0.07)
     static let line2 = Color.adaptive(
         dark: 0xFFFFFF, light: 0x0F172A, darkAlpha: 0.16, lightAlpha: 0.12)
-    static let line3 = Color.adaptive(
-        dark: 0xFFFFFF, light: 0x0F172A, darkAlpha: 0.26, lightAlpha: 0.22)
 
     static let glassBorder = Color.adaptive(
         dark: 0xFFFFFF, light: 0x0F172A, darkAlpha: 0.12, lightAlpha: 0.08)
@@ -59,10 +60,15 @@ enum DS {
     static let text3 = Color.adaptive(dark: 0x94A3B8, light: 0x64748B)
     static let text4 = Color.adaptive(dark: 0x64748B, light: 0x94A3B8)
 
-    static let accent = Color.adaptive(dark: 0x818CF8, light: 0x4F46E5)
-    static let accentBlue = Color.adaptive(dark: 0x60A5FA, light: 0x2563EB)
-    static let accentSoft = Color.adaptive(
-        dark: 0x818CF8, light: 0x4F46E5, darkAlpha: 0.18, lightAlpha: 0.10)
+    /// 主题强调色家族。全部从 `ThemeRuntime.palette` 取：
+    /// `accent` 用于文字 / 图标，`accentFill` 用于实心块，`onAccent` 是橙底前景。
+    static var accent: Color { ThemeRuntime.palette.accent.color }
+    static var accentSoft: Color { ThemeRuntime.palette.accentSoft.color }
+    static var accentFill: Color { ThemeRuntime.palette.accentFill.color }
+    static var onAccent: Color { ThemeRuntime.palette.onAccent.color }
+    /// 次级数据色：缓存 / 内存条的第二色与 claude 方言标签。
+    static var accentPeach: Color { ThemeRuntime.palette.accentPeach.color }
+    static var accentPeachText: Color { ThemeRuntime.palette.accentPeachText.color }
 
     static let ok = Color.adaptive(dark: 0x34D399, light: 0x059669)
     static let okSoft = Color.adaptive(
@@ -85,17 +91,13 @@ enum DS {
     /// 主按钮 / 段落控件轨道。
     static let pillFill = Color.adaptive(
         dark: 0xFFFFFF, light: 0xEEF1F6, darkAlpha: 0.07, lightAlpha: 1)
-    static let pillActive = Color.adaptive(
-        dark: 0x6366F1, light: 0xFFFFFF, darkAlpha: 0.26, lightAlpha: 1)
+    static var pillActive: Color { ThemeRuntime.palette.pillActive.color }
     static let pillActiveNeutral = Color.adaptive(
         dark: 0xFFFFFF, light: 0xFFFFFF, darkAlpha: 0.12, lightAlpha: 1)
-    static let pillBorder = Color.adaptive(
-        dark: 0xFFFFFF, light: 0x0F172A, darkAlpha: 0.12, lightAlpha: 0.07)
 
-    /// 图表数据色。
-    static let chartLine = Color.adaptive(dark: 0x818CF8, light: 0x4F46E5)
-    static let chartFill = Color.adaptive(
-        dark: 0x818CF8, light: 0x4F46E5, darkAlpha: 0.28, lightAlpha: 0.16)
+    /// 图表兜底色；接上引擎后仍用引擎识别色。
+    static var chartLine: Color { ThemeRuntime.palette.chartLine.color }
+    static var chartFill: Color { ThemeRuntime.palette.chartFill.color }
     static let chartGrid = Color.adaptive(
         dark: 0xFFFFFF, light: 0x0F172A, darkAlpha: 0.08, lightAlpha: 0.06)
 
@@ -207,6 +209,7 @@ enum DS {
     // MARK: Radius
 
     enum Radius {
+        static let xs: CGFloat = 6
         static let sm: CGFloat = 8
         static let md: CGFloat = 10
         static let lg: CGFloat = 12
@@ -299,17 +302,26 @@ extension View {
             .frame(maxWidth: .infinity)
     }
 
-    /// 卡片内部的次级小格：更淡的底 + 发丝边，不叠投影。
+    /// 卡片内部的次级分组：只有底色，不再叠描边。
+    /// 卡内分组由留白、底色和 `DSDivider` 表达，边框只留给页面级卡片。
+    func dsWell(radius: CGFloat = DS.Radius.md, fill: Color = DS.bg) -> some View {
+        background(DS.rect(radius).fill(fill))
+    }
+
+    /// 兼容旧调用点：`dsSubcard` 已收敛为无描边的 well。
     func dsSubcard(radius: CGFloat = DS.Radius.md) -> some View {
-        let shape = DS.rect(radius)
-        return background(shape.fill(DS.bg))
-            .overlay(shape.strokeBorder(DS.line, lineWidth: 1))
+        dsWell(radius: radius)
     }
 
     /// 胶囊标签底：状态角标、筛选条、分段控件轨道。
     func dsGlassPill(active: Bool = false) -> some View {
         background(Capsule().fill(active ? DS.pillActive : DS.pillFill))
-            .overlay(Capsule().strokeBorder(DS.pillBorder, lineWidth: 1))
+            .overlay(Capsule().strokeBorder(DS.line, lineWidth: 1))
+    }
+
+    /// 卡内 / 输入区里的安静胶囊：只有底色，不再描边。
+    func dsQuietPill(fill: Color = DS.pillFill) -> some View {
+        background(Capsule().fill(fill))
     }
 
     /// 输入框 / 文本域表面：凹槽 + 1px 描边（聚焦时亮起强调色描边）。

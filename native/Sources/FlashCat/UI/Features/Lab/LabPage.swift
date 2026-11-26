@@ -99,8 +99,9 @@ struct LabPage: View {
         .toolbar {
             ToolbarItem(id: DSToolbarSlot.title, placement: .navigation) {
                 DSToolbarPageTitle(
-                    title: "画廊")
-                    .padding(.leading, 15)
+                    title: "画廊"
+                )
+                .padding(.leading, 15)
             }
             .sharedBackgroundVisibility(.hidden)
             ToolbarItem(id: DSToolbarSlot.anchor, placement: .principal) {

@@ -433,8 +433,9 @@ struct ChatComposerHost: View {
                 if !supportsMedia, state.contextUsedTokens > 0 {
                     ChatContextRing(
                         used: state.contextUsedTokens,
-                        ceiling: state.contextWindowCeiling)
-                        .padding(.trailing, 2)
+                        ceiling: state.contextWindowCeiling
+                    )
+                    .padding(.trailing, 2)
                 }
 
                 modelPickerTrigger
@@ -597,7 +598,7 @@ struct ChatComposerHost: View {
                 ]
             }
             return [
-                .init(title: "底图", systemImage: "photo.badge.plus") { pickImage(for: nil) },
+                .init(title: "底图", systemImage: "photo.badge.plus") { pickImage(for: nil) }
             ]
         }
         var items: [ComposerAttachMenu.Item] = []
@@ -768,7 +769,8 @@ struct ChatComposerHost: View {
         let files = chatFiles
         let images = chatImages
         // 只挂附件不写字也可以：给一句保守的可见文案，引擎侧再补文件正文。
-        let visible = text.isEmpty
+        let visible =
+            text.isEmpty
             ? (files.isEmpty ? "看看这张图。" : "请阅读附件。")
             : text
         var engine = visible
@@ -897,7 +899,8 @@ struct ChatComposerHost: View {
         }
         if ext.isEmpty,
             let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-            size < 20_000_000 {
+            size < 20_000_000
+        {
             return NSImage(contentsOf: url) != nil
         }
         return false

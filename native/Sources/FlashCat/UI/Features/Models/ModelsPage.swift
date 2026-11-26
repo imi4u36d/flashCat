@@ -76,8 +76,9 @@ struct ModelsPage: View {
         .toolbar {
             ToolbarItem(id: DSToolbarSlot.title, placement: .navigation) {
                 DSToolbarPageTitle(
-                    title: "模型库")
-                    .padding(.leading, 15)
+                    title: "模型库"
+                )
+                .padding(.leading, 15)
             }
             .sharedBackgroundVisibility(.hidden)
             ToolbarItem(id: DSToolbarSlot.anchor, placement: .principal) {

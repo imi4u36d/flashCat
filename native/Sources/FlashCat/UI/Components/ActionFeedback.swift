@@ -98,7 +98,8 @@ struct ActionFlashIcon: View {
                     .font(.system(size: size, weight: .bold))
                     .foregroundStyle(flash.tint)
                     .transition(
-                        .scale(scale: 0.72).combined(with: .opacity))
+                        .scale(scale: 0.72).combined(with: .opacity)
+                    )
                     .accessibilityLabel(L10n.t(flash.accessibilitySuffix))
             }
         }

@@ -173,11 +173,12 @@ struct DSIconButton: View {
                 systemName: systemName,
                 flash: flash,
                 size: size * 0.43,
-                baseColor: foreground)
-                .frame(width: size, height: size)
-                .background(shape.fill(background))
-                .overlay(shape.strokeBorder(border, lineWidth: 1))
-                .contentShape(shape)
+                baseColor: foreground
+            )
+            .frame(width: size, height: size)
+            .background(shape.fill(background))
+            .overlay(shape.strokeBorder(border, lineWidth: 1))
+            .contentShape(shape)
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }

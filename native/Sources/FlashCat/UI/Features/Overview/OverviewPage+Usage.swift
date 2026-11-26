@@ -117,9 +117,10 @@ extension OverviewPage {
             selection: window,
             options: UsageSummary.Window.allCases,
             labels: ["7 天", "30 天", "全部"],
-            width: 172)
-            .disabled(summary.sessions == 0)
-            .opacity(summary.sessions == 0 ? 0.55 : 1)
+            width: 172
+        )
+        .disabled(summary.sessions == 0)
+        .opacity(summary.sessions == 0 ? 0.55 : 1)
 
         return HStack(spacing: 12) {
             title
@@ -201,8 +202,9 @@ extension OverviewPage {
                 usageReadout(
                     "消息",
                     value: UsageFormat.count(summary.messages),
-                    unit: nil)
-                    .padding(.leading, 20)
+                    unit: nil
+                )
+                .padding(.leading, 20)
             }
 
             DSDivider()
@@ -218,8 +220,9 @@ extension OverviewPage {
                 usageReadout(
                     "平均解码",
                     value: UsageFormat.rate(summary.averageTokensPerSecond),
-                    unit: summary.averageTokensPerSecond == nil ? nil : "tok/s")
-                    .padding(.leading, 20)
+                    unit: summary.averageTokensPerSecond == nil ? nil : "tok/s"
+                )
+                .padding(.leading, 20)
             }
         }
     }
@@ -268,12 +271,14 @@ extension OverviewPage {
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(DS.text)
                 Spacer(minLength: 6)
-                Text(verbatim: summary.models.isEmpty
-                    ? L10n.t("还没有记录")
-                    : L10n.format("%@ 个模型 · 按 Token 排序", "\(summary.models.count)"))
-                    .font(.system(size: 11))
-                    .foregroundStyle(DS.text3)
-                    .lineLimit(1)
+                Text(
+                    verbatim: summary.models.isEmpty
+                        ? L10n.t("还没有记录")
+                        : L10n.format("%@ 个模型 · 按 Token 排序", "\(summary.models.count)")
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(DS.text3)
+                .lineLimit(1)
             }
             .padding(.bottom, 8)
 
@@ -352,8 +357,7 @@ extension OverviewPage {
         var map: [String: EngineID] = [:]
         for engine in EngineCatalog.allIDs where state.engineIsInstalled(engine) {
             for model in state.engineModels(for: engine)
-            where !model.hidden && !model.helper && !ModelLibraryEntry.isDraftModel(model.id)
-            {
+            where !model.hidden && !model.helper && !ModelLibraryEntry.isDraftModel(model.id) {
                 map[model.id] = engine
             }
         }
@@ -456,7 +460,8 @@ extension OverviewPage {
     }
 
     func usageEmptyCard(compact: Bool) -> some View {
-        let copy: String = state.selectedModel.isEmpty
+        let copy: String =
+            state.selectedModel.isEmpty
             ? L10n.t("先在模型库下载一个模型；启动引擎后，这里会按消息落盘的 Token 用量、模型与时间聚合出整页统计。全部在本机计算，不上传任何内容。")
             : L10n.t("启动引擎后，这里会按消息落盘的 Token 用量、模型与时间聚合出整页统计。全部在本机计算，不上传任何内容。")
 

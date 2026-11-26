@@ -220,10 +220,11 @@ package enum NativeModelCatalog {
         root: String, entrypoint: String, machine: MachineProfile
     ) -> [ModelRecommendation] {
         let tier = chipTier(for: machine.chipName)
-        guard let output = runPython(
-            executable: entrypoint,
-            workingDirectory: root,
-            arguments: ["-c", mtplxScript, String(machine.memoryGB), tier]),
+        guard
+            let output = runPython(
+                executable: entrypoint,
+                workingDirectory: root,
+                arguments: ["-c", mtplxScript, String(machine.memoryGB), tier]),
             let data = output.data(using: .utf8),
             let payload = try? JSONDecoder().decode(MTPLXPayload.self, from: data)
         else {

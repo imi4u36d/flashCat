@@ -600,7 +600,8 @@ public final class GatewaySessionMeter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         let current = epoch
-        return sessions
+        return
+            sessions
             .compactMap { session -> CompletedStreamDecode? in
                 guard session.epoch == current,
                     session.id > afterSessionID,

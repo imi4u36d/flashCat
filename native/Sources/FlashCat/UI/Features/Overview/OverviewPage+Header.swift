@@ -136,7 +136,8 @@ extension OverviewPage {
                             .fill(
                                 LinearGradient(
                                     colors: [engineTint.opacity(0.82), engineTint],
-                                    startPoint: .leading, endPoint: .trailing))
+                                    startPoint: .leading, endPoint: .trailing)
+                            )
                             .frame(width: max(4, proxy.size.width * contextProgress))
                     }
                 }

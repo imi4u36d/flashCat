@@ -399,7 +399,7 @@ func statusColor(_ state: ServerState) -> Color {
 func levelColor(_ level: LogLevel) -> Color {
     switch level {
     case .error: return DS.err
-        case .warning: return DS.warn
+    case .warning: return DS.warn
     case .success: return DS.ok
     case .system: return DS.info
     case .info: return DS.text2

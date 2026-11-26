@@ -59,13 +59,15 @@ struct EnginesPage: View {
             $gridColumns,
             minWidth: Self.cardMinWidth,
             spacing: Self.cardSpacing,
-            maxColumns: 2)
+            maxColumns: 2
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .toolbar {
             ToolbarItem(id: DSToolbarSlot.title, placement: .navigation) {
                 DSToolbarPageTitle(
-                    title: "引擎")
-                    .padding(.leading, 15)
+                    title: "引擎"
+                )
+                .padding(.leading, 15)
             }
             .sharedBackgroundVisibility(.hidden)
             ToolbarItem(id: DSToolbarSlot.anchor, placement: .principal) {
@@ -634,7 +636,8 @@ struct EngineProgressBar: View {
                         .fill(
                             LinearGradient(
                                 colors: [tint.opacity(0.72), tint, DS.accent],
-                                startPoint: .leading, endPoint: .trailing))
+                                startPoint: .leading, endPoint: .trailing)
+                        )
                         .frame(width: max(4, proxy.size.width * clamped))
                 }
             }

@@ -225,7 +225,8 @@ private struct ModelPickerRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 DS.rect(ModelPickerMetrics.rowRadius)
-                    .fill(selected ? DS.accentSoft : (hovering ? DS.hover : Color.clear)))
+                    .fill(selected ? DS.accentSoft : (hovering ? DS.hover : Color.clear))
+            )
             .contentShape(DS.rect(ModelPickerMetrics.rowRadius))
         }
         .buttonStyle(.plain)
@@ -233,7 +234,8 @@ private struct ModelPickerRow: View {
         .help(
             locked
                 ? L10n.t("正在生成，先停止再切换模型")
-                : L10n.t("切换到这个模型"))
+                : L10n.t("切换到这个模型")
+        )
         .onHover { inside in
             if reduceMotion {
                 hovering = inside
@@ -374,7 +376,8 @@ struct ModelPickerInlinePanel: View {
                         state: state,
                         groups: groups,
                         revealed: revealed,
-                        onPick: onPick)
+                        onPick: onPick
+                    )
                     .padding(.horizontal, ModelPickerMetrics.inlineHorizontalPadding)
                     .padding(.top, ModelPickerMetrics.topPadding)
                     .padding(.bottom, ModelPickerMetrics.bottomPadding)
@@ -472,7 +475,8 @@ struct ModelPickerPanelContent: View {
                     ModelPickerListContent(
                         state: state,
                         groups: groups,
-                        onPick: onPick)
+                        onPick: onPick
+                    )
                     .padding(.horizontal, ModelPickerMetrics.floatingHorizontalPadding)
                     .padding(.top, ModelPickerMetrics.topPadding)
                     .padding(.bottom, ModelPickerMetrics.bottomPadding)

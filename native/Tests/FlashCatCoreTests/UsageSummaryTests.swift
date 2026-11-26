@@ -15,8 +15,9 @@ final class UsageSummaryTests: XCTestCase {
     }()
 
     private func date(_ year: Int, _ month: Int, _ day: Int, _ hour: Int = 12) -> Date {
-        calendar.date(from: DateComponents(
-            year: year, month: month, day: day, hour: hour))!
+        calendar.date(
+            from: DateComponents(
+                year: year, month: month, day: day, hour: hour))!
     }
 
     private func message(
@@ -47,19 +48,25 @@ final class UsageSummaryTests: XCTestCase {
     private var now: Date { date(2026, 11, 26) }
 
     func testTotalsAndWindowFiltering() {
-        let a = thread("a", [
-            message("user", at: date(2026, 11, 24)),
-            message("assistant", at: date(2026, 11, 24), model: "M1", prompt: 100, completion: 20, rate: 50),
-            message("user", at: date(2026, 11, 25)),
-            message("assistant", at: date(2026, 11, 25), model: "M1", prompt: 80, completion: 10, rate: 60),
-        ])
-        let b = thread("b", [
-            message("user", at: date(2026, 10, 1)),
-            message("assistant", at: date(2026, 10, 1), model: "M2", prompt: 200, completion: 40, rate: 100),
-        ])
-        let c = thread("c", [
-            message("assistant", at: date(2026, 11, 25), model: "M2", prompt: 10, completion: 2, rate: 30),
-        ])
+        let a = thread(
+            "a",
+            [
+                message("user", at: date(2026, 11, 24)),
+                message("assistant", at: date(2026, 11, 24), model: "M1", prompt: 100, completion: 20, rate: 50),
+                message("user", at: date(2026, 11, 25)),
+                message("assistant", at: date(2026, 11, 25), model: "M1", prompt: 80, completion: 10, rate: 60),
+            ])
+        let b = thread(
+            "b",
+            [
+                message("user", at: date(2026, 10, 1)),
+                message("assistant", at: date(2026, 10, 1), model: "M2", prompt: 200, completion: 40, rate: 100),
+            ])
+        let c = thread(
+            "c",
+            [
+                message("assistant", at: date(2026, 11, 25), model: "M2", prompt: 10, completion: 2, rate: 30)
+            ])
 
         let all = UsageSummary.make(
             threads: [a, b, c], window: .all, now: now, calendar: calendar)
@@ -100,15 +107,19 @@ final class UsageSummaryTests: XCTestCase {
     }
 
     func testDominantModelAttributionAndTieBreak() {
-        let mixed = thread("mixed", [
-            message("assistant", at: date(2026, 11, 20), model: "M2", prompt: 10, completion: 1),
-            message("assistant", at: date(2026, 11, 20), model: "M2", prompt: 10, completion: 1),
-            message("assistant", at: date(2026, 11, 21), model: "M1", prompt: 10, completion: 1),
-        ])
-        let tie = thread("tie", [
-            message("assistant", at: date(2026, 11, 22), model: "M2", prompt: 10, completion: 1),
-            message("assistant", at: date(2026, 11, 22), model: "M1", prompt: 10, completion: 1),
-        ])
+        let mixed = thread(
+            "mixed",
+            [
+                message("assistant", at: date(2026, 11, 20), model: "M2", prompt: 10, completion: 1),
+                message("assistant", at: date(2026, 11, 20), model: "M2", prompt: 10, completion: 1),
+                message("assistant", at: date(2026, 11, 21), model: "M1", prompt: 10, completion: 1),
+            ])
+        let tie = thread(
+            "tie",
+            [
+                message("assistant", at: date(2026, 11, 22), model: "M2", prompt: 10, completion: 1),
+                message("assistant", at: date(2026, 11, 22), model: "M1", prompt: 10, completion: 1),
+            ])
 
         let summary = UsageSummary.make(
             threads: [mixed, tie], window: .all, now: now, calendar: calendar)
@@ -121,10 +132,12 @@ final class UsageSummaryTests: XCTestCase {
     }
 
     func testLegacyMessagesWithoutDates() {
-        let legacy = thread("legacy", [
-            message("user", at: nil),
-            message("assistant", at: nil, model: "M1", prompt: 10, completion: 5),
-        ])
+        let legacy = thread(
+            "legacy",
+            [
+                message("user", at: nil),
+                message("assistant", at: nil, model: "M1", prompt: 10, completion: 5),
+            ])
         let all = UsageSummary.make(
             threads: [legacy], window: .all, now: now, calendar: calendar)
         XCTAssertEqual(all.sessions, 1)

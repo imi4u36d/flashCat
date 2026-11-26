@@ -61,8 +61,9 @@ struct EngineRuntimeStrip: View {
                         systemName: "doc.on.doc",
                         flash: copyFlash,
                         size: 9.5,
-                        baseColor: DS.text4)
-                        .frame(width: 11, height: 11)
+                        baseColor: DS.text4
+                    )
+                    .frame(width: 11, height: 11)
                 }
             }
             .buttonStyle(.plain)

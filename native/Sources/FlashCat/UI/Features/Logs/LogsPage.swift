@@ -84,8 +84,9 @@ struct LogsPage: View {
         .toolbar {
             ToolbarItem(id: DSToolbarSlot.title, placement: .navigation) {
                 DSToolbarPageTitle(
-                    title: "日志")
-                    .padding(.leading, 15)
+                    title: "日志"
+                )
+                .padding(.leading, 15)
             }
             .sharedBackgroundVisibility(.hidden)
             ToolbarItem(id: DSToolbarSlot.anchor, placement: .principal) {

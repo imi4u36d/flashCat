@@ -171,8 +171,9 @@ struct OverviewPage: View {
         .toolbar {
             ToolbarItem(id: DSToolbarSlot.title, placement: .navigation) {
                 DSToolbarPageTitle(
-                    title: "概览")
-                    .padding(.leading, 15)
+                    title: "概览"
+                )
+                .padding(.leading, 15)
             }
             .sharedBackgroundVisibility(.hidden)
             ToolbarItem(id: DSToolbarSlot.anchor, placement: .principal) {
@@ -216,7 +217,8 @@ struct OverviewPage: View {
                 }
             }
             .buttonStyle(
-                OverviewTintActionStyle(tint: state.isRunning ? DS.dangerText : DS.ok))
+                OverviewTintActionStyle(tint: state.isRunning ? DS.dangerText : DS.ok)
+            )
             .disabled(engineToggleDisabled)
             .help(engineToggleHelp)
         } else {
@@ -287,8 +289,9 @@ struct OverviewPage: View {
                     recentRequestsCard(
                         maxRows: recentRows,
                         cardPadding: canvas.cardPadding,
-                        alwaysVisible: pinned)
-                        .frame(height: halfHeight)
+                        alwaysVisible: pinned
+                    )
+                    .frame(height: halfHeight)
                 }
             } trailing: {
                 VStack(spacing: canvas.columnGap) {

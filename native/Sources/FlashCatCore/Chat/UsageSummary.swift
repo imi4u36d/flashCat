@@ -134,7 +134,7 @@ package struct UsageSummary: Equatable, Sendable {
 
                 let createdAt = message.createdAt
                 if let createdAt {
-                    if firstActivity == nil || createdAt < firstActivity! {
+                    if firstActivity.map({ createdAt < $0 }) ?? true {
                         firstActivity = createdAt
                     }
                     let day = calendar.startOfDay(for: createdAt)
@@ -235,7 +235,8 @@ package struct UsageSummary: Equatable, Sendable {
             return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
         }
 
-        let days = allDaySessions
+        let days =
+            allDaySessions
             .map { Day(date: $0.key, sessions: $0.value.count) }
             .sorted { $0.date < $1.date }
 

@@ -84,8 +84,9 @@ extension OverviewPage {
                     systemName: "doc.on.doc",
                     flash: copied ? .success : nil,
                     size: 10.5,
-                    baseColor: DS.text4)
-                    .frame(width: 12, height: 12)
+                    baseColor: DS.text4
+                )
+                .frame(width: 12, height: 12)
             }
             .frame(height: 32)
             .contentShape(DS.rect(9))
@@ -147,8 +148,9 @@ extension OverviewPage {
                         systemName: "doc.on.doc",
                         flash: copied ? .success : nil,
                         size: 9.5,
-                        baseColor: DS.text4)
-                        .frame(width: 12, height: 12)
+                        baseColor: DS.text4
+                    )
+                    .frame(width: 12, height: 12)
                 }
             } content: {
                 Text(verbatim: "127.0.0.1:\(state.port)")
@@ -434,10 +436,11 @@ extension OverviewPage {
                     systemName: "doc.on.doc",
                     flash: copied ? .success : nil,
                     size: 10,
-                    baseColor: DS.text4)
-                    .frame(width: 12, height: 12)
-                    .opacity(hovered || copied ? 1 : 0)
-                    .animation(reduceMotion ? nil : DS.Motion.snappy, value: hovered)
+                    baseColor: DS.text4
+                )
+                .frame(width: 12, height: 12)
+                .opacity(hovered || copied ? 1 : 0)
+                .animation(reduceMotion ? nil : DS.Motion.snappy, value: hovered)
             }
             .padding(.horizontal, 8)
             .frame(height: 34)

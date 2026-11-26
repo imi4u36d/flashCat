@@ -8,6 +8,16 @@ import FlashCatKit
 import QuartzCore
 import SwiftUI
 
+/// `NSAnimationContext` 的 completion 是 `@Sendable`，而面板收尾要碰 AppKit。
+/// 这个盒子只负责把闭包原样搬到 completion 里；那里本来就在主线程执行。
+private final class AnimationCompletionBox: @unchecked Sendable {
+    let run: () -> Void
+
+    init(_ run: @escaping () -> Void) {
+        self.run = run
+    }
+}
+
 // MARK: - 尺寸
 
 /// 模型列表的固定几何：宽度固定、高度封顶，列表只在内部滚动。
@@ -718,12 +728,13 @@ final class ModelPickerPanelController: NSObject, NSWindowDelegate {
                 y: panel.frame.maxY - 1,
                 width: 1,
                 height: 1)
+            let completion = AnimationCompletionBox(finish)
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.18
                 context.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 0, 0.7, 0.2)
                 panel.animator().setFrame(corner, display: true)
             } completionHandler: {
-                finish()
+                completion.run()
             }
         } else {
             presenter?.isPresented = false
@@ -981,12 +992,13 @@ final class ModelPickerInlinePanelController: NSObject, NSWindowDelegate {
                 y: panel.frame.minY,
                 width: panel.frame.width,
                 height: 1)
+            let completion = AnimationCompletionBox(finish)
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.2
                 context.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 0, 0.7, 0.2)
                 panel.animator().setFrame(collapsed, display: true)
             } completionHandler: {
-                finish()
+                completion.run()
             }
         } else {
             finish()

@@ -312,13 +312,14 @@ package final class ChatHistory {
                 messages: thread.messages.map(Self.stored))
         }
         let sink = onWriteFailure
+        let path = filePath
         writeQueue.async {
             Paths.ensureDirectory(Paths.supportDirectory)
             do {
                 let data = try JSONEncoder().encode(stored)
-                try data.write(to: URL(fileURLWithPath: self.filePath))
+                try data.write(to: URL(fileURLWithPath: path))
             } catch {
-                sink?("讨论列表保存失败（\(self.filePath)）：\(error.localizedDescription)")
+                sink?("讨论列表保存失败（\(path)）：\(error.localizedDescription)")
             }
         }
     }
@@ -533,13 +534,14 @@ package final class ConversationStore {
         }
         guard !stored.isEmpty else { return }
         let sink = onWriteFailure
+        let path = filePath
         writeQueue.async {
             Paths.ensureDirectory(Paths.supportDirectory)
             do {
                 let data = try JSONEncoder().encode(stored)
-                try data.write(to: URL(fileURLWithPath: self.filePath))
+                try data.write(to: URL(fileURLWithPath: path))
             } catch {
-                sink?("对话记录保存失败（\(self.filePath)）：\(error.localizedDescription)")
+                sink?("对话记录保存失败（\(path)）：\(error.localizedDescription)")
             }
         }
     }
@@ -547,9 +549,10 @@ package final class ConversationStore {
     package func clear() {
         // 走同一条队列：先前的 save 必须先落盘，再删文件，顺序不能反。
         let sink = onWriteFailure
+        let path = filePath
         writeQueue.async {
             do {
-                try FileManager.default.removeItem(atPath: self.filePath)
+                try FileManager.default.removeItem(atPath: path)
             } catch let error as NSError
                 where error.domain == NSCocoaErrorDomain && error.code == NSFileNoSuchFileError
             {
